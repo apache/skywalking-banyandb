@@ -72,7 +72,7 @@ This section guides committers and PMC members to release SkyWalking Cloud on Ku
 
 ### Release steps
 - Export the version that is to be released, `export VERSION=0.1.0 `
-- Tag the latest commit that is to be released with `git tag ${VERSION}` and push the tag with `git push https://github.com/apache/skywalking-swck ${VERSION}`
+- Tag the latest commit that is to be released with `git tag ${VERSION}` and push the tag with `git push https://github.com/apache/skywalking-banyandb ${VERSION}`
 - Verify licenses, build and sign distribution packages, simply run `make release`, distribution packages and checksums are generated
 - [Upload the packages to SVN repository](docs/release.md#upload-to-apache-svn) 
 - [Send internal announcement](docs/release.md#make-the-internal-announcements)
