@@ -33,10 +33,11 @@ const logo = `
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,
-		Short: "BanyanDB is an observability database",
+		Short:             "BanyanDB is an observability database",
 		Long: logo + `
 BanyanDB, as an observability database, aims to ingest, analyze and store Metrics, Tracing and Logging data
 `,
 	}
+	cmd.AddCommand(newStandaloneCmd())
 	return cmd
 }

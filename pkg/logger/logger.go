@@ -17,19 +17,23 @@
  *  under the License.
  */
 
-package main
+package logger
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/apache/skywalking-banyandb/standalone/internal/cmd"
+	"go.uber.org/zap"
 )
 
-func main() {
-	if err := cmd.NewRoot().Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+type Logger struct {
+	*zap.Logger
 }
 
+func (l Logger) Scope(scope string) *Logger {
+	return &Logger{l.Logger.Named(scope)}
+}
+
+var Log *Logger
+
+func init() {
+	l, _ := zap.NewDevelopment()
+	Log = &Logger{l}
+}
