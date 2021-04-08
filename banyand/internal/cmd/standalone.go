@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/banyand/config"
 	"github.com/apache/skywalking-banyandb/banyand/executor"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
@@ -43,6 +45,11 @@ func newStandaloneCmd() *cobra.Command {
 		Short:   "Run as the standalone mode",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			logger.Log.Info("starting as a standalone server")
+			var sc config.Standalone
+			if sc, err = config.Load(); err != nil {
+				return err
+			}
+			fmt.Println(sc)
 			dataBus := bus.NewBus()
 			err = multierr.Append(err, dataBus.Subscribe(storage.TraceRaw, shard.NewShard(dataBus)))
 			err = multierr.Append(err, dataBus.Subscribe(storage.TraceSharded, executor.NewExecutor(dataBus)))

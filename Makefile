@@ -92,11 +92,17 @@ check: clean
 		git status -s; \
 		exit 1; \
 	fi
+	
+pre-push: license-check check ## Check source files before pushing to the remote repo
 
-license-check:
+##@ License targets
+
+license-check: ## Check license header
 	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header check
+ 
+license-fix: ## Fix license header issues
+	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header fix
 
-pre-commit: license-check check
 
 default:
 	@for PRJ in $(PROJECTS); do \
@@ -108,3 +114,5 @@ default:
 	done
 
 include scripts/build/help.mk
+
+.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit
