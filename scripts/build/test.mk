@@ -1,0 +1,33 @@
+
+TEST_OPTS ?=
+TEST_EXTRA_OPTS ?=
+TEST_TAGS ?= $(BUILD_TAGS)
+TEST_PKG_LIST ?= ./...
+
+TEST_COVERAGE_DIR ?= build/coverage
+TEST_COVERAGE_PROFILE := $(TEST_COVERAGE_DIR)/coverage.out
+TEST_COVERAGE_REPORT := $(TEST_COVERAGE_DIR)/coverage.html
+TEST_COVERAGE_PKG_LIST ?= $(TEST_PKG_LIST)
+TEST_COVERAGE_OPTS ?= -covermode=atomic -coverpkg=./...
+TEST_COVERAGE_EXTRA_OPTS ?=
+
+##@ Test targets
+
+.PHONY: test
+test: ## Run all the unit tests
+	go test $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
+
+.PHONY: test-race
+test-race: TEST_OPTS=-race
+test-race: test  ## Run all the unit tests with race detector on
+
+.PHONY: test-coverage
+test-coverage: ## Run all the unit tests with coverage analysis on
+	mkdir -p "$(shell dirname "$(TEST_COVERAGE_PROFILE)")"
+	go test $(TEST_COVERAGE_OPTS) $(TEST_COVERAGE_EXTRA_OPTS) -coverprofile="$(TEST_COVERAGE_PROFILE)" -tags "$(TEST_TAGS)" $(TEST_COVERAGE_PKG_LIST)
+	go tool cover -html="$(TEST_COVERAGE_PROFILE)" -o "$(TEST_COVERAGE_REPORT)"
+	@echo "Test coverage report has been saved to $(TEST_COVERAGE_REPORT)"
+
+.PHONY: test-clean
+test-clean::  ## Clean all test artifacts
+	rm -rf $(TEST_COVERAGE_DIR)

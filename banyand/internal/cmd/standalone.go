@@ -35,12 +35,14 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/shard"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 func newStandaloneCmd() *cobra.Command {
 	standaloneCmd := &cobra.Command{
-		Use:   "standalone",
-		Short: "Run as the standalone mode",
+		Use:     "standalone",
+		Version: version.Build(),
+		Short:   "Run as the standalone mode",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			logger.Log.Info("starting as a standalone server")
 			dataBus := bus.NewBus()

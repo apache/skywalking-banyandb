@@ -1,0 +1,88 @@
+mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
+mk_dir   := $(dir $(mk_path))
+tool_bin := $(mk_dir)bin
+
+PROJECTS := banyand
+
+##@ Build targets
+
+clean: TARGET=clean test-clean
+clean: default  ## Clean artifacts in all projects
+
+build: TARGET=all
+build: PROJECTS:=$(PROJECTS)
+build: default  ## Build all projects
+
+##@ Release targets
+
+release: TARGET=release
+release: default  ## Build the release artifacts for all projects, usually the statically linked binaries
+
+##@ Test targets
+
+test: TARGET=test
+test: PROJECTS:=$(PROJECTS)
+test: default          ## Run the unit tests in all projects
+
+test-race: TARGET=test-race
+test-race: PROJECTS:=$(PROJECTS)
+test-race: default     ## Run the unit tests in all projects with race detector on
+
+test-coverage: TARGET=test-coverage
+test-coverage: PROJECTS:=$(PROJECTS)
+test-coverage: default ## Run the unit tests in all projects with coverage analysis on
+
+##@ Code quality targets
+
+lint: TARGET=lint
+lint: PROJECTS:=$(PROJECTS)
+lint: default ## Run the linters on all projects
+
+
+##@ Code style targets
+
+# The goimports tool does not arrange imports in 3 blocks if there are already more than three blocks.
+# To avoid that, before running it, we collapse all imports in one block, then run the formatter.
+format: ## Format all Go code
+	@for f in `find . -name '*.go'`; do \
+	    awk '/^import \($$/,/^\)$$/{if($$0=="")next}{print}' $$f > /tmp/fmt; \
+	    mv /tmp/fmt $$f; \
+	done
+	@goimports -w -local github.com/apache/skywalking-banyandb .
+
+# Enforce go version matches what's in go.mod when running `make check` assuming the following:
+# * 'go version' returns output like "go version go1.16 darwin/amd64"
+# * go.mod contains a line like "go 1.16"
+CONFIGURED_GO_VERSION := $(shell sed -ne '/^go /s/.* //gp' go.mod)
+EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
+GO_VERSION := $(shell go version)
+
+## Check that the status is consistent with CI.
+check: clean
+# case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
+	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
+		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \
+		echo "Upgrade go to $(CONFIGURED_GO_VERSION)+"; \
+		exit 1; \
+	esac
+	$(MAKE) format
+	mkdir -p /tmp/artifacts
+	git diff >/tmp/artifacts/check.diff 2>&1
+	go mod tidy
+	@if [ ! -z "`git status -s`" ]; then \
+		echo "Following files are not consistent with CI:"; \
+		git status -s; \
+		exit 1; \
+	fi
+
+
+default:
+	@for PRJ in $(PROJECTS); do \
+		echo "--- $$PRJ: $(TARGET) ---"; \
+		$(MAKE) $(TARGET) -C $$PRJ; \
+		if [ $$? -ne 0 ]; then \
+			exit 1; \
+		fi; \
+	done
+
+include scripts/build/help.mk

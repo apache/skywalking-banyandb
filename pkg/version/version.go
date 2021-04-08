@@ -17,19 +17,14 @@
  *  under the License.
  */
 
-package main
+// Package version can be used to implement embedding versioning details from
+// git branches and tags into the binary importing this package.
+package version
 
-import (
-	"fmt"
-	"os"
+// build is to be populated at build time using -ldflags -X.
+var build string
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/cmd"
-)
-
-func main() {
-	if err := cmd.NewRoot().Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+// Show the service's build information
+func Build() string {
+	return build
 }
-

@@ -115,7 +115,7 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 		b.topics[topic] = make([]Channel, 0)
 	}
 	ch := make(Channel)
-	list, _ := b.topics[topic]
+	list := b.topics[topic]
 	list = append(list, ch)
 	b.topics[topic] = list
 	go func(listener MessageListener, ch Channel) {

@@ -19,7 +19,11 @@
 
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/apache/skywalking-banyandb/pkg/version"
+)
 
 const logo = `
 ██████╗  █████╗ ███╗   ██╗██╗   ██╗ █████╗ ███╗   ██╗██████╗ ██████╗ 
@@ -33,6 +37,7 @@ const logo = `
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,
+		Version:           version.Build(),
 		Short:             "BanyanDB is an observability database",
 		Long: logo + `
 BanyanDB, as an observability database, aims to ingest, analyze and store Metrics, Tracing and Logging data

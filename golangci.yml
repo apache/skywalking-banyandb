@@ -21,7 +21,6 @@ linters:
     - golint
     - ineffassign
     - lll
-    - maligned
     - misspell
     - structcheck
     - unconvert
