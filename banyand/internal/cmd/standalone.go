@@ -19,7 +19,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,18 +37,24 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
+var standAloneConfig config.Standalone
+
 func newStandaloneCmd() *cobra.Command {
 	standaloneCmd := &cobra.Command{
 		Use:     "standalone",
 		Version: version.Build(),
 		Short:   "Run as the standalone mode",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.Log.Info("starting as a standalone server")
-			var sc config.Standalone
-			if sc, err = config.Load(); err != nil {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
+			if standAloneConfig, err = config.Load(); err != nil {
 				return err
 			}
-			fmt.Println(sc)
+			if err = logger.InitLogger(standAloneConfig.Logging); err != nil {
+				return err
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			logger.GetLogger().Info("starting as a standalone server")
 			dataBus := bus.NewBus()
 			err = multierr.Append(err, dataBus.Subscribe(storage.TraceRaw, shard.NewShard(dataBus)))
 			err = multierr.Append(err, dataBus.Subscribe(storage.TraceSharded, executor.NewExecutor(dataBus)))

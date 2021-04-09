@@ -35,16 +35,16 @@ type Shard struct {
 func NewShard(bus *bus.Bus) *Shard {
 	return &Shard{
 		bus: bus,
-		log: logger.Log.Scope("shard"),
+		log: logger.GetLogger("shard"),
 	}
 }
 
 func (s Shard) Rev(message bus.Message) {
-	s.log.Sugar().Infow("rev", "msg", message.Data())
+	s.log.Info("rev", logger.Any("msg", message.Data()))
 	_ = s.bus.Publish(storage.TraceSharded, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "sharded message"))
 }
 
 func (s Shard) Close() error {
-	s.log.Sugar().Infow("closed")
+	s.log.Info("closed")
 	return nil
 }

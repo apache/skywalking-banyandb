@@ -30,15 +30,15 @@ type Series struct {
 
 func NewSeries() *Series {
 	return &Series{
-		log: logger.Log.Scope("series"),
+		log: logger.GetLogger("series"),
 	}
 }
 
 func (s Series) Rev(message bus.Message) {
-	s.log.Sugar().Infow("rev", "msg", message.Data())
+	s.log.Info("rev", logger.Any("msg", message.Data()))
 }
 
 func (s Series) Close() error {
-	s.log.Sugar().Infow("closed")
+	s.log.Info("closed")
 	return nil
 }

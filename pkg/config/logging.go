@@ -18,5 +18,6 @@
 package config
 
 type Logging struct {
+	Env   string
 	Level string
 }

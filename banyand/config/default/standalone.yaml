@@ -16,4 +16,5 @@
 # specific language governing permissions and limitations
 # under the License.
 logging:
+  env: dev
   level: info

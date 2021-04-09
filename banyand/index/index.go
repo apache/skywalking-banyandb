@@ -30,15 +30,15 @@ type Index struct {
 
 func NewIndex() *Index {
 	return &Index{
-		log: logger.Log.Scope("Index"),
+		log: logger.GetLogger("Index"),
 	}
 }
 
 func (s Index) Rev(message bus.Message) {
-	s.log.Sugar().Infow("rev", "msg", message.Data())
+	s.log.Info("rev", logger.Any("msg", message.Data()))
 }
 
 func (s Index) Close() error {
-	s.log.Sugar().Infow("closed")
+	s.log.Info("closed")
 	return nil
 }

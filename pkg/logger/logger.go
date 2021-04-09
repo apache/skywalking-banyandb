@@ -19,19 +19,72 @@ package logger
 
 import (
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
+// Logger is wrapper for zap logger with module, it is singleton.
 type Logger struct {
-	*zap.Logger
+	module string
+	logger *zap.Logger
 }
 
-func (l Logger) Scope(scope string) *Logger {
-	return &Logger{l.Logger.Named(scope)}
+// Debug logs a message at DebugLevel. The message includes any fields passed
+// at the log site, as well as any fields accumulated on the logger.
+func (l *Logger) Debug(msg string, fields ...zap.Field) {
+	l.logger.Debug(msg, fields...)
 }
 
-var Log *Logger
+// Info logs a message at InfoLevel. The message includes any fields passed
+// at the log site, as well as any fields accumulated on the logger.
+func (l *Logger) Info(msg string, fields ...zap.Field) {
+	l.logger.Info(msg, fields...)
+}
 
-func init() {
-	l, _ := zap.NewDevelopment()
-	Log = &Logger{l}
+// Warn logs a message at WarnLevel. The message includes any fields passed
+// at the log site, as well as any fields accumulated on the logger.
+func (l *Logger) Warn(msg string, fields ...zap.Field) {
+	l.logger.Warn(msg, fields...)
+}
+
+// Error logs a message at ErrorLevel. The message includes any fields passed
+// at the log site, as well as any fields accumulated on the logger.
+func (l *Logger) Error(msg string, fields ...zap.Field) {
+	l.logger.Error(msg, fields...)
+}
+
+// String constructs a field with the given key and value.
+func String(key string, val string) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.StringType, String: val}
+}
+
+// Error is shorthand for the common idiom NamedError("error", err).
+func Error(err error) zap.Field {
+	return zap.NamedError("error", err)
+}
+
+// Uint16 constructs a field with the given key and value.
+func Uint16(key string, val uint16) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.Uint16Type, Integer: int64(val)}
+}
+
+// Uint32 constructs a field with the given key and value.
+func Uint32(key string, val uint32) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.Uint32Type, Integer: int64(val)}
+}
+
+// Int32 constructs a field with the given key and value.
+func Int32(key string, val int32) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.Int32Type, Integer: int64(val)}
+}
+
+// Int64 constructs a field with the given key and value.
+func Int64(key string, val int64) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.Int64Type, Integer: val}
+}
+
+// Any takes a key and an arbitrary value and chooses the best way to represent
+// them as a field, falling back to a reflection-based approach only if
+// necessary.
+func Any(key string, value interface{}) zap.Field {
+	return zap.Any(key, value)
 }

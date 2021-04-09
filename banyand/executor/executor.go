@@ -35,17 +35,17 @@ type Executor struct {
 func NewExecutor(bus *bus.Bus) *Executor {
 	return &Executor{
 		bus: bus,
-		log: logger.Log.Scope("executor"),
+		log: logger.GetLogger("executor"),
 	}
 }
 
 func (s Executor) Rev(message bus.Message) {
-	s.log.Sugar().Infow("rev", "msg", message.Data())
+	s.log.Info("rev", logger.Any("msg", message.Data()))
 	_ = s.bus.Publish(storage.TraceIndex, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "index message"))
 	_ = s.bus.Publish(storage.TraceData, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "data message"))
 }
 
 func (s Executor) Close() error {
-	s.log.Sugar().Infow("closed")
+	s.log.Info("closed")
 	return nil
 }
