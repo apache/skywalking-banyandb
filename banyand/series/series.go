@@ -19,26 +19,40 @@ package series
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ bus.MessageListener = (*Series)(nil)
+const name = "series"
+
+var (
+	_ bus.MessageListener    = (*Series)(nil)
+	_ run.PreRunner          = (*Series)(nil)
+	_ storage.DataSubscriber = (*Series)(nil)
+)
 
 type Series struct {
 	log *logger.Logger
 }
 
-func NewSeries() *Series {
-	return &Series{
-		log: logger.GetLogger("series"),
-	}
+func (s Series) ComponentName() string {
+	return name
+}
+
+func (s *Series) Sub(subscriber bus.Subscriber) error {
+	return subscriber.Subscribe(storage.TraceData, s)
+}
+
+func (s Series) Name() string {
+	return name
+}
+
+func (s *Series) PreRun() error {
+	s.log = logger.GetLogger(name)
+	return nil
 }
 
 func (s Series) Rev(message bus.Message) {
 	s.log.Info("rev", logger.Any("msg", message.Data()))
-}
-
-func (s Series) Close() error {
-	s.log.Info("closed")
-	return nil
 }

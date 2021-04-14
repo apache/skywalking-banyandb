@@ -19,10 +19,7 @@ package bus
 
 import (
 	"errors"
-	"io"
 	"sync"
-
-	"go.uber.org/atomic"
 )
 
 // Payload represents a simple data
@@ -43,10 +40,17 @@ func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, payload: data}
 }
 
-// EventListener is the signature of functions that can handle an EventMessage.
+//MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
 	Rev(message Message)
-	io.Closer
+}
+
+type Subscriber interface {
+	Subscribe(topic Topic, listener MessageListener) error
+}
+
+type Publisher interface {
+	Publish(topic Topic, message ...Message) error
 }
 
 type Channel chan Message
@@ -56,7 +60,6 @@ type Topic string
 // The Bus allows publish-subscribe-style communication between components
 type Bus struct {
 	topics map[Topic][]Channel
-	closed atomic.Bool
 	mutex  sync.RWMutex
 }
 
@@ -70,15 +73,11 @@ var (
 	ErrTopicEmpty    = errors.New("the topic is empty")
 	ErrTopicNotExist = errors.New("the topic does not exist")
 	ErrListenerEmpty = errors.New("the message listener is empty")
-	ErrClosed        = errors.New("the bus is closed")
 )
 
 func (b *Bus) Publish(topic Topic, message ...Message) error {
 	if topic == "" {
 		return ErrTopicEmpty
-	}
-	if b.closed.Load() {
-		return ErrClosed
 	}
 	cc, exit := b.topics[topic]
 	if !exit {
@@ -104,9 +103,6 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 	if listener == nil {
 		return ErrListenerEmpty
 	}
-	if b.closed.Load() {
-		return ErrClosed
-	}
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	if _, exist := b.topics[topic]; !exist {
@@ -122,7 +118,6 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 			if ok {
 				listener.Rev(c)
 			} else {
-				_ = listener.Close()
 				break
 			}
 		}

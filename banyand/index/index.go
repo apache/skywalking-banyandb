@@ -19,26 +19,40 @@ package index
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ bus.MessageListener = (*Index)(nil)
+const name = "index"
+
+var (
+	_ bus.MessageListener    = (*Index)(nil)
+	_ run.PreRunner          = (*Index)(nil)
+	_ storage.DataSubscriber = (*Index)(nil)
+)
 
 type Index struct {
 	log *logger.Logger
 }
 
-func NewIndex() *Index {
-	return &Index{
-		log: logger.GetLogger("Index"),
-	}
+func (s *Index) ComponentName() string {
+	return name
+}
+
+func (s *Index) Sub(subscriber bus.Subscriber) error {
+	return subscriber.Subscribe(storage.TraceIndex, s)
+}
+
+func (s Index) Name() string {
+	return name
+}
+
+func (s Index) PreRun() error {
+	s.log = logger.GetLogger(name)
+	return nil
 }
 
 func (s Index) Rev(message bus.Message) {
 	s.log.Info("rev", logger.Any("msg", message.Data()))
-}
-
-func (s Index) Close() error {
-	s.log.Info("closed")
-	return nil
 }

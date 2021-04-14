@@ -23,28 +23,45 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ bus.MessageListener = (*Shard)(nil)
+var (
+	_ bus.MessageListener    = (*Shard)(nil)
+	_ run.PreRunner          = (*Shard)(nil)
+	_ storage.DataSubscriber = (*Shard)(nil)
+	_ storage.DataPublisher  = (*Shard)(nil)
+)
 
 type Shard struct {
-	log *logger.Logger
-	bus *bus.Bus
+	log       *logger.Logger
+	publisher bus.Publisher
 }
 
-func NewShard(bus *bus.Bus) *Shard {
-	return &Shard{
-		bus: bus,
-		log: logger.GetLogger("shard"),
-	}
+func (s Shard) ComponentName() string {
+	return "shard"
+}
+
+func (s *Shard) Pub(publisher bus.Publisher) error {
+	s.publisher = publisher
+	return nil
+}
+
+func (s *Shard) Sub(subscriber bus.Subscriber) error {
+	return subscriber.Subscribe(storage.TraceRaw, s)
+}
+
+func (s *Shard) PreRun() error {
+	s.log = logger.GetLogger("shard")
+	s.log.Info("pre running")
+	return nil
+}
+
+func (s *Shard) Name() string {
+	return "shard"
 }
 
 func (s Shard) Rev(message bus.Message) {
 	s.log.Info("rev", logger.Any("msg", message.Data()))
-	_ = s.bus.Publish(storage.TraceSharded, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "sharded message"))
-}
-
-func (s Shard) Close() error {
-	s.log.Info("closed")
-	return nil
+	_ = s.publisher.Publish(storage.TraceSharded, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "sharded message"))
 }

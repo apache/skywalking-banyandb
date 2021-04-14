@@ -38,7 +38,7 @@ func GetLogger(scope ...string) *Logger {
 		return root
 	}
 	module := strings.Join(scope, ".")
-	return &Logger{module: module, logger: root.logger.Named(module)}
+	return &Logger{module: module, Logger: root.Logger.Named(module)}
 }
 
 // InitLogger initializes a zap logger from user config
@@ -73,5 +73,5 @@ func getLogger(cfg config.Logging) (*Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Logger{module: "root", logger: l}, nil
+	return &Logger{module: "root", Logger: l}, nil
 }

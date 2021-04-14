@@ -18,26 +18,26 @@
 package cmd
 
 import (
-	"context"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/banyand/config"
-	"github.com/apache/skywalking-banyandb/banyand/executor"
-	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
-	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/banyand/shard"
+	executor2 "github.com/apache/skywalking-banyandb/banyand/executor"
+	index2 "github.com/apache/skywalking-banyandb/banyand/index"
+	series2 "github.com/apache/skywalking-banyandb/banyand/series"
+	shard2 "github.com/apache/skywalking-banyandb/banyand/shard"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var standAloneConfig config.Standalone
+var (
+	standAloneConfig config.Standalone
+	g                = run.Group{Name: "standalone"}
+)
 
 func newStandaloneCmd() *cobra.Command {
 	standaloneCmd := &cobra.Command{
@@ -55,38 +55,38 @@ func newStandaloneCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			logger.GetLogger().Info("starting as a standalone server")
-			dataBus := bus.NewBus()
-			err = multierr.Append(err, dataBus.Subscribe(storage.TraceRaw, shard.NewShard(dataBus)))
-			err = multierr.Append(err, dataBus.Subscribe(storage.TraceSharded, executor.NewExecutor(dataBus)))
-			err = multierr.Append(err, dataBus.Subscribe(storage.TraceIndex, index.NewIndex()))
-			err = multierr.Append(err, dataBus.Subscribe(storage.TraceData, series.NewSeries()))
-			if err != nil {
-				return err
+			engine := new(storage.Pipeline)
+			shard := new(shard2.Shard)
+			executor := new(executor2.Executor)
+			index := new(index2.Index)
+			series := new(series2.Series)
+
+			// Register the storage engine components.
+			engine.Register(
+				shard,
+				executor,
+				index,
+				series,
+			)
+
+			// Register the run Group units.
+			g.Register(
+				new(signal.Handler),
+				engine,
+				shard,
+				executor,
+				index,
+				series,
+			)
+
+			// Spawn our go routines and wait for shutdown.
+			if err := g.Run(args...); err != nil {
+				logger.GetLogger().Error("exit: ", logger.String("name", g.Name), logger.Error(err))
+				os.Exit(-1)
 			}
-			if err = dataBus.Publish(storage.TraceRaw, bus.NewMessage(0, "initialization")); err != nil {
-				return err
-			}
-			ctx := newContext()
-			<-ctx.Done()
 			return nil
 		},
 	}
 
 	return standaloneCmd
-}
-
-func newContext() context.Context {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		defer cancel()
-		select {
-		case <-ctx.Done():
-			return
-		case <-c:
-			return
-		}
-	}()
-	return ctx
 }

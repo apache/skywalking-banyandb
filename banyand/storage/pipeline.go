@@ -17,9 +17,70 @@
 
 package storage
 
+import (
+	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+)
+
 const (
 	TraceRaw     = "trace-raw"
 	TraceSharded = "trace-sharded"
 	TraceIndex   = "trace-index"
 	TraceData    = "trace-data"
 )
+
+const name = "storage-engine"
+
+type Component interface {
+	ComponentName() string
+}
+
+type DataSubscriber interface {
+	Component
+	Sub(subscriber bus.Subscriber) error
+}
+
+type DataPublisher interface {
+	Component
+	Pub(publisher bus.Publisher) error
+}
+
+var _ run.PreRunner = (*Pipeline)(nil)
+
+type Pipeline struct {
+	logger  *logger.Logger
+	dataBus *bus.Bus
+	dps     []DataPublisher
+	dss     []DataSubscriber
+}
+
+func (e Pipeline) Name() string {
+	return name
+}
+
+func (e *Pipeline) PreRun() error {
+	e.logger = logger.GetLogger(name)
+	var err error
+	e.dataBus = bus.NewBus()
+	for _, dp := range e.dps {
+		err = multierr.Append(err, dp.Pub(e.dataBus))
+	}
+	for _, ds := range e.dss {
+		err = multierr.Append(err, ds.Sub(e.dataBus))
+	}
+	return err
+}
+
+func (e *Pipeline) Register(component ...Component) {
+	for _, c := range component {
+		if ds, ok := c.(DataSubscriber); ok {
+			e.dss = append(e.dss, ds)
+		}
+		if ps, ok := c.(DataPublisher); ok {
+			e.dps = append(e.dps, ps)
+		}
+	}
+}

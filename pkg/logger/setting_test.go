@@ -81,10 +81,10 @@ func TestInitLogger(t *testing.T) {
 			}
 			if err == nil {
 				assert.NotNil(t, logger)
-				assert.NotNil(t, logger.logger)
+				assert.NotNil(t, logger.Logger)
 				assert.NotEmpty(t, logger.module)
-				assert.Equal(t, tt.want.isDev, reflect.ValueOf(*logger.logger).FieldByName("development").Bool())
-				assert.NotNil(t, logger.logger.Check(tt.want.level, "foo"))
+				assert.Equal(t, tt.want.isDev, reflect.ValueOf(*logger.Logger).FieldByName("development").Bool())
+				assert.NotNil(t, logger.Logger.Check(tt.want.level, "foo"))
 			}
 		})
 	}

@@ -23,29 +23,47 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ bus.MessageListener = (*Executor)(nil)
+const name = "executor"
+
+var (
+	_ bus.MessageListener    = (*Executor)(nil)
+	_ run.PreRunner          = (*Executor)(nil)
+	_ storage.DataSubscriber = (*Executor)(nil)
+	_ storage.DataPublisher  = (*Executor)(nil)
+)
 
 type Executor struct {
-	log *logger.Logger
-	bus *bus.Bus
+	log       *logger.Logger
+	publisher bus.Publisher
 }
 
-func NewExecutor(bus *bus.Bus) *Executor {
-	return &Executor{
-		bus: bus,
-		log: logger.GetLogger("executor"),
-	}
+func (s *Executor) Pub(publisher bus.Publisher) error {
+	s.publisher = publisher
+	return nil
+}
+
+func (s *Executor) ComponentName() string {
+	return name
+}
+
+func (s *Executor) Sub(subscriber bus.Subscriber) error {
+	return subscriber.Subscribe(storage.TraceRaw, s)
+}
+
+func (s *Executor) Name() string {
+	return name
+}
+
+func (s *Executor) PreRun() error {
+	s.log = logger.GetLogger(name)
+	return nil
 }
 
 func (s Executor) Rev(message bus.Message) {
 	s.log.Info("rev", logger.Any("msg", message.Data()))
-	_ = s.bus.Publish(storage.TraceIndex, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "index message"))
-	_ = s.bus.Publish(storage.TraceData, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "data message"))
-}
-
-func (s Executor) Close() error {
-	s.log.Info("closed")
-	return nil
+	_ = s.publisher.Publish(storage.TraceIndex, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "index message"))
+	_ = s.publisher.Publish(storage.TraceData, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "data message"))
 }
