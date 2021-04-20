@@ -21,26 +21,83 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"go.uber.org/multierr"
 )
 
-type Config struct {
+const (
+	// The environment variable prefix of all environment variables bound to our command line flags.
+	envPrefix = "BYDB"
+)
+
+type config struct {
+	name  string
 	viper *viper.Viper
 }
 
-func (c *Config) Unmarshal(config interface{}) error {
-	return c.viper.Unmarshal(config)
+func Load(name string, fs *pflag.FlagSet) error {
+	c := new(config)
+	v := viper.New()
+	c.name = name
+	c.viper = v
+	if err := c.initializeConfig(fs); err != nil {
+		return err
+	}
+	return nil
 }
 
-func NewConfig(defaultConfig string) (*Config, error) {
-	c := new(Config)
-	v := viper.New()
-	c.viper = v
-	v.SetConfigType("yaml")
-	if err := v.ReadConfig(strings.NewReader(defaultConfig)); err != nil {
-		return nil, fmt.Errorf("failed to read config entries from default config files: %v", err)
+func (c *config) initializeConfig(fs *pflag.FlagSet) error {
+	v := c.viper
+
+	// Set the base name of the config file, without the file extension.
+	v.SetConfigName(c.name)
+
+	// Set as many paths as you like where viper should look for the
+	// config file. We are only looking in the current working directory.
+	v.AddConfigPath(".")
+
+	// Attempt to read the config file, gracefully ignoring errors
+	// caused by a config file not being found. Return an error
+	// if we cannot parse the config file.
+	if err := v.ReadInConfig(); err != nil {
+		// It's okay if there isn't a config file
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return err
+		}
 	}
+
+	// When we bind flags to environment variables expect that the
+	// environment variables are prefixed, e.g. a flag like --number
+	// binds to an environment variable STING_NUMBER. This helps
+	// avoid conflicts.
+	v.SetEnvPrefix(envPrefix)
+
+	// Bind to environment variables
+	// Works great for simple config names, but needs help for names
+	// like --favorite-color which we fix in the bindFlags function
 	v.AutomaticEnv()
-	v.SetEnvPrefix("BYDB")
-	return c, nil
+
+	// Bind the current command's flags to viper
+	return bindFlags(fs, v)
+}
+
+// Bind each cobra flag to its associated viper configuration (config file and environment variable)
+func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
+	var err error
+	fs.VisitAll(func(f *pflag.Flag) {
+		// Environment variables can't have dashes in them, so bind them to their equivalent
+		// keys with underscores.
+		if strings.Contains(f.Name, ".") {
+			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, ".", "_"))
+			err = multierr.Append(err, v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix)))
+		}
+
+		// Apply the viper config value to the flag when the flag is not set and viper has a value
+		if !f.Changed && v.IsSet(f.Name) {
+			val := v.Get(f.Name)
+			err = multierr.Append(err, fs.Set(f.Name, fmt.Sprintf("%v", val)))
+		}
+	})
+	return err
 }

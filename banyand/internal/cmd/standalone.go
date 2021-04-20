@@ -21,13 +21,14 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/banyand/config"
 	executor2 "github.com/apache/skywalking-banyandb/banyand/executor"
 	index2 "github.com/apache/skywalking-banyandb/banyand/index"
 	series2 "github.com/apache/skywalking-banyandb/banyand/series"
 	shard2 "github.com/apache/skywalking-banyandb/banyand/shard"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/signal"
@@ -35,58 +36,59 @@ import (
 )
 
 var (
-	standAloneConfig config.Standalone
-	g                = run.Group{Name: "standalone"}
+	g = run.Group{Name: "standalone"}
 )
 
 func newStandaloneCmd() *cobra.Command {
+	_ = logger.Bootstrap()
+	engine := new(storage.Pipeline)
+	shard := new(shard2.Shard)
+	executor := new(executor2.Executor)
+	index := new(index2.Index)
+	series := new(series2.Series)
+
+	// Register the storage engine components.
+	engine.Register(
+		shard,
+		executor,
+		index,
+		series,
+	)
+
+	// Register the run Group units.
+	g.Register(
+		new(signal.Handler),
+		engine,
+		shard,
+		executor,
+		index,
+		series,
+	)
+	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{
 		Use:     "standalone",
 		Version: version.Build(),
 		Short:   "Run as the standalone mode",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			if standAloneConfig, err = config.Load(); err != nil {
+			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
-			if err = logger.InitLogger(standAloneConfig.Logging); err != nil {
-				return err
-			}
-			return nil
+			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			logger.GetLogger().Info("starting as a standalone server")
-			engine := new(storage.Pipeline)
-			shard := new(shard2.Shard)
-			executor := new(executor2.Executor)
-			index := new(index2.Index)
-			series := new(series2.Series)
-
-			// Register the storage engine components.
-			engine.Register(
-				shard,
-				executor,
-				index,
-				series,
-			)
-
-			// Register the run Group units.
-			g.Register(
-				new(signal.Handler),
-				engine,
-				shard,
-				executor,
-				index,
-				series,
-			)
-
 			// Spawn our go routines and wait for shutdown.
-			if err := g.Run(args...); err != nil {
-				logger.GetLogger().Error("exit: ", logger.String("name", g.Name), logger.Error(err))
+			if err := g.Run(); err != nil {
+				logger.GetLogger().WithOptions(zap.AddStacktrace(zap.FatalLevel)).
+					Error("exit: ", logger.String("name", g.Name), logger.Error(err))
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
 
+	standaloneCmd.Flags().StringVarP(&logging.Env, "logging.env", "", "dev", "the logging")
+	standaloneCmd.Flags().StringVarP(&logging.Level, "logging.level", "", "debug", "the level of logging")
+	standaloneCmd.Flags().AddFlagSet(g.RegisterFlags().FlagSet)
 	return standaloneCmd
 }

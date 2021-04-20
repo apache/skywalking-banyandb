@@ -23,8 +23,6 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	"github.com/apache/skywalking-banyandb/pkg/config"
 )
 
 var (
@@ -41,8 +39,22 @@ func GetLogger(scope ...string) *Logger {
 	return &Logger{module: module, Logger: root.Logger.Named(module)}
 }
 
-// InitLogger initializes a zap logger from user config
-func InitLogger(cfg config.Logging) (err error) {
+// Bootstrap logging for system boot
+func Bootstrap() (err error) {
+	once.Do(func() {
+		root, err = getLogger(Logging{
+			Env:   "dev",
+			Level: "debug",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Init initializes a zap logger from user config
+func Init(cfg Logging) (err error) {
 	once.Do(func() {
 		root, err = getLogger(cfg)
 	})
@@ -53,7 +65,7 @@ func InitLogger(cfg config.Logging) (err error) {
 }
 
 // getLogger initializes a root logger
-func getLogger(cfg config.Logging) (*Logger, error) {
+func getLogger(cfg Logging) (*Logger, error) {
 	// parse logging level
 	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {

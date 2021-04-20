@@ -49,12 +49,26 @@ type DataPublisher interface {
 }
 
 var _ run.PreRunner = (*Pipeline)(nil)
+var _ run.Config = (*Pipeline)(nil)
 
 type Pipeline struct {
 	logger  *logger.Logger
+	test    string
 	dataBus *bus.Bus
 	dps     []DataPublisher
 	dss     []DataSubscriber
+}
+
+func (e *Pipeline) FlagSet() *run.FlagSet {
+	e.logger = logger.GetLogger(name)
+	fs := run.NewFlagSet("storage")
+	fs.StringVarP(&e.test, "storage.test", "", "a", "test config")
+	return fs
+}
+
+func (e *Pipeline) Validate() error {
+	e.logger.Info("test", logger.String("val", e.test))
+	return nil
 }
 
 func (e Pipeline) Name() string {
@@ -62,7 +76,6 @@ func (e Pipeline) Name() string {
 }
 
 func (e *Pipeline) PreRun() error {
-	e.logger = logger.GetLogger(name)
 	var err error
 	e.dataBus = bus.NewBus()
 	for _, dp := range e.dps {

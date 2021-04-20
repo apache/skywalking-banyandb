@@ -25,7 +25,9 @@ import (
 	"github.com/oklog/run"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -124,8 +126,9 @@ type Group struct {
 	s   []Service
 	log *logger.Logger
 
-	configured   bool
-	hsRegistered bool
+	showRunGroup bool
+
+	configured bool
 }
 
 // Register will inspect the provided objects implementing the Unit interface to
@@ -136,6 +139,7 @@ type Group struct {
 // Units, signalling for each provided Unit if it successfully registered with
 // Group for at least one of the bootstrap phases or if it was ignored.
 func (g *Group) Register(units ...Unit) []bool {
+	g.log = logger.GetLogger(g.Name)
 	hasRegistered := make([]bool, len(units))
 	for idx := range units {
 		if !g.configured {
@@ -158,30 +162,7 @@ func (g *Group) Register(units ...Unit) []bool {
 	return hasRegistered
 }
 
-// RunConfig runs the Config phase of all registered Config aware Units.
-// Only use this function if needing to add additional wiring between config
-// and (pre)run phases and a separate PreRunner phase is not an option.
-// In most cases it is best to use the Run method directly as it will run the
-// Config phase prior to executing the PreRunner and Service phases.
-// If an error is returned the application must shut down as it is considered
-// fatal.
-func (g *Group) RunConfig(args ...string) (err error) {
-
-	g.configured = true
-
-	if g.Name == "" {
-		// use the binary name if custom name has not been provided
-		g.Name = path.Base(os.Args[0])
-	}
-
-	g.log = logger.GetLogger(g.Name)
-
-	defer func() {
-		if err != nil {
-			g.log.Error("unexpected exit", logger.Error(err))
-		}
-	}()
-
+func (g *Group) RegisterFlags() *FlagSet {
 	// run configuration stage
 	g.f = NewFlagSet(g.Name)
 	g.f.SortFlags = false // keep order of flag registration
@@ -190,31 +171,11 @@ func (g *Group) RunConfig(args ...string) (err error) {
 		g.f.PrintDefaults()
 	}
 
-	// register default rungroup flags
-	var (
-		name         string
-		showVersion  bool
-		showRunGroup bool
-	)
-
 	gFS := NewFlagSet("Common Service options")
 	gFS.SortFlags = false
-	gFS.StringVarP(&name, "name", "n", g.Name, `name of this service`)
-	gFS.BoolVarP(&showVersion, "version", "v", false,
-		"show version information and exit.")
-	gFS.BoolVar(&showRunGroup, "show-rungroup-units", false, "show rungroup units")
+	gFS.StringVarP(&g.Name, "name", "n", g.Name, `name of this service`)
+	gFS.BoolVar(&g.showRunGroup, "show-rungroup-units", false, "show rungroup units")
 	g.f.AddFlagSet(gFS.FlagSet)
-
-	// default to os.Args if args parameter was omitted
-	if len(args) == 0 {
-		args = os.Args[1:]
-	}
-
-	// parse our rungroup flags only (not the plugin ones)
-	_ = gFS.Parse(args)
-	if name != "" {
-		g.Name = name
-	}
 
 	// register flags from attached Config objects
 	fs := make([]*FlagSet, len(g.c))
@@ -224,7 +185,7 @@ func (g *Group) RunConfig(args ...string) (err error) {
 			continue
 		}
 		nameField := logger.String("name", g.c[idx].Name())
-		indexField := logger.Uint32("index", uint32(idx))
+		indexField := logger.Uint32("registered", uint32(idx+1))
 		g.log.Debug("register flags", nameField, indexField,
 			logger.Uint32("total", uint32(len(g.c))))
 		fs[idx] = g.c[idx].FlagSet()
@@ -242,28 +203,52 @@ func (g *Group) RunConfig(args ...string) (err error) {
 			g.f.AddFlag(f)
 		})
 	}
+	return g.f
+}
 
-	// parse FlagSet and exit on error
-	if err = g.f.Parse(args); err != nil {
-		return err
+// RunConfig runs the Config phase of all registered Config aware Units.
+// Only use this function if needing to add additional wiring between config
+// and (pre)run phases and a separate PreRunner phase is not an option.
+// In most cases it is best to use the Run method directly as it will run the
+// Config phase prior to executing the PreRunner and Service phases.
+// If an error is returned the application must shut down as it is considered
+// fatal.
+func (g *Group) RunConfig() (interrupted bool, err error) {
+	g.log = logger.GetLogger(g.Name)
+	g.configured = true
+
+	if g.Name == "" {
+		// use the binary name if custom name has not been provided
+		g.Name = path.Base(os.Args[0])
+	}
+
+	defer func() {
+		if err != nil {
+			g.log.Error("unexpected exit", logger.Error(err))
+		}
+	}()
+
+	// Load config from env and file
+	if err = config.Load(g.f.Name, g.f.FlagSet); err != nil {
+		return false, err
 	}
 
 	// bail early on help or version requests
 	switch {
-	case showRunGroup:
+	case g.showRunGroup:
 		fmt.Println(g.ListUnits())
-		return nil
+		return true, nil
 	}
 
 	// Validate Config inputs
 	for idx := range g.c {
 		// a Config might have been deregistered during Run
-		indexField := logger.Uint32("index", uint32(idx))
+		indexField := logger.Uint32("ran", uint32(idx+1))
 		if g.c[idx] == nil {
 			g.log.Debug("skipping validate", indexField)
 			continue
 		}
-		g.log.Debug("validate config: %s (%d/%d)", logger.String("name", g.c[idx].Name()), indexField,
+		g.log.Debug("validate config", logger.String("name", g.c[idx].Name()), indexField,
 			logger.Uint32("total", uint32(len(g.c))))
 		if vErr := g.c[idx].Validate(); vErr != nil {
 			err = multierr.Append(err, vErr)
@@ -272,13 +257,13 @@ func (g *Group) RunConfig(args ...string) (err error) {
 
 	// exit on at least one Validate error
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// log binary name and version
 	g.log.Info("started")
 
-	return nil
+	return false, nil
 }
 
 // Run will execute all phases of all registered Units and block until an error
@@ -306,14 +291,14 @@ func (g *Group) RunConfig(args ...string) (err error) {
 //   - first PreRunner.PreRun() returning an error
 //   - first Service.Serve()    returning (error or nil)
 //
-func (g *Group) Run(args ...string) (err error) {
+func (g *Group) Run() (err error) {
 	// run config registration and flag parsing stages
-	if err = g.RunConfig(args...); err != nil {
+	if interrupted, err := g.RunConfig(); interrupted || err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			g.log.Error("unexpected exit", logger.Error(err))
+			g.log.WithOptions(zap.AddStacktrace(zap.FatalLevel)).Error("unexpected exit", logger.Error(err))
 		}
 	}()
 

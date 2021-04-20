@@ -22,6 +22,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Logging is the config info
+type Logging struct {
+	Env   string
+	Level string
+}
+
 // Logger is wrapper for zap logger with module, it is singleton.
 type Logger struct {
 	module string
