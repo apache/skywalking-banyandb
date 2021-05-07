@@ -32,6 +32,10 @@ type Message struct {
 	payload Payload
 }
 
+func (m Message) ID() MessageID {
+	return m.id
+}
+
 func (m Message) Data() interface{} {
 	return m.payload
 }

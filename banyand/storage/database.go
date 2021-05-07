@@ -15,53 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package shard
+package storage
 
 import (
-	"time"
-
+	"github.com/apache/skywalking-banyandb/api/event"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var (
-	_ bus.MessageListener    = (*Shard)(nil)
-	_ run.PreRunner          = (*Shard)(nil)
-	_ storage.DataSubscriber = (*Shard)(nil)
-	_ storage.DataPublisher  = (*Shard)(nil)
-)
+var _ Database = (*DB)(nil)
 
-type Shard struct {
-	log       *logger.Logger
-	publisher bus.Publisher
+type DB struct {
+	repo discovery.ServiceRepo
 }
 
-func (s Shard) ComponentName() string {
-	return "shard"
+func (d *DB) Name() string {
+	return "database"
 }
 
-func (s *Shard) Pub(publisher bus.Publisher) error {
-	s.publisher = publisher
+func (d *DB) FlagSet() *run.FlagSet {
 	return nil
 }
 
-func (s *Shard) Sub(subscriber bus.Subscriber) error {
-	return subscriber.Subscribe(storage.TraceRaw, s)
-}
-
-func (s *Shard) PreRun() error {
-	s.log = logger.GetLogger("shard")
-	s.log.Info("pre running")
+func (d *DB) Validate() error {
 	return nil
 }
 
-func (s *Shard) Name() string {
-	return "shard"
-}
-
-func (s Shard) Rev(message bus.Message) {
-	s.log.Info("rev", logger.Any("msg", message.Data()))
-	_ = s.publisher.Publish(storage.TraceSharded, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), "sharded message"))
+func (d *DB) PreRun() error {
+	return d.repo.Publish(bus.Topic(event.ShardEventKindVersion.String()), bus.NewMessage(1, event.NewShard()))
 }

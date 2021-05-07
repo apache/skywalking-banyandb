@@ -15,44 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package series
+package queue
 
 import (
-	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"context"
+
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const name = "series"
-
-var (
-	_ bus.MessageListener    = (*Series)(nil)
-	_ run.PreRunner          = (*Series)(nil)
-	_ storage.DataSubscriber = (*Series)(nil)
-)
-
-type Series struct {
-	log *logger.Logger
+type Pipeline interface {
+	run.Config
+	run.PreRunner
 }
 
-func (s Series) ComponentName() string {
-	return name
-}
-
-func (s *Series) Sub(subscriber bus.Subscriber) error {
-	return subscriber.Subscribe(storage.TraceData, s)
-}
-
-func (s Series) Name() string {
-	return name
-}
-
-func (s *Series) PreRun() error {
-	s.log = logger.GetLogger(name)
-	return nil
-}
-
-func (s Series) Rev(message bus.Message) {
-	s.log.Info("rev", logger.Any("msg", message.Data()))
+func NewPipeline(ctx context.Context, repo discovery.ServiceRepo) (Pipeline, error) {
+	return &Local{repo: repo}, nil
 }

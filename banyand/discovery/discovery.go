@@ -15,21 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package index
+package discovery
 
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Builder interface {
+type ServiceRepo interface {
 	run.Config
-	run.PreRunner
+	run.Service
+	bus.Subscriber
+	bus.Publisher
 }
 
-func NewBuilder(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Pipeline) (Builder, error) {
+func NewServiceRepo(ctx context.Context) (ServiceRepo, error) {
 	return nil, nil
 }

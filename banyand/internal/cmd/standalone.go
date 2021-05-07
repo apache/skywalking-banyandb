@@ -18,15 +18,17 @@
 package cmd
 
 import (
+	"context"
 	"os"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	executor2 "github.com/apache/skywalking-banyandb/banyand/executor"
-	index2 "github.com/apache/skywalking-banyandb/banyand/index"
-	series2 "github.com/apache/skywalking-banyandb/banyand/series"
-	shard2 "github.com/apache/skywalking-banyandb/banyand/shard"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/query"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -41,28 +43,41 @@ var (
 
 func newStandaloneCmd() *cobra.Command {
 	_ = logger.Bootstrap()
-	engine := new(storage.Pipeline)
-	shard := new(shard2.Shard)
-	executor := new(executor2.Executor)
-	index := new(index2.Index)
-	series := new(series2.Series)
-
-	// Register the storage engine components.
-	engine.Register(
-		shard,
-		executor,
-		index,
-		series,
-	)
+	l := logger.GetLogger("bootstrap")
+	ctx := context.Background()
+	repo, err := discovery.NewServiceRepo(ctx)
+	if err != nil {
+		l.Fatal("failed to initiate service repository", logger.Error(err))
+	}
+	pipeline, err := queue.NewPipeline(ctx, repo)
+	if err != nil {
+		l.Fatal("failed to initiate data pipeline", logger.Error(err))
+	}
+	db, err := storage.NewDB(ctx, repo)
+	if err != nil {
+		l.Fatal("failed to initiate database", logger.Error(err))
+	}
+	idxBuilder, err := index.NewBuilder(ctx, repo, pipeline)
+	if err != nil {
+		l.Fatal("failed to initiate index builder", logger.Error(err))
+	}
+	composer, err := query.NewPlanComposer(ctx, repo)
+	if err != nil {
+		l.Fatal("failed to initiate execution plan composer", logger.Error(err))
+	}
+	tcp, err := liaison.NewEndpoint(ctx, pipeline)
+	if err != nil {
+		l.Fatal("failed to initiate Endpoint transport layer", logger.Error(err))
+	}
 
 	// Register the run Group units.
 	g.Register(
 		new(signal.Handler),
-		engine,
-		shard,
-		executor,
-		index,
-		series,
+		repo,
+		db,
+		idxBuilder,
+		composer,
+		tcp,
 	)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{

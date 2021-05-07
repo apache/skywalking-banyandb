@@ -15,21 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package storage
+package queue
 
 import (
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-)
-
-const (
-	TraceRaw     = "trace-raw"
-	TraceSharded = "trace-sharded"
-	TraceIndex   = "trace-index"
-	TraceData    = "trace-data"
 )
 
 const name = "storage-engine"
@@ -48,34 +42,35 @@ type DataPublisher interface {
 	Pub(publisher bus.Publisher) error
 }
 
-var _ run.PreRunner = (*Pipeline)(nil)
-var _ run.Config = (*Pipeline)(nil)
+var _ run.PreRunner = (*Local)(nil)
+var _ run.Config = (*Local)(nil)
 
-type Pipeline struct {
+type Local struct {
 	logger  *logger.Logger
 	test    string
 	dataBus *bus.Bus
 	dps     []DataPublisher
 	dss     []DataSubscriber
+	repo    discovery.ServiceRepo
 }
 
-func (e *Pipeline) FlagSet() *run.FlagSet {
+func (e *Local) FlagSet() *run.FlagSet {
 	e.logger = logger.GetLogger(name)
 	fs := run.NewFlagSet("storage")
 	fs.StringVarP(&e.test, "storage.test", "", "a", "test config")
 	return fs
 }
 
-func (e *Pipeline) Validate() error {
+func (e *Local) Validate() error {
 	e.logger.Info("test", logger.String("val", e.test))
 	return nil
 }
 
-func (e Pipeline) Name() string {
+func (e Local) Name() string {
 	return name
 }
 
-func (e *Pipeline) PreRun() error {
+func (e *Local) PreRun() error {
 	var err error
 	e.dataBus = bus.NewBus()
 	for _, dp := range e.dps {
@@ -87,7 +82,7 @@ func (e *Pipeline) PreRun() error {
 	return err
 }
 
-func (e *Pipeline) Register(component ...Component) {
+func (e *Local) Register(component ...Component) {
 	for _, c := range component {
 		if ds, ok := c.(DataSubscriber); ok {
 			e.dss = append(e.dss, ds)

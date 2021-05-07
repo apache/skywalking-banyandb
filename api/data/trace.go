@@ -15,21 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package index
+package trace
 
 import (
-	"context"
-
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/api/common"
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-type Builder interface {
-	run.Config
-	run.PreRunner
+var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
+
+type Trace struct {
+	common.KindVersion
+	PayLoad v1.Trace
 }
 
-func NewBuilder(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Pipeline) (Builder, error) {
-	return nil, nil
+func NewTrace() *Trace {
+	return &Trace{KindVersion: TraceKindVersion}
 }
