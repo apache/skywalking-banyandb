@@ -21,14 +21,17 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Pipeline interface {
+type Queue interface {
 	run.Config
 	run.PreRunner
+	bus.Subscriber
+	bus.Publisher
 }
 
-func NewPipeline(ctx context.Context, repo discovery.ServiceRepo) (Pipeline, error) {
+func NewQueue(ctx context.Context, repo discovery.ServiceRepo) (Queue, error) {
 	return &Local{repo: repo}, nil
 }

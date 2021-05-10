@@ -49,11 +49,11 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal("failed to initiate service repository", logger.Error(err))
 	}
-	pipeline, err := queue.NewPipeline(ctx, repo)
+	pipeline, err := queue.NewQueue(ctx, repo)
 	if err != nil {
 		l.Fatal("failed to initiate data pipeline", logger.Error(err))
 	}
-	db, err := storage.NewDB(ctx, repo)
+	db, err := storage.NewDB(ctx, repo, pipeline)
 	if err != nil {
 		l.Fatal("failed to initiate database", logger.Error(err))
 	}

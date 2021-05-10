@@ -44,6 +44,8 @@ type DataPublisher interface {
 
 var _ run.PreRunner = (*Local)(nil)
 var _ run.Config = (*Local)(nil)
+var _ bus.Publisher = (*Local)(nil)
+var _ bus.Subscriber = (*Local)(nil)
 
 type Local struct {
 	logger  *logger.Logger
@@ -52,6 +54,14 @@ type Local struct {
 	dps     []DataPublisher
 	dss     []DataSubscriber
 	repo    discovery.ServiceRepo
+}
+
+func (e *Local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
+	panic("implement me")
+}
+
+func (e *Local) Publish(topic bus.Topic, message ...bus.Message) error {
+	panic("implement me")
 }
 
 func (e *Local) FlagSet() *run.FlagSet {

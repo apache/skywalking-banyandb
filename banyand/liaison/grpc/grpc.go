@@ -34,10 +34,10 @@ type Server struct {
 	addr     string
 	log      *logger.Logger
 	ser      *grpclib.Server
-	pipeline queue.Pipeline
+	pipeline queue.Queue
 }
 
-func NewServer(ctx context.Context, pipeline queue.Pipeline) *Server {
+func NewServer(ctx context.Context, pipeline queue.Queue) *Server {
 	return &Server{pipeline: pipeline}
 }
 

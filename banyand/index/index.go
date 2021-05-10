@@ -30,6 +30,6 @@ type Builder interface {
 	run.PreRunner
 }
 
-func NewBuilder(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Pipeline) (Builder, error) {
+func NewBuilder(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Builder, error) {
 	return nil, nil
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -29,6 +30,6 @@ type Database interface {
 	run.PreRunner
 }
 
-func NewDB(ctx context.Context, repo discovery.ServiceRepo) (Database, error) {
-	return &DB{repo: repo}, nil
+func NewDB(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Database, error) {
+	return &DB{repo: repo, q: pipeline}, nil
 }

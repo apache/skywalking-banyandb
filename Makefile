@@ -93,7 +93,7 @@ check: clean
 		exit 1; \
 	fi
 	
-pre-push: license-check check ## Check source files before pushing to the remote repo
+pre-push: lint license-check check ## Check source files before pushing to the remote repo
 
 ##@ License targets
 
