@@ -18,5 +18,5 @@
 
 VERSION := v1
 
-build:
+generate:
 	flatc --go --gen-onefile --go-namespace $(VERSION) -o $(VERSION) $(VERSION)/*.fbs

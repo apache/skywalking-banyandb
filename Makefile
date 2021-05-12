@@ -27,6 +27,11 @@ PROJECTS := banyand
 clean: TARGET=clean test-clean
 clean: default  ## Clean artifacts in all projects
 
+generate: ## Generate API codes
+	$(MAKE) -C api/fbs generate
+	$(MAKE) license-fix
+	$(MAKE) format
+
 build: TARGET=all
 build: PROJECTS:=$(PROJECTS)
 build: default  ## Build all projects
