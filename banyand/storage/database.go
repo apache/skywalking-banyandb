@@ -49,7 +49,7 @@ func (d *DB) Name() string {
 
 func (d *DB) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("storage")
-	fs.StringVar(&d.root, "root-path", "", "the root path of database")
+	fs.StringVar(&d.root, "root-path", "/tmp", "the root path of database")
 	fs.IntVar(&d.shards, "shards", 1, "total shards size")
 	return fs
 }
@@ -59,6 +59,9 @@ func (d *DB) Validate() error {
 }
 
 func (d *DB) PreRun() error {
+	if d.repo == nil {
+		return nil
+	}
 	if err := d.init(); err != nil {
 		return fmt.Errorf("failed to initialize db: %v", err)
 	}

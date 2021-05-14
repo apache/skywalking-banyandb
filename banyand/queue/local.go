@@ -57,11 +57,11 @@ type Local struct {
 }
 
 func (e *Local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
-	panic("implement me")
+	return nil
 }
 
 func (e *Local) Publish(topic bus.Topic, message ...bus.Message) error {
-	panic("implement me")
+	return nil
 }
 
 func (e *Local) FlagSet() *run.FlagSet {
