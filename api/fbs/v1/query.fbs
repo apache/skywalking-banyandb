@@ -1,0 +1,121 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+namespace v1;
+
+enum BinaryOp: byte {
+    EQ,
+    NE,
+    LT,
+    GT,
+    LE,
+    GE,
+    HAVING,
+    NOT_HAVING,
+    RANGE
+}
+
+table ByteValue {
+    value: [ubyte];
+}
+
+table Tag {
+    key: [ubyte];
+    values: [ByteValue];
+}
+
+table TagQuery {
+    tag: Tag;
+    op: BinaryOp;
+}
+
+enum TraceState : byte {
+    ALL,
+    SUCCESS,
+    ERROR
+}
+
+enum QueryOrder : byte {
+    ByStartTime,
+    ByDuration
+}
+
+enum Sort : byte {
+    DESC,
+    ASC
+}
+
+table Entity {
+    entity_id: string;
+    trace_id: string;
+    statement: string;
+    service_id: string;
+    service_instance_id: string;
+    endpoint_name: string;
+    endpoint_id: string;
+    start_time: uint64;
+    end_time: uint64;
+    duration: uint64;
+    trace_state: TraceState;
+    data_binary: [ubyte];
+    tags: [Tag];
+}
+
+table BasicTrace {
+    entity_id: string;
+    endpoint_names: [string];
+    duration: uint64;
+    start_time: uint64;
+    trace_state: TraceState;
+    trace_ids: [string];
+}
+
+table TraceBrief {
+    traces: [BasicTrace];
+    total: int32;
+}
+
+table TraceQueryCriteria {  
+    trace_id: string;
+    start_time_nanoseconds: uint64;
+    end_time_nanoseconds: uint64;
+    min_duration: uint64;
+    max_duration: uint64;
+    endpoint_name: string;
+    endpoint_id: string;
+    service_id: string;
+    service_instance_id: string;
+    limit: uint32;
+    query_order: QueryOrder = ByStartTime;
+    sort: Sort = DESC;
+    trace_state: TraceState = ALL;
+    tags: [TagQuery];
+    fields: [TagQuery];
+}
+
+table Trace {
+    entities: [Entity];
+}
+
+table GetTraceRequest {
+    trace_id: string;
+}
+
+rpc_service Query {
+    GetTrace(GetTraceRequest):Trace;
+    QueryBasicTraces(TraceQueryCriteria):TraceBrief;
+}

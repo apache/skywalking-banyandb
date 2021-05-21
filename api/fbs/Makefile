@@ -16,7 +16,9 @@
 # under the License.
 
 
-VERSION := v1
+VERSION ?= v1
+fbs := $(wildcard $(VERSION)/*.fbs)
 
-generate:
-	flatc --go --gen-onefile --go-namespace $(VERSION) -o $(VERSION) $(VERSION)/*.fbs
+.PHONY: generate
+generate: $(fbs)
+	flatc --go --gen-onefile --go-namespace $(VERSION) -o $(VERSION) $^
