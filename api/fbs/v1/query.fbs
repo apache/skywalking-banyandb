@@ -64,17 +64,8 @@ table Entity {
     tags: [Tag];
 }
 
-table BasicTrace {
-    entity_id: string;
-    endpoint_names: [string];
-    duration: uint64;
-    start_time: uint64;
-    trace_ids: [string];
-}
-
-table TraceBrief {
-    traces: [BasicTrace];
-    total: int32;
+table TracesResponse {
+    entities: [Entity];
 }
 
 table TraceQueryCriteria {
@@ -88,15 +79,6 @@ table TraceQueryCriteria {
     fields: [TagQuery];
 }
 
-table Trace {
-    entities: [Entity];
-}
-
-table GetTraceRequest {
-    trace_id: [ubyte];
-}
-
 rpc_service Query {
-    GetTrace(GetTraceRequest):Trace;
-    QueryBasicTraces(TraceQueryCriteria):TraceBrief;
+    QueryTraces(TraceQueryCriteria):TracesResponse;
 }
