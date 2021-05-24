@@ -92,6 +92,7 @@ table TracesResponse {
 // TraceQueryCriteria is the request contract for query.
 table TraceQueryCriteria {
     trace_id: string;
+    // the range of time is a left-inclusive, right-exclusive interval, i.e. [start_time_nanoseconds, end_time_nanoseconds)
     // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
     // 2) while these two conditions are required if a complex search condition is given
     start_time_nanoseconds: uint64;
