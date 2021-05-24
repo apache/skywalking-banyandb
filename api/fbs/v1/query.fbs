@@ -102,7 +102,7 @@ table Trace {
 }
 
 table GetTraceRequest {
-    trace_id: string;
+    trace_id: [ubyte];
 }
 
 rpc_service Query {
