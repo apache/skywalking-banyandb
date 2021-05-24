@@ -34,6 +34,13 @@ func GetRootAsTrace(buf []byte, offset flatbuffers.UOffsetT) *Trace {
 	return x
 }
 
+func GetSizePrefixedRootAsTrace(buf []byte, offset flatbuffers.UOffsetT) *Trace {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Trace{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
 func (rcv *Trace) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i

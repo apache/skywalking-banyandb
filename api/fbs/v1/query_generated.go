@@ -70,30 +70,6 @@ func (v BinaryOp) String() string {
 	return "BinaryOp(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-type QueryOrder int8
-
-const (
-	QueryOrderByStartTime QueryOrder = 0
-	QueryOrderByDuration  QueryOrder = 1
-)
-
-var EnumNamesQueryOrder = map[QueryOrder]string{
-	QueryOrderByStartTime: "ByStartTime",
-	QueryOrderByDuration:  "ByDuration",
-}
-
-var EnumValuesQueryOrder = map[string]QueryOrder{
-	"ByStartTime": QueryOrderByStartTime,
-	"ByDuration":  QueryOrderByDuration,
-}
-
-func (v QueryOrder) String() string {
-	if s, ok := EnumNamesQueryOrder[v]; ok {
-		return s
-	}
-	return "QueryOrder(" + strconv.FormatInt(int64(v), 10) + ")"
-}
-
 type Sort int8
 
 const (
@@ -357,6 +333,66 @@ func TagQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
+type QueryOrder struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsQueryOrder(buf []byte, offset flatbuffers.UOffsetT) *QueryOrder {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &QueryOrder{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsQueryOrder(buf []byte, offset flatbuffers.UOffsetT) *QueryOrder {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &QueryOrder{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *QueryOrder) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *QueryOrder) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *QueryOrder) FieldName() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *QueryOrder) Sort() Sort {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return Sort(rcv._tab.GetInt8(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *QueryOrder) MutateSort(n Sort) bool {
+	return rcv._tab.MutateInt8Slot(6, int8(n))
+}
+
+func QueryOrderStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func QueryOrderAddFieldName(builder *flatbuffers.Builder, fieldName flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(fieldName), 0)
+}
+func QueryOrderAddSort(builder *flatbuffers.Builder, sort Sort) {
+	builder.PrependInt8Slot(1, int8(sort), 0)
+}
+func QueryOrderEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
 type Entity struct {
 	_tab flatbuffers.Table
 }
@@ -597,16 +633,16 @@ func (rcv *TracesResponse) EntitiesLength() int {
 	return 0
 }
 
-func (rcv *TracesResponse) Total() int32 {
+func (rcv *TracesResponse) Count() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *TracesResponse) MutateTotal(n int32) bool {
-	return rcv._tab.MutateInt32Slot(6, n)
+func (rcv *TracesResponse) MutateCount(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
 }
 
 func TracesResponseStart(builder *flatbuffers.Builder) {
@@ -618,8 +654,8 @@ func TracesResponseAddEntities(builder *flatbuffers.Builder, entities flatbuffer
 func TracesResponseStartEntitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func TracesResponseAddTotal(builder *flatbuffers.Builder, total int32) {
-	builder.PrependInt32Slot(1, total, 0)
+func TracesResponseAddCount(builder *flatbuffers.Builder, count uint64) {
+	builder.PrependUint64Slot(1, count, 0)
 }
 func TracesResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
@@ -696,32 +732,21 @@ func (rcv *TraceQueryCriteria) MutateLimit(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
 
-func (rcv *TraceQueryCriteria) QueryOrder() QueryOrder {
+func (rcv *TraceQueryCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
-		return QueryOrder(rcv._tab.GetInt8(o + rcv._tab.Pos))
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(QueryOrder)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
 	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) MutateQueryOrder(n QueryOrder) bool {
-	return rcv._tab.MutateInt8Slot(12, int8(n))
-}
-
-func (rcv *TraceQueryCriteria) Sort() Sort {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return Sort(rcv._tab.GetInt8(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) MutateSort(n Sort) bool {
-	return rcv._tab.MutateInt8Slot(14, int8(n))
+	return nil
 }
 
 func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -733,7 +758,7 @@ func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
 }
 
 func (rcv *TraceQueryCriteria) TagsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -741,7 +766,7 @@ func (rcv *TraceQueryCriteria) TagsLength() int {
 }
 
 func (rcv *TraceQueryCriteria) Fields(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -753,7 +778,7 @@ func (rcv *TraceQueryCriteria) Fields(obj *TagQuery, j int) bool {
 }
 
 func (rcv *TraceQueryCriteria) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -761,7 +786,7 @@ func (rcv *TraceQueryCriteria) FieldsLength() int {
 }
 
 func TraceQueryCriteriaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(7)
 }
 func TraceQueryCriteriaAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
@@ -775,20 +800,17 @@ func TraceQueryCriteriaAddEndTimeNanoseconds(builder *flatbuffers.Builder, endTi
 func TraceQueryCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
 	builder.PrependUint32Slot(3, limit, 0)
 }
-func TraceQueryCriteriaAddQueryOrder(builder *flatbuffers.Builder, queryOrder QueryOrder) {
-	builder.PrependInt8Slot(4, int8(queryOrder), 0)
-}
-func TraceQueryCriteriaAddSort(builder *flatbuffers.Builder, sort Sort) {
-	builder.PrependInt8Slot(5, int8(sort), 0)
+func TraceQueryCriteriaAddOrderBy(builder *flatbuffers.Builder, orderBy flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(orderBy), 0)
 }
 func TraceQueryCriteriaAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tags), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(tags), 0)
 }
 func TraceQueryCriteriaStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func TraceQueryCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
 }
 func TraceQueryCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

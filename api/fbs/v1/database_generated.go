@@ -60,6 +60,13 @@ func GetRootAsNode(buf []byte, offset flatbuffers.UOffsetT) *Node {
 	return x
 }
 
+func GetSizePrefixedRootAsNode(buf []byte, offset flatbuffers.UOffsetT) *Node {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Node{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
 func (rcv *Node) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
@@ -136,6 +143,13 @@ func GetRootAsShard(buf []byte, offset flatbuffers.UOffsetT) *Shard {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
 	x := &Shard{}
 	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsShard(buf []byte, offset flatbuffers.UOffsetT) *Shard {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Shard{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
@@ -224,6 +238,13 @@ func GetRootAsShardEvent(buf []byte, offset flatbuffers.UOffsetT) *ShardEvent {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
 	x := &ShardEvent{}
 	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsShardEvent(buf []byte, offset flatbuffers.UOffsetT) *ShardEvent {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &ShardEvent{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 

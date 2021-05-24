@@ -43,14 +43,14 @@ table TagQuery {
     condition: Tag;
 }
 
-enum QueryOrder : byte {
-    ByStartTime,
-    ByDuration
-}
-
 enum Sort : byte {
     DESC,
     ASC
+}
+
+table QueryOrder {
+    field_name: string;
+    sort: Sort;
 }
 
 table Entity {
@@ -74,8 +74,7 @@ table TraceQueryCriteria {
     start_time_nanoseconds: uint64;
     end_time_nanoseconds: uint64;
     limit: uint32;
-    query_order: QueryOrder = ByStartTime;
-    sort: Sort = DESC;
+    order_by: QueryOrder;
     tags: [TagQuery];
     fields: [TagQuery];
 }
