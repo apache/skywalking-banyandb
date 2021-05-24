@@ -39,8 +39,8 @@ table Tag {
 }
 
 table TagQuery {
-    tag: Tag;
     op: BinaryOp;
+    condition: Tag;
 }
 
 enum QueryOrder : byte {
