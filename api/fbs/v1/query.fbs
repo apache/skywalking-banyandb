@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-namespace v1;
+namespace banyandb.v1;
 
 // BinaryOp specify the operation imposed to the given query condition
 enum BinaryOp: byte {
