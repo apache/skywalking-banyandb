@@ -66,6 +66,7 @@ table Entity {
 
 table TracesResponse {
     entities: [Entity];
+    count: uint64;
 }
 
 table TraceQueryCriteria {
