@@ -69,33 +69,6 @@ func (v BinaryOp) String() string {
 	return "BinaryOp(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-type TraceState int8
-
-const (
-	TraceStateALL     TraceState = 0
-	TraceStateSUCCESS TraceState = 1
-	TraceStateERROR   TraceState = 2
-)
-
-var EnumNamesTraceState = map[TraceState]string{
-	TraceStateALL:     "ALL",
-	TraceStateSUCCESS: "SUCCESS",
-	TraceStateERROR:   "ERROR",
-}
-
-var EnumValuesTraceState = map[string]TraceState{
-	"ALL":     TraceStateALL,
-	"SUCCESS": TraceStateSUCCESS,
-	"ERROR":   TraceStateERROR,
-}
-
-func (v TraceState) String() string {
-	if s, ok := EnumNamesTraceState[v]; ok {
-		return s
-	}
-	return "TraceState(" + strconv.FormatInt(int64(v), 10) + ")"
-}
-
 type QueryOrder int8
 
 const (
@@ -423,48 +396,8 @@ func (rcv *Entity) TraceId() []byte {
 	return nil
 }
 
-func (rcv *Entity) Statement() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Entity) ServiceId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Entity) ServiceInstanceId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Entity) EndpointName() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Entity) EndpointId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *Entity) StartTime() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -472,11 +405,11 @@ func (rcv *Entity) StartTime() uint64 {
 }
 
 func (rcv *Entity) MutateStartTime(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(18, n)
+	return rcv._tab.MutateUint64Slot(8, n)
 }
 
 func (rcv *Entity) EndTime() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -484,11 +417,11 @@ func (rcv *Entity) EndTime() uint64 {
 }
 
 func (rcv *Entity) MutateEndTime(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(20, n)
+	return rcv._tab.MutateUint64Slot(10, n)
 }
 
 func (rcv *Entity) Duration() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -496,23 +429,11 @@ func (rcv *Entity) Duration() uint64 {
 }
 
 func (rcv *Entity) MutateDuration(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(22, n)
-}
-
-func (rcv *Entity) TraceState() TraceState {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
-	if o != 0 {
-		return TraceState(rcv._tab.GetInt8(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-func (rcv *Entity) MutateTraceState(n TraceState) bool {
-	return rcv._tab.MutateInt8Slot(24, int8(n))
+	return rcv._tab.MutateUint64Slot(12, n)
 }
 
 func (rcv *Entity) DataBinary(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -521,7 +442,7 @@ func (rcv *Entity) DataBinary(j int) byte {
 }
 
 func (rcv *Entity) DataBinaryLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -529,7 +450,7 @@ func (rcv *Entity) DataBinaryLength() int {
 }
 
 func (rcv *Entity) DataBinaryBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -537,7 +458,7 @@ func (rcv *Entity) DataBinaryBytes() []byte {
 }
 
 func (rcv *Entity) MutateDataBinary(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -545,8 +466,28 @@ func (rcv *Entity) MutateDataBinary(j int, n byte) bool {
 	return false
 }
 
+func (rcv *Entity) Fields(obj *Tag, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *Entity) FieldsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func (rcv *Entity) Tags(obj *Tag, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -558,7 +499,7 @@ func (rcv *Entity) Tags(obj *Tag, j int) bool {
 }
 
 func (rcv *Entity) TagsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -566,7 +507,7 @@ func (rcv *Entity) TagsLength() int {
 }
 
 func EntityStart(builder *flatbuffers.Builder) {
-	builder.StartObject(13)
+	builder.StartObject(8)
 }
 func EntityAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entityId), 0)
@@ -574,41 +515,29 @@ func EntityAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffse
 func EntityAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(traceId), 0)
 }
-func EntityAddStatement(builder *flatbuffers.Builder, statement flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(statement), 0)
-}
-func EntityAddServiceId(builder *flatbuffers.Builder, serviceId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(serviceId), 0)
-}
-func EntityAddServiceInstanceId(builder *flatbuffers.Builder, serviceInstanceId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(serviceInstanceId), 0)
-}
-func EntityAddEndpointName(builder *flatbuffers.Builder, endpointName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(endpointName), 0)
-}
-func EntityAddEndpointId(builder *flatbuffers.Builder, endpointId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(endpointId), 0)
-}
 func EntityAddStartTime(builder *flatbuffers.Builder, startTime uint64) {
-	builder.PrependUint64Slot(7, startTime, 0)
+	builder.PrependUint64Slot(2, startTime, 0)
 }
 func EntityAddEndTime(builder *flatbuffers.Builder, endTime uint64) {
-	builder.PrependUint64Slot(8, endTime, 0)
+	builder.PrependUint64Slot(3, endTime, 0)
 }
 func EntityAddDuration(builder *flatbuffers.Builder, duration uint64) {
-	builder.PrependUint64Slot(9, duration, 0)
-}
-func EntityAddTraceState(builder *flatbuffers.Builder, traceState TraceState) {
-	builder.PrependInt8Slot(10, int8(traceState), 0)
+	builder.PrependUint64Slot(4, duration, 0)
 }
 func EntityAddDataBinary(builder *flatbuffers.Builder, dataBinary flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(dataBinary), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(dataBinary), 0)
 }
 func EntityStartDataBinaryVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
+func EntityAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
+}
+func EntityStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
 func EntityAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(tags), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(tags), 0)
 }
 func EntityStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
@@ -692,20 +621,8 @@ func (rcv *BasicTrace) MutateStartTime(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(10, n)
 }
 
-func (rcv *BasicTrace) TraceState() TraceState {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return TraceState(rcv._tab.GetInt8(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-func (rcv *BasicTrace) MutateTraceState(n TraceState) bool {
-	return rcv._tab.MutateInt8Slot(12, int8(n))
-}
-
 func (rcv *BasicTrace) TraceIds(j int) []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
@@ -714,7 +631,7 @@ func (rcv *BasicTrace) TraceIds(j int) []byte {
 }
 
 func (rcv *BasicTrace) TraceIdsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -722,7 +639,7 @@ func (rcv *BasicTrace) TraceIdsLength() int {
 }
 
 func BasicTraceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(5)
 }
 func BasicTraceAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entityId), 0)
@@ -739,11 +656,8 @@ func BasicTraceAddDuration(builder *flatbuffers.Builder, duration uint64) {
 func BasicTraceAddStartTime(builder *flatbuffers.Builder, startTime uint64) {
 	builder.PrependUint64Slot(3, startTime, 0)
 }
-func BasicTraceAddTraceState(builder *flatbuffers.Builder, traceState TraceState) {
-	builder.PrependInt8Slot(4, int8(traceState), 0)
-}
 func BasicTraceAddTraceIds(builder *flatbuffers.Builder, traceIds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(traceIds), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(traceIds), 0)
 }
 func BasicTraceStartTraceIdsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
@@ -884,64 +798,8 @@ func (rcv *TraceQueryCriteria) MutateEndTimeNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(8, n)
 }
 
-func (rcv *TraceQueryCriteria) MinDuration() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) MutateMinDuration(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(10, n)
-}
-
-func (rcv *TraceQueryCriteria) MaxDuration() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) MutateMaxDuration(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(12, n)
-}
-
-func (rcv *TraceQueryCriteria) EndpointName() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *TraceQueryCriteria) EndpointId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *TraceQueryCriteria) ServiceId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *TraceQueryCriteria) ServiceInstanceId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *TraceQueryCriteria) Limit() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -949,11 +807,11 @@ func (rcv *TraceQueryCriteria) Limit() uint32 {
 }
 
 func (rcv *TraceQueryCriteria) MutateLimit(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(22, n)
+	return rcv._tab.MutateUint32Slot(10, n)
 }
 
 func (rcv *TraceQueryCriteria) QueryOrder() QueryOrder {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return QueryOrder(rcv._tab.GetInt8(o + rcv._tab.Pos))
 	}
@@ -961,11 +819,11 @@ func (rcv *TraceQueryCriteria) QueryOrder() QueryOrder {
 }
 
 func (rcv *TraceQueryCriteria) MutateQueryOrder(n QueryOrder) bool {
-	return rcv._tab.MutateInt8Slot(24, int8(n))
+	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
 
 func (rcv *TraceQueryCriteria) Sort() Sort {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return Sort(rcv._tab.GetInt8(o + rcv._tab.Pos))
 	}
@@ -973,23 +831,11 @@ func (rcv *TraceQueryCriteria) Sort() Sort {
 }
 
 func (rcv *TraceQueryCriteria) MutateSort(n Sort) bool {
-	return rcv._tab.MutateInt8Slot(26, int8(n))
-}
-
-func (rcv *TraceQueryCriteria) TraceState() TraceState {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
-	if o != 0 {
-		return TraceState(rcv._tab.GetInt8(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) MutateTraceState(n TraceState) bool {
-	return rcv._tab.MutateInt8Slot(28, int8(n))
+	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
 
 func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -1001,7 +847,7 @@ func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
 }
 
 func (rcv *TraceQueryCriteria) TagsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -1009,7 +855,7 @@ func (rcv *TraceQueryCriteria) TagsLength() int {
 }
 
 func (rcv *TraceQueryCriteria) Fields(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -1021,7 +867,7 @@ func (rcv *TraceQueryCriteria) Fields(obj *TagQuery, j int) bool {
 }
 
 func (rcv *TraceQueryCriteria) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -1029,7 +875,7 @@ func (rcv *TraceQueryCriteria) FieldsLength() int {
 }
 
 func TraceQueryCriteriaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(15)
+	builder.StartObject(8)
 }
 func TraceQueryCriteriaAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
@@ -1040,44 +886,23 @@ func TraceQueryCriteriaAddStartTimeNanoseconds(builder *flatbuffers.Builder, sta
 func TraceQueryCriteriaAddEndTimeNanoseconds(builder *flatbuffers.Builder, endTimeNanoseconds uint64) {
 	builder.PrependUint64Slot(2, endTimeNanoseconds, 0)
 }
-func TraceQueryCriteriaAddMinDuration(builder *flatbuffers.Builder, minDuration uint64) {
-	builder.PrependUint64Slot(3, minDuration, 0)
-}
-func TraceQueryCriteriaAddMaxDuration(builder *flatbuffers.Builder, maxDuration uint64) {
-	builder.PrependUint64Slot(4, maxDuration, 0)
-}
-func TraceQueryCriteriaAddEndpointName(builder *flatbuffers.Builder, endpointName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(endpointName), 0)
-}
-func TraceQueryCriteriaAddEndpointId(builder *flatbuffers.Builder, endpointId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(endpointId), 0)
-}
-func TraceQueryCriteriaAddServiceId(builder *flatbuffers.Builder, serviceId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(serviceId), 0)
-}
-func TraceQueryCriteriaAddServiceInstanceId(builder *flatbuffers.Builder, serviceInstanceId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(serviceInstanceId), 0)
-}
 func TraceQueryCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
-	builder.PrependUint32Slot(9, limit, 0)
+	builder.PrependUint32Slot(3, limit, 0)
 }
 func TraceQueryCriteriaAddQueryOrder(builder *flatbuffers.Builder, queryOrder QueryOrder) {
-	builder.PrependInt8Slot(10, int8(queryOrder), 0)
+	builder.PrependInt8Slot(4, int8(queryOrder), 0)
 }
 func TraceQueryCriteriaAddSort(builder *flatbuffers.Builder, sort Sort) {
-	builder.PrependInt8Slot(11, int8(sort), 0)
-}
-func TraceQueryCriteriaAddTraceState(builder *flatbuffers.Builder, traceState TraceState) {
-	builder.PrependInt8Slot(12, int8(traceState), 0)
+	builder.PrependInt8Slot(5, int8(sort), 0)
 }
 func TraceQueryCriteriaAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(tags), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tags), 0)
 }
 func TraceQueryCriteriaStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func TraceQueryCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(fields), 0)
 }
 func TraceQueryCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
@@ -1171,7 +996,24 @@ func (rcv *GetTraceRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *GetTraceRequest) TraceId() []byte {
+func (rcv *GetTraceRequest) TraceId(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
+	}
+	return 0
+}
+
+func (rcv *GetTraceRequest) TraceIdLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *GetTraceRequest) TraceIdBytes() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -1179,11 +1021,23 @@ func (rcv *GetTraceRequest) TraceId() []byte {
 	return nil
 }
 
+func (rcv *GetTraceRequest) MutateTraceId(j int, n byte) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
+	}
+	return false
+}
+
 func GetTraceRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
 func GetTraceRequestAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
+}
+func GetTraceRequestStartTraceIdVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
 }
 func GetTraceRequestEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
