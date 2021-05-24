@@ -62,16 +62,12 @@ enum Sort : byte {
 table Entity {
     entity_id: string;
     trace_id: string;
-    statement: string;
-    service_id: string;
-    service_instance_id: string;
-    endpoint_name: string;
-    endpoint_id: string;
     start_time: uint64;
     end_time: uint64;
     duration: uint64;
     trace_state: TraceState;
     data_binary: [ubyte];
+    fields: [Tag];
     tags: [Tag];
 }
 
@@ -89,16 +85,10 @@ table TraceBrief {
     total: int32;
 }
 
-table TraceQueryCriteria {  
+table TraceQueryCriteria {
     trace_id: string;
     start_time_nanoseconds: uint64;
     end_time_nanoseconds: uint64;
-    min_duration: uint64;
-    max_duration: uint64;
-    endpoint_name: string;
-    endpoint_id: string;
-    service_id: string;
-    service_instance_id: string;
     limit: uint32;
     query_order: QueryOrder = ByStartTime;
     sort: Sort = DESC;
