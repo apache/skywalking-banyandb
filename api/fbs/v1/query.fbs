@@ -92,12 +92,18 @@ table TracesResponse {
 // TraceQueryCriteria is the request contract for query.
 table TraceQueryCriteria {
     trace_id: string;
+    // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
+    // 2) while these two conditions are required if a complex search condition is given
     start_time_nanoseconds: uint64;
     end_time_nanoseconds: uint64;
+    // limit is used to impose a boundary on the number of records being returned
     limit: uint32;
+    // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
     order_by: QueryOrder;
-    tags: [TagQuery];
+    // fields are indexed
     fields: [TagQuery];
+    // tag are not indexed
+    tags: [TagQuery];
 }
 
 // Query is the RPC service exposed
