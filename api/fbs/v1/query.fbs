@@ -66,26 +66,26 @@ table QueryOrder {
 // Entity represents a Span defined in Google Dapper paper.
 // Or equivalently a Segment in Skywalking.
 table Entity {
-// entity_id could be span_id of a Span or segment_id of a Segment
+    // entity_id could be span_id of a Span or segment_id of a Segment
     entity_id: string;
     trace_id: string;
     start_time: uint64;
     end_time: uint64;
     duration: uint64;
     data_binary: [ubyte];
-// fields contains all indexed Field
+    // fields contains all indexed Field
     fields: [Tag];
-// tags contains all non-indexed Field
+    // tags contains all non-indexed Field
     tags: [Tag];
 }
 
 // TracesResponse is the response for a query to the Query module. 
 table TracesResponse {
-// entities are the actual data returned
+    // entities are the actual data returned
     entities: [Entity];
-// count means
-// 1) total number of entities found if the corresponding request is a parametrized search regardless of the limit parameter
-// 2) otherwise, length of the `entities` if it is a primary-key fetch (i.e trace_id)
+    // count means
+    // 1) total number of entities found if the corresponding request is a parametrized search regardless of the limit parameter
+    // 2) otherwise, length of the `entities` if it is a primary-key fetch (i.e trace_id)
     count: uint64;
 }
 
