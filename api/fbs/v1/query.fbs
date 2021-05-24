@@ -95,6 +95,7 @@ table TraceQueryCriteria {
     // the range of time is a left-inclusive, right-exclusive interval, i.e. [start_time_nanoseconds, end_time_nanoseconds)
     // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
     // 2) while these two conditions are required if a complex search condition is given
+    // it is always recommended to specify time range for performance reason
     start_time_nanoseconds: uint64;
     end_time_nanoseconds: uint64;
     // limit is used to impose a boundary on the number of records being returned
