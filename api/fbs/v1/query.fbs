@@ -17,6 +17,7 @@
 
 namespace v1;
 
+// BinaryOp specify the operation imposed to the given query condition
 enum BinaryOp: byte {
     EQ,
     NE,
@@ -29,46 +30,64 @@ enum BinaryOp: byte {
     RANGE
 }
 
+// ByteValue is the byte-representation of the value of a Tag
 table ByteValue {
     value: [ubyte];
 }
 
+// Tag is the building block of a record which is equivalent to a key-value pair.
+// In the context of Trace, it could be metadata of a trace such as service_name, serivce_instance, etc.
+// Besides, other fields/tags are organized in key-value pair in the underlying storage layer.
+// One should notice that the values can be a multi-value.
 table Tag {
     key: [ubyte];
     values: [ByteValue];
 }
 
+// TagQuery consists of the query condition with a binary operator to be imposed
 table TagQuery {
     op: BinaryOp;
     condition: Tag;
 }
 
+// Sort is either descending or ascending
 enum Sort : byte {
     DESC,
     ASC
 }
 
+// QueryOrder means a Sort operation to be done for a given field.
+// The field can be only the type of Integer.
 table QueryOrder {
     field_name: string;
     sort: Sort;
 }
 
+// Entity represents a Span defined in OpenTracing standard.
+// Or equivalently a Segment in Skywalking.
 table Entity {
+// entity_id could be span_id in OpenTracing or segment_id in Skywalking
     entity_id: string;
     trace_id: string;
     start_time: uint64;
     end_time: uint64;
     duration: uint64;
     data_binary: [ubyte];
+// fields contains all indexed Field
     fields: [Tag];
+// tags contains all non-indexed Field
     tags: [Tag];
 }
 
+// TracesResponse is the response for a query to the Query module. 
 table TracesResponse {
+// entities are the actual data returned
     entities: [Entity];
+// count is given if the corresponding request is a parametrized search 
     count: uint64;
 }
 
+// TraceQueryCriteria is the request contract for query.
 table TraceQueryCriteria {
     trace_id: string;
     start_time_nanoseconds: uint64;
@@ -79,6 +98,7 @@ table TraceQueryCriteria {
     fields: [TagQuery];
 }
 
+// Query is the RPC service exposed
 rpc_service Query {
     QueryTraces(TraceQueryCriteria):TracesResponse;
 }
