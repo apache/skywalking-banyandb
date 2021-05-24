@@ -63,10 +63,10 @@ table QueryOrder {
     sort: Sort;
 }
 
-// Entity represents a Span defined in OpenTracing standard.
+// Entity represents a Span defined in Google Dapper paper.
 // Or equivalently a Segment in Skywalking.
 table Entity {
-// entity_id could be span_id in OpenTracing or segment_id in Skywalking
+// entity_id could be span_id of a Span or segment_id of a Segment
     entity_id: string;
     trace_id: string;
     start_time: uint64;
@@ -83,7 +83,9 @@ table Entity {
 table TracesResponse {
 // entities are the actual data returned
     entities: [Entity];
-// count is given if the corresponding request is a parametrized search 
+// count means
+// 1) total number of entities found if the corresponding request is a parametrized search regardless of the limit parameter
+// 2) otherwise, length of the `entities` if it is a primary-key fetch (i.e trace_id)
     count: uint64;
 }
 
