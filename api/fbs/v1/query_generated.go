@@ -419,7 +419,7 @@ func (rcv *QueryOrder) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *QueryOrder) FieldName() []byte {
+func (rcv *QueryOrder) KeyName() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -442,8 +442,8 @@ func (rcv *QueryOrder) MutateSort(n Sort) bool {
 func QueryOrderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func QueryOrderAddFieldName(builder *flatbuffers.Builder, fieldName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(fieldName), 0)
+func QueryOrderAddKeyName(builder *flatbuffers.Builder, keyName flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(keyName), 0)
 }
 func QueryOrderAddSort(builder *flatbuffers.Builder, sort Sort) {
 	builder.PrependInt8Slot(1, int8(sort), 0)
@@ -666,20 +666,8 @@ func (rcv *TracesResponse) EntitiesLength() int {
 	return 0
 }
 
-func (rcv *TracesResponse) Count() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *TracesResponse) MutateCount(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(6, n)
-}
-
 func TracesResponseStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+	builder.StartObject(1)
 }
 func TracesResponseAddEntities(builder *flatbuffers.Builder, entities flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entities), 0)
@@ -687,10 +675,64 @@ func TracesResponseAddEntities(builder *flatbuffers.Builder, entities flatbuffer
 func TracesResponseStartEntitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func TracesResponseAddCount(builder *flatbuffers.Builder, count uint64) {
-	builder.PrependUint64Slot(1, count, 0)
-}
 func TracesResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
+type Projection struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsProjection(buf []byte, offset flatbuffers.UOffsetT) *Projection {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &Projection{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsProjection(buf []byte, offset flatbuffers.UOffsetT) *Projection {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Projection{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *Projection) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *Projection) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *Projection) KeyNames(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *Projection) KeyNamesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func ProjectionStart(builder *flatbuffers.Builder) {
+	builder.StartObject(1)
+}
+func ProjectionAddKeyNames(builder *flatbuffers.Builder, keyNames flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(keyNames), 0)
+}
+func ProjectionStartKeyNamesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func ProjectionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
@@ -810,8 +852,21 @@ func (rcv *EntityCriteria) FieldsLength() int {
 	return 0
 }
 
+func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(Projection)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func EntityCriteriaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(8)
 }
 func EntityCriteriaAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
@@ -836,6 +891,9 @@ func EntityCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UO
 }
 func EntityCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func EntityCriteriaAddProjection(builder *flatbuffers.Builder, projection flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(projection), 0)
 }
 func EntityCriteriaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

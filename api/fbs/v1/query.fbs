@@ -66,9 +66,9 @@ enum Sort : byte {
 }
 
 // QueryOrder means a Sort operation to be done for a given field.
-// The field can be only the type of Integer.
+// The key_name refers to the key of a Pair.
 table QueryOrder {
-    field_name: string;
+    key_name: string;
     sort: Sort;
 }
 
@@ -93,6 +93,12 @@ table TracesResponse {
     entities: [Entity];
 }
 
+// Projection is used to select the names of keys to be returned.
+// The key_name refers to the key(s) of Pair(s).
+table Projection {
+    key_names: [string];
+}
+
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
     trace_id: string;
@@ -110,6 +116,8 @@ table EntityCriteria {
     order_by: QueryOrder;
     // fields are indexed
     fields: [TagQuery];
+    // projection can be used to select the key names of the entities in the response
+    projection: Projection;
 }
 
 // Query is the RPC service exposed
