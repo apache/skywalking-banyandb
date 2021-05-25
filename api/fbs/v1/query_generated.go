@@ -390,34 +390,34 @@ func PairEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type TagQuery struct {
+type PairQuery struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsTagQuery(buf []byte, offset flatbuffers.UOffsetT) *TagQuery {
+func GetRootAsPairQuery(buf []byte, offset flatbuffers.UOffsetT) *PairQuery {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &TagQuery{}
+	x := &PairQuery{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsTagQuery(buf []byte, offset flatbuffers.UOffsetT) *TagQuery {
+func GetSizePrefixedRootAsPairQuery(buf []byte, offset flatbuffers.UOffsetT) *PairQuery {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &TagQuery{}
+	x := &PairQuery{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *TagQuery) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *PairQuery) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *TagQuery) Table() flatbuffers.Table {
+func (rcv *PairQuery) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *TagQuery) Ops(obj *BinaryOps) *BinaryOps {
+func (rcv *PairQuery) Ops(obj *BinaryOps) *BinaryOps {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -430,7 +430,7 @@ func (rcv *TagQuery) Ops(obj *BinaryOps) *BinaryOps {
 	return nil
 }
 
-func (rcv *TagQuery) Condition(obj *Pair) *Pair {
+func (rcv *PairQuery) Condition(obj *Pair) *Pair {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -443,16 +443,16 @@ func (rcv *TagQuery) Condition(obj *Pair) *Pair {
 	return nil
 }
 
-func TagQueryStart(builder *flatbuffers.Builder) {
+func PairQueryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func TagQueryAddOps(builder *flatbuffers.Builder, ops flatbuffers.UOffsetT) {
+func PairQueryAddOps(builder *flatbuffers.Builder, ops flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ops), 0)
 }
-func TagQueryAddCondition(builder *flatbuffers.Builder, condition flatbuffers.UOffsetT) {
+func PairQueryAddCondition(builder *flatbuffers.Builder, condition flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(condition), 0)
 }
-func TagQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func PairQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
@@ -860,7 +860,7 @@ func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
 	return nil
 }
 
-func (rcv *EntityCriteria) Fields(obj *TagQuery, j int) bool {
+func (rcv *EntityCriteria) Fields(obj *PairQuery, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)

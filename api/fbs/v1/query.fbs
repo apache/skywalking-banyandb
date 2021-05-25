@@ -57,8 +57,8 @@ table Pair {
     pair: TypedPair;
 }
 
-// TagQuery consists of the query condition with a binary operator to be imposed
-table TagQuery {
+// PairQuery consists of the query condition with a binary operator to be imposed
+table PairQuery {
     ops: BinaryOps;
     condition: Pair;
 }
@@ -123,7 +123,7 @@ table EntityCriteria {
     // fields are indexed. Some typical fields are listed below,
     // - trace_id: if given, it takes precedence over other fields and will be used to retrieve entities before other conditions are imposed
     // - duration: typical for trace context
-    fields: [TagQuery];
+    fields: [PairQuery];
     // projection can be used to select the key names of the entities in the response
     projection: Projection;
 }
