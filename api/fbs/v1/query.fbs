@@ -26,8 +26,12 @@ enum BinaryOp: byte {
     LE,
     GE,
     HAVING,
-    NOT_HAVING,
-    RANGE
+    NOT_HAVING
+}
+
+// BinaryOps is an array of binary operators.
+table BinaryOps {
+    ops: [BinaryOp];
 }
 
 // IntPair in a typed pair with an array of int64 as values
@@ -55,7 +59,7 @@ table Pair {
 
 // TagQuery consists of the query condition with a binary operator to be imposed
 table TagQuery {
-    op: BinaryOp;
+    ops: BinaryOps;
     condition: Pair;
 }
 
@@ -77,13 +81,16 @@ table QueryOrder {
 table Entity {
     // entity_id could be span_id of a Span or segment_id of a Segment
     entity_id: string;
-    trace_id: string;
-    start_time: uint64;
-    end_time: uint64;
-    duration: uint64;
+    // start_time_nanoseconds is the start time of the entity in timeunit of nanosecond
+    start_time_nanoseconds: uint64;
     // data_binary contains all unindexed Tags and other key-value pairs
     data_binary: [ubyte];
-    // fields contains all indexed Field
+    // fields contains all indexed Field. Some typical names,
+    // - trace_id
+    // - duration
+    // - service_name
+    // - service_instance_id
+    // - end_time_nanoseconds
     fields: [Pair];
 }
 
@@ -94,21 +101,21 @@ table TracesResponse {
 }
 
 // Projection is used to select the names of keys to be returned.
-// The key_name refers to the key(s) of Pair(s).
 table Projection {
+    // The key_name refers to the key(s) of Pair(s).
     key_names: [string];
 }
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    // the range of time is a left-inclusive, right-exclusive interval, i.e. [start_time_nanoseconds, end_time_nanoseconds)
-    // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
-    // 2) while these two conditions are required if a complex search condition is given
+    // start_time_(min|max)_nanoseconds are the range of start time of the entity in timeunit of nanosecond
     // it is always recommended to specify time range for performance reason
-    start_time_nanoseconds: uint64;
-    end_time_nanoseconds: uint64;
-    // from is used to support pagination
-    from: uint32;
+    start_time_min_nanoseconds: uint64;
+    start_time_max_nanoseconds: uint64;
+    // start_times_range_op is the operator for the above term start_time_(min|max)_nanoseconds
+    start_times_range_op: BinaryOps;
+    // offset is used to support pagination, together with the following limit
+    offset: uint32;
     // limit is used to impose a boundary on the number of records being returned
     limit: uint32;
     // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported

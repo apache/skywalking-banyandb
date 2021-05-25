@@ -36,7 +36,6 @@ const (
 	BinaryOpGE         BinaryOp = 5
 	BinaryOpHAVING     BinaryOp = 6
 	BinaryOpNOT_HAVING BinaryOp = 7
-	BinaryOpRANGE      BinaryOp = 8
 )
 
 var EnumNamesBinaryOp = map[BinaryOp]string{
@@ -48,7 +47,6 @@ var EnumNamesBinaryOp = map[BinaryOp]string{
 	BinaryOpGE:         "GE",
 	BinaryOpHAVING:     "HAVING",
 	BinaryOpNOT_HAVING: "NOT_HAVING",
-	BinaryOpRANGE:      "RANGE",
 }
 
 var EnumValuesBinaryOp = map[string]BinaryOp{
@@ -60,7 +58,6 @@ var EnumValuesBinaryOp = map[string]BinaryOp{
 	"GE":         BinaryOpGE,
 	"HAVING":     BinaryOpHAVING,
 	"NOT_HAVING": BinaryOpNOT_HAVING,
-	"RANGE":      BinaryOpRANGE,
 }
 
 func (v BinaryOp) String() string {
@@ -119,6 +116,72 @@ func (v Sort) String() string {
 		return s
 	}
 	return "Sort(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
+type BinaryOps struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsBinaryOps(buf []byte, offset flatbuffers.UOffsetT) *BinaryOps {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &BinaryOps{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsBinaryOps(buf []byte, offset flatbuffers.UOffsetT) *BinaryOps {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &BinaryOps{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *BinaryOps) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *BinaryOps) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *BinaryOps) Ops(j int) BinaryOp {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return BinaryOp(rcv._tab.GetInt8(a + flatbuffers.UOffsetT(j*1)))
+	}
+	return 0
+}
+
+func (rcv *BinaryOps) OpsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *BinaryOps) MutateOps(j int, n BinaryOp) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateInt8(a+flatbuffers.UOffsetT(j*1), int8(n))
+	}
+	return false
+}
+
+func BinaryOpsStart(builder *flatbuffers.Builder) {
+	builder.StartObject(1)
+}
+func BinaryOpsAddOps(builder *flatbuffers.Builder, ops flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ops), 0)
+}
+func BinaryOpsStartOpsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
+}
+func BinaryOpsEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
 }
 
 type IntPair struct {
@@ -354,16 +417,17 @@ func (rcv *TagQuery) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *TagQuery) Op() BinaryOp {
+func (rcv *TagQuery) Ops(obj *BinaryOps) *BinaryOps {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return BinaryOp(rcv._tab.GetInt8(o + rcv._tab.Pos))
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(BinaryOps)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
 	}
-	return 0
-}
-
-func (rcv *TagQuery) MutateOp(n BinaryOp) bool {
-	return rcv._tab.MutateInt8Slot(4, int8(n))
+	return nil
 }
 
 func (rcv *TagQuery) Condition(obj *Pair) *Pair {
@@ -382,8 +446,8 @@ func (rcv *TagQuery) Condition(obj *Pair) *Pair {
 func TagQueryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func TagQueryAddOp(builder *flatbuffers.Builder, op BinaryOp) {
-	builder.PrependInt8Slot(0, int8(op), 0)
+func TagQueryAddOps(builder *flatbuffers.Builder, ops flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ops), 0)
 }
 func TagQueryAddCondition(builder *flatbuffers.Builder, condition flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(condition), 0)
@@ -487,52 +551,20 @@ func (rcv *Entity) EntityId() []byte {
 	return nil
 }
 
-func (rcv *Entity) TraceId() []byte {
+func (rcv *Entity) StartTimeNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Entity) StartTime() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *Entity) MutateStartTime(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
-}
-
-func (rcv *Entity) EndTime() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Entity) MutateEndTime(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(10, n)
-}
-
-func (rcv *Entity) Duration() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Entity) MutateDuration(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(12, n)
+func (rcv *Entity) MutateStartTimeNanoseconds(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
 }
 
 func (rcv *Entity) DataBinary(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -541,7 +573,7 @@ func (rcv *Entity) DataBinary(j int) byte {
 }
 
 func (rcv *Entity) DataBinaryLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -549,7 +581,7 @@ func (rcv *Entity) DataBinaryLength() int {
 }
 
 func (rcv *Entity) DataBinaryBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -557,7 +589,7 @@ func (rcv *Entity) DataBinaryBytes() []byte {
 }
 
 func (rcv *Entity) MutateDataBinary(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -566,7 +598,7 @@ func (rcv *Entity) MutateDataBinary(j int, n byte) bool {
 }
 
 func (rcv *Entity) Fields(obj *Pair, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -578,7 +610,7 @@ func (rcv *Entity) Fields(obj *Pair, j int) bool {
 }
 
 func (rcv *Entity) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -586,31 +618,22 @@ func (rcv *Entity) FieldsLength() int {
 }
 
 func EntityStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(4)
 }
 func EntityAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entityId), 0)
 }
-func EntityAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(traceId), 0)
-}
-func EntityAddStartTime(builder *flatbuffers.Builder, startTime uint64) {
-	builder.PrependUint64Slot(2, startTime, 0)
-}
-func EntityAddEndTime(builder *flatbuffers.Builder, endTime uint64) {
-	builder.PrependUint64Slot(3, endTime, 0)
-}
-func EntityAddDuration(builder *flatbuffers.Builder, duration uint64) {
-	builder.PrependUint64Slot(4, duration, 0)
+func EntityAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds uint64) {
+	builder.PrependUint64Slot(1, startTimeNanoseconds, 0)
 }
 func EntityAddDataBinary(builder *flatbuffers.Builder, dataBinary flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(dataBinary), 0)
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(dataBinary), 0)
 }
 func EntityStartDataBinaryVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func EntityAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(fields), 0)
 }
 func EntityStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
@@ -763,7 +786,7 @@ func (rcv *EntityCriteria) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *EntityCriteria) StartTimeNanoseconds() uint64 {
+func (rcv *EntityCriteria) StartTimeMinNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -771,11 +794,11 @@ func (rcv *EntityCriteria) StartTimeNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *EntityCriteria) MutateStartTimeNanoseconds(n uint64) bool {
+func (rcv *EntityCriteria) MutateStartTimeMinNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(4, n)
 }
 
-func (rcv *EntityCriteria) EndTimeNanoseconds() uint64 {
+func (rcv *EntityCriteria) StartTimeMaxNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -783,23 +806,24 @@ func (rcv *EntityCriteria) EndTimeNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *EntityCriteria) MutateEndTimeNanoseconds(n uint64) bool {
+func (rcv *EntityCriteria) MutateStartTimeMaxNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *EntityCriteria) From() uint32 {
+func (rcv *EntityCriteria) StartTimesRangeOp(obj *BinaryOps) *BinaryOps {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(BinaryOps)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
 	}
-	return 0
+	return nil
 }
 
-func (rcv *EntityCriteria) MutateFrom(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(8, n)
-}
-
-func (rcv *EntityCriteria) Limit() uint32 {
+func (rcv *EntityCriteria) Offset() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
@@ -807,12 +831,24 @@ func (rcv *EntityCriteria) Limit() uint32 {
 	return 0
 }
 
-func (rcv *EntityCriteria) MutateLimit(n uint32) bool {
+func (rcv *EntityCriteria) MutateOffset(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
 
-func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
+func (rcv *EntityCriteria) Limit() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EntityCriteria) MutateLimit(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(12, n)
+}
+
+func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -825,7 +861,7 @@ func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
 }
 
 func (rcv *EntityCriteria) Fields(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -837,7 +873,7 @@ func (rcv *EntityCriteria) Fields(obj *TagQuery, j int) bool {
 }
 
 func (rcv *EntityCriteria) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -845,7 +881,7 @@ func (rcv *EntityCriteria) FieldsLength() int {
 }
 
 func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -858,31 +894,34 @@ func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
 }
 
 func EntityCriteriaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(8)
 }
-func EntityCriteriaAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds uint64) {
-	builder.PrependUint64Slot(0, startTimeNanoseconds, 0)
+func EntityCriteriaAddStartTimeMinNanoseconds(builder *flatbuffers.Builder, startTimeMinNanoseconds uint64) {
+	builder.PrependUint64Slot(0, startTimeMinNanoseconds, 0)
 }
-func EntityCriteriaAddEndTimeNanoseconds(builder *flatbuffers.Builder, endTimeNanoseconds uint64) {
-	builder.PrependUint64Slot(1, endTimeNanoseconds, 0)
+func EntityCriteriaAddStartTimeMaxNanoseconds(builder *flatbuffers.Builder, startTimeMaxNanoseconds uint64) {
+	builder.PrependUint64Slot(1, startTimeMaxNanoseconds, 0)
 }
-func EntityCriteriaAddFrom(builder *flatbuffers.Builder, from uint32) {
-	builder.PrependUint32Slot(2, from, 0)
+func EntityCriteriaAddStartTimesRangeOp(builder *flatbuffers.Builder, startTimesRangeOp flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(startTimesRangeOp), 0)
+}
+func EntityCriteriaAddOffset(builder *flatbuffers.Builder, offset uint32) {
+	builder.PrependUint32Slot(3, offset, 0)
 }
 func EntityCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
-	builder.PrependUint32Slot(3, limit, 0)
+	builder.PrependUint32Slot(4, limit, 0)
 }
 func EntityCriteriaAddOrderBy(builder *flatbuffers.Builder, orderBy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(orderBy), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(orderBy), 0)
 }
 func EntityCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
 }
 func EntityCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func EntityCriteriaAddProjection(builder *flatbuffers.Builder, projection flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(projection), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(projection), 0)
 }
 func EntityCriteriaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
