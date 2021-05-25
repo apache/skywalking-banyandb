@@ -81,6 +81,7 @@ table Entity {
     start_time: uint64;
     end_time: uint64;
     duration: uint64;
+    // data_binary contains all unindexed Tags and other key-value pairs
     data_binary: [ubyte];
     // fields contains all indexed Field
     fields: [Pair];
@@ -96,8 +97,8 @@ table TracesResponse {
     count: uint64;
 }
 
-// TraceQueryCriteria is the request contract for query.
-table TraceQueryCriteria {
+// EntityCriteria is the request contract for query.
+table EntityCriteria {
     trace_id: string;
     // the range of time is a left-inclusive, right-exclusive interval, i.e. [start_time_nanoseconds, end_time_nanoseconds)
     // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
@@ -105,14 +106,14 @@ table TraceQueryCriteria {
     // it is always recommended to specify time range for performance reason
     start_time_nanoseconds: uint64;
     end_time_nanoseconds: uint64;
+    // from is used to support pagination
+    from: uint32;
     // limit is used to impose a boundary on the number of records being returned
     limit: uint32;
     // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
     order_by: QueryOrder;
     // fields are indexed
     fields: [TagQuery];
-    // tag are not indexed
-    tags: [TagQuery];
 }
 
 // Query is the RPC service exposed
