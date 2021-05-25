@@ -76,13 +76,16 @@ table QueryOrder {
     sort: Sort;
 }
 
-// Entity represents a Span defined in Google Dapper paper.
-// Or equivalently a Segment in Skywalking.
+// Entity represents 
+// (Trace context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
+// (Log context) a log
 table Entity {
-    // entity_id could be span_id of a Span or segment_id of a Segment
+    // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
-    // start_time_nanoseconds is the start time of the entity in timeunit of nanosecond
-    start_time_nanoseconds: uint64;
+    // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
+    // 1) either the start time of a Span/Segment,
+    // 2) or the timestamp of a log
+    timestamp_nanoseconds: uint64;
     // data_binary contains all unindexed Tags and other key-value pairs
     data_binary: [ubyte];
     // fields contains all indexed Field. Some typical names,
@@ -115,9 +118,11 @@ table RangeQuery {
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    // start_time_nanoseconds is a range query with start/end time of the entity in timeunit of nanoseconds
+    // timestamp_nanoseconds is a range query with begin/end time of entities in the timeunit of nanoseconds.
+    // In the context of Trace, it represents the range of the `startTime` for spans/segments,
+    // while in the context of Log, it means the range of the timestamp(s) for logs.
     // it is always recommended to specify time range for performance reason
-    start_time_nanoseconds: RangeQuery;
+    timestamp_nanoseconds: RangeQuery;
     // offset is used to support pagination, together with the following limit
     offset: uint32;
     // limit is used to impose a boundary on the number of records being returned
