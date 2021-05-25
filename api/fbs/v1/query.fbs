@@ -40,7 +40,7 @@ table IntPair {
     values: [int64];
 }
 
-// IntPair in a typed pair with an array of string as values
+// StrPair in a typed pair with an array of string as values
 table StrPair {
     key: string;
     values: [string];
