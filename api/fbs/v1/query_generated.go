@@ -694,34 +694,34 @@ func TracesResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type TraceQueryCriteria struct {
+type EntityCriteria struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsTraceQueryCriteria(buf []byte, offset flatbuffers.UOffsetT) *TraceQueryCriteria {
+func GetRootAsEntityCriteria(buf []byte, offset flatbuffers.UOffsetT) *EntityCriteria {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &TraceQueryCriteria{}
+	x := &EntityCriteria{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsTraceQueryCriteria(buf []byte, offset flatbuffers.UOffsetT) *TraceQueryCriteria {
+func GetSizePrefixedRootAsEntityCriteria(buf []byte, offset flatbuffers.UOffsetT) *EntityCriteria {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &TraceQueryCriteria{}
+	x := &EntityCriteria{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *TraceQueryCriteria) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *EntityCriteria) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *TraceQueryCriteria) Table() flatbuffers.Table {
+func (rcv *EntityCriteria) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *TraceQueryCriteria) TraceId() []byte {
+func (rcv *EntityCriteria) TraceId() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -729,7 +729,7 @@ func (rcv *TraceQueryCriteria) TraceId() []byte {
 	return nil
 }
 
-func (rcv *TraceQueryCriteria) StartTimeNanoseconds() uint64 {
+func (rcv *EntityCriteria) StartTimeNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -737,11 +737,11 @@ func (rcv *TraceQueryCriteria) StartTimeNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *TraceQueryCriteria) MutateStartTimeNanoseconds(n uint64) bool {
+func (rcv *EntityCriteria) MutateStartTimeNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *TraceQueryCriteria) EndTimeNanoseconds() uint64 {
+func (rcv *EntityCriteria) EndTimeNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -749,11 +749,11 @@ func (rcv *TraceQueryCriteria) EndTimeNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *TraceQueryCriteria) MutateEndTimeNanoseconds(n uint64) bool {
+func (rcv *EntityCriteria) MutateEndTimeNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(8, n)
 }
 
-func (rcv *TraceQueryCriteria) Limit() uint32 {
+func (rcv *EntityCriteria) From() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
@@ -761,12 +761,24 @@ func (rcv *TraceQueryCriteria) Limit() uint32 {
 	return 0
 }
 
-func (rcv *TraceQueryCriteria) MutateLimit(n uint32) bool {
+func (rcv *EntityCriteria) MutateFrom(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
 
-func (rcv *TraceQueryCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
+func (rcv *EntityCriteria) Limit() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EntityCriteria) MutateLimit(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(12, n)
+}
+
+func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -778,27 +790,7 @@ func (rcv *TraceQueryCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
 	return nil
 }
 
-func (rcv *TraceQueryCriteria) Fields(obj *TagQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		obj.Init(rcv._tab.Bytes, x)
-		return true
-	}
-	return false
-}
-
-func (rcv *TraceQueryCriteria) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
-func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
+func (rcv *EntityCriteria) Fields(obj *TagQuery, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -810,7 +802,7 @@ func (rcv *TraceQueryCriteria) Tags(obj *TagQuery, j int) bool {
 	return false
 }
 
-func (rcv *TraceQueryCriteria) TagsLength() int {
+func (rcv *EntityCriteria) FieldsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -818,36 +810,33 @@ func (rcv *TraceQueryCriteria) TagsLength() int {
 	return 0
 }
 
-func TraceQueryCriteriaStart(builder *flatbuffers.Builder) {
+func EntityCriteriaStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }
-func TraceQueryCriteriaAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
+func EntityCriteriaAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
 }
-func TraceQueryCriteriaAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds uint64) {
+func EntityCriteriaAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds uint64) {
 	builder.PrependUint64Slot(1, startTimeNanoseconds, 0)
 }
-func TraceQueryCriteriaAddEndTimeNanoseconds(builder *flatbuffers.Builder, endTimeNanoseconds uint64) {
+func EntityCriteriaAddEndTimeNanoseconds(builder *flatbuffers.Builder, endTimeNanoseconds uint64) {
 	builder.PrependUint64Slot(2, endTimeNanoseconds, 0)
 }
-func TraceQueryCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
-	builder.PrependUint32Slot(3, limit, 0)
+func EntityCriteriaAddFrom(builder *flatbuffers.Builder, from uint32) {
+	builder.PrependUint32Slot(3, from, 0)
 }
-func TraceQueryCriteriaAddOrderBy(builder *flatbuffers.Builder, orderBy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(orderBy), 0)
+func EntityCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
+	builder.PrependUint32Slot(4, limit, 0)
 }
-func TraceQueryCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(fields), 0)
+func EntityCriteriaAddOrderBy(builder *flatbuffers.Builder, orderBy flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(orderBy), 0)
 }
-func TraceQueryCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func EntityCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
+}
+func EntityCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func TraceQueryCriteriaAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tags), 0)
-}
-func TraceQueryCriteriaStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
-}
-func TraceQueryCriteriaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func EntityCriteriaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }

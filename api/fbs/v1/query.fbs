@@ -91,10 +91,6 @@ table Entity {
 table TracesResponse {
     // entities are the actual data returned
     entities: [Entity];
-    // count means
-    // 1) total number of entities found if the corresponding request is a parametrized search regardless of the limit parameter
-    // 2) otherwise, length of the `entities` if it is a primary-key fetch (i.e trace_id)
-    count: uint64;
 }
 
 // EntityCriteria is the request contract for query.
@@ -118,5 +114,5 @@ table EntityCriteria {
 
 // Query is the RPC service exposed
 rpc_service Query {
-    QueryTraces(TraceQueryCriteria):TracesResponse;
+    QueryTraces(EntityCriteria):TracesResponse;
 }
