@@ -106,11 +106,11 @@ table Projection {
     key_names: [string];
 }
 
-// RangeQuery is a range query for uint64
+// RangeQuery is a range query for uint64,
+// the range here follows right-inclusive and left-exclusive rule, i.e. [start, end) if both edges exist
 table RangeQuery {
     start: uint64;
     end: uint64;
-    ops: BinaryOps;
 }
 
 // EntityCriteria is the request contract for query.

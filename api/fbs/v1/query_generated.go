@@ -810,30 +810,14 @@ func (rcv *RangeQuery) MutateEnd(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *RangeQuery) Op(obj *BinaryOps) *BinaryOps {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(BinaryOps)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
 func RangeQueryStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(2)
 }
 func RangeQueryAddStart(builder *flatbuffers.Builder, start uint64) {
 	builder.PrependUint64Slot(0, start, 0)
 }
 func RangeQueryAddEnd(builder *flatbuffers.Builder, end uint64) {
 	builder.PrependUint64Slot(1, end, 0)
-}
-func RangeQueryAddOp(builder *flatbuffers.Builder, op flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(op), 0)
 }
 func RangeQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
