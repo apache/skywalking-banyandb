@@ -30,24 +30,33 @@ enum BinaryOp: byte {
     RANGE
 }
 
-// ByteValue is the byte-representation of the value of a Tag
-table ByteValue {
-    value: [ubyte];
+// IntPair in a typed pair with an array of int64 as values
+table IntPair {
+    key: string;
+    values: [int64];
 }
 
-// Tag is the building block of a record which is equivalent to a key-value pair.
+// IntPair in a typed pair with an array of string as values
+table StrPair {
+    key: string;
+    values: [string];
+}
+
+// Pair is the building block of a record which is equivalent to a key-value pair.
 // In the context of Trace, it could be metadata of a trace such as service_name, serivce_instance, etc.
 // Besides, other fields/tags are organized in key-value pair in the underlying storage layer.
 // One should notice that the values can be a multi-value.
-table Tag {
-    key: [ubyte];
-    values: [ByteValue];
+union TypedPair { IntPair, StrPair }
+
+// Pair is a workaround since vector of union is not yet supported in some of languages.
+table Pair {
+    pair: TypedPair;
 }
 
 // TagQuery consists of the query condition with a binary operator to be imposed
 table TagQuery {
     op: BinaryOp;
-    condition: Tag;
+    condition: Pair;
 }
 
 // Sort is either descending or ascending
@@ -74,9 +83,7 @@ table Entity {
     duration: uint64;
     data_binary: [ubyte];
     // fields contains all indexed Field
-    fields: [Tag];
-    // tags contains all non-indexed Field
-    tags: [Tag];
+    fields: [Pair];
 }
 
 // TracesResponse is the response for a query to the Query module. 
