@@ -120,8 +120,3 @@ table EntityCriteria {
     // projection can be used to select the key names of the entities in the response
     projection: Projection;
 }
-
-// Query is the RPC service exposed
-rpc_service Query {
-    QueryTraces(EntityCriteria):TracesResponse;
-}
