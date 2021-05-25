@@ -48,7 +48,7 @@ table StrPair {
 // One should notice that the values can be a multi-value.
 union TypedPair { IntPair, StrPair }
 
-// Pair is a workaround since vector of union is not yet supported in some of languages.
+// Pair is a workaround since vector of unions is not yet supported in some of languages.
 table Pair {
     pair: TypedPair;
 }
@@ -101,7 +101,6 @@ table Projection {
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    trace_id: string;
     // the range of time is a left-inclusive, right-exclusive interval, i.e. [start_time_nanoseconds, end_time_nanoseconds)
     // 1) the start_time_nanoseconds and end_time_nanoseconds are optional if only trace_id is given,
     // 2) while these two conditions are required if a complex search condition is given
@@ -114,7 +113,9 @@ table EntityCriteria {
     limit: uint32;
     // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
     order_by: QueryOrder;
-    // fields are indexed
+    // fields are indexed. Some typical fields are listed below,
+    // - trace_id: if given, it takes precedence over other fields and will be used to retrieve entities before other conditions are imposed
+    // - duration: typical for trace context
     fields: [TagQuery];
     // projection can be used to select the key names of the entities in the response
     projection: Projection;
