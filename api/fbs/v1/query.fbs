@@ -107,7 +107,7 @@ table Projection {
 }
 
 // RangeQuery is a range query for uint64,
-// the range here follows right-inclusive and left-exclusive rule, i.e. [start, end) if both edges exist
+// the range here follows left-inclusive and right-exclusive rule, i.e. [start, end) if both edges exist
 table RangeQuery {
     start: uint64;
     end: uint64;
