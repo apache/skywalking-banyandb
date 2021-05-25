@@ -106,14 +106,18 @@ table Projection {
     key_names: [string];
 }
 
+// RangeQuery is a range query for uint64
+table RangeQuery {
+    start: uint64;
+    end: uint64;
+    op: BinaryOps;
+}
+
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    // start_time_(min|max)_nanoseconds are the range of start time of the entity in timeunit of nanosecond
+    // start_time_nanoseconds is a range query with start/end time of the entity in timeunit of nanoseconds
     // it is always recommended to specify time range for performance reason
-    start_time_min_nanoseconds: uint64;
-    start_time_max_nanoseconds: uint64;
-    // start_times_range_op is the operator for the above term start_time_(min|max)_nanoseconds
-    start_times_range_op: BinaryOps;
+    start_time_nanoseconds: RangeQuery;
     // offset is used to support pagination, together with the following limit
     offset: uint32;
     // limit is used to impose a boundary on the number of records being returned
