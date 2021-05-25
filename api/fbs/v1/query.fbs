@@ -110,7 +110,7 @@ table Projection {
 table RangeQuery {
     start: uint64;
     end: uint64;
-    op: BinaryOps;
+    ops: BinaryOps;
 }
 
 // EntityCriteria is the request contract for query.
