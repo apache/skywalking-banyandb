@@ -25,28 +25,28 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-type Aciton int8
+type Action int8
 
 const (
-	AcitonPut    Aciton = 0
-	AcitonDelete Aciton = 1
+	ActionPut    Action = 0
+	ActionDelete Action = 1
 )
 
-var EnumNamesAciton = map[Aciton]string{
-	AcitonPut:    "Put",
-	AcitonDelete: "Delete",
+var EnumNamesAction = map[Action]string{
+	ActionPut:    "Put",
+	ActionDelete: "Delete",
 }
 
-var EnumValuesAciton = map[string]Aciton{
-	"Put":    AcitonPut,
-	"Delete": AcitonDelete,
+var EnumValuesAction = map[string]Action{
+	"Put":    ActionPut,
+	"Delete": ActionDelete,
 }
 
-func (v Aciton) String() string {
-	if s, ok := EnumNamesAciton[v]; ok {
+func (v Action) String() string {
+	if s, ok := EnumNamesAction[v]; ok {
 		return s
 	}
-	return "Aciton(" + strconv.FormatInt(int64(v), 10) + ")"
+	return "Action(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
 type Node struct {
@@ -57,6 +57,13 @@ func GetRootAsNode(buf []byte, offset flatbuffers.UOffsetT) *Node {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
 	x := &Node{}
 	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsNode(buf []byte, offset flatbuffers.UOffsetT) *Node {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Node{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
@@ -136,6 +143,13 @@ func GetRootAsShard(buf []byte, offset flatbuffers.UOffsetT) *Shard {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
 	x := &Shard{}
 	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsShard(buf []byte, offset flatbuffers.UOffsetT) *Shard {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Shard{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
@@ -227,6 +241,13 @@ func GetRootAsShardEvent(buf []byte, offset flatbuffers.UOffsetT) *ShardEvent {
 	return x
 }
 
+func GetSizePrefixedRootAsShardEvent(buf []byte, offset flatbuffers.UOffsetT) *ShardEvent {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &ShardEvent{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
 func (rcv *ShardEvent) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
@@ -249,15 +270,15 @@ func (rcv *ShardEvent) Shard(obj *Shard) *Shard {
 	return nil
 }
 
-func (rcv *ShardEvent) Action() Aciton {
+func (rcv *ShardEvent) Action() Action {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return Aciton(rcv._tab.GetInt8(o + rcv._tab.Pos))
+		return Action(rcv._tab.GetInt8(o + rcv._tab.Pos))
 	}
 	return 0
 }
 
-func (rcv *ShardEvent) MutateAction(n Aciton) bool {
+func (rcv *ShardEvent) MutateAction(n Action) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
 
@@ -279,12 +300,68 @@ func ShardEventStart(builder *flatbuffers.Builder) {
 func ShardEventAddShard(builder *flatbuffers.Builder, shard flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(shard), 0)
 }
-func ShardEventAddAction(builder *flatbuffers.Builder, action Aciton) {
+func ShardEventAddAction(builder *flatbuffers.Builder, action Action) {
 	builder.PrependInt8Slot(1, int8(action), 0)
 }
 func ShardEventAddTime(builder *flatbuffers.Builder, time int64) {
 	builder.PrependInt64Slot(2, time, 0)
 }
 func ShardEventEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
+type Metadata struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsMetadata(buf []byte, offset flatbuffers.UOffsetT) *Metadata {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &Metadata{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsMetadata(buf []byte, offset flatbuffers.UOffsetT) *Metadata {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &Metadata{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *Metadata) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *Metadata) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *Metadata) Group() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *Metadata) Name() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func MetadataStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func MetadataAddGroup(builder *flatbuffers.Builder, group flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(group), 0)
+}
+func MetadataAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(name), 0)
+}
+func MetadataEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }

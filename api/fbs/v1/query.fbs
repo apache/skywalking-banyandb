@@ -1,0 +1,142 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+include "database.fbs";
+
+namespace banyandb.v1;
+
+// BinaryOp specify the operation imposed to the given query condition
+enum BinaryOp: byte {
+    EQ,
+    NE,
+    LT,
+    GT,
+    LE,
+    GE,
+    HAVING,
+    NOT_HAVING
+}
+
+// BinaryOps is an array of binary operators.
+table BinaryOps {
+    ops: [BinaryOp];
+}
+
+// IntPair in a typed pair with an array of int64 as values
+table IntPair {
+    key: string;
+    values: [int64];
+}
+
+// StrPair in a typed pair with an array of string as values
+table StrPair {
+    key: string;
+    values: [string];
+}
+
+// Pair is the building block of a record which is equivalent to a key-value pair.
+// In the context of Trace, it could be metadata of a trace such as service_name, serivce_instance, etc.
+// Besides, other fields/tags are organized in key-value pair in the underlying storage layer.
+// One should notice that the values can be a multi-value.
+union TypedPair { IntPair, StrPair }
+
+// Pair is a workaround since vector of unions is not yet supported in some of languages.
+table Pair {
+    pair: TypedPair;
+}
+
+// PairQuery consists of the query condition with a binary operator to be imposed
+table PairQuery {
+    ops: BinaryOps;
+    condition: Pair;
+}
+
+// Sort is either descending or ascending
+enum Sort : byte {
+    DESC,
+    ASC
+}
+
+// QueryOrder means a Sort operation to be done for a given field.
+// The key_name refers to the key of a Pair.
+table QueryOrder {
+    key_name: string;
+    sort: Sort;
+}
+
+// Entity represents 
+// (Trace context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
+// (Log context) a log
+table Entity {
+    // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
+    entity_id: string;
+    // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
+    // 1) either the start time of a Span/Segment,
+    // 2) or the timestamp of a log
+    timestamp_nanoseconds: uint64;
+    // data_binary contains all unindexed Tags and other key-value pairs
+    data_binary: [ubyte];
+    // fields contains all indexed Field. Some typical names,
+    // - trace_id
+    // - duration
+    // - service_name
+    // - service_instance_id
+    // - end_time_nanoseconds
+    fields: [Pair];
+}
+
+// TracesResponse is the response for a query to the Query module. 
+table TracesResponse {
+    // entities are the actual data returned
+    entities: [Entity];
+}
+
+// Projection is used to select the names of keys to be returned.
+table Projection {
+    // The key_name refers to the key(s) of Pair(s).
+    key_names: [string];
+}
+
+// RangeQuery is a range query for uint64,
+// the range here follows left-inclusive and right-exclusive rule, i.e. [begin, end) if both edges exist
+table RangeQuery {
+    begin: uint64;
+    end: uint64;
+}
+
+// EntityCriteria is the request contract for query.
+table EntityCriteria {
+    // metatdata is required
+    metatdata: Metadata;
+    // timestamp_nanoseconds is a range query with begin/end time of entities in the timeunit of nanoseconds.
+    // In the context of Trace, it represents the range of the `startTime` for spans/segments,
+    // while in the context of Log, it means the range of the timestamp(s) for logs.
+    // it is always recommended to specify time range for performance reason
+    timestamp_nanoseconds: RangeQuery;
+    // offset is used to support pagination, together with the following limit
+    offset: uint32;
+    // limit is used to impose a boundary on the number of records being returned
+    limit: uint32;
+    // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
+    order_by: QueryOrder;
+    // fields are indexed. Some typical fields are listed below,
+    // - trace_id: if given, it takes precedence over other fields and will be used to retrieve entities before other conditions are imposed
+    // - duration: typical for trace context
+    fields: [PairQuery];
+    // projection can be used to select the key names of the entities in the response
+    projection: Projection;
+}

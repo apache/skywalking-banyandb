@@ -15,39 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+include "query.fbs";
+
 namespace banyandb.v1;
 
-table Node {
-    id:string;
-    addr:string;
-    update_time:int64;
-    create_time:int64;
+// Query is the RPC service exposed
+rpc_service Query {
+    QueryTraces(EntityCriteria):TracesResponse;
 }
-
-table Shard {
-    id:int64;
-    node:Node;
-    update_time:int64;
-    create_time:int64;
-}
-
-enum Action:byte { Put = 0, Delete = 1 }
-
-table ShardEvent {
-    shard:Shard;
-    action:Action;
-    time:int64;
-}
-
-// Metadata is for multi-tenant, multi-model use
-table Metadata {
-    // group contains a set of options, like retention policy, max
-    group:string;
-    // name of the entity
-    name:string;
-}
-
-root_type Metadata;
-root_type Shard;
-root_type Node;
-root_type ShardEvent;
