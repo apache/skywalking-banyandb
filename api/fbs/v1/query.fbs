@@ -115,6 +115,11 @@ table RangeQuery {
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
+    // group and name are for multi-tenant, multi-model use
+    // group contains a set of options, like retention policy, max
+    group: string;
+    // name of the entity
+    name: string;
     // start_time_nanoseconds is a range query with start/end time of the entity in timeunit of nanoseconds
     // it is always recommended to specify time range for performance reason
     start_time_nanoseconds: RangeQuery;
