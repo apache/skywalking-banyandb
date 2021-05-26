@@ -850,24 +850,21 @@ func (rcv *EntityCriteria) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *EntityCriteria) Group() []byte {
+func (rcv *EntityCriteria) Metatdata(obj *Metadata) *Metadata {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *EntityCriteria) Name() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(Metadata)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
 	}
 	return nil
 }
 
 func (rcv *EntityCriteria) TimestampNanoseconds(obj *RangeQuery) *RangeQuery {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -880,7 +877,7 @@ func (rcv *EntityCriteria) TimestampNanoseconds(obj *RangeQuery) *RangeQuery {
 }
 
 func (rcv *EntityCriteria) Offset() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -888,11 +885,11 @@ func (rcv *EntityCriteria) Offset() uint32 {
 }
 
 func (rcv *EntityCriteria) MutateOffset(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(10, n)
+	return rcv._tab.MutateUint32Slot(8, n)
 }
 
 func (rcv *EntityCriteria) Limit() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -900,11 +897,11 @@ func (rcv *EntityCriteria) Limit() uint32 {
 }
 
 func (rcv *EntityCriteria) MutateLimit(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(12, n)
+	return rcv._tab.MutateUint32Slot(10, n)
 }
 
 func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -917,7 +914,7 @@ func (rcv *EntityCriteria) OrderBy(obj *QueryOrder) *QueryOrder {
 }
 
 func (rcv *EntityCriteria) Fields(obj *PairQuery, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -929,7 +926,7 @@ func (rcv *EntityCriteria) Fields(obj *PairQuery, j int) bool {
 }
 
 func (rcv *EntityCriteria) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -937,7 +934,7 @@ func (rcv *EntityCriteria) FieldsLength() int {
 }
 
 func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -950,34 +947,31 @@ func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
 }
 
 func EntityCriteriaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(7)
 }
-func EntityCriteriaAddGroup(builder *flatbuffers.Builder, group flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(group), 0)
-}
-func EntityCriteriaAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(name), 0)
+func EntityCriteriaAddMetatdata(builder *flatbuffers.Builder, metatdata flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metatdata), 0)
 }
 func EntityCriteriaAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(timestampNanoseconds), 0)
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(timestampNanoseconds), 0)
 }
 func EntityCriteriaAddOffset(builder *flatbuffers.Builder, offset uint32) {
-	builder.PrependUint32Slot(3, offset, 0)
+	builder.PrependUint32Slot(2, offset, 0)
 }
 func EntityCriteriaAddLimit(builder *flatbuffers.Builder, limit uint32) {
-	builder.PrependUint32Slot(4, limit, 0)
+	builder.PrependUint32Slot(3, limit, 0)
 }
 func EntityCriteriaAddOrderBy(builder *flatbuffers.Builder, orderBy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(orderBy), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(orderBy), 0)
 }
 func EntityCriteriaAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(fields), 0)
 }
 func EntityCriteriaStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func EntityCriteriaAddProjection(builder *flatbuffers.Builder, projection flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(projection), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(projection), 0)
 }
 func EntityCriteriaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

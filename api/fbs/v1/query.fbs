@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+include "database.fbs";
+
 namespace banyandb.v1;
 
 // BinaryOp specify the operation imposed to the given query condition
@@ -118,11 +120,8 @@ table RangeQuery {
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    // group and name are for multi-tenant, multi-model use
-    // group contains a set of options, like retention policy, max
-    group: string;
-    // name of the entity
-    name: string;
+    // metatdata is required
+    metatdata: Metadata;
     // timestamp_nanoseconds is a range query with begin/end time of entities in the timeunit of nanoseconds.
     // In the context of Trace, it represents the range of the `startTime` for spans/segments,
     // while in the context of Log, it means the range of the timestamp(s) for logs.
