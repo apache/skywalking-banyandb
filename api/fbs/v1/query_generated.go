@@ -551,7 +551,7 @@ func (rcv *Entity) EntityId() []byte {
 	return nil
 }
 
-func (rcv *Entity) StartTimeNanoseconds() uint64 {
+func (rcv *Entity) TimestampNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -559,7 +559,7 @@ func (rcv *Entity) StartTimeNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *Entity) MutateStartTimeNanoseconds(n uint64) bool {
+func (rcv *Entity) MutateTimestampNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
@@ -623,8 +623,8 @@ func EntityStart(builder *flatbuffers.Builder) {
 func EntityAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entityId), 0)
 }
-func EntityAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds uint64) {
-	builder.PrependUint64Slot(1, startTimeNanoseconds, 0)
+func EntityAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds uint64) {
+	builder.PrependUint64Slot(1, timestampNanoseconds, 0)
 }
 func EntityAddDataBinary(builder *flatbuffers.Builder, dataBinary flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(dataBinary), 0)
@@ -786,7 +786,7 @@ func (rcv *RangeQuery) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *RangeQuery) Start() uint64 {
+func (rcv *RangeQuery) Begin() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -794,7 +794,7 @@ func (rcv *RangeQuery) Start() uint64 {
 	return 0
 }
 
-func (rcv *RangeQuery) MutateStart(n uint64) bool {
+func (rcv *RangeQuery) MutateBegin(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(4, n)
 }
 
@@ -813,8 +813,8 @@ func (rcv *RangeQuery) MutateEnd(n uint64) bool {
 func RangeQueryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func RangeQueryAddStart(builder *flatbuffers.Builder, start uint64) {
-	builder.PrependUint64Slot(0, start, 0)
+func RangeQueryAddBegin(builder *flatbuffers.Builder, begin uint64) {
+	builder.PrependUint64Slot(0, begin, 0)
 }
 func RangeQueryAddEnd(builder *flatbuffers.Builder, end uint64) {
 	builder.PrependUint64Slot(1, end, 0)
@@ -866,7 +866,7 @@ func (rcv *EntityCriteria) Name() []byte {
 	return nil
 }
 
-func (rcv *EntityCriteria) StartTimeNanoseconds(obj *RangeQuery) *RangeQuery {
+func (rcv *EntityCriteria) TimestampNanoseconds(obj *RangeQuery) *RangeQuery {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -958,8 +958,8 @@ func EntityCriteriaAddGroup(builder *flatbuffers.Builder, group flatbuffers.UOff
 func EntityCriteriaAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(name), 0)
 }
-func EntityCriteriaAddStartTimeNanoseconds(builder *flatbuffers.Builder, startTimeNanoseconds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(startTimeNanoseconds), 0)
+func EntityCriteriaAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(timestampNanoseconds), 0)
 }
 func EntityCriteriaAddOffset(builder *flatbuffers.Builder, offset uint32) {
 	builder.PrependUint32Slot(3, offset, 0)
