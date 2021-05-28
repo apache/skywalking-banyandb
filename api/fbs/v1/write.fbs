@@ -39,14 +39,16 @@ table Field {
 table entityValue {
     entity_id: string;
     timestamp_nanoseconds: uint64;
+    // binary representation of segments, including tags, spans...
     data_binary: [ubyte];
+    // support all of indexed fields in the fields.
     fields: [Field];
 }
 
 table WriteEntity {
-    // the mate_data will be only required in the first query.
+    // the mate_data is only required in the first query.
     mate_data: Metadata;
-    //
+    // the entity is required except the first query.
     entity: entityValue;
 }
 
