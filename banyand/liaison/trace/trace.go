@@ -15,56 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-namespace banyandb.v1;
+package trace
 
-table String {
-    value: string;
-}
-
-table Boolean {
-    value: bool;
-}
-
-table ArrayString {
-    value: [string];
-}
-
-table ArrayByte {
-    value: [byte];
-}
-
-table Uint {
-    value: uint;
-}
-
-table Tags {
-    value: [Tag];
-}
-
-table Tag {
-    key: string;
-    value: string;
-}
-
-union ValueType {
-    String,
-    Boolean,
-    ArrayString,
-    Uint,
-    ArrayByte,
-    Tags,
-}
-
-table TraceValue {
-    value: ValueType;
-}
-// the keys includes traceId, startTime, endTime, segmentId, serviceId, serviceInstanceId, endpointId,
-// endpointName, tags, isError, latency, version, dataBinary
-table WriteTracesEntity {
-    keys: [string];
-    values: [TraceValue];
-}
-
-table WriteTracesResponse {
+type server struct {
 
 }

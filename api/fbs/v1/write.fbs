@@ -15,13 +15,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-include "query.fbs";
-include "write.fbs";
+include "common.fbs";
+include "database.fbs";
 
 namespace banyandb.v1;
 
-// Query is the RPC service exposed
-rpc_service Query {
-    QueryTraces(EntityCriteria): TracesResponse;
-    WriteTraces(streaming: WriteEntity): WriteResponse(streaming: "write");
+table String {
+    value: string;
 }
+
+table Int {
+    value: int64;
+}
+
+union FieldValue {
+    String,
+    Int
+}
+table Field {
+    value: FieldValue;
+}
+
+table entityValue {
+    entity_id: string;
+    timestamp_nanoseconds: uint64;
+    data_binary: [ubyte];
+    fields: [Field];
+}
+
+table WriteEntity {
+    // the mate_data will be only required in the first query.
+    mate_data: Metadata;
+    //
+    entity: entityValue;
+}
+
+table WriteResponse {}

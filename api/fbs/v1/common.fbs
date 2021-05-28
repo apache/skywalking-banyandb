@@ -15,13 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-include "query.fbs";
-include "write.fbs";
-
 namespace banyandb.v1;
 
-// Query is the RPC service exposed
-rpc_service Query {
-    QueryTraces(EntityCriteria): TracesResponse;
-    WriteTraces(streaming: WriteEntity): WriteResponse(streaming: "write");
+// Sort is either descending or ascending
+enum Sort : byte {
+    DESC,
+    ASC
 }
+
+// QueryOrder means a Sort operation to be done for a given field.
+// The key_name refers to the key of a Pair.
+table QueryOrder {
+    key_name: string;
+    sort: Sort;
+}
+
+// RangeQuery is a range query for uint64,
+// the range here follows left-inclusive and right-exclusive rule, i.e. [begin, end) if both edges exist
+table RangeQuery {
+    begin: uint64;
+    end: uint64;
+}
+
+
+root_type QueryOrder;
