@@ -37,7 +37,11 @@ table Field {
 }
 
 table entityValue {
+    // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
+    // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
+    // 1) either the start time of a Span/Segment,
+    // 2) or the timestamp of a log
     timestamp_nanoseconds: uint64;
     // binary representation of segments, including tags, spans...
     data_binary: [ubyte];

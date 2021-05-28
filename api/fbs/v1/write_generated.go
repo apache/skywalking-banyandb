@@ -13,19 +13,19 @@ type FieldValue byte
 const (
 	FieldValueNONE   FieldValue = 0
 	FieldValueString FieldValue = 1
-	FieldValueUint   FieldValue = 2
+	FieldValueInt    FieldValue = 2
 )
 
 var EnumNamesFieldValue = map[FieldValue]string{
 	FieldValueNONE:   "NONE",
 	FieldValueString: "String",
-	FieldValueUint:   "Uint",
+	FieldValueInt:    "Int",
 }
 
 var EnumValuesFieldValue = map[string]FieldValue{
 	"NONE":   FieldValueNONE,
 	"String": FieldValueString,
-	"Uint":   FieldValueUint,
+	"Int":    FieldValueInt,
 }
 
 func (v FieldValue) String() string {
@@ -79,34 +79,34 @@ func StringAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
 func StringEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
-type Uint struct {
+type Int struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsUint(buf []byte, offset flatbuffers.UOffsetT) *Uint {
+func GetRootAsInt(buf []byte, offset flatbuffers.UOffsetT) *Int {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &Uint{}
+	x := &Int{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsUint(buf []byte, offset flatbuffers.UOffsetT) *Uint {
+func GetSizePrefixedRootAsInt(buf []byte, offset flatbuffers.UOffsetT) *Int {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &Uint{}
+	x := &Int{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *Uint) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *Int) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *Uint) Table() flatbuffers.Table {
+func (rcv *Int) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Uint) Value() int64 {
+func (rcv *Int) Value() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -114,17 +114,17 @@ func (rcv *Uint) Value() int64 {
 	return 0
 }
 
-func (rcv *Uint) MutateValue(n int64) bool {
+func (rcv *Int) MutateValue(n int64) bool {
 	return rcv._tab.MutateInt64Slot(4, n)
 }
 
-func UintStart(builder *flatbuffers.Builder) {
+func IntStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func UintAddValue(builder *flatbuffers.Builder, value int64) {
+func IntAddValue(builder *flatbuffers.Builder, value int64) {
 	builder.PrependInt64Slot(0, value, 0)
 }
-func UintEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func IntEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 type Field struct {

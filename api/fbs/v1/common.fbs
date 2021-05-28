@@ -37,5 +37,5 @@ table RangeQuery {
     end: uint64;
 }
 
-
 root_type QueryOrder;
+root_type RangeQuery;
