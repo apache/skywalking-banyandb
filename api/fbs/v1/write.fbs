@@ -51,7 +51,7 @@ table entityValue {
 
 table WriteEntity {
     // the mate_data is only required in the first query.
-    mate_data: Metadata;
+    meta_data: Metadata;
     // the entity is required except the first query.
     entity: entityValue;
 }

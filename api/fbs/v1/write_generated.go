@@ -339,7 +339,7 @@ func (rcv *WriteEntity) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *WriteEntity) MateData(obj *Metadata) *Metadata {
+func (rcv *WriteEntity) MetaData(obj *Metadata) *Metadata {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -368,8 +368,8 @@ func (rcv *WriteEntity) Entity(obj *entityValue) *entityValue {
 func WriteEntityStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func WriteEntityAddMateData(builder *flatbuffers.Builder, mateData flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(mateData), 0)
+func WriteEntityAddMetaData(builder *flatbuffers.Builder, metaData flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metaData), 0)
 }
 func WriteEntityAddEntity(builder *flatbuffers.Builder, entity flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(entity), 0)
