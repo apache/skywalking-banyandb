@@ -15,11 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package kv
+package convert
 
-type Block interface {
+import "encoding/binary"
+
+func Uint64ToBytes(u uint64) []byte {
+	bs := make([]byte, 8)
+	binary.BigEndian.PutUint64(bs, u)
+	return bs
 }
 
-func NewBlock() (Block, error) {
-	return nil, nil
+func Uint32ToBytes(u uint32) []byte {
+	bs := make([]byte, 8)
+	binary.BigEndian.PutUint32(bs, u)
+	return bs
+}
+
+func BytesToUint64(b []byte) uint64 {
+	return binary.BigEndian.Uint64(b)
 }

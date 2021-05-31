@@ -18,6 +18,8 @@
 package logger
 
 import (
+	"strings"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -34,6 +36,11 @@ type Logger struct {
 	*zap.Logger
 }
 
+func (l *Logger) Named(name string) *Logger {
+	module := strings.Join([]string{l.module, name}, ".")
+	return &Logger{module: module, Logger: root.Logger.Named(module)}
+}
+
 // String constructs a field with the given key and value.
 func String(key string, val string) zap.Field {
 	return zap.Field{Key: key, Type: zapcore.StringType, String: val}
@@ -44,14 +51,14 @@ func Error(err error) zap.Field {
 	return zap.NamedError("error", err)
 }
 
-// Uint16 constructs a field with the given key and value.
-func Uint16(key string, val uint16) zap.Field {
-	return zap.Field{Key: key, Type: zapcore.Uint16Type, Integer: int64(val)}
-}
-
 // Uint32 constructs a field with the given key and value.
 func Uint32(key string, val uint32) zap.Field {
 	return zap.Field{Key: key, Type: zapcore.Uint32Type, Integer: int64(val)}
+}
+
+// Uint64 constructs a field with the given key and value.
+func Uint64(key string, val uint64) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.Uint64Type, Integer: int64(val)}
 }
 
 // Int32 constructs a field with the given key and value.
@@ -62,6 +69,11 @@ func Int32(key string, val int32) zap.Field {
 // Int64 constructs a field with the given key and value.
 func Int64(key string, val int64) zap.Field {
 	return zap.Field{Key: key, Type: zapcore.Int64Type, Integer: val}
+}
+
+// Binary constructs a field with the given key and value.
+func Binary(key string, value interface{}) zap.Field {
+	return zap.Field{Key: key, Type: zapcore.BinaryType, Interface: value}
 }
 
 // Any takes a key and an arbitrary value and chooses the best way to represent

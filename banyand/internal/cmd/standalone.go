@@ -53,7 +53,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal("failed to initiate data pipeline", logger.Error(err))
 	}
-	db, err := storage.NewDB(ctx, repo, pipeline)
+	db, err := storage.NewDB(ctx, repo)
 	if err != nil {
 		l.Fatal("failed to initiate database", logger.Error(err))
 	}
