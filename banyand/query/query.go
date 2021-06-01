@@ -27,6 +27,7 @@ import (
 
 type Executor interface {
 	run.PreRunner
+	run.Service
 }
 
 func NewExecutor(ctx context.Context, idx index.Repo, s series.UniModel) (Executor, error) {

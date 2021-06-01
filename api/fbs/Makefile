@@ -21,4 +21,4 @@ fbs := $(wildcard $(VERSION)/*.fbs)
 
 .PHONY: generate
 generate: $(fbs)
-	flatc --go --gen-onefile --go-namespace $(VERSION) -o $(VERSION) $^
+	flatc --grpc --go --gen-onefile --go-namespace $(VERSION) -o $(VERSION) $^
