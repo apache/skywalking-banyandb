@@ -1,4 +1,3 @@
-//
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package logical
 
 import (
@@ -30,6 +30,18 @@ var (
 	NoSuchField          = errors.New("no such field")
 	NotSupporterBinaryOp = errors.New("not supported binary operator")
 )
+
+type OpFactory func(left, right Expr) *BinaryExpr
+
+var (
+	operatorFactory map[apiv1.BinaryOp]OpFactory
+)
+
+func init() {
+	operatorFactory = map[apiv1.BinaryOp]OpFactory{
+		apiv1.BinaryOpEQ: Eq,
+	}
+}
 
 var _ Expr = (*FieldRef)(nil)
 
@@ -64,6 +76,10 @@ type StringLit struct {
 	literal string
 }
 
+func Str(lit string) Expr {
+	return &StringLit{lit}
+}
+
 func (s *StringLit) String() string {
 	return fmt.Sprintf("'%s'", s.literal)
 }
@@ -76,6 +92,10 @@ var _ Expr = (*Int64Lit)(nil)
 
 type Int64Lit struct {
 	literal int64
+}
+
+func Long(lit int64) Expr {
+	return &Int64Lit{lit}
 }
 
 func (i *Int64Lit) String() string {
@@ -105,5 +125,14 @@ func (b BinaryExpr) ToField(Plan) (types.Field, error) {
 		return types.NewField(b.name, types.BOOLEAN), nil
 	default:
 		return nil, NotSupporterBinaryOp
+	}
+}
+
+func Eq(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "eq",
+		op:    apiv1.BinaryOpEQ,
+		left:  l,
+		right: r,
 	}
 }

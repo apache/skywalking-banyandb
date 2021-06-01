@@ -1,4 +1,3 @@
-//
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package logical
 
 import (
@@ -29,11 +29,22 @@ var _ Plan = (*Selection)(nil)
 
 type Selection struct {
 	input Plan
-	expr  Expr
+	exprs []Expr
+}
+
+func NewSelection(input Plan, exprs ...Expr) Plan {
+	return &Selection{
+		input: input,
+		exprs: exprs,
+	}
 }
 
 func (s *Selection) String() string {
-	return fmt.Sprintf("Selection: %s", s.expr.String())
+	var exprStrs []string
+	for _, expr := range s.exprs {
+		exprStrs = append(exprStrs, expr.String())
+	}
+	return fmt.Sprintf("Selection: %s", strings.Join(exprStrs, " And "))
 }
 
 func (s *Selection) Schema() (types.Schema, error) {
@@ -49,6 +60,13 @@ var _ Plan = (*Projection)(nil)
 type Projection struct {
 	input Plan
 	exprs []Expr
+}
+
+func NewProjection(input Plan, exprs ...Expr) Plan {
+	return &Projection{
+		input: input,
+		exprs: exprs,
+	}
 }
 
 func (p *Projection) String() string {
@@ -78,8 +96,19 @@ func (p *Projection) Children() []Plan {
 var _ Plan = (*Scan)(nil)
 
 type Scan struct {
-	metadata   apiv1.Metadata
+	metadata   *apiv1.Metadata
+	startTime  uint64
+	endTime    uint64
 	projection []string
+}
+
+func NewScan(metadata *apiv1.Metadata, startTime, endTime uint64) Plan {
+	return &Scan{
+		metadata:   metadata,
+		startTime:  startTime,
+		endTime:    endTime,
+		projection: make([]string, 0),
+	}
 }
 
 func (s *Scan) String() string {

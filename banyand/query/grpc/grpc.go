@@ -19,13 +19,13 @@ package grpc
 
 import (
 	"context"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"net"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/encoding"
 
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -53,7 +53,7 @@ func (s *Server) Name() string {
 
 func (s *Server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	fs.StringVarP(&s.addr, "addr", "", ":17922", "the address of banyandb-query endpoints")
+	fs.StringVarP(&s.addr, "query.grpc-addr", "", ":17922", "the address of banyandb-query endpoints")
 	return fs
 }
 
