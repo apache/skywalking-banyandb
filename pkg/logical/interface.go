@@ -9,7 +9,7 @@ import (
 //go:generate mockery --name Plan --output ../internal/mocks
 type Plan interface {
 	fmt.Stringer
-	Schema() types.Schema
+	Schema() (types.Schema, error)
 	Children() []Plan
 }
 

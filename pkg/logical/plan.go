@@ -19,7 +19,7 @@ func (s *Selection) String() string {
 	return fmt.Sprintf("Selection: %s", s.expr.String())
 }
 
-func (s *Selection) Schema() types.Schema {
+func (s *Selection) Schema() (types.Schema, error) {
 	return s.input.Schema()
 }
 
@@ -42,8 +42,16 @@ func (p *Projection) String() string {
 	return "Projection: " + strings.Join(expressStr, ", ")
 }
 
-func (p *Projection) Schema() types.Schema {
-	panic("implement me")
+func (p *Projection) Schema() (types.Schema, error) {
+	var fields []types.Field
+	for _, e := range p.exprs {
+		f, err := e.ToField(p.input)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, f)
+	}
+	return types.NewSchema(fields...), nil
 }
 
 func (p *Projection) Children() []Plan {
@@ -65,7 +73,7 @@ func (s *Scan) String() string {
 	}
 }
 
-func (s *Scan) Schema() types.Schema {
+func (s *Scan) Schema() (types.Schema, error) {
 	panic("implement me")
 }
 

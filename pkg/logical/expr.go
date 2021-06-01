@@ -29,7 +29,11 @@ func (ref FieldRef) String() string {
 }
 
 func (ref FieldRef) ToField(plan Plan) (types.Field, error) {
-	for _, f := range plan.Schema().GetFields() {
+	schema, err := plan.Schema()
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range schema.GetFields() {
 		if f.Name() == ref.fieldName {
 			return f, nil
 		}

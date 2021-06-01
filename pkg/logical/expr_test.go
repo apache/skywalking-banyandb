@@ -19,7 +19,7 @@ func TestExpr_KeyRef_ToField(t *testing.T) {
 	keyRef := logical.NewKeyRef("duration")
 	plan := &mocks.Plan{}
 	schema := &mocks.Schema{}
-	plan.On("Schema").Return(schema)
+	plan.On("Schema").Return(schema, nil)
 	schema.On("GetFields").Return([]types.Field{
 		types.NewField("duration", types.INT64),
 		types.NewField("serviceName", types.STRING),
@@ -34,7 +34,7 @@ func TestExpr_KeyRef_ToField_Failure(t *testing.T) {
 	keyRef := logical.NewKeyRef("traceID")
 	plan := &mocks.Plan{}
 	schema := &mocks.Schema{}
-	plan.On("Schema").Return(schema)
+	plan.On("Schema").Return(schema, nil)
 	schema.On("GetFields").Return([]types.Field{
 		types.NewField("duration", types.INT64),
 		types.NewField("serviceName", types.STRING),
