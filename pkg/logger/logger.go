@@ -46,7 +46,7 @@ func String(key string, val string) zap.Field {
 	return zap.Field{Key: key, Type: zapcore.StringType, String: val}
 }
 
-// Error is shorthand for the common idiom NamedError("error", err).
+// Error is shorthand for the types idiom NamedError("error", err).
 func Error(err error) zap.Field {
 	return zap.NamedError("error", err)
 }

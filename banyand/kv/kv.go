@@ -39,7 +39,7 @@ type Hook interface {
 	Split(raw []byte) ([][]byte, error)
 }
 
-// Store is a common kv storage with auto-generated key
+// Store is a types kv storage with auto-generated key
 type Store interface {
 	io.Closer
 	// Add a value whose key can be generated automatically
