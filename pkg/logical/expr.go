@@ -31,14 +31,14 @@ var (
 	NotSupporterBinaryOp = errors.New("not supported binary operator")
 )
 
-type OpFactory func(left, right Expr) *BinaryExpr
+type BinaryOpFactory func(left, right Expr) *BinaryExpr
 
 var (
-	operatorFactory map[apiv1.BinaryOp]OpFactory
+	operatorFactory map[apiv1.BinaryOp]BinaryOpFactory
 )
 
 func init() {
-	operatorFactory = map[apiv1.BinaryOp]OpFactory{
+	operatorFactory = map[apiv1.BinaryOp]BinaryOpFactory{
 		apiv1.BinaryOpEQ: Eq,
 	}
 }

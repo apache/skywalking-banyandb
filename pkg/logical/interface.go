@@ -23,6 +23,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/types"
 )
 
+type ExprType int8
+
+const (
+	Unary ExprType = iota
+	Binary
+)
+
 //go:generate mockery --name Plan --output ../internal/mocks
 type Plan interface {
 	fmt.Stringer
