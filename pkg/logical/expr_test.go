@@ -11,12 +11,12 @@ import (
 )
 
 func TestExpr_KeyRef_Stringer(t *testing.T) {
-	keyRef := logical.NewKeyRef("duration")
+	keyRef := logical.NewFieldRef("duration")
 	assert.Equal(t, keyRef.String(), "#duration")
 }
 
 func TestExpr_KeyRef_ToField(t *testing.T) {
-	keyRef := logical.NewKeyRef("duration")
+	keyRef := logical.NewFieldRef("duration")
 	plan := &mocks.Plan{}
 	schema := &mocks.Schema{}
 	plan.On("Schema").Return(schema, nil)
@@ -31,7 +31,7 @@ func TestExpr_KeyRef_ToField(t *testing.T) {
 }
 
 func TestExpr_KeyRef_ToField_Failure(t *testing.T) {
-	keyRef := logical.NewKeyRef("traceID")
+	keyRef := logical.NewFieldRef("traceID")
 	plan := &mocks.Plan{}
 	schema := &mocks.Schema{}
 	plan.On("Schema").Return(schema, nil)

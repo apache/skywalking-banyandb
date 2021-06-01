@@ -20,7 +20,7 @@ type FieldRef struct {
 	fieldName string
 }
 
-func NewKeyRef(keyName string) Expr {
+func NewFieldRef(keyName string) Expr {
 	return &FieldRef{fieldName: keyName}
 }
 
