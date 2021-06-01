@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//go:generate mockgen -destination=./kv_mock.go -package=kv . Hook
 package kv
 
 import (

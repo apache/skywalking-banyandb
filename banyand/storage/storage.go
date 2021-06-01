@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//go:generate mockgen -destination=./storage_mock.go -package=storage . Plugin
 package storage
 
 import (

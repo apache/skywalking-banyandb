@@ -41,3 +41,7 @@ build/release/
 .DS_Store
 .env
 .run
+
+# mock files
+*mock.go
+*mock_test.go

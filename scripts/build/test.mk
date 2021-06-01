@@ -31,7 +31,9 @@ TEST_COVERAGE_EXTRA_OPTS ?=
 ##@ Test targets
 
 .PHONY: test
-test: ## Run all the unit tests
+test: $(MOCKGEN) ## Run all the unit tests
+	go install github.com/golang/mock/mockgen@v1.5.0
+	go generate $(TEST_PKG_LIST) 
 	go test $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
 
 .PHONY: test-race
@@ -48,3 +50,4 @@ test-coverage: ## Run all the unit tests with coverage analysis on
 .PHONY: test-clean
 test-clean::  ## Clean all test artifacts
 	rm -rf $(TEST_COVERAGE_DIR)
+	

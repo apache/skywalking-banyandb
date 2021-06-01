@@ -69,6 +69,10 @@ header: # `header` section is configurations for source codes license header.
     - '**/go.sum'
     - 'LICENSE'
     - 'NOTICE'
+    - '**/build/**'
+    - '**/*_mock.go'
+    - '**/*_mock_test.go'
+    - '**/*_generated.go'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

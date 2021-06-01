@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3/y"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -47,13 +48,19 @@ func TestDB_Create_Directory(t *testing.T) {
 }
 
 func TestDB_Store(t *testing.T) {
-	p := new(mockPlugin)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	var ap AccessPoint
+	p := mockPlugin(ctrl, func(get GetAccessPoint) {
+		ap = get()
+	})
+
 	tempDir, db := setUp(t, p)
 	defer func() {
 		db.GracefulStop()
 		removeDir(tempDir)
 	}()
-	ap := p.ApFunc()
+
 	s := ap.Store("normal")
 	assert.NoError(t, s.Put([]byte("key1"), []byte{12}))
 	val, err := s.Get([]byte("key1"))
@@ -77,7 +84,68 @@ func TestDB_Store(t *testing.T) {
 	assert.Equal(t, [][]byte{{33}}, vals)
 }
 
-func setUp(t *testing.T, p *mockPlugin) (tempDir string, db Database) {
+func mockPlugin(ctrl *gomock.Controller, f func(get GetAccessPoint)) Plugin {
+	p := NewMockPlugin(ctrl)
+	p.
+		EXPECT().
+		ID().
+		Return("foo").
+		AnyTimes()
+	p.
+		EXPECT().
+		Init().
+		Return([]KVSpec{
+			{
+				Name: "normal",
+				Type: KVTypeNormal,
+			},
+			{
+				Name:       "auto-gen",
+				Type:       KVTypeNormal,
+				AutoGenKey: true,
+			},
+			{
+				Name:           "time-series",
+				Type:           KVTypeTimeSeries,
+				TimeSeriesHook: mockHook(ctrl),
+			},
+		}).
+		AnyTimes()
+	p.
+		EXPECT().
+		Start(gomock.Any()).
+		Do(f).
+		AnyTimes()
+	return p
+}
+
+func mockHook(ctrl *gomock.Controller) kv.Hook {
+	h := kv.NewMockHook(ctrl)
+	h.
+		EXPECT().
+		Reduce(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(left bytes.Buffer, right y.ValueStruct) bytes.Buffer {
+			return left
+		}).
+		AnyTimes()
+	h.
+		EXPECT().
+		Extract(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(raw []byte, ts uint64) ([]byte, error) {
+			return raw, nil
+		}).
+		AnyTimes()
+	h.
+		EXPECT().
+		Split(gomock.Any()).
+		DoAndReturn(func(raw []byte) ([][]byte, error) {
+			return [][]byte{raw}, nil
+		}).
+		AnyTimes()
+	return h
+}
+
+func setUp(t *testing.T, p Plugin) (tempDir string, db Database) {
 	require.NoError(t, logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "debug",
@@ -112,54 +180,4 @@ func removeDir(dir string) {
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Printf("Error while removing dir: %v\n", err)
 	}
-}
-
-var _ Plugin = (*mockPlugin)(nil)
-
-type mockPlugin struct {
-	ApFunc GetAccessPoint
-}
-
-func (m *mockPlugin) ID() string {
-	return "foo"
-}
-
-func (m *mockPlugin) Init() []KVSpec {
-	return []KVSpec{
-		{
-			Name: "normal",
-			Type: KVTypeNormal,
-		},
-		{
-			Name:       "auto-gen",
-			Type:       KVTypeNormal,
-			AutoGenKey: true,
-		},
-		{
-			Name:           "time-series",
-			Type:           KVTypeTimeSeries,
-			TimeSeriesHook: &mockHook{},
-		},
-	}
-}
-
-func (m *mockPlugin) Start(point GetAccessPoint) {
-	m.ApFunc = point
-}
-
-var _ kv.Hook = (*mockHook)(nil)
-
-type mockHook struct {
-}
-
-func (m *mockHook) Reduce(left bytes.Buffer, right y.ValueStruct) bytes.Buffer {
-	return left
-}
-
-func (m *mockHook) Extract(raw []byte, ts uint64) ([]byte, error) {
-	return raw, nil
-}
-
-func (m *mockHook) Split(raw []byte) ([][]byte, error) {
-	return [][]byte{raw}, nil
 }
