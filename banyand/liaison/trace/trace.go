@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package trace
+namespace v1;
 
-type server struct {
+table Trace {
 
 }
