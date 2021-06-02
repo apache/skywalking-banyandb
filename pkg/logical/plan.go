@@ -129,6 +129,62 @@ func (s *Scan) Children() []Plan {
 	return []Plan{}
 }
 
+var _ Plan = (*OffsetAndLimit)(nil)
+
+type OffsetAndLimit struct {
+	input  Plan
+	offset uint32
+	limit  uint32
+}
+
+func NewOffsetAndLimit(input Plan, offset, limit uint32) Plan {
+	return &OffsetAndLimit{
+		input:  input,
+		offset: offset,
+		limit:  limit,
+	}
+}
+
+func (o *OffsetAndLimit) String() string {
+	return fmt.Sprintf("Pagination: offset=%d; limit=%d", o.offset, o.limit)
+}
+
+func (o *OffsetAndLimit) Schema() (types.Schema, error) {
+	return o.input.Schema()
+}
+
+func (o *OffsetAndLimit) Children() []Plan {
+	return []Plan{o.input}
+}
+
+var _ Plan = (*Sort)(nil)
+
+type Sort struct {
+	input     Plan
+	fieldName string
+	order     apiv1.Sort
+}
+
+func NewSort(input Plan, fieldName string, order apiv1.Sort) Plan {
+	return &Sort{
+		input:     input,
+		fieldName: fieldName,
+		order:     order,
+	}
+}
+
+func (o *Sort) String() string {
+	return fmt.Sprintf("Sort: field=#%s; order=%s", o.fieldName, apiv1.EnumNamesSort[o.order])
+}
+
+func (o *Sort) Schema() (types.Schema, error) {
+	return o.input.Schema()
+}
+
+func (o *Sort) Children() []Plan {
+	return []Plan{o.input}
+}
+
 func FormatPlan(plan Plan) string {
 	return formatPlan(plan, 0)
 }

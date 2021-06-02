@@ -69,5 +69,13 @@ func ComposeLogicalPlan(criteria *apiv1.EntityCriteria) (Plan, error) {
 
 	projection := NewProjection(selection, projectionList...)
 
-	return projection, nil
+	orderBy := criteria.OrderBy(nil)
+
+	sort := NewSort(projection, string(orderBy.KeyName()), orderBy.Sort())
+
+	offset, limit := criteria.Offset(), criteria.Limit()
+
+	offsetAndLimit := NewOffsetAndLimit(sort, offset, limit)
+
+	return offsetAndLimit, nil
 }
