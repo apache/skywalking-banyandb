@@ -2,8 +2,10 @@ package logical
 
 import (
 	"errors"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+
 	flatbuffers "github.com/google/flatbuffers/go"
+
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
 var (

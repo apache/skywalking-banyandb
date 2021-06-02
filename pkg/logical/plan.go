@@ -113,9 +113,11 @@ func NewScan(metadata *apiv1.Metadata, startTime, endTime uint64) Plan {
 
 func (s *Scan) String() string {
 	if len(s.projection) == 0 {
-		return fmt.Sprintf("Scan: Metadata{group=%s, name=%s}; projection=None", s.metadata.Group(), s.metadata.Name())
+		return fmt.Sprintf("Scan: Metadata{group=%s, name=%s}; startTime=%d ,endTime=%d; projection=None",
+			s.metadata.Group(), s.metadata.Name(), s.startTime, s.endTime)
 	} else {
-		return fmt.Sprintf("Scan: Metadata{group=%s, name=%s}; projection=%v", s.metadata.Group(), s.metadata.Name(), s.projection)
+		return fmt.Sprintf("Scan: Metadata{group=%s, name=%s}; startTime=%d ,endTime=%d; projection=%v",
+			s.metadata.Group(), s.metadata.Name(), s.startTime, s.endTime, s.projection)
 	}
 }
 
