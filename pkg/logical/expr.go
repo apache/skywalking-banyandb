@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/types"
@@ -93,6 +94,24 @@ func (s *StringLit) String() string {
 
 func (s *StringLit) ToField(Plan) (types.Field, error) {
 	return types.NewField(s.literal, types.STRING), nil
+}
+
+var _ Expr = (*StringsLit)(nil)
+
+type StringsLit struct {
+	literal []string
+}
+
+func Strs(lit ...string) Expr {
+	return &StringsLit{lit}
+}
+
+func (s *StringsLit) String() string {
+	return fmt.Sprintf("['%s']", strings.Join(s.literal, "', '"))
+}
+
+func (s *StringsLit) ToField(Plan) (types.Field, error) {
+	return types.NewField(strings.Join(s.literal, ","), types.STRING), nil
 }
 
 var _ Expr = (*Int64Lit)(nil)

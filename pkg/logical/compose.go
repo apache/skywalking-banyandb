@@ -37,10 +37,18 @@ func ComposeLogicalPlan(criteria *apiv1.EntityCriteria) (Plan, error) {
 					unionStrPair := new(apiv1.StrPair)
 					unionStrPair.Init(unionTable.Bytes, unionTable.Pos)
 					key := string(unionStrPair.Key())
-					// TODO: support array
-					value := string(unionStrPair.Values(0))
-					f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Str(value))
-					filterExprs = append(filterExprs, f)
+					if unionStrPair.ValuesLength() > 1 {
+						var values []string
+						for i := 0; i < unionStrPair.ValuesLength(); i++ {
+							values = append(values, string(unionStrPair.Values(i)))
+						}
+						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Strs(values...))
+						filterExprs = append(filterExprs, f)
+					} else {
+						value := string(unionStrPair.Values(0))
+						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Str(value))
+						filterExprs = append(filterExprs, f)
+					}
 				} else {
 					return nil, InvalidPairType
 				}

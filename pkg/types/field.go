@@ -25,6 +25,7 @@ const (
 	STRING FieldType = iota
 	INT64
 	BOOLEAN
+	STRING_ARRAY
 )
 
 //go:generate mockery --name Field --output ../internal/mocks
