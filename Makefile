@@ -28,8 +28,9 @@ clean: TARGET=clean test-clean
 clean: default  ## Clean artifacts in all projects
 
 generate: ## Generate API codes
+	go install github.com/golang/mock/mockgen@v1.5.0
+	go generate ./...
 	$(MAKE) -C api/fbs generate
-	$(MAKE) license-fix
 	$(MAKE) format
 
 build: TARGET=all
@@ -81,7 +82,7 @@ EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
 GO_VERSION := $(shell go version)
 
 ## Check that the status is consistent with CI.
-check: clean
+check: clean generate
 # case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
 	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
 		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \
@@ -98,7 +99,7 @@ check: clean
 		exit 1; \
 	fi
 	
-pre-push: lint license-check check ## Check source files before pushing to the remote repo
+pre-push: generate lint license-check check ## Check source files before pushing to the remote repo
 
 ##@ License targets
 

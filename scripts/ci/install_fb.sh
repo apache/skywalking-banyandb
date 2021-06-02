@@ -19,7 +19,7 @@
 
 set -e
 
-FB_VERSION=${FB_VERSION:=v1.12.0}
+FB_VERSION=${FB_VERSION:=v2.0.0}
 
 for CMD in curl cmake g++ make; do
   command -v $CMD > /dev/null || \
@@ -39,7 +39,8 @@ cd flatbuffers-${FB_VERSION#v}
 cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
 make
 ./flattests
-cp flatc /usr/local/bin/flatc
+sudo cp flatc /usr/local/bin/flatc
+sudo chmod +x /usr/local/bin/flatc
 
 ## Cleanup Temp Build Directory
 popd
