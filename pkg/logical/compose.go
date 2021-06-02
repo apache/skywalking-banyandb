@@ -10,7 +10,7 @@ var (
 	InvalidPairType = errors.New("invalid pair type")
 )
 
-func ComposeLogicalPlan(criteria apiv1.EntityCriteria) (Plan, error) {
+func ComposeLogicalPlan(criteria *apiv1.EntityCriteria) (Plan, error) {
 	metadata := criteria.Metatdata(nil)
 	timeRange := criteria.TimestampNanoseconds(nil)
 	begin, end := timeRange.Begin(), timeRange.End()
