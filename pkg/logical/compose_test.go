@@ -1,6 +1,7 @@
 package logical_test
 
 import (
+	"fmt"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -25,7 +26,7 @@ func (b *criteriaBuilder) buildMetaData(group, name string) flatbuffers.UOffsetT
 	g, n := b.CreateString(group), b.CreateString(name)
 	apiv1.MetadataStart(b.Builder)
 	apiv1.MetadataAddGroup(b.Builder, g)
-	apiv1.MetadataAddGroup(b.Builder, n)
+	apiv1.MetadataAddName(b.Builder, n)
 	return apiv1.MetadataEnd(b.Builder)
 }
 
@@ -150,12 +151,16 @@ func Test_Compose(t *testing.T) {
 	apiv1.EntityCriteriaAddProjection(builder.Builder, projection)
 	// selection
 	apiv1.EntityCriteriaAddFields(builder.Builder, fields)
+	// Finish
+	criteriaOffset := apiv1.EntityCriteriaEnd(builder.Builder)
+	builder.Finish(criteriaOffset)
 	// Deserialize
-	apiv1.EntityCriteriaEnd(builder.Builder)
 	buf := builder.Bytes[builder.Head():]
 	criteria := apiv1.GetRootAsEntityCriteria(buf, 0)
 	assert.NotNil(t, criteria)
 	plan, err := logical.ComposeLogicalPlan(criteria)
 	assert.NoError(t, err)
 	assert.NotNil(t, plan)
+	fmt.Printf("%s", logical.FormatPlan(plan))
+	assert.Equal(t, logical.FormatPlan(plan), "")
 }

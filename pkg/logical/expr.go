@@ -40,6 +40,7 @@ var (
 func init() {
 	operatorFactory = map[apiv1.BinaryOp]BinaryOpFactory{
 		apiv1.BinaryOpEQ: Eq,
+		apiv1.BinaryOpGT: Gt,
 	}
 }
 
@@ -132,6 +133,15 @@ func Eq(l, r Expr) *BinaryExpr {
 	return &BinaryExpr{
 		name:  "eq",
 		op:    apiv1.BinaryOpEQ,
+		left:  l,
+		right: r,
+	}
+}
+
+func Gt(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "gt",
+		op:    apiv1.BinaryOpGT,
 		left:  l,
 		right: r,
 	}

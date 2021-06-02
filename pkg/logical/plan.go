@@ -126,3 +126,20 @@ func (s *Scan) Schema() (types.Schema, error) {
 func (s *Scan) Children() []Plan {
 	return []Plan{}
 }
+
+func FormatPlan(plan Plan) string {
+	return formatPlan(plan, 0)
+}
+
+func formatPlan(plan Plan, indent int) string {
+	result := ""
+	for i := 0; i < indent; i++ {
+		result += "\t"
+	}
+	result += plan.String() + "\n"
+	children := plan.Children()
+	for _, child := range children {
+		result += formatPlan(child, indent+1)
+	}
+	return result
+}
