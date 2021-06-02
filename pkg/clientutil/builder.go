@@ -107,6 +107,24 @@ func (b *criteriaBuilder) buildIntPair(key string, values ...int64) flatbuffers.
 	return apiv1.IntPairEnd(b.Builder)
 }
 
+func (b *criteriaBuilder) buildStrPair(key string, values ...string) flatbuffers.UOffsetT {
+	var strOffsets []flatbuffers.UOffsetT
+	for i := 0; i < len(values); i++ {
+		strOffsets = append(strOffsets, b.CreateString(values[i]))
+	}
+	apiv1.StrPairStartValuesVector(b.Builder, len(values))
+	for i := 0; i < len(strOffsets); i++ {
+		b.Builder.PrependUOffsetT(strOffsets[i])
+	}
+	int64Arr := b.Builder.EndVector(len(values))
+
+	keyOffset := b.CreateString(key)
+	apiv1.IntPairStart(b.Builder)
+	apiv1.IntPairAddKey(b.Builder, keyOffset)
+	apiv1.IntPairAddValues(b.Builder, int64Arr)
+	return apiv1.IntPairEnd(b.Builder)
+}
+
 func (b *criteriaBuilder) buildCondition(key string, value interface{}) flatbuffers.UOffsetT {
 	var pairOffset flatbuffers.UOffsetT
 	var pairType apiv1.TypedPair
@@ -126,6 +144,9 @@ func (b *criteriaBuilder) buildCondition(key string, value interface{}) flatbuff
 	case int64:
 		pairOffset = b.buildIntPair(key, v)
 		pairType = apiv1.TypedPairIntPair
+	case string:
+		pairOffset = b.buildStrPair(key, v)
+		pairType = apiv1.TypedPairStrPair
 	default:
 		panic("not supported values")
 	}

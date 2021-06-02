@@ -13,7 +13,6 @@ import (
 
 func Test_Compose(t *testing.T) {
 	builder := clientutil.NewCriteriaBuilder()
-	// Deserialize
 	criteria := builder.Build(
 		clientutil.AddLimit(20),
 		clientutil.AddOffset(0),
@@ -21,12 +20,12 @@ func Test_Compose(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-5*time.Hour), time.Now()),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 		builder.BuildProjection("traceID", "spanID"),
-		builder.BuildFields("duration", ">", 4000),
+		builder.BuildFields("duration", ">", 4000, "duration", "<", 10000, "serviceName", "=", "demo"),
 	)
 	assert.NotNil(t, criteria)
 	plan, err := logical.ComposeLogicalPlan(criteria)
 	assert.NoError(t, err)
 	assert.NotNil(t, plan)
 	fmt.Printf("%s", logical.FormatPlan(plan))
-	assert.Equal(t, logical.FormatPlan(plan), "")
+	assert.Equal(t, logical.FormatPlan(plan), "Projection: #spanID, #traceID\n\tSelection: #duration GT 4000\n\t\tScan: Metadata{group=group1, name=name1}; projection=None\n")
 }

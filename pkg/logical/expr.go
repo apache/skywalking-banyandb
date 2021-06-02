@@ -39,8 +39,14 @@ var (
 
 func init() {
 	operatorFactory = map[apiv1.BinaryOp]BinaryOpFactory{
-		apiv1.BinaryOpEQ: Eq,
-		apiv1.BinaryOpGT: Gt,
+		apiv1.BinaryOpEQ:         Eq,
+		apiv1.BinaryOpNE:         Ne,
+		apiv1.BinaryOpLT:         Lt,
+		apiv1.BinaryOpGT:         Gt,
+		apiv1.BinaryOpLE:         Le,
+		apiv1.BinaryOpGE:         Ge,
+		apiv1.BinaryOpHAVING:     Having,
+		apiv1.BinaryOpNOT_HAVING: NotHaving,
 	}
 }
 
@@ -138,10 +144,64 @@ func Eq(l, r Expr) *BinaryExpr {
 	}
 }
 
+func Ne(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "ne",
+		op:    apiv1.BinaryOpNE,
+		left:  l,
+		right: r,
+	}
+}
+
 func Gt(l, r Expr) *BinaryExpr {
 	return &BinaryExpr{
 		name:  "gt",
 		op:    apiv1.BinaryOpGT,
+		left:  l,
+		right: r,
+	}
+}
+
+func Lt(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "lt",
+		op:    apiv1.BinaryOpLT,
+		left:  l,
+		right: r,
+	}
+}
+
+func Ge(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "ge",
+		op:    apiv1.BinaryOpGE,
+		left:  l,
+		right: r,
+	}
+}
+
+func Le(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "le",
+		op:    apiv1.BinaryOpLE,
+		left:  l,
+		right: r,
+	}
+}
+
+func Having(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "having",
+		op:    apiv1.BinaryOpHAVING,
+		left:  l,
+		right: r,
+	}
+}
+
+func NotHaving(l, r Expr) *BinaryExpr {
+	return &BinaryExpr{
+		name:  "not having",
+		op:    apiv1.BinaryOpHAVING,
 		left:  l,
 		right: r,
 	}
