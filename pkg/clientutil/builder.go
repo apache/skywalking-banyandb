@@ -1,6 +1,7 @@
 package clientutil
 
 import (
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -132,20 +133,38 @@ func (b *criteriaBuilder) buildCondition(key string, value interface{}) flatbuff
 	case int:
 		pairOffset = b.buildIntPair(key, int64(v))
 		pairType = apiv1.TypedPairIntPair
+	case []int:
+		pairOffset = b.buildIntPair(key, convert.IntToInt64(v...)...)
+		pairType = apiv1.TypedPairIntPair
 	case int8:
 		pairOffset = b.buildIntPair(key, int64(v))
+		pairType = apiv1.TypedPairIntPair
+	case []int8:
+		pairOffset = b.buildIntPair(key, convert.Int8ToInt64(v...)...)
 		pairType = apiv1.TypedPairIntPair
 	case int16:
 		pairOffset = b.buildIntPair(key, int64(v))
 		pairType = apiv1.TypedPairIntPair
+	case []int16:
+		pairOffset = b.buildIntPair(key, convert.Int16ToInt64(v...)...)
+		pairType = apiv1.TypedPairIntPair
 	case int32:
 		pairOffset = b.buildIntPair(key, int64(v))
+		pairType = apiv1.TypedPairIntPair
+	case []int32:
+		pairOffset = b.buildIntPair(key, convert.Int32ToInt64(v...)...)
 		pairType = apiv1.TypedPairIntPair
 	case int64:
 		pairOffset = b.buildIntPair(key, v)
 		pairType = apiv1.TypedPairIntPair
+	case []int64:
+		pairOffset = b.buildIntPair(key, v...)
+		pairType = apiv1.TypedPairIntPair
 	case string:
 		pairOffset = b.buildStrPair(key, v)
+		pairType = apiv1.TypedPairStrPair
+	case []string:
+		pairOffset = b.buildStrPair(key, v...)
 		pairType = apiv1.TypedPairStrPair
 	default:
 		panic("not supported values")

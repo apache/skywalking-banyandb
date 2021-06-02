@@ -20,7 +20,13 @@ func Test_Compose(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-5*time.Hour), time.Now()),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 		builder.BuildProjection("traceID", "spanID"),
-		builder.BuildFields("duration", ">", 4000, "duration", "<", 10000, "serviceName", "=", "demo"),
+		builder.BuildFields(
+			"duration", ">=", 4000,
+			"duration", "<", 10000,
+			"serviceName", "=", "demo",
+			"serviceInstanceID", "!=", "pod-xxxxx",
+			"keys", "having", []string{"key1", "key2"},
+		),
 	)
 	assert.NotNil(t, criteria)
 	plan, err := logical.ComposeLogicalPlan(criteria)
