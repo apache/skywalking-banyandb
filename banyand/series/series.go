@@ -15,20 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package query
+//go:generate mockgen -destination=./series_mock.go -package=series . UniModel
+package series
 
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Executor interface {
+type Trace interface {
+	FetchTrace(traceID string) (data.Trace, error)
+	FetchEntity(chunkIDs []string, fields []string) ([]data.Entity, error)
+	ScanEntity(startTime, endTime uint64, fields []string) ([]data.Entity, error)
+}
+
+type UniModel interface {
+	Trace
+}
+
+type Service interface {
+	UniModel
 	run.PreRunner
 }
 
-func NewExecutor(ctx context.Context, idx index.Repo, s series.UniModel) (Executor, error) {
+func NewService(ctx context.Context, db storage.Database) (Service, error) {
 	return nil, nil
 }
