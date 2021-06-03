@@ -39,6 +39,19 @@ func NewSelection(input Plan, exprs ...Expr) Plan {
 	}
 }
 
+func (s *Selection) Validate(opts *validationOpts) (bool, error) {
+	if ok, err := s.input.Validate(opts); !ok {
+		return false, err
+	}
+	parentSchema, _ := s.input.Schema()
+	for _, expr := range s.exprs {
+		if ok, err := expr.Validate(parentSchema, opts); !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func (s *Selection) String() string {
 	var exprStrs []string
 	for _, expr := range s.exprs {
@@ -60,6 +73,19 @@ var _ Plan = (*Projection)(nil)
 type Projection struct {
 	input Plan
 	exprs []Expr
+}
+
+func (p *Projection) Validate(opts *validationOpts) (bool, error) {
+	if ok, err := p.input.Validate(opts); !ok {
+		return false, err
+	}
+	parentSchema, _ := p.input.Schema()
+	for _, expr := range p.exprs {
+		if ok, err := expr.Validate(parentSchema, opts); !ok {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func NewProjection(input Plan, exprs ...Expr) Plan {
@@ -100,6 +126,10 @@ type Scan struct {
 	startTime  uint64
 	endTime    uint64
 	projection []string
+}
+
+func (s *Scan) Validate(opts *validationOpts) (bool, error) {
+	panic("implement me")
 }
 
 func NewScan(metadata *apiv1.Metadata, startTime, endTime uint64) Plan {
@@ -145,6 +175,10 @@ func NewOffsetAndLimit(input Plan, offset, limit uint32) Plan {
 	}
 }
 
+func (o *OffsetAndLimit) Validate(opts *validationOpts) (bool, error) {
+	return o.input.Validate(opts)
+}
+
 func (o *OffsetAndLimit) String() string {
 	return fmt.Sprintf("Pagination: offset=%d; limit=%d", o.offset, o.limit)
 }
@@ -163,6 +197,10 @@ type Sort struct {
 	input     Plan
 	fieldName string
 	order     apiv1.Sort
+}
+
+func (o *Sort) Validate(opts *validationOpts) (bool, error) {
+	return o.input.Validate(opts)
 }
 
 func NewSort(input Plan, fieldName string, order apiv1.Sort) Plan {

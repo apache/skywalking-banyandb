@@ -30,14 +30,19 @@ const (
 	Binary
 )
 
+type validationOpts struct {
+}
+
 //go:generate mockery --name Plan --output ../internal/mocks
 type Plan interface {
 	fmt.Stringer
 	Schema() (types.Schema, error)
 	Children() []Plan
+	Validate(*validationOpts) (bool, error)
 }
 
 type Expr interface {
 	fmt.Stringer
 	ToField(plan Plan) (types.Field, error)
+	Validate(types.Schema, *validationOpts) (bool, error)
 }
