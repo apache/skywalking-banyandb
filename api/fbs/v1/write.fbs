@@ -27,13 +27,17 @@ table Int {
     value: int64;
 }
 
-union FieldValue {
+union ValueType {
     String,
     Int
 }
 
+table FieldValue {
+    value: ValueType;
+}
+
 table Field {
-    value: FieldValue;
+    value: [FieldValue];
 }
 
 table entityValue {
@@ -46,6 +50,9 @@ table entityValue {
     // binary representation of segments, including tags, spans...
     data_binary: [ubyte];
     // support all of indexed fields in the fields.
+    // Field only has value, as the value of FieldValue match with the key
+    // by the index rules and index rule bindings of Metadata group.
+    // indexed fields of multiple entities are compression in the fields.
     fields: [Field];
 }
 
