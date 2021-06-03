@@ -177,6 +177,7 @@ func IntPairStartValuesVector(builder *flatbuffers.Builder, numElems int) flatbu
 func IntPairEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type StrPair struct {
 	_tab flatbuffers.Table
 }
@@ -244,6 +245,7 @@ func StrPairStartValuesVector(builder *flatbuffers.Builder, numElems int) flatbu
 func StrPairEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Pair struct {
 	_tab flatbuffers.Table
 }
@@ -304,6 +306,7 @@ func PairAddPair(builder *flatbuffers.Builder, pair flatbuffers.UOffsetT) {
 func PairEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type PairQuery struct {
 	_tab flatbuffers.Table
 }
@@ -368,6 +371,7 @@ func PairQueryAddCondition(builder *flatbuffers.Builder, condition flatbuffers.U
 func PairQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type QueryOrder struct {
 	_tab flatbuffers.Table
 }
@@ -427,6 +431,7 @@ func QueryOrderAddSort(builder *flatbuffers.Builder, sort Sort) {
 func QueryOrderEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Entity struct {
 	_tab flatbuffers.Table
 }
@@ -552,6 +557,7 @@ func EntityStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuf
 func EntityEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type TracesResponse struct {
 	_tab flatbuffers.Table
 }
@@ -611,6 +617,7 @@ func TracesResponseStartEntitiesVector(builder *flatbuffers.Builder, numElems in
 func TracesResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Projection struct {
 	_tab flatbuffers.Table
 }
@@ -667,6 +674,7 @@ func ProjectionStartKeyNamesVector(builder *flatbuffers.Builder, numElems int) f
 func ProjectionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type RangeQuery struct {
 	_tab flatbuffers.Table
 }
@@ -730,6 +738,7 @@ func RangeQueryAddEnd(builder *flatbuffers.Builder, end uint64) {
 func RangeQueryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type EntityCriteria struct {
 	_tab flatbuffers.Table
 }

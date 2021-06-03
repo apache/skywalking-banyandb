@@ -117,6 +117,7 @@ func NodeAddCreateTime(builder *flatbuffers.Builder, createTime int64) {
 func NodeEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Shard struct {
 	_tab flatbuffers.Table
 }
@@ -211,6 +212,7 @@ func ShardAddCreateTime(builder *flatbuffers.Builder, createTime int64) {
 func ShardEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ShardEvent struct {
 	_tab flatbuffers.Table
 }
@@ -290,6 +292,7 @@ func ShardEventAddTime(builder *flatbuffers.Builder, time int64) {
 func ShardEventEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Metadata struct {
 	_tab flatbuffers.Table
 }

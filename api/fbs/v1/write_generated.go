@@ -79,6 +79,7 @@ func StringAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
 func StringEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Int struct {
 	_tab flatbuffers.Table
 }
@@ -127,6 +128,7 @@ func IntAddValue(builder *flatbuffers.Builder, value int64) {
 func IntEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type Field struct {
 	_tab flatbuffers.Table
 }
@@ -187,6 +189,7 @@ func FieldAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
 func FieldEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type entityValue struct {
 	_tab flatbuffers.Table
 }
@@ -312,6 +315,7 @@ func entityValueStartFieldsVector(builder *flatbuffers.Builder, numElems int) fl
 func entityValueEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type WriteEntity struct {
 	_tab flatbuffers.Table
 }
@@ -377,6 +381,7 @@ func WriteEntityAddEntity(builder *flatbuffers.Builder, entity flatbuffers.UOffs
 func WriteEntityEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type WriteResponse struct {
 	_tab flatbuffers.Table
 }
