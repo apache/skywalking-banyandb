@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-namespace v1;
+package common
 
-table Trace {
-    
-}
+type ChunkID uint64

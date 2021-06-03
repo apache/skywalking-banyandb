@@ -30,11 +30,13 @@ func TestBus_PubAndSub(t *testing.T) {
 		topic      Topic
 		messageIDS []MessageID
 		wantErr    bool
+		wantRet    []MessageID
 	}
 	type listener struct {
 		wantTopic    Topic
 		wantMessages []MessageID
 		wantErr      bool
+		ret          []MessageID
 	}
 	tests := []struct {
 		name      string
@@ -45,14 +47,16 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "golden path",
 			messages: []message{
 				{
-					topic:      Topic("default"),
+					topic:      BiTopic("default"),
 					messageIDS: []MessageID{12, 33},
+					wantRet:    []MessageID{22, 43},
 				},
 			},
 			listeners: []listener{
 				{
-					wantTopic:    Topic("default"),
+					wantTopic:    BiTopic("default"),
 					wantMessages: []MessageID{12, 33},
+					ret:          []MessageID{22, 43},
 				},
 			},
 		},
@@ -60,21 +64,21 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "two topics",
 			messages: []message{
 				{
-					topic:      Topic("t1"),
+					topic:      UniTopic("t1"),
 					messageIDS: []MessageID{12, 33},
 				},
 				{
-					topic:      Topic("t2"),
+					topic:      UniTopic("t2"),
 					messageIDS: []MessageID{101, 102},
 				},
 			},
 			listeners: []listener{
 				{
-					wantTopic:    Topic("t1"),
+					wantTopic:    UniTopic("t1"),
 					wantMessages: []MessageID{12, 33},
 				},
 				{
-					wantTopic:    Topic("t2"),
+					wantTopic:    UniTopic("t2"),
 					wantMessages: []MessageID{101, 102},
 				},
 			},
@@ -83,29 +87,29 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "two topics with two listeners",
 			messages: []message{
 				{
-					topic:      Topic("t1"),
+					topic:      UniTopic("t1"),
 					messageIDS: []MessageID{12, 33},
 				},
 				{
-					topic:      Topic("t2"),
+					topic:      UniTopic("t2"),
 					messageIDS: []MessageID{101, 102},
 				},
 			},
 			listeners: []listener{
 				{
-					wantTopic:    Topic("t1"),
+					wantTopic:    UniTopic("t1"),
 					wantMessages: []MessageID{12, 33},
 				},
 				{
-					wantTopic:    Topic("t1"),
+					wantTopic:    UniTopic("t1"),
 					wantMessages: []MessageID{12, 33},
 				},
 				{
-					wantTopic:    Topic("t2"),
+					wantTopic:    UniTopic("t2"),
 					wantMessages: []MessageID{101, 102},
 				},
 				{
-					wantTopic:    Topic("t2"),
+					wantTopic:    UniTopic("t2"),
 					wantMessages: []MessageID{101, 102},
 				},
 			},
@@ -114,7 +118,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "publish invalid topic",
 			messages: []message{
 				{
-					topic:      Topic(""),
+					topic:      UniTopic(""),
 					messageIDS: []MessageID{12, 33},
 					wantErr:    true,
 				},
@@ -124,13 +128,13 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "publish empty message",
 			messages: []message{
 				{
-					topic:      Topic("default"),
+					topic:      UniTopic("default"),
 					messageIDS: []MessageID{},
 				},
 			},
 			listeners: []listener{
 				{
-					wantTopic:    Topic("default"),
+					wantTopic:    UniTopic("default"),
 					wantMessages: []MessageID{},
 				},
 			},
@@ -139,7 +143,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			name: "subscribe invalid topic",
 			listeners: []listener{
 				{
-					wantTopic: Topic(""),
+					wantTopic: UniTopic(""),
 					wantErr:   true,
 				},
 			},
@@ -151,27 +155,56 @@ func TestBus_PubAndSub(t *testing.T) {
 			wg := sync.WaitGroup{}
 			mll := make([]*mockListener, 0)
 			for _, l := range tt.listeners {
-				ml := &mockListener{wg: &wg}
+				var ret chan Message
+				if len(l.ret) > 0 {
+					ret = make(chan Message, len(l.ret))
+					for _, id := range l.ret {
+						ret <- NewMessage(id, nil)
+					}
+				}
+				ml := &mockListener{wg: &wg, ret: ret}
 				mll = append(mll, ml)
 				wg.Add(len(l.wantMessages))
 				if err := e.Subscribe(l.wantTopic, ml); (err != nil) != l.wantErr {
 					t.Errorf("Subscribe() error = %v, wantErr %v", err, l.wantErr)
 				}
 			}
-			for _, m := range tt.messages {
-				mm := make([]Message, 0)
-				for _, id := range m.messageIDS {
-					mm = append(mm, NewMessage(id, nil))
+			go func() {
+				for _, m := range tt.messages {
+					mm := make([]Message, 0)
+					for _, id := range m.messageIDS {
+						mm = append(mm, NewMessage(id, nil))
+					}
+					f, err := e.Publish(m.topic, mm...)
+					if (err != nil) != m.wantErr {
+						t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
+						continue
+					}
+					if f == nil {
+						continue
+					}
+					ret, errRet := f.GetAll()
+					if errRet == ErrEmptyFuture {
+						continue
+					} else if errRet != nil {
+						t.Errorf("Publish()'s return message error = %v", err)
+					}
+					ids := make([]MessageID, 0, len(ret))
+					for i := range ret {
+						ids = append(ids, ret[i].ID())
+					}
+					ids = sortMessage(ids)
+					if !reflect.DeepEqual(ids, m.wantRet) {
+						t.Errorf("Publish()'s return = %v, want %v", ret, m.wantRet)
+					}
+					for i := 0; i < len(ret); i++ {
+						wg.Done()
+					}
 				}
-				err := e.Publish(m.topic, mm...)
-				if (err != nil) != m.wantErr {
-					t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
-				}
-			}
+			}()
 			if waitTimeout(&wg, 10*time.Second) {
 				t.Error("message receiving is time out")
 			}
-			wg.Wait()
 			for i, l := range tt.listeners {
 				if len(mll[i].queue) > 0 && len(l.wantMessages) > 0 &&
 					!reflect.DeepEqual(mll[i].queue, l.wantMessages) {
@@ -202,18 +235,31 @@ type mockListener struct {
 	queue   []MessageID
 	wg      *sync.WaitGroup
 	closeWg *sync.WaitGroup
+	ret     chan Message
 }
 
-func (m *mockListener) Rev(message Message) {
+func (m *mockListener) Rev(message Message) Message {
 	m.queue = append(m.queue, message.id)
 	sort.SliceStable(m.queue, func(i, j int) bool {
 		return uint64(m.queue[i]) < uint64(m.queue[j])
 	})
+	if m.ret != nil {
+		r := <-m.ret
+		return r
+	}
 	m.wg.Done()
+	return Message{}
 }
 
 func (m *mockListener) Close() error {
 	m.queue = nil
 	m.closeWg.Done()
 	return nil
+}
+
+func sortMessage(ids []MessageID) []MessageID {
+	sort.SliceStable(ids, func(i, j int) bool {
+		return uint64(ids[i]) < uint64(ids[j])
+	})
+	return ids
 }
