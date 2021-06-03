@@ -20,6 +20,7 @@ package logical
 import (
 	"errors"
 	"fmt"
+	"go.uber.org/multierr"
 	"strconv"
 	"strings"
 
@@ -61,11 +62,21 @@ func NewFieldRef(keyName string) Expr {
 	return &FieldRef{fieldName: keyName}
 }
 
-func (ref FieldRef) String() string {
+// Validate whether the fieldName exist in the schema
+func (ref *FieldRef) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	for _, f := range schema.GetFields() {
+		if f.Name() == ref.fieldName {
+			return true, nil
+		}
+	}
+	return false, NoSuchField
+}
+
+func (ref *FieldRef) String() string {
 	return "#" + ref.fieldName
 }
 
-func (ref FieldRef) ToField(plan Plan) (types.Field, error) {
+func (ref *FieldRef) ToField(plan Plan) (types.Field, error) {
 	schema, err := plan.Schema()
 	if err != nil {
 		return nil, err
@@ -88,6 +99,10 @@ func Str(lit string) Expr {
 	return &StringLit{lit}
 }
 
+func (s *StringLit) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	return true, nil
+}
+
 func (s *StringLit) String() string {
 	return fmt.Sprintf("'%s'", s.literal)
 }
@@ -104,6 +119,10 @@ type StringsLit struct {
 
 func Strs(lit ...string) Expr {
 	return &StringsLit{lit}
+}
+
+func (s *StringsLit) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	return true, nil
 }
 
 func (s *StringsLit) String() string {
@@ -124,6 +143,10 @@ func Long(lit int64) Expr {
 	return &Int64Lit{lit}
 }
 
+func (i *Int64Lit) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	return true, nil
+}
+
 func (i *Int64Lit) String() string {
 	return strconv.FormatInt(i.literal, 10)
 }
@@ -140,6 +163,10 @@ type Int64sLit struct {
 
 func Longs(lit ...int64) Expr {
 	return &Int64sLit{lit}
+}
+
+func (i *Int64sLit) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	return true, nil
 }
 
 func (i *Int64sLit) String() string {
@@ -161,6 +188,20 @@ type BinaryExpr struct {
 	op    apiv1.BinaryOp
 	left  Expr
 	right Expr
+}
+
+func (b BinaryExpr) Validate(schema types.Schema, opts *validationOpts) (bool, error) {
+	// TODO: check left and right have same types
+	lok, lErr := b.left.Validate(schema, opts)
+	rok, rErr := b.right.Validate(schema, opts)
+	if !lok && !rok {
+		return false, multierr.Combine(lErr, rErr)
+	} else if !lok {
+		return false, lErr
+	} else if !rok {
+		return false, rErr
+	}
+	return true, nil
 }
 
 func (b BinaryExpr) String() string {
