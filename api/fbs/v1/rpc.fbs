@@ -20,8 +20,8 @@ include "write.fbs";
 
 namespace banyandb.v1;
 
-// Query is the RPC service exposed
-rpc_service Query {
+// Trace is the RPC service exposed
+rpc_service Trace {
     QueryTraces(EntityCriteria): TracesResponse;
     WriteTraces(WriteEntity): WriteResponse(streaming: "bidi");
 }

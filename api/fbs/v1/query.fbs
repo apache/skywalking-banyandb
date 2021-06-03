@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-include "common.fbs";
 include "database.fbs";
 
 namespace banyandb.v1;
@@ -66,9 +65,22 @@ table PairQuery {
     condition: Pair;
 }
 
+// Sort is either descending or ascending
+enum Sort : byte {
+    DESC,
+    ASC
+}
+
+// QueryOrder means a Sort operation to be done for a given field.
+// The key_name refers to the key of a Pair.
+table QueryOrder {
+    key_name: string;
+    sort: Sort;
+}
 // Entity represents 
 // (Trace context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
 // (Log context) a log
+
 table Entity {
     // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
@@ -97,6 +109,13 @@ table TracesResponse {
 table Projection {
     // The key_name refers to the key(s) of Pair(s).
     key_names: [string];
+}
+
+// RangeQuery is a range query for uint64,
+// the range here follows left-inclusive and right-exclusive rule, i.e. [begin, end) if both edges exist
+table RangeQuery {
+    begin: uint64;
+    end: uint64;
 }
 
 // EntityCriteria is the request contract for query.
