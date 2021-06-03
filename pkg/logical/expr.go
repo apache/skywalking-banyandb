@@ -111,7 +111,7 @@ func (s *StringsLit) String() string {
 }
 
 func (s *StringsLit) ToField(Plan) (types.Field, error) {
-	return types.NewField(strings.Join(s.literal, ","), types.STRING), nil
+	return types.NewField(strings.Join(s.literal, ","), types.ARRAY_STRING), nil
 }
 
 var _ Expr = (*Int64Lit)(nil)
@@ -130,6 +130,28 @@ func (i *Int64Lit) String() string {
 
 func (i *Int64Lit) ToField(Plan) (types.Field, error) {
 	return types.NewField(strconv.FormatInt(i.literal, 10), types.INT64), nil
+}
+
+var _ Expr = (*Int64sLit)(nil)
+
+type Int64sLit struct {
+	literal []int64
+}
+
+func Longs(lit ...int64) Expr {
+	return &Int64sLit{lit}
+}
+
+func (i *Int64sLit) String() string {
+	str := ""
+	for j := 0; j < len(i.literal); j++ {
+		str += strconv.FormatInt(i.literal[j], 10) + ","
+	}
+	return str
+}
+
+func (i *Int64sLit) ToField(Plan) (types.Field, error) {
+	return types.NewField(i.String(), types.ARRAY_INT64), nil
 }
 
 var _ Expr = (*BinaryExpr)(nil)
