@@ -15,20 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package query
+package common
 
-import (
-	"context"
-
-	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-)
-
-type Executor interface {
-	run.PreRunner
-}
-
-func NewExecutor(ctx context.Context, idx index.Repo, s series.UniModel) (Executor, error) {
-	return nil, nil
-}
+type ChunkID uint64

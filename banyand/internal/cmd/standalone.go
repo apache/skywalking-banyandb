@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -57,13 +58,17 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal("failed to initiate database", logger.Error(err))
 	}
-	idxBuilder, err := index.NewBuilder(ctx, repo, pipeline)
+	idx, err := index.NewService(ctx, repo, pipeline)
 	if err != nil {
 		l.Fatal("failed to initiate index builder", logger.Error(err))
 	}
-	composer, err := query.NewPlanComposer(ctx, repo)
+	s, err := series.NewService(ctx, db)
 	if err != nil {
-		l.Fatal("failed to initiate execution plan composer", logger.Error(err))
+		l.Fatal("failed to initiate series", logger.Error(err))
+	}
+	q, err := query.NewExecutor(ctx, idx, s)
+	if err != nil {
+		l.Fatal("failed to initiate query executor", logger.Error(err))
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline)
 	if err != nil {
@@ -75,8 +80,9 @@ func newStandaloneCmd() *cobra.Command {
 		new(signal.Handler),
 		repo,
 		db,
-		idxBuilder,
-		composer,
+		s,
+		idx,
+		q,
 		tcp,
 	)
 	logging := logger.Logging{}

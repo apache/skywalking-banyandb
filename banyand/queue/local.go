@@ -60,8 +60,8 @@ func (e *Local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
 	return nil
 }
 
-func (e *Local) Publish(topic bus.Topic, message ...bus.Message) error {
-	return nil
+func (e *Local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
+	return nil, nil
 }
 
 func (e *Local) FlagSet() *run.FlagSet {
