@@ -29,7 +29,7 @@ const (
 	ARRAY_INT64
 )
 
-//go:generate mockery --name Field --output ../internal/mocks
+//go:generate mockgen -destination=./field_mock.go -package=types . Field
 type Field interface {
 	Name() string
 	Type() FieldType

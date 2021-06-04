@@ -1,12 +1,12 @@
 package clientutil
 
 import (
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var binaryOpsMap = map[string]apiv1.BinaryOp{

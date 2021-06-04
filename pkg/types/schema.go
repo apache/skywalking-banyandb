@@ -47,7 +47,7 @@ func NewSchema(fields ...Field) Schema {
 	}
 }
 
-//go:generate mockery --name Schema --output ../internal/mocks
+//go:generate mockgen -destination=./schema_mock.go -package=types . Schema
 type Schema interface {
 	Select(names ...string) Schema
 	GetFields() []Field

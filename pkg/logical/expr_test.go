@@ -1,4 +1,3 @@
-//
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,14 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package logical_test
 
 import (
 	"testing"
 
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/internal/mocks"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 	"github.com/apache/skywalking-banyandb/pkg/types"
 )
@@ -33,11 +33,13 @@ func TestExpr_KeyRef_Stringer(t *testing.T) {
 }
 
 func TestExpr_KeyRef_ToField(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
 	keyRef := logical.NewFieldRef("duration")
-	plan := &mocks.Plan{}
-	schema := &mocks.Schema{}
-	plan.On("Schema").Return(schema, nil)
-	schema.On("GetFields").Return([]types.Field{
+	plan := logical.NewMockPlan(ctrl)
+	schema := types.NewMockSchema(ctrl)
+	plan.EXPECT().Schema().Return(schema, nil)
+	schema.EXPECT().GetFields().Return([]types.Field{
 		types.NewField("duration", types.INT64),
 		types.NewField("serviceName", types.STRING),
 		types.NewField("spanID", types.STRING),
@@ -48,11 +50,13 @@ func TestExpr_KeyRef_ToField(t *testing.T) {
 }
 
 func TestExpr_KeyRef_ToField_Failure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
 	keyRef := logical.NewFieldRef("traceID")
-	plan := &mocks.Plan{}
-	schema := &mocks.Schema{}
-	plan.On("Schema").Return(schema, nil)
-	schema.On("GetFields").Return([]types.Field{
+	plan := logical.NewMockPlan(ctrl)
+	schema := types.NewMockSchema(ctrl)
+	plan.EXPECT().Schema().Return(schema, nil)
+	schema.EXPECT().GetFields().Return([]types.Field{
 		types.NewField("duration", types.INT64),
 		types.NewField("serviceName", types.STRING),
 		types.NewField("spanID", types.STRING),

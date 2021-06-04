@@ -20,9 +20,10 @@ package logical
 import (
 	"errors"
 	"fmt"
-	"go.uber.org/multierr"
 	"strconv"
 	"strings"
+
+	"go.uber.org/multierr"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/types"

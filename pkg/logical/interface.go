@@ -33,7 +33,7 @@ const (
 type validationOpts struct {
 }
 
-//go:generate mockery --name Plan --output ../internal/mocks
+//go:generate mockgen -destination=./plan_mock.go -package=logical . Plan
 type Plan interface {
 	fmt.Stringer
 	Schema() (types.Schema, error)
@@ -41,6 +41,7 @@ type Plan interface {
 	Validate(*validationOpts) (bool, error)
 }
 
+//go:generate mockgen -destination=./expr_mock.go -package=logical . Expr
 type Expr interface {
 	fmt.Stringer
 	ToField(plan Plan) (types.Field, error)

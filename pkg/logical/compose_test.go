@@ -2,13 +2,14 @@ package logical_test
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/clientutil"
-	"github.com/apache/skywalking-banyandb/pkg/logical"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/clientutil"
+	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
 func Test_Compose(t *testing.T) {
