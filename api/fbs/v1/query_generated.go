@@ -558,34 +558,34 @@ func EntityEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type TracesResponse struct {
+type QueryResponse struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsTracesResponse(buf []byte, offset flatbuffers.UOffsetT) *TracesResponse {
+func GetRootAsQueryResponse(buf []byte, offset flatbuffers.UOffsetT) *QueryResponse {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &TracesResponse{}
+	x := &QueryResponse{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsTracesResponse(buf []byte, offset flatbuffers.UOffsetT) *TracesResponse {
+func GetSizePrefixedRootAsQueryResponse(buf []byte, offset flatbuffers.UOffsetT) *QueryResponse {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &TracesResponse{}
+	x := &QueryResponse{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *TracesResponse) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *QueryResponse) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *TracesResponse) Table() flatbuffers.Table {
+func (rcv *QueryResponse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *TracesResponse) Entities(obj *Entity, j int) bool {
+func (rcv *QueryResponse) Entities(obj *Entity, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -597,7 +597,7 @@ func (rcv *TracesResponse) Entities(obj *Entity, j int) bool {
 	return false
 }
 
-func (rcv *TracesResponse) EntitiesLength() int {
+func (rcv *QueryResponse) EntitiesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -605,16 +605,16 @@ func (rcv *TracesResponse) EntitiesLength() int {
 	return 0
 }
 
-func TracesResponseStart(builder *flatbuffers.Builder) {
+func QueryResponseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func TracesResponseAddEntities(builder *flatbuffers.Builder, entities flatbuffers.UOffsetT) {
+func QueryResponseAddEntities(builder *flatbuffers.Builder, entities flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entities), 0)
 }
-func TracesResponseStartEntitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func QueryResponseStartEntitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func TracesResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func QueryResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 

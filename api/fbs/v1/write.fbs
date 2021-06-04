@@ -1,0 +1,72 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+include "database.fbs";
+
+namespace banyandb.v1;
+
+table String {
+    value: string;
+}
+
+table Int {
+    value: int64;
+}
+
+table StringArray {
+    value: [string];
+}
+
+table IntArray {
+    value: [int64];
+}
+
+union ValueType {
+    String,
+    StringArray,
+    Int,
+    IntArray
+}
+
+table Field {
+    value: ValueType;
+}
+
+table entityValue {
+    // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
+    entity_id: string;
+    // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
+    // 1) either the start time of a Span/Segment,
+    // 2) or the timestamp of a log
+    timestamp_nanoseconds: uint64;
+    // binary representation of segments, including tags, spans...
+    data_binary: [ubyte];
+    // support all of indexed fields in the fields.
+    // Pair only has value, as the value of PairValue match with the key
+    // by the index rules and index rule bindings of Metadata group.
+    // indexed fields of multiple entities are compression in the fields.
+    fields: [Field];
+}
+
+table WriteEntity {
+    // the mate_data is only required in the first write.
+    meta_data: Metadata;
+    // the entity is required.
+    entity: entityValue;
+}
+
+table WriteResponse {}

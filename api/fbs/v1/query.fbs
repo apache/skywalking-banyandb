@@ -77,10 +77,10 @@ table QueryOrder {
     key_name: string;
     sort: Sort;
 }
-
 // Entity represents 
 // (Trace context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
 // (Log context) a log
+
 table Entity {
     // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
@@ -99,8 +99,8 @@ table Entity {
     fields: [Pair];
 }
 
-// TracesResponse is the response for a query to the Query module. 
-table TracesResponse {
+// QueryResponse is the response for a query to the Query module.
+table QueryResponse {
     // entities are the actual data returned
     entities: [Entity];
 }

@@ -16,10 +16,12 @@
 // under the License.
 
 include "query.fbs";
+include "write.fbs";
 
 namespace banyandb.v1;
 
-// Query is the RPC service exposed
-rpc_service Query {
-    QueryTraces(EntityCriteria):TracesResponse;
+// Trace is the RPC service exposed
+rpc_service Trace {
+    Query(EntityCriteria): QueryResponse;
+    Write(WriteEntity): WriteResponse(streaming: "bidi");
 }
