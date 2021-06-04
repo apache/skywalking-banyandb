@@ -27,9 +27,19 @@ table Int {
     value: int64;
 }
 
+table StringArray {
+    value: [string];
+}
+
+table IntArray {
+    value: [int64];
+}
+
 union ValueType {
     String,
-    Int
+    StringArray,
+    Int,
+    IntArray
 }
 
 table FieldValue {

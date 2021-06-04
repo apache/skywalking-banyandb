@@ -99,8 +99,8 @@ table Entity {
     fields: [Pair];
 }
 
-// TracesResponse is the response for a query to the Query module. 
-table TracesResponse {
+// QueryResponse is the response for a query to the Query module.
+table QueryResponse {
     // entities are the actual data returned
     entities: [Entity];
 }

@@ -22,6 +22,6 @@ namespace banyandb.v1;
 
 // Trace is the RPC service exposed
 rpc_service Trace {
-    QueryTraces(EntityCriteria): TracesResponse;
-    WriteTraces(WriteEntity): WriteResponse(streaming: "bidi");
+    Query(EntityCriteria): QueryResponse;
+    Write(WriteEntity): WriteResponse(streaming: "bidi");
 }
