@@ -50,16 +50,16 @@ table entityValue {
     // binary representation of segments, including tags, spans...
     data_binary: [ubyte];
     // support all of indexed fields in the fields.
-    // Field only has value, as the value of FieldValue match with the key
+    // Pair only has value, as the value of PairValue match with the key
     // by the index rules and index rule bindings of Metadata group.
     // indexed fields of multiple entities are compression in the fields.
     fields: [Field];
 }
 
 table WriteEntity {
-    // the mate_data is only required in the first query.
+    // the mate_data is only required in the first write.
     meta_data: Metadata;
-    // the entity is required except the first query.
+    // the entity is required.
     entity: entityValue;
 }
 
