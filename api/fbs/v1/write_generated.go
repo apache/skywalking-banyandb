@@ -258,67 +258,6 @@ func IntArrayEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type FieldValue struct {
-	_tab flatbuffers.Table
-}
-
-func GetRootAsFieldValue(buf []byte, offset flatbuffers.UOffsetT) *FieldValue {
-	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &FieldValue{}
-	x.Init(buf, n+offset)
-	return x
-}
-
-func GetSizePrefixedRootAsFieldValue(buf []byte, offset flatbuffers.UOffsetT) *FieldValue {
-	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &FieldValue{}
-	x.Init(buf, n+offset+flatbuffers.SizeUint32)
-	return x
-}
-
-func (rcv *FieldValue) Init(buf []byte, i flatbuffers.UOffsetT) {
-	rcv._tab.Bytes = buf
-	rcv._tab.Pos = i
-}
-
-func (rcv *FieldValue) Table() flatbuffers.Table {
-	return rcv._tab
-}
-
-func (rcv *FieldValue) ValueType() ValueType {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
-	if o != 0 {
-		return ValueType(rcv._tab.GetByte(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-func (rcv *FieldValue) MutateValueType(n ValueType) bool {
-	return rcv._tab.MutateByteSlot(4, byte(n))
-}
-
-func (rcv *FieldValue) Value(obj *flatbuffers.Table) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		rcv._tab.Union(obj, o)
-		return true
-	}
-	return false
-}
-
-func FieldValueStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
-}
-func FieldValueAddValueType(builder *flatbuffers.Builder, valueType ValueType) {
-	builder.PrependByteSlot(0, byte(valueType), 0)
-}
-func FieldValueAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(value), 0)
-}
-func FieldValueEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	return builder.EndObject()
-}
-
 type Field struct {
 	_tab flatbuffers.Table
 }
@@ -346,34 +285,35 @@ func (rcv *Field) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Field) Value(obj *FieldValue, j int) bool {
+func (rcv *Field) ValueType() ValueType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		obj.Init(rcv._tab.Bytes, x)
+		return ValueType(rcv._tab.GetByte(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *Field) MutateValueType(n ValueType) bool {
+	return rcv._tab.MutateByteSlot(4, byte(n))
+}
+
+func (rcv *Field) Value(obj *flatbuffers.Table) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		rcv._tab.Union(obj, o)
 		return true
 	}
 	return false
 }
 
-func (rcv *Field) ValueLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
 func FieldStart(builder *flatbuffers.Builder) {
-	builder.StartObject(1)
+	builder.StartObject(2)
+}
+func FieldAddValueType(builder *flatbuffers.Builder, valueType ValueType) {
+	builder.PrependByteSlot(0, byte(valueType), 0)
 }
 func FieldAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
-}
-func FieldStartValueVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(value), 0)
 }
 func FieldEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

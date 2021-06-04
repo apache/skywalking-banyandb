@@ -42,12 +42,8 @@ union ValueType {
     IntArray
 }
 
-table FieldValue {
-    value: ValueType;
-}
-
 table Field {
-    value: [FieldValue];
+    value: ValueType;
 }
 
 table entityValue {
