@@ -44,3 +44,7 @@ type Service interface {
 func NewService(ctx context.Context, db storage.Database) (Service, error) {
 	return nil, nil
 }
+
+// TODO: this interface should contains methods to access schema objects
+type SchemaRepo interface {
+}
