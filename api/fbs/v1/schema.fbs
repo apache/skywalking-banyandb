@@ -19,14 +19,20 @@ include "database.fbs";
 
 namespace banyandb.v1;
 
+enum DurationUint:byte { Hour = 0, Day = 1, Week = 2, Month = 3 }
+
+// Duration represents the elapsed time between two instants
+struct Duration {
+    val:uint;
+    unit:DurationUint;
+}
+
 // TraceSeries represents a trace storage object
 table TraceSeries {
     // metadata is the identity of a trace series
     metadata:Metadata;
     // duration determines how long a TraceSeries keeps its data
-    // unit    = "ns" | "ms" | "s" | "m" | "h" | "d" | "w" .
-    // duration: int_literal unit
-    duration:string;
+    duration:Duration;
     // updated_at indicates when the TraceSeries is updated
     updated_at:uint64;
 }

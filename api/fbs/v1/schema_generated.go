@@ -8,6 +8,36 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
+type DurationUint int8
+
+const (
+	DurationUintHour  DurationUint = 0
+	DurationUintDay   DurationUint = 1
+	DurationUintWeek  DurationUint = 2
+	DurationUintMonth DurationUint = 3
+)
+
+var EnumNamesDurationUint = map[DurationUint]string{
+	DurationUintHour:  "Hour",
+	DurationUintDay:   "Day",
+	DurationUintWeek:  "Week",
+	DurationUintMonth: "Month",
+}
+
+var EnumValuesDurationUint = map[string]DurationUint{
+	"Hour":  DurationUintHour,
+	"Day":   DurationUintDay,
+	"Week":  DurationUintWeek,
+	"Month": DurationUintMonth,
+}
+
+func (v DurationUint) String() string {
+	if s, ok := EnumNamesDurationUint[v]; ok {
+		return s
+	}
+	return "DurationUint(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
 type Catalog int8
 
 const (
@@ -62,6 +92,41 @@ func (v IndexType) String() string {
 	return "IndexType(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
+type Duration struct {
+	_tab flatbuffers.Struct
+}
+
+func (rcv *Duration) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *Duration) Table() flatbuffers.Table {
+	return rcv._tab.Table
+}
+
+func (rcv *Duration) Val() uint32 {
+	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(0))
+}
+func (rcv *Duration) MutateVal(n uint32) bool {
+	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(0), n)
+}
+
+func (rcv *Duration) Unit() DurationUint {
+	return DurationUint(rcv._tab.GetInt8(rcv._tab.Pos + flatbuffers.UOffsetT(4)))
+}
+func (rcv *Duration) MutateUnit(n DurationUint) bool {
+	return rcv._tab.MutateInt8(rcv._tab.Pos+flatbuffers.UOffsetT(4), int8(n))
+}
+
+func CreateDuration(builder *flatbuffers.Builder, val uint32, unit DurationUint) flatbuffers.UOffsetT {
+	builder.Prep(4, 8)
+	builder.Pad(3)
+	builder.PrependInt8(int8(unit))
+	builder.PrependUint32(val)
+	return builder.Offset()
+}
+
 type TraceSeries struct {
 	_tab flatbuffers.Table
 }
@@ -102,10 +167,15 @@ func (rcv *TraceSeries) Metadata(obj *Metadata) *Metadata {
 	return nil
 }
 
-func (rcv *TraceSeries) Duration() []byte {
+func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+		x := o + rcv._tab.Pos
+		if obj == nil {
+			obj = new(Duration)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
 	}
 	return nil
 }
@@ -129,7 +199,7 @@ func TraceSeriesAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.U
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metadata), 0)
 }
 func TraceSeriesAddDuration(builder *flatbuffers.Builder, duration flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(duration), 0)
+	builder.PrependStructSlot(1, flatbuffers.UOffsetT(duration), 0)
 }
 func TraceSeriesAddUpdatedAt(builder *flatbuffers.Builder, updatedAt uint64) {
 	builder.PrependUint64Slot(2, updatedAt, 0)
