@@ -1,0 +1,127 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+include "database.fbs";
+
+namespace banyandb.v1;
+
+enum DurationUint:byte { Hour = 0, Day = 1, Week = 2, Month = 3 }
+
+// Duration represents the elapsed time between two instants
+struct Duration {
+    val:uint;
+    unit:DurationUint;
+}
+
+// TraceSeries represents a trace storage object
+table TraceSeries {
+    // metadata is the identity of a trace series
+    metadata:Metadata;
+    // duration determines how long a TraceSeries keeps its data
+    duration:Duration;
+    // updated_at indicates when the TraceSeries is updated
+    updated_at:uint64;
+}
+
+// Catalog refers to a placement contains objects belonged to a particular data type
+enum Catalog:byte { Trace = 0, Log = 1, Metric = 2 }
+
+// IndexType determine the index structure under the hood
+enum IndexType:byte { Text = 0, Numerical = 1, ID = 2}
+
+// IndexObject defines who should be indexed.
+table IndexObject {
+    // fields are the combination that refers to an indexed object
+    // If the elements in fields are more than 1, the object will generate a multi-field index
+    // Caveat: All fields in a multi-field index MUST have an identical IndexTypee
+    fields:[string];
+    // type is the IndexType of this IndexObject.
+    type:IndexType;
+}
+
+// IndexRule defines how to generate indices based on IndexObject
+// IndexRule should bind to an IndexSubject through an IndexRuleBinding to generate proper indices.
+// Example: A trace entity wants to index fields: trace_id, service_name, endpoint_name, and latency.
+//          and service_name and endpoint_name would combine a multi-field index.
+// The index rule could be:
+// IndexRule {
+//     metadata: {
+//         name: sw_trace
+//         group: production
+//     }
+//     objects: [
+//        { 
+//            fields: [trace_id]
+//            type: ID
+//        },
+//        { 
+//            fields: [service_name, endpoint_name]
+//            type: Text
+//        },
+//        { 
+//            fields: latency]
+//            type: Numerical
+//        },
+//    ]
+//    update_at: .......
+// } 
+table IndexRule {
+    // metadata define the rule's identity
+    metadata:Metadata;
+    // objects refer to which fields should be indexed
+    objects:[IndexObject];
+    // updated_at indicates when the IndexRule is updated
+    updated_at:uint64;
+}
+
+// IndexSubject defines which subject(series) would generate indices
+// For example, if a TraceSeries's metadata is {name: sw_trace, group: production},
+//                in consequence, the IndexSubject is
+//                Index Subject {
+//                    catalog: Trace
+//                    series: {name: sw_trace, group: production}
+//                }
+table IndexSubject {
+    // catalog is where the subject/series belongs to
+    catalog:Catalog;
+    // series refers to a series in a particular catalog
+    series:Metadata;
+}
+
+
+// IndexRuleBinding is a bridge to connect an IndexRule to several IndexSubjects
+// This binding is valid between begin_at and expire_at, that provides flexible strategies
+// to control how to generate time series indices.
+table IndexRuleBinding {
+    // metadata is the identity of this binding
+    metadata:Metadata;
+    // rule_ref refers to the IndexRule
+    rule_ref:Metadata;
+    // subjects indicate which subjects will use such IndexRule to generate indices
+    subjects:[IndexSubject];
+    // begin_at is the timestamp, after which the binding will be active
+    begin_at:uint64;
+    // expire_at it the timestamp, after which the binding will be inactive
+    // expire_at must be larger than begin_at
+    expire_at:uint64;
+    // updated_at indicates when the IndexRuleBinding is updated
+    updated_at:uint64;
+}
+
+root_type TraceSeries;
+root_type IndexRule;
+root_type IndexRuleBinding;
