@@ -1,11 +1,9 @@
 package logical_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/hashicorp/terraform/dag"
 	"github.com/stretchr/testify/assert"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
@@ -27,7 +25,6 @@ func TestTableScan(t *testing.T) {
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
-	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
 }
 
 func TestIndexScan(t *testing.T) {
@@ -45,7 +42,23 @@ func TestIndexScan(t *testing.T) {
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
-	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
+}
+
+func TestMultiIndexesScan(t *testing.T) {
+	tester := assert.New(t)
+	builder := clientutil.NewCriteriaBuilder()
+	criteria := builder.Build(
+		clientutil.AddLimit(0),
+		clientutil.AddOffset(0),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000, "component", "=", "mysql"),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
+	)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
 }
 
 func TestTraceIDSearch(t *testing.T) {
@@ -63,5 +76,4 @@ func TestTraceIDSearch(t *testing.T) {
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
-	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
 }

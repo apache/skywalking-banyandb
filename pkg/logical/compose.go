@@ -43,6 +43,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 						keyName := string(unionIntPairQuery.Key())
 						if existingPairQueries, ok := keyQueryMap[keyName]; ok {
 							existingPairQueries = append(existingPairQueries, &f)
+							keyQueryMap[keyName] = existingPairQueries
 						} else {
 							keyQueryMap[keyName] = []*apiv1.PairQuery{&f}
 						}
