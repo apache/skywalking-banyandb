@@ -1,13 +1,15 @@
 package logical
 
 import (
+	"errors"
+
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/hashicorp/terraform/dag"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
+func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 	g := dag.AcyclicGraph{}
 
 	root := NewRoot()
@@ -25,9 +27,9 @@ func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
 		g.Add(tableScanOp)
 		g.Connect(dag.BasicEdge(root, tableScanOp))
 	} else {
+		keyQueryMap := make(map[string][]*apiv1.PairQuery)
 		for i := 0; i < entityCriteria.FieldsLength(); i++ {
 			// group PairQuery by keyName
-			keyQueryMap := make(map[string][]*apiv1.PairQuery)
 			var f apiv1.PairQuery
 			if ok := entityCriteria.Fields(&f, i); ok {
 				condition := f.Condition(nil)
@@ -49,6 +51,17 @@ func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
 						unionStrPairQuery.Init(unionPair.Bytes, unionPair.Pos)
 
 						keyName := string(unionStrPairQuery.Key())
+
+						if keyName == "traceID" {
+							if f.Op() != apiv1.BinaryOpEQ {
+								return nil, errors.New("only `=` operator is supported for traceID")
+							}
+							traceIDFetchOp := NewTraceIDFetch(metadata, projection, string(unionStrPairQuery.Values(0)))
+							seriesOps = append(seriesOps, traceIDFetchOp)
+							g.Add(traceIDFetchOp)
+							g.Connect(dag.BasicEdge(root, traceIDFetchOp))
+							continue
+						}
 						if existingPairQueries, ok := keyQueryMap[keyName]; ok {
 							existingPairQueries = append(existingPairQueries, &f)
 						} else {
@@ -62,9 +75,6 @@ func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
 
 			// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
 			for k, v := range keyQueryMap {
-				if k == "traceID" {
-					panic("traceID not supported")
-				}
 				idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
 				g.Add(idxScanOp)
 				idxOps = append(idxOps, idxScanOp)
@@ -102,5 +112,5 @@ func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
 
 	return &Plan{
 		AcyclicGraph: g,
-	}
+	}, nil
 }

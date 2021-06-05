@@ -19,7 +19,8 @@ func TestTableScan(t *testing.T) {
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 	)
-	plan := logical.Compose(criteria)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
 }
@@ -34,7 +35,8 @@ func TestIndexScan(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000),
 	)
-	plan := logical.Compose(criteria)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
 }
@@ -49,7 +51,8 @@ func TestTraceIDSearch(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("traceID", "=", "aaaaaaaa"),
 	)
-	plan := logical.Compose(criteria)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
 }

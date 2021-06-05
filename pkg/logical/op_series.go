@@ -61,8 +61,27 @@ func NewChunkIDsFetch(metadata *apiv1.Metadata, projection *apiv1.Projection) Se
 	}
 }
 
-// indexScan defines parameters
+var _ SeriesOp = (*traceIDFetch)(nil)
+
+// traceIDFetch defines parameters for fetching TraceID directly
 type traceIDFetch struct {
-	metadata *apiv1.Metadata
-	traceID  string
+	metadata   *apiv1.Metadata
+	traceID    string
+	projection *apiv1.Projection
+}
+
+func (t *traceIDFetch) Name() string {
+	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata+%v,projection=%v}", t.traceID, t.metadata, t.projection)
+}
+
+func (t *traceIDFetch) OpType() string {
+	return TableTraceIDFetch
+}
+
+func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, traceID string) SeriesOp {
+	return &traceIDFetch{
+		metadata:   metadata,
+		traceID:    traceID,
+		projection: projection,
+	}
 }

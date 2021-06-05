@@ -8,6 +8,7 @@ const (
 	Root               = "root"
 	TableScan          = "tableScan"
 	TableChunkIDsFetch = "tableChunkIDsFetch"
+	TableTraceIDFetch  = "tableTraceIDFetch"
 	IndexScan          = "indexScan"
 	SortedMerge        = "sortedMerge"
 	Pagination         = "pagination"
