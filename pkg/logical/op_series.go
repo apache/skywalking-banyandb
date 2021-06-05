@@ -25,10 +25,11 @@ func NewTableScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, project
 }
 
 func (t *tableScan) Name() string {
-	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata=%v,projection=%v}",
+	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=%v}",
 		t.timeRange.Begin(),
 		t.timeRange.End(),
-		t.metadata,
+		t.metadata.Group(),
+		t.metadata.Name(),
 		t.projection)
 }
 
@@ -47,7 +48,7 @@ type chunkIDsFetch struct {
 }
 
 func (c *chunkIDsFetch) Name() string {
-	return fmt.Sprintf("ChunkIDsFetch{metadata=%v}", c.metadata)
+	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s}}", c.metadata.Group(), c.metadata.Name())
 }
 
 func (c *chunkIDsFetch) OpType() string {
@@ -71,7 +72,8 @@ type traceIDFetch struct {
 }
 
 func (t *traceIDFetch) Name() string {
-	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata+%v,projection=%v}", t.traceID, t.metadata, t.projection)
+	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata={group=%s,name=%s},projection=%v}",
+		t.traceID, t.metadata.Group(), t.metadata.Name(), t.projection)
 }
 
 func (t *traceIDFetch) OpType() string {

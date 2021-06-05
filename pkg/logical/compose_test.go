@@ -1,11 +1,14 @@
 package logical_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform/dag"
 	"github.com/stretchr/testify/assert"
 
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/clientutil"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
@@ -18,11 +21,13 @@ func TestTableScan(t *testing.T) {
 		clientutil.AddOffset(0),
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
 	plan, err := logical.Compose(criteria)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
+	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
 }
 
 func TestIndexScan(t *testing.T) {
@@ -34,11 +39,13 @@ func TestIndexScan(t *testing.T) {
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
 	plan, err := logical.Compose(criteria)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
+	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
 }
 
 func TestTraceIDSearch(t *testing.T) {
@@ -50,9 +57,11 @@ func TestTraceIDSearch(t *testing.T) {
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("traceID", "=", "aaaaaaaa"),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
 	plan, err := logical.Compose(criteria)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
+	fmt.Println(string(plan.Dot(&dag.DotOpts{})))
 }

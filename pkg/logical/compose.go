@@ -70,17 +70,19 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 					}
 				}
 			}
+		}
 
-			var idxOps []IndexOp
+		var idxOps []IndexOp
 
-			// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
-			for k, v := range keyQueryMap {
-				idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
-				g.Add(idxScanOp)
-				idxOps = append(idxOps, idxScanOp)
-				g.Connect(dag.BasicEdge(root, idxScanOp))
-			}
+		// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
+		for k, v := range keyQueryMap {
+			idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
+			g.Add(idxScanOp)
+			idxOps = append(idxOps, idxScanOp)
+			g.Connect(dag.BasicEdge(root, idxScanOp))
+		}
 
+		if len(idxOps) > 0 {
 			// Merge all ChunkIDs
 			chunkIdsMergeOp := NewChunkIDsMerge()
 			g.Add(chunkIdsMergeOp)

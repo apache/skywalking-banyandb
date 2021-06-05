@@ -18,7 +18,8 @@ type indexScan struct {
 }
 
 func (is *indexScan) Name() string {
-	return fmt.Sprintf("IndexScan{begin=%d,end=%d,keyName=%s,conditions=%v}", is.timeRange.Begin(), is.timeRange.End(), is.keyName, is.pairQueries)
+	return fmt.Sprintf("IndexScan{begin=%d,end=%d,keyName=%s,conditions=%v,metadata={group=%s,name=%s}}",
+		is.timeRange.Begin(), is.timeRange.End(), is.keyName, is.pairQueries, is.metadata.Group(), is.metadata.Name())
 }
 
 func (is *indexScan) OpType() string {
