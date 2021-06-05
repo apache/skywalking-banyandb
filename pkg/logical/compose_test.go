@@ -1,6 +1,7 @@
 package logical_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ func TestIndexScan(t *testing.T) {
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
+	fmt.Println(plan.Plot())
 }
 
 func TestMultiIndexesScan(t *testing.T) {
@@ -59,6 +61,7 @@ func TestMultiIndexesScan(t *testing.T) {
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
+	fmt.Println(plan.Plot())
 }
 
 func TestTraceIDSearch(t *testing.T) {
