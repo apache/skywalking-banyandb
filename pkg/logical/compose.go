@@ -14,7 +14,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
 	g.Add(root)
 
 	rangeQuery := entityCriteria.TimestampNanoseconds(nil)
-	metadata := entityCriteria.Metatdata(nil)
+	metadata := entityCriteria.Metadata(nil)
 	projection := entityCriteria.Projection(nil)
 
 	var seriesOps []SeriesOp

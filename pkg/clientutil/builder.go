@@ -51,7 +51,7 @@ func (b *criteriaBuilder) BuildMetaData(group, name string) ComponentBuilderFunc
 	apiv1.MetadataAddName(b.Builder, n)
 	metadata := apiv1.MetadataEnd(b.Builder)
 	return func(b *flatbuffers.Builder) {
-		apiv1.EntityCriteriaAddMetatdata(b, metadata)
+		apiv1.EntityCriteriaAddMetadata(b, metadata)
 	}
 }
 
