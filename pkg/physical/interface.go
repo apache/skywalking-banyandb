@@ -1,29 +1,22 @@
 package physical
 
 import (
-	"github.com/hashicorp/terraform/dag"
-
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/types"
 )
 
-type Op interface {
-	dag.NamedVertex
-	OpType() string
-	CreateTransform() Transform
+type ExecutionContext interface {
+	Series(apiv1.Metadata) interface{}
+	Index(apiv1.Metadata) interface{}
+	Schema(apiv1.Metadata) (interface{}, error)
 }
 
-type SourceOp interface {
-	Op
-}
-
-type Continuation interface {
-	Proceed()
-}
+type Operation func(ExecutionContext, Data) (Data, error)
 
 // Transform is a vertex for a stateful transformation
 // it can be created from Op
 type Transform interface {
-	Apply(Continuation) (Data, error)
+	Run(ctx ExecutionContext, _ Data) (Data, error)
 }
 
 type Data interface {

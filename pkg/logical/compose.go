@@ -1,89 +1,106 @@
 package logical
 
 import (
-	"errors"
-
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/hashicorp/terraform/dag"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-var (
-	InvalidPairType = errors.New("invalid pair type")
-)
+func Compose(entityCriteria *apiv1.EntityCriteria) *Plan {
+	g := dag.AcyclicGraph{}
 
-func ComposeLogicalPlan(criteria *apiv1.EntityCriteria) (Plan, error) {
-	metadata := criteria.Metatdata(nil)
-	timeRange := criteria.TimestampNanoseconds(nil)
-	begin, end := timeRange.Begin(), timeRange.End()
-	scan := NewScan(metadata, begin, end)
+	root := NewRoot()
+	g.Add(root)
 
-	var filterExprs []Expr
-	for i := 0; i < criteria.FieldsLength(); i++ {
-		var pairQuery apiv1.PairQuery
-		if ok := criteria.Fields(&pairQuery, i); ok {
-			condition := pairQuery.Condition(nil)
-			unionTable := new(flatbuffers.Table)
+	rangeQuery := entityCriteria.TimestampNanoseconds(nil)
+	metadata := entityCriteria.Metatdata(nil)
+	projection := entityCriteria.Projection(nil)
 
-			if condition.Pair(unionTable) {
-				pairType := condition.PairType()
-				if pairType == apiv1.TypedPairIntPair {
-					unionIntPair := new(apiv1.IntPair)
-					unionIntPair.Init(unionTable.Bytes, unionTable.Pos)
-					key := string(unionIntPair.Key())
-					if unionIntPair.ValuesLength() > 1 {
-						var values []int64
-						for i := 0; i < unionIntPair.ValuesLength(); i++ {
-							values = append(values, unionIntPair.Values(i))
+	var seriesOps []SeriesOp
+
+	if entityCriteria.FieldsLength() == 0 {
+		tableScanOp := NewTableScan(metadata, rangeQuery, projection)
+		seriesOps = append(seriesOps, tableScanOp)
+		g.Add(tableScanOp)
+		g.Connect(dag.BasicEdge(root, tableScanOp))
+	} else {
+		for i := 0; i < entityCriteria.FieldsLength(); i++ {
+			// group PairQuery by keyName
+			keyQueryMap := make(map[string][]*apiv1.PairQuery)
+			var f apiv1.PairQuery
+			if ok := entityCriteria.Fields(&f, i); ok {
+				condition := f.Condition(nil)
+				unionPair := new(flatbuffers.Table)
+				if condition.Pair(unionPair) {
+					pairType := condition.PairType()
+					if pairType == apiv1.TypedPairIntPair {
+						unionIntPairQuery := new(apiv1.IntPair)
+						unionIntPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+
+						keyName := string(unionIntPairQuery.Key())
+						if existingPairQueries, ok := keyQueryMap[keyName]; ok {
+							existingPairQueries = append(existingPairQueries, &f)
+						} else {
+							keyQueryMap[keyName] = []*apiv1.PairQuery{&f}
 						}
-						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Longs(values...))
-						filterExprs = append(filterExprs, f)
-					} else {
-						value := unionIntPair.Values(0)
-						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Long(value))
-						filterExprs = append(filterExprs, f)
-					}
-				} else if pairType == apiv1.TypedPairStrPair {
-					unionStrPair := new(apiv1.StrPair)
-					unionStrPair.Init(unionTable.Bytes, unionTable.Pos)
-					key := string(unionStrPair.Key())
-					if unionStrPair.ValuesLength() > 1 {
-						var values []string
-						for i := 0; i < unionStrPair.ValuesLength(); i++ {
-							values = append(values, string(unionStrPair.Values(i)))
+					} else if pairType == apiv1.TypedPairStrPair {
+						unionStrPairQuery := new(apiv1.StrPair)
+						unionStrPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+
+						keyName := string(unionStrPairQuery.Key())
+						if existingPairQueries, ok := keyQueryMap[keyName]; ok {
+							existingPairQueries = append(existingPairQueries, &f)
+						} else {
+							keyQueryMap[keyName] = []*apiv1.PairQuery{&f}
 						}
-						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Strs(values...))
-						filterExprs = append(filterExprs, f)
-					} else {
-						value := string(unionStrPair.Values(0))
-						f := operatorFactory[pairQuery.Op()](NewFieldRef(key), Str(value))
-						filterExprs = append(filterExprs, f)
 					}
-				} else {
-					return nil, InvalidPairType
 				}
 			}
+
+			var idxOps []IndexOp
+
+			// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
+			for k, v := range keyQueryMap {
+				if k == "traceID" {
+					panic("traceID not supported")
+				}
+				idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
+				g.Add(idxScanOp)
+				idxOps = append(idxOps, idxScanOp)
+				g.Connect(dag.BasicEdge(root, idxScanOp))
+			}
+
+			// Merge all ChunkIDs
+			chunkIdsMergeOp := NewChunkIDsMerge()
+			g.Add(chunkIdsMergeOp)
+			for _, idxOp := range idxOps {
+				// connect idxOp -> chunkIDsMerge
+				g.Connect(dag.BasicEdge(idxOp, chunkIdsMergeOp))
+			}
+
+			// Retrieve from Series by chunkID(s)
+			chunkIDsFetchOp := NewChunkIDsFetch(metadata, projection)
+			seriesOps = append(seriesOps, chunkIDsFetchOp)
+			g.Add(chunkIDsFetchOp)
+			g.Connect(dag.BasicEdge(chunkIdsMergeOp, chunkIDsFetchOp))
 		}
 	}
 
-	selection := NewSelection(scan, filterExprs...)
-
-	var projectionList []Expr
-	keys := criteria.Projection(nil)
-	for i := 0; i < keys.KeyNamesLength(); i++ {
-		keyName := string(keys.KeyNames(i))
-		projectionList = append(projectionList, NewFieldRef(keyName))
+	// Add Sorted-Merge Op
+	sortedMergeOp := NewSortedMerge(entityCriteria.OrderBy(nil))
+	g.Add(sortedMergeOp)
+	for _, sourceOp := range seriesOps {
+		e := dag.BasicEdge(sourceOp, sortedMergeOp)
+		g.Connect(e)
 	}
 
-	projection := NewProjection(selection, projectionList...)
+	// Add Pagination Op
+	paginationOp := NewPagination(entityCriteria.Offset(), entityCriteria.Limit())
+	g.Add(paginationOp)
+	g.Connect(dag.BasicEdge(sortedMergeOp, paginationOp))
 
-	orderBy := criteria.OrderBy(nil)
-
-	sort := NewSort(projection, string(orderBy.KeyName()), orderBy.Sort())
-
-	offset, limit := criteria.Offset(), criteria.Limit()
-
-	offsetAndLimit := NewOffsetAndLimit(sort, offset, limit)
-
-	return offsetAndLimit, nil
+	return &Plan{
+		AcyclicGraph: g,
+	}
 }

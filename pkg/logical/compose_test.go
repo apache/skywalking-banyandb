@@ -1,38 +1,55 @@
 package logical_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/clientutil"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
-func Test_Compose(t *testing.T) {
+func TestTableScan(t *testing.T) {
+	tester := assert.New(t)
 	builder := clientutil.NewCriteriaBuilder()
 	criteria := builder.Build(
-		clientutil.AddLimit(20),
+		clientutil.AddLimit(0),
 		clientutil.AddOffset(0),
-		builder.BuildMetaData("group1", "name1"),
-		builder.BuildTimeStampNanoSeconds(time.Now().Add(-5*time.Hour), time.Now()),
-		builder.BuildOrderBy("startTime", apiv1.SortDESC),
-		builder.BuildProjection("traceID", "spanID"),
-		builder.BuildFields(
-			"duration", ">=", 4000,
-			"duration", "<", 10000,
-			"serviceName", "=", "demo",
-			"serviceInstanceID", "!=", "pod-xxxxx",
-			"keys", "having", []string{"key1", "key2"},
-		),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 	)
-	assert.NotNil(t, criteria)
-	plan, err := logical.ComposeLogicalPlan(criteria)
-	assert.NoError(t, err)
-	assert.NotNil(t, plan)
-	fmt.Printf("%s", logical.FormatPlan(plan))
-	assert.Equal(t, logical.FormatPlan(plan), "Projection: #spanID, #traceID\n\tSelection: #duration GT 4000\n\t\tScan: Metadata{group=group1, name=name1}; projection=None\n")
+	plan := logical.Compose(criteria)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
+}
+
+func TestIndexScan(t *testing.T) {
+	tester := assert.New(t)
+	builder := clientutil.NewCriteriaBuilder()
+	criteria := builder.Build(
+		clientutil.AddLimit(0),
+		clientutil.AddOffset(0),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000),
+	)
+	plan := logical.Compose(criteria)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
+}
+
+func TestTraceIDSearch(t *testing.T) {
+	tester := assert.New(t)
+	builder := clientutil.NewCriteriaBuilder()
+	criteria := builder.Build(
+		clientutil.AddLimit(0),
+		clientutil.AddOffset(0),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildFields("traceID", "=", "aaaaaaaa"),
+	)
+	plan := logical.Compose(criteria)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
 }

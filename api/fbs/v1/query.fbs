@@ -120,8 +120,8 @@ table RangeQuery {
 
 // EntityCriteria is the request contract for query.
 table EntityCriteria {
-    // metatdata is required
-    metatdata: Metadata;
+    // metadata is required
+    metadata: Metadata;
     // timestamp_nanoseconds is a range query with begin/end time of entities in the timeunit of nanoseconds.
     // In the context of Trace, it represents the range of the `startTime` for spans/segments,
     // while in the context of Log, it means the range of the timestamp(s) for logs.
