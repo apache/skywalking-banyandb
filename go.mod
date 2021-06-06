@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/dgraph-io/badger/v3 v3.2011.1
+	github.com/emicklei/dot v0.16.0 // indirect
 	github.com/golang/mock v1.4.4
 	github.com/google/flatbuffers v2.0.0+incompatible
 	github.com/hashicorp/terraform v0.15.3

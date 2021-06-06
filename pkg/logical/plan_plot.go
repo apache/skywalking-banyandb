@@ -1,20 +1,22 @@
 package logical
 
 import (
-	"fmt"
-
+	"github.com/emicklei/dot"
 	"github.com/hashicorp/terraform/dag"
 )
 
 func (plan *Plan) Plot() string {
-	result := "digraph {\n"
-	result += "\tcompound = \"true\"\n"
-	result += "\tnewrank = \"true\"\n"
-	result += "\tsubgraph \"root\" {\n"
-	for _, e := range plan.Edges() {
-		result += fmt.Sprintf("\t\t\"%s\" -> \"%s\"\n", dag.VertexName(e.Source()), dag.VertexName(e.Target()))
+	g := dot.NewGraph(dot.Directed)
+
+	var nodes = make(map[dag.Vertex]dot.Node)
+
+	for _, v := range plan.Vertices() {
+		nodes[v] = g.Node(dag.VertexName(v))
 	}
-	result += "\t}\n"
-	result += "}\n"
-	return result
+
+	for _, e := range plan.Edges() {
+		g.Edge(nodes[e.Source()], nodes[e.Target()])
+	}
+
+	return g.String()
 }
