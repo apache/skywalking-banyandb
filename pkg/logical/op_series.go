@@ -94,6 +94,9 @@ func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, tra
 }
 
 func serializeProjection(projection *apiv1.Projection) string {
+	if projection == nil {
+		return "<nil>"
+	}
 	var projStr []string
 	for i := 0; i < projection.KeyNamesLength(); i++ {
 		projStr = append(projStr, string(projection.KeyNames(i)))
