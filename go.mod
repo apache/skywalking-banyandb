@@ -7,6 +7,7 @@ require (
 	github.com/emicklei/dot v0.16.0 // indirect
 	github.com/golang/mock v1.4.4
 	github.com/google/flatbuffers v2.0.0+incompatible
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/terraform v0.15.3
 	github.com/oklog/run v1.1.0
 	github.com/spf13/cobra v1.1.3

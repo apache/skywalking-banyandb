@@ -16,7 +16,7 @@ func (r *rootOp) Name() string {
 }
 
 func (r *rootOp) OpType() string {
-	return Root
+	return OpRoot
 }
 
 func NewRoot() Op {
@@ -36,7 +36,7 @@ func (s *sortedMerge) Name() string {
 }
 
 func (s *sortedMerge) OpType() string {
-	return SortedMerge
+	return OpSortedMerge
 }
 
 func NewSortedMerge(queryOrder *apiv1.QueryOrder) Op {
@@ -56,7 +56,7 @@ func (p *pagination) Name() string {
 }
 
 func (p *pagination) OpType() string {
-	return Pagination
+	return OpPagination
 }
 
 func NewPagination(offset, limit uint32) Op {
@@ -76,7 +76,7 @@ func (c *chunkIDsMerge) Name() string {
 }
 
 func (c *chunkIDsMerge) OpType() string {
-	return ChunkIDsMerge
+	return OpChunkIDsMerge
 }
 
 func NewChunkIDsMerge() Op {

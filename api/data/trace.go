@@ -36,3 +36,10 @@ type Entity struct {
 func NewTrace() *Trace {
 	return &Trace{KindVersion: TraceKindVersion}
 }
+
+func NewTraceWithEntities(entities []Entity) *Trace {
+	return &Trace{
+		KindVersion: TraceKindVersion,
+		entities:    entities,
+	}
+}

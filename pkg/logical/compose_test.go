@@ -80,3 +80,40 @@ func TestTraceIDSearch(t *testing.T) {
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
 }
+
+func TestTraceIDSearchAndIndexSearch(t *testing.T) {
+	tester := assert.New(t)
+	builder := clientutil.NewCriteriaBuilder()
+	criteria := builder.Build(
+		clientutil.AddLimit(0),
+		clientutil.AddOffset(0),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildFields("traceID", "=", "aaaaaaaa", "duration", "<=", 1000),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
+	)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
+	fmt.Println(plan.Plot())
+}
+
+func TestProjection(t *testing.T) {
+	tester := assert.New(t)
+	builder := clientutil.NewCriteriaBuilder()
+	criteria := builder.Build(
+		clientutil.AddLimit(0),
+		clientutil.AddOffset(0),
+		builder.BuildMetaData("skywalking", "trace"),
+		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
+		builder.BuildFields("traceID", "=", "aaaaaaaa", "duration", "<=", 1000),
+		builder.BuildOrderBy("startTime", apiv1.SortDESC),
+		builder.BuildProjection("startTime", "traceID"),
+	)
+	plan, err := logical.Compose(criteria)
+	tester.NoError(err)
+	tester.NotNil(plan)
+	tester.NoError(plan.Validate())
+	fmt.Println(plan.Plot())
+}

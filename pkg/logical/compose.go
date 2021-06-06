@@ -29,7 +29,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 	} else {
 		keyQueryMap := make(map[string][]*apiv1.PairQuery)
 		for i := 0; i < entityCriteria.FieldsLength(); i++ {
-			// group PairQuery by keyName
+			// group PairQuery by KeyName
 			var f apiv1.PairQuery
 			if ok := entityCriteria.Fields(&f, i); ok {
 				condition := f.Condition(nil)
@@ -55,7 +55,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 
 						if keyName == "traceID" {
 							if f.Op() != apiv1.BinaryOpEQ {
-								return nil, errors.New("only `=` operator is supported for traceID")
+								return nil, errors.New("only `=` operator is supported for TraceID")
 							}
 							traceIDFetchOp := NewTraceIDFetch(metadata, projection, string(unionStrPairQuery.Values(0)))
 							seriesOps = append(seriesOps, traceIDFetchOp)
@@ -77,6 +77,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 
 		// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
 		for k, v := range keyQueryMap {
+			// TODO(validation): check whether key is indexed?
 			idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
 			g.Add(idxScanOp)
 			idxOps = append(idxOps, idxScanOp)

@@ -2,40 +2,51 @@ package logical
 
 import (
 	"fmt"
-	"strings"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-var _ SeriesOp = (*tableScan)(nil)
+var _ SeriesOp = (*TableScan)(nil)
 
-// tableScan defines parameters for a scan operation
+// TableScan defines parameters for a scan operation
 // metadata can be mapped to the underlying storage
-type tableScan struct {
+type TableScan struct {
 	timeRange  *apiv1.RangeQuery
 	metadata   *apiv1.Metadata
 	projection *apiv1.Projection
 }
 
+func (t *TableScan) Projection() []string {
+	return parseProjectionFields(t.projection)
+}
+
+func (t *TableScan) TimeRange() *apiv1.RangeQuery {
+	return t.timeRange
+}
+
+func (t *TableScan) Medata() *apiv1.Metadata {
+	return t.metadata
+}
+
 func NewTableScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, projection *apiv1.Projection) SeriesOp {
-	return &tableScan{
+	return &TableScan{
 		timeRange:  timeRange,
 		metadata:   metadata,
 		projection: projection,
 	}
 }
 
-func (t *tableScan) Name() string {
-	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=[%s]}",
+func (t *TableScan) Name() string {
+	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=%v}",
 		t.timeRange.Begin(),
 		t.timeRange.End(),
 		t.metadata.Group(),
 		t.metadata.Name(),
-		serializeProjection(t.projection))
+		parseProjectionFields(t.projection))
 }
 
-func (t *tableScan) OpType() string {
-	return TableScan
+func (t *TableScan) OpType() string {
+	return OpTableScan
 }
 
 var _ SeriesOp = (*chunkIDsFetch)(nil)
@@ -48,16 +59,28 @@ type chunkIDsFetch struct {
 	projection *apiv1.Projection
 }
 
+func (c *chunkIDsFetch) Projection() []string {
+	return parseProjectionFields(c.projection)
+}
+
+func (c *chunkIDsFetch) TimeRange() *apiv1.RangeQuery {
+	return nil
+}
+
+func (c *chunkIDsFetch) Medata() *apiv1.Metadata {
+	return c.metadata
+}
+
 func (c *chunkIDsFetch) Name() string {
-	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s},projection=[%s]}",
+	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s},projection=%v}",
 		c.metadata.Group(),
 		c.metadata.Name(),
-		serializeProjection(c.projection),
+		parseProjectionFields(c.projection),
 	)
 }
 
 func (c *chunkIDsFetch) OpType() string {
-	return TableChunkIDsFetch
+	return OpTableChunkIDsFetch
 }
 
 func NewChunkIDsFetch(metadata *apiv1.Metadata, projection *apiv1.Projection) SeriesOp {
@@ -72,34 +95,46 @@ var _ SeriesOp = (*traceIDFetch)(nil)
 // traceIDFetch defines parameters for fetching TraceID directly
 type traceIDFetch struct {
 	metadata   *apiv1.Metadata
-	traceID    string
+	TraceID    string
 	projection *apiv1.Projection
 }
 
+func (t *traceIDFetch) Projection() []string {
+	return parseProjectionFields(t.projection)
+}
+
+func (t *traceIDFetch) TimeRange() *apiv1.RangeQuery {
+	return nil
+}
+
+func (t *traceIDFetch) Medata() *apiv1.Metadata {
+	return t.metadata
+}
+
 func (t *traceIDFetch) Name() string {
-	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata={group=%s,name=%s},projection=[%s]}",
-		t.traceID, t.metadata.Group(), t.metadata.Name(), serializeProjection(t.projection))
+	return fmt.Sprintf("TraceIDFetch{TraceID=%s,metadata={group=%s,name=%s},projection=%v}",
+		t.TraceID, t.metadata.Group(), t.metadata.Name(), parseProjectionFields(t.projection))
 }
 
 func (t *traceIDFetch) OpType() string {
-	return TableTraceIDFetch
+	return OpTableTraceIDFetch
 }
 
 func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, traceID string) SeriesOp {
 	return &traceIDFetch{
 		metadata:   metadata,
-		traceID:    traceID,
+		TraceID:    traceID,
 		projection: projection,
 	}
 }
 
-func serializeProjection(projection *apiv1.Projection) string {
+func parseProjectionFields(projection *apiv1.Projection) []string {
 	if projection == nil {
-		return "<nil>"
+		return []string{}
 	}
-	var projStr []string
+	var projFields []string
 	for i := 0; i < projection.KeyNamesLength(); i++ {
-		projStr = append(projStr, string(projection.KeyNames(i)))
+		projFields = append(projFields, string(projection.KeyNames(i)))
 	}
-	return strings.Join(projStr, ",")
+	return projFields
 }

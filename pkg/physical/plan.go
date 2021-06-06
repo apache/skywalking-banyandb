@@ -1,7 +1,19 @@
 package physical
 
-import "github.com/hashicorp/terraform/dag"
+import (
+	"context"
 
+	"github.com/apache/skywalking-banyandb/banyand/series"
+)
+
+//go:generate mockgen -destination=./plan_mock.go -package=physical . ExecutionContext
+type ExecutionContext interface {
+	context.Context
+	UniModel() series.UniModel
+}
+
+// plan is the physical plan
 type plan struct {
-	graph dag.AcyclicGraph
+	// steps is sorted by topology-sort algorithm
+	steps []Transform
 }

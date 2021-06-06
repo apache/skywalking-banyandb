@@ -28,25 +28,33 @@ var _ IndexOp = (*indexScan)(nil)
 type indexScan struct {
 	metadata    *apiv1.Metadata
 	timeRange   *apiv1.RangeQuery
-	keyName     string
-	pairQueries []*apiv1.PairQuery
+	KeyName     string
+	PairQueries []*apiv1.PairQuery
+}
+
+func (is *indexScan) TimeRange() *apiv1.RangeQuery {
+	return is.timeRange
+}
+
+func (is *indexScan) Medata() *apiv1.Metadata {
+	return is.metadata
 }
 
 func (is *indexScan) Name() string {
-	return fmt.Sprintf("IndexScan{begin=%d,end=%d,keyName=%s,conditions=[%s],metadata={group=%s,name=%s}}",
-		is.timeRange.Begin(), is.timeRange.End(), is.keyName, serializePairQueries(is.pairQueries), is.metadata.Group(), is.metadata.Name())
+	return fmt.Sprintf("IndexScan{begin=%d,end=%d,KeyName=%s,conditions=[%s],metadata={group=%s,name=%s}}",
+		is.timeRange.Begin(), is.timeRange.End(), is.KeyName, serializePairQueries(is.PairQueries), is.metadata.Group(), is.metadata.Name())
 }
 
 func (is *indexScan) OpType() string {
-	return IndexScan
+	return OpIndexScan
 }
 
 func NewIndexScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, keyName string, pairQueries []*apiv1.PairQuery) IndexOp {
 	return &indexScan{
 		metadata:    metadata,
 		timeRange:   timeRange,
-		keyName:     keyName,
-		pairQueries: pairQueries,
+		KeyName:     keyName,
+		PairQueries: pairQueries,
 	}
 }
 
