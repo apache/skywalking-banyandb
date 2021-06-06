@@ -1,6 +1,8 @@
 package physical
 
 import (
+	"errors"
+
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
@@ -30,11 +32,40 @@ func (t *tableScanTransform) Run(ec ExecutionContext) Future {
 		if err != nil {
 			return Failure(err)
 		}
-		t := data.NewTraceWithEntities(entities)
-		return Success(NewTraceData(t))
+		traceEntities := data.NewTraceWithEntities(entities)
+		return Success(NewTraceData(traceEntities))
 	})
 }
 
 func (t *tableScanTransform) AppendParent(f ...Future) {
 	t.parents = t.parents.Append(f...)
+}
+
+var _ Transform = (*chunkIDsFetchTransform)(nil)
+
+type chunkIDsFetchTransform struct {
+	params  *logical.ChunkIDsFetch
+	parents Futures
+}
+
+func (c *chunkIDsFetchTransform) Run(ec ExecutionContext) Future {
+	return c.parents.Then(func(result Result) (Data, error) {
+		if result.Error() != nil {
+			return nil, result.Error()
+		}
+		v := result.Value()
+		if v.DataType() == ChunkID {
+			entities, err := ec.UniModel().FetchEntity(v.(*chunkIDs).ids, c.params.Projection())
+			if err != nil {
+				return nil, err
+			}
+			traceEntities := data.NewTraceWithEntities(entities)
+			return NewTraceData(traceEntities), nil
+		}
+		return nil, errors.New("incompatible upstream data type")
+	})
+}
+
+func (c *chunkIDsFetchTransform) AppendParent(f ...Future) {
+	c.parents = c.parents.Append(f...)
 }

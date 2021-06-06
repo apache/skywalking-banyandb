@@ -49,29 +49,29 @@ func (t *TableScan) OpType() string {
 	return OpTableScan
 }
 
-var _ SeriesOp = (*chunkIDsFetch)(nil)
+var _ SeriesOp = (*ChunkIDsFetch)(nil)
 
-// chunkIDs defines parameters for retrieving entities from chunkID(s)
+// ChunkIDsFetch defines parameters for retrieving entities from chunkID(s)
 // metadata can be mapped to the underlying storage
 // since we don't know chunkID(s) in advance, it will be collected in physical operation node
-type chunkIDsFetch struct {
+type ChunkIDsFetch struct {
 	metadata   *apiv1.Metadata
 	projection *apiv1.Projection
 }
 
-func (c *chunkIDsFetch) Projection() []string {
+func (c *ChunkIDsFetch) Projection() []string {
 	return parseProjectionFields(c.projection)
 }
 
-func (c *chunkIDsFetch) TimeRange() *apiv1.RangeQuery {
+func (c *ChunkIDsFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (c *chunkIDsFetch) Medata() *apiv1.Metadata {
+func (c *ChunkIDsFetch) Medata() *apiv1.Metadata {
 	return c.metadata
 }
 
-func (c *chunkIDsFetch) Name() string {
+func (c *ChunkIDsFetch) Name() string {
 	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s},projection=%v}",
 		c.metadata.Group(),
 		c.metadata.Name(),
@@ -79,12 +79,12 @@ func (c *chunkIDsFetch) Name() string {
 	)
 }
 
-func (c *chunkIDsFetch) OpType() string {
+func (c *ChunkIDsFetch) OpType() string {
 	return OpTableChunkIDsFetch
 }
 
 func NewChunkIDsFetch(metadata *apiv1.Metadata, projection *apiv1.Projection) SeriesOp {
-	return &chunkIDsFetch{
+	return &ChunkIDsFetch{
 		metadata:   metadata,
 		projection: projection,
 	}

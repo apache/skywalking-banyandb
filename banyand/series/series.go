@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./series_mock.go -package=series . UniModel
 package series
 
 import (
@@ -55,7 +54,7 @@ type TraceRepo interface {
 	ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
 }
 
-//UniModel combines Trace, Metric and Log repositories into a union interface
+//go:generate mockgen -destination=./series_mock.go -package=series . UniModel
 type UniModel interface {
 	TraceRepo
 }

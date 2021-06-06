@@ -1,12 +1,32 @@
 package physical
 
 import (
+	"sync"
+
 	"github.com/hashicorp/go-multierror"
 )
 
 var _ Future = (Futures)(nil)
 
 type Futures []Future
+
+func (f Futures) Await() Result {
+	for _, single := range f {
+		_ = single.Await()
+	}
+	return f.Value()
+}
+
+func (f Futures) Then(cb Callback) Future {
+	return NewFuture(func() Result {
+		result := f.Await()
+		callbackResp, err := cb(result)
+		if err != nil {
+			return Failure(err)
+		}
+		return Success(callbackResp)
+	})
+}
 
 func (f Futures) Append(futures ...Future) Futures {
 	return append(f, futures...)
@@ -82,24 +102,53 @@ func Failure(err error) Result {
 	return &failure{err: err}
 }
 
+type Callback func(Result) (Data, error)
+
+type Awaitable interface {
+	Await() Result
+}
+
 type Future interface {
+	Awaitable
 	IsComplete() bool
 	Value() Result
+	Then(Callback) Future
 }
 
 var _ Future = (*future)(nil)
 
 type future struct {
-	f func() Result
-	r Result
+	f   func() Result
+	r   Result
+	cbs []Callback
+	wg  sync.WaitGroup
+}
+
+func (f *future) Await() Result {
+	f.wg.Wait()
+	return f.r
+}
+
+func (f *future) Then(cb Callback) Future {
+	return NewFuture(func() Result {
+		result := f.Await()
+		callbackResp, err := cb(result)
+		if err != nil {
+			return Failure(err)
+		}
+		return Success(callbackResp)
+	})
 }
 
 func NewFuture(fun func() Result) Future {
 	f := &future{
-		f: fun,
-		r: nil,
+		f:  fun,
+		r:  nil,
+		wg: sync.WaitGroup{},
 	}
+	f.wg.Add(1)
 	go func() {
+		// TODO: handle panic
 		f.r = fun()
 	}()
 	return f
