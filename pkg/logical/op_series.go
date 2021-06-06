@@ -2,6 +2,7 @@ package logical
 
 import (
 	"fmt"
+	"strings"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
@@ -25,12 +26,12 @@ func NewTableScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, project
 }
 
 func (t *tableScan) Name() string {
-	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=%v}",
+	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=[%s]}",
 		t.timeRange.Begin(),
 		t.timeRange.End(),
 		t.metadata.Group(),
 		t.metadata.Name(),
-		t.projection)
+		serializeProjection(t.projection))
 }
 
 func (t *tableScan) OpType() string {
@@ -48,7 +49,11 @@ type chunkIDsFetch struct {
 }
 
 func (c *chunkIDsFetch) Name() string {
-	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s}}", c.metadata.Group(), c.metadata.Name())
+	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s},projection=[%s]}",
+		c.metadata.Group(),
+		c.metadata.Name(),
+		serializeProjection(c.projection),
+	)
 }
 
 func (c *chunkIDsFetch) OpType() string {
@@ -72,8 +77,8 @@ type traceIDFetch struct {
 }
 
 func (t *traceIDFetch) Name() string {
-	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata={group=%s,name=%s},projection=%v}",
-		t.traceID, t.metadata.Group(), t.metadata.Name(), t.projection)
+	return fmt.Sprintf("TraceIDFetch{traceID=%s,metadata={group=%s,name=%s},projection=[%s]}",
+		t.traceID, t.metadata.Group(), t.metadata.Name(), serializeProjection(t.projection))
 }
 
 func (t *traceIDFetch) OpType() string {
@@ -86,4 +91,12 @@ func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, tra
 		traceID:    traceID,
 		projection: projection,
 	}
+}
+
+func serializeProjection(projection *apiv1.Projection) string {
+	var projStr []string
+	for i := 0; i < projection.KeyNamesLength(); i++ {
+		projStr = append(projStr, string(projection.KeyNames(i)))
+	}
+	return strings.Join(projStr, ",")
 }
