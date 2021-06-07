@@ -89,7 +89,31 @@ var _ = Describe("Future", func() {
 			}).Should(BeNil())
 			Eventually(func() error {
 				return fs.Value().Error()
-			}).Should(HaveOccurred())
+			}).Should(ContainError(err1))
+			Eventually(func() error {
+				return fs.Value().Error()
+			}).Should(ContainError(err2))
+		})
+
+		It("should return error if any of futures returns error", func() {
+			err1 := errors.New("first error")
+
+			var fs physical.Futures
+			fs = fs.Append(physical.NewFuture(func() physical.Result {
+				return physical.Failure(err1)
+			})).Append(physical.NewFuture(func() physical.Result {
+				return physical.Success(physical.NewChunkIDs(1, 2, 3))
+			}))
+
+			Eventually(func() bool {
+				return fs.IsComplete()
+			}).Should(BeTrue())
+			Eventually(func() physical.Data {
+				return fs.Value().Success()
+			}).Should(BeNil())
+			Eventually(func() error {
+				return fs.Value().Error()
+			}).Should(ContainError(err1))
 		})
 	})
 })
