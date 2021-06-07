@@ -52,6 +52,12 @@ func (c *chunkIDs) DataType() DataType {
 	return ChunkID
 }
 
+func NewChunkIDs(ids ...common.ChunkID) Data {
+	return &chunkIDs{
+		ids: ids,
+	}
+}
+
 var _ Data = (*traces)(nil)
 
 type traces struct {

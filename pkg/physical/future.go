@@ -1,6 +1,7 @@
 package physical
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
@@ -118,10 +119,11 @@ type Future interface {
 var _ Future = (*future)(nil)
 
 type future struct {
-	f   func() Result
-	r   Result
-	cbs []Callback
-	wg  sync.WaitGroup
+	f     func() Result
+	r     Result
+	cbs   []Callback
+	wg    sync.WaitGroup
+	mutex sync.Mutex
 }
 
 func (f *future) Await() Result {
@@ -148,8 +150,8 @@ func NewFuture(fun func() Result) Future {
 	}
 	f.wg.Add(1)
 	go func() {
-		// TODO: handle panic
-		f.r = fun()
+		defer f.handlePanic()
+		f.resolve(fun())
 	}()
 	return f
 }
@@ -160,4 +162,29 @@ func (f *future) IsComplete() bool {
 
 func (f *future) Value() Result {
 	return f.r
+}
+
+func (f *future) resolve(r Result) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	if f.r != nil {
+		return
+	}
+
+	f.r = r
+	f.wg.Done()
+}
+
+func (f *future) handlePanic() {
+	e := recover()
+	if e != nil {
+		switch err := e.(type) {
+		case nil:
+			f.resolve(Failure(fmt.Errorf("panic recovery with nil error")))
+		case error:
+			f.resolve(Failure(fmt.Errorf("panic recovery with error: %s", err.Error())))
+		default:
+			f.resolve(Failure(fmt.Errorf("panic recovery with unknown error: %s", fmt.Sprint(err))))
+		}
+	}
 }
