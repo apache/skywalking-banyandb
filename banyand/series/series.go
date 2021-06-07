@@ -22,29 +22,66 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Trace interface {
+// TraceState represents the state of a trace link
+type TraceState int
+
+var (
+	TraceStateSuccess = 0
+	TraceStateError   = 1
+)
+
+//ScanOptions contain options
+//nolint
+type ScanOptions struct {
+	projection []string
+	state      TraceState
+	limit      uint32
+}
+
+//TraceRepo contains trace and entity data
+type TraceRepo interface {
+	//FetchTrace returns data.Trace by traceID
 	FetchTrace(traceID string) (data.Trace, error)
-	FetchEntity(chunkIDs []string, fields []string) ([]data.Entity, error)
-	ScanEntity(startTime, endTime uint64, fields []string) ([]data.Entity, error)
+	//FetchEntity returns data.Entity by ChunkID
+	FetchEntity(chunkIDs []string, opt ScanOptions) ([]data.Entity, error)
+	//ScanEntity returns data.Entity between a duration by ScanOptions
+	ScanEntity(startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
 }
 
+//UniModel combines Trace, Metric and Log repositories into a union interface
 type UniModel interface {
-	Trace
+	TraceRepo
 }
 
+//SchemaRepo contains schema definition
+type SchemaRepo interface {
+	TraceSeries() schema.TraceSeries
+	IndexRule() schema.IndexRule
+	IndexRuleBinding() schema.IndexRuleBinding
+}
+
+//IndexFilter provides methods to find a specific index related objects
+type IndexFilter interface {
+	//RulesBySubject fetches IndexRule by Series defined in IndexRuleBinding
+	RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.IndexRule, error)
+}
+
+//Service provides operations how to access series module
 type Service interface {
 	UniModel
+	SchemaRepo
+	IndexFilter
+	run.Config
 	run.PreRunner
 }
 
+//NewService returns a new service
 func NewService(ctx context.Context, db storage.Database) (Service, error) {
-	return nil, nil
-}
-
-// TODO: this interface should contains methods to access schema objects
-type SchemaRepo interface {
+	return &service{db: db}, nil
 }

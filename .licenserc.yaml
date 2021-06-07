@@ -70,6 +70,8 @@ header: # `header` section is configurations for source codes license header.
     - 'LICENSE'
     - 'NOTICE'
     - '**/build/**'
+    - '**/*.bin'
+    - '**/*.json'
     - '**/*_mock.go'
     - '**/*_mock_test.go'
     - '**/*_generated.go'
