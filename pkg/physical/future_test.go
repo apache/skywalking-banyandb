@@ -17,7 +17,7 @@ var _ = Describe("Future", func() {
 			return f.IsComplete()
 		}).Should(BeTrue())
 		Eventually(func() physical.Data {
-			return f.Value().Value()
+			return f.Value().Success()
 		}).Should(BeEquivalentTo(physical.NewChunkIDs(1, 2, 3)))
 	})
 

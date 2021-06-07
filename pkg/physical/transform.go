@@ -53,7 +53,7 @@ func (c *chunkIDsFetchTransform) Run(ec ExecutionContext) Future {
 		if result.Error() != nil {
 			return nil, result.Error()
 		}
-		v := result.Value()
+		v := result.Success()
 		if v.DataType() == ChunkID {
 			entities, err := ec.UniModel().FetchEntity(v.(*chunkIDs).ids, c.params.Projection())
 			if err != nil {

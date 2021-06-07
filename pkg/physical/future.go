@@ -51,7 +51,7 @@ func (f Futures) Value() Result {
 			globalErr = multierror.Append(globalErr, result.Error())
 		}
 		var err error
-		dg, err = dg.Append(result.Value())
+		dg, err = dg.Append(result.Success())
 		if err != nil {
 			globalErr = multierror.Append(globalErr, err)
 		}
@@ -63,7 +63,7 @@ func (f Futures) Value() Result {
 }
 
 type Result interface {
-	Value() Data
+	Success() Data
 	Error() error
 }
 
@@ -73,7 +73,7 @@ type success struct {
 	data Data
 }
 
-func (s *success) Value() Data {
+func (s *success) Success() Data {
 	return s.data
 }
 
@@ -91,7 +91,7 @@ type failure struct {
 	err error
 }
 
-func (f *failure) Value() Data {
+func (f *failure) Success() Data {
 	return nil
 }
 
