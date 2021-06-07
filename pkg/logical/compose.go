@@ -70,7 +70,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 
 						keyName := string(unionStrPairQuery.Key())
 
-						if keyName == "traceID" {
+						if keyName == "TraceID" {
 							if f.Op() != apiv1.BinaryOpEQ {
 								return nil, errors.New("only `=` operator is supported for TraceID")
 							}

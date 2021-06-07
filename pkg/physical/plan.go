@@ -20,6 +20,7 @@ package physical
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 )
 
@@ -27,6 +28,7 @@ import (
 type ExecutionContext interface {
 	context.Context
 	UniModel() series.UniModel
+	IndexRepo() index.Repo
 }
 
 // plan is the physical plan

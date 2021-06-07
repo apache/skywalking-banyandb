@@ -107,38 +107,38 @@ func NewChunkIDsFetch(metadata *apiv1.Metadata, projection *apiv1.Projection) Se
 	}
 }
 
-var _ SeriesOp = (*traceIDFetch)(nil)
+var _ SeriesOp = (*TraceIDFetch)(nil)
 
-// traceIDFetch defines parameters for fetching TraceID directly
-type traceIDFetch struct {
+// TraceIDFetch defines parameters for fetching TraceID directly
+type TraceIDFetch struct {
 	metadata   *apiv1.Metadata
 	TraceID    string
 	projection *apiv1.Projection
 }
 
-func (t *traceIDFetch) Projection() []string {
+func (t *TraceIDFetch) Projection() []string {
 	return parseProjectionFields(t.projection)
 }
 
-func (t *traceIDFetch) TimeRange() *apiv1.RangeQuery {
+func (t *TraceIDFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (t *traceIDFetch) Medata() *apiv1.Metadata {
+func (t *TraceIDFetch) Medata() *apiv1.Metadata {
 	return t.metadata
 }
 
-func (t *traceIDFetch) Name() string {
+func (t *TraceIDFetch) Name() string {
 	return fmt.Sprintf("TraceIDFetch{TraceID=%s,metadata={group=%s,name=%s},projection=%v}",
 		t.TraceID, t.metadata.Group(), t.metadata.Name(), parseProjectionFields(t.projection))
 }
 
-func (t *traceIDFetch) OpType() string {
+func (t *TraceIDFetch) OpType() string {
 	return OpTableTraceIDFetch
 }
 
 func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, traceID string) SeriesOp {
-	return &traceIDFetch{
+	return &TraceIDFetch{
 		metadata:   metadata,
 		TraceID:    traceID,
 		projection: projection,

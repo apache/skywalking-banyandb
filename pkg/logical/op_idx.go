@@ -38,36 +38,36 @@ var binaryOpStrMap = map[apiv1.BinaryOp]string{
 	apiv1.BinaryOpNOT_HAVING: "not_having",
 }
 
-var _ IndexOp = (*indexScan)(nil)
+var _ IndexOp = (*IndexScan)(nil)
 
-// indexScan defines parameters for index-scan
+// IndexScan defines parameters for index-scan
 // metadata together with Catalog can be mapped to the IndexRuleBinding, and thus IndexRule via rule_refs, but how?
-type indexScan struct {
+type IndexScan struct {
 	metadata    *apiv1.Metadata
 	timeRange   *apiv1.RangeQuery
 	KeyName     string
 	PairQueries []*apiv1.PairQuery
 }
 
-func (is *indexScan) TimeRange() *apiv1.RangeQuery {
+func (is *IndexScan) TimeRange() *apiv1.RangeQuery {
 	return is.timeRange
 }
 
-func (is *indexScan) Medata() *apiv1.Metadata {
+func (is *IndexScan) Medata() *apiv1.Metadata {
 	return is.metadata
 }
 
-func (is *indexScan) Name() string {
+func (is *IndexScan) Name() string {
 	return fmt.Sprintf("IndexScan{begin=%d,end=%d,KeyName=%s,conditions=[%s],metadata={group=%s,name=%s}}",
 		is.timeRange.Begin(), is.timeRange.End(), is.KeyName, serializePairQueries(is.PairQueries), is.metadata.Group(), is.metadata.Name())
 }
 
-func (is *indexScan) OpType() string {
+func (is *IndexScan) OpType() string {
 	return OpIndexScan
 }
 
 func NewIndexScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, keyName string, pairQueries []*apiv1.PairQuery) IndexOp {
-	return &indexScan{
+	return &IndexScan{
 		metadata:    metadata,
 		timeRange:   timeRange,
 		KeyName:     keyName,

@@ -15,41 +15,37 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logical
+package physical
 
 import (
-	"github.com/hashicorp/terraform/dag"
-
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
-const (
-	OpRoot               = "root"
-	OpTableScan          = "TableScan"
-	OpTableChunkIDsFetch = "tableChunkIDsFetch"
-	OpTableTraceIDFetch  = "tableTraceIDFetch"
-	OpIndexScan          = "IndexScan"
-	OpSortedMerge        = "sortedMerge"
-	OpPagination         = "pagination"
-	OpChunkIDsMerge      = "chunkIDsMerge"
-)
+var _ Transform = (*indexScanTransform)(nil)
 
-type Op interface {
-	dag.NamedVertex
-	OpType() string
+type indexScanTransform struct {
+	params  *logical.IndexScan
+	parents Futures
 }
 
-type SourceOp interface {
-	TimeRange() *apiv1.RangeQuery
-	Medata() *apiv1.Metadata
-	Op
+func NewIndexScanTransform(params *logical.IndexScan) Transform {
+	return &indexScanTransform{
+		params: params,
+	}
 }
 
-type IndexOp interface {
-	SourceOp
+func (i *indexScanTransform) Run(ec ExecutionContext) Future {
+	return NewFuture(func() Result {
+		sT, eT := i.params.TimeRange().Begin(), i.params.TimeRange().End()
+		// TODO: condition?
+		cIDs, err := ec.IndexRepo().Search(i.params.KeyName, sT, eT, nil)
+		if err != nil {
+			return Failure(err)
+		}
+		return Success(NewChunkIDs(cIDs...))
+	})
 }
 
-type SeriesOp interface {
-	SourceOp
-	Projection() []string
+func (i *indexScanTransform) AppendParent(f ...Future) {
+	i.parents = i.parents.Append(f...)
 }

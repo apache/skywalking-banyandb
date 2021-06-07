@@ -89,7 +89,7 @@ func TestTraceIDSearch(t *testing.T) {
 		clientutil.AddOffset(0),
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildFields("traceID", "=", "aaaaaaaa"),
+		builder.BuildFields("TraceID", "=", "aaaaaaaa"),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
 	plan, err := logical.Compose(criteria)
@@ -106,7 +106,7 @@ func TestTraceIDSearchAndIndexSearch(t *testing.T) {
 		clientutil.AddOffset(0),
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildFields("traceID", "=", "aaaaaaaa", "duration", "<=", 1000),
+		builder.BuildFields("TraceID", "=", "aaaaaaaa", "duration", "<=", 1000),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
 	plan, err := logical.Compose(criteria)
@@ -124,9 +124,9 @@ func TestProjection(t *testing.T) {
 		clientutil.AddOffset(0),
 		builder.BuildMetaData("skywalking", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildFields("traceID", "=", "aaaaaaaa", "duration", "<=", 1000),
+		builder.BuildFields("TraceID", "=", "aaaaaaaa", "duration", "<=", 1000),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
-		builder.BuildProjection("startTime", "traceID"),
+		builder.BuildProjection("startTime", "TraceID"),
 	)
 	plan, err := logical.Compose(criteria)
 	tester.NoError(err)
