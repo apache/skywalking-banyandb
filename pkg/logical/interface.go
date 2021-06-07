@@ -31,7 +31,7 @@ const (
 	OpIndexScan          = "IndexScan"
 	OpSortedMerge        = "SortedMerge"
 	OpPagination         = "Pagination"
-	OpChunkIDsMerge      = "chunkIDsMerge"
+	OpChunkIDsMerge      = "ChunkIDsMerge"
 )
 
 type Op interface {

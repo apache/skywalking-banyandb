@@ -106,7 +106,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 			chunkIdsMergeOp := NewChunkIDsMerge()
 			g.Add(chunkIdsMergeOp)
 			for _, idxOp := range idxOps {
-				// connect idxOp -> chunkIDsMerge
+				// connect idxOp -> ChunkIDsMerge
 				g.Connect(dag.BasicEdge(idxOp, chunkIdsMergeOp))
 			}
 

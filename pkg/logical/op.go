@@ -83,19 +83,19 @@ func NewPagination(offset, limit uint32) Op {
 	}
 }
 
-var _ Op = (*chunkIDsMerge)(nil)
+var _ Op = (*ChunkIDsMerge)(nil)
 
-type chunkIDsMerge struct {
+type ChunkIDsMerge struct {
 }
 
-func (c *chunkIDsMerge) Name() string {
+func (c *ChunkIDsMerge) Name() string {
 	return "ChunkIDsMerge{}"
 }
 
-func (c *chunkIDsMerge) OpType() string {
+func (c *ChunkIDsMerge) OpType() string {
 	return OpChunkIDsMerge
 }
 
 func NewChunkIDsMerge() Op {
-	return &chunkIDsMerge{}
+	return &ChunkIDsMerge{}
 }

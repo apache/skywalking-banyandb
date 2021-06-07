@@ -81,3 +81,20 @@ func (s *sortedMergeTransform) Run(ec ExecutionContext) Future {
 func (s *sortedMergeTransform) AppendParent(f ...Future) {
 	s.parents = append(s.parents, f...)
 }
+
+var _ Transform = (*chunkIDsMergeTransform)(nil)
+
+type chunkIDsMergeTransform struct {
+	params  *logical.ChunkIDsMerge
+	parents Futures
+}
+
+func (c *chunkIDsMergeTransform) Run(context ExecutionContext) Future {
+	return c.parents.Then(func(result Result) (Data, error) {
+		panic("implement me")
+	})
+}
+
+func (c *chunkIDsMergeTransform) AppendParent(f ...Future) {
+	c.parents = append(c.parents, f...)
+}
