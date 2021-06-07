@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"go.uber.org/multierr"
 )
 
 const (
@@ -90,13 +90,13 @@ func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 		// keys with underscores.
 		if strings.Contains(f.Name, ".") {
 			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, ".", "_"))
-			err = multierr.Append(err, v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix)))
+			err = multierror.Append(err, v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix)))
 		}
 
 		// Apply the viper config value to the flag when the flag is not set and viper has a value
 		if !f.Changed && v.IsSet(f.Name) {
 			val := v.Get(f.Name)
-			err = multierr.Append(err, fs.Set(f.Name, fmt.Sprintf("%v", val)))
+			err = multierror.Append(err, fs.Set(f.Name, fmt.Sprintf("%v", val)))
 		}
 	})
 	return err

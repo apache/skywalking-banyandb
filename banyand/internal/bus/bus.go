@@ -22,7 +22,7 @@ import (
 	"io"
 	"sync"
 
-	"go.uber.org/multierr"
+	"github.com/hashicorp/go-multierror"
 )
 
 // Payload represents a simple data
@@ -142,7 +142,7 @@ func (l *localFuture) GetAll() ([]Message, error) {
 			return ret, globalErr
 		}
 		if err != nil {
-			globalErr = multierr.Append(globalErr, err)
+			globalErr = multierror.Append(globalErr, err)
 			continue
 		}
 		ret = append(ret, m)

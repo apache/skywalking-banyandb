@@ -22,9 +22,9 @@ import (
 	"os"
 	"path"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/oklog/run"
 	"github.com/spf13/pflag"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/pkg/config"
@@ -251,7 +251,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 		g.log.Debug("validate config", logger.String("name", g.c[idx].Name()), indexField,
 			logger.Uint32("total", uint32(len(g.c))))
 		if vErr := g.c[idx].Validate(); vErr != nil {
-			err = multierr.Append(err, vErr)
+			err = multierror.Append(err, vErr)
 		}
 	}
 

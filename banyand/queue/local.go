@@ -18,7 +18,7 @@
 package queue
 
 import (
-	"go.uber.org/multierr"
+	"github.com/hashicorp/go-multierror"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
@@ -84,10 +84,10 @@ func (e *Local) PreRun() error {
 	var err error
 	e.dataBus = bus.NewBus()
 	for _, dp := range e.dps {
-		err = multierr.Append(err, dp.Pub(e.dataBus))
+		err = multierror.Append(err, dp.Pub(e.dataBus))
 	}
 	for _, ds := range e.dss {
-		err = multierr.Append(err, ds.Sub(e.dataBus))
+		err = multierror.Append(err, ds.Sub(e.dataBus))
 	}
 	return err
 }

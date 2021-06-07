@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/multierr"
+	"github.com/hashicorp/go-multierror"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -125,7 +125,7 @@ func (d *DB) createShards() (err error) {
 		}
 		s := newShard(i, shardLocation)
 		if sErr := s.init(d.pluginLst); sErr != nil {
-			err = multierr.Append(err, sErr)
+			err = multierror.Append(err, sErr)
 			continue
 		}
 		d.sLst = append(d.sLst, s)
