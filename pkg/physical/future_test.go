@@ -18,6 +18,7 @@
 package physical_test
 
 import (
+	"errors"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -25,29 +26,70 @@ import (
 )
 
 var _ = Describe("Future", func() {
-	It("should run single future", func() {
-		f := physical.NewFuture(func() physical.Result {
-			return physical.Success(physical.NewChunkIDs(1, 2, 3))
+	Context("Single future", func() {
+		It("should run single future", func() {
+			f := physical.NewFuture(func() physical.Result {
+				return physical.Success(physical.NewChunkIDs(1, 2, 3))
+			})
+
+			Eventually(func() bool {
+				return f.IsComplete()
+			}).Should(BeTrue())
+			Eventually(func() physical.Data {
+				return f.Value().Success()
+			}).Should(BeEquivalentTo(physical.NewChunkIDs(1, 2, 3)))
 		})
 
-		Eventually(func() bool {
-			return f.IsComplete()
-		}).Should(BeTrue())
-		Eventually(func() physical.Data {
-			return f.Value().Success()
-		}).Should(BeEquivalentTo(physical.NewChunkIDs(1, 2, 3)))
+		It("should return error if panic", func() {
+			f := physical.NewFuture(func() physical.Result {
+				panic("panic in future")
+			})
+
+			Eventually(func() bool {
+				return f.IsComplete()
+			}).Should(BeTrue())
+			Eventually(func() error {
+				return f.Value().Error()
+			}).Should(HaveOccurred())
+		})
 	})
 
-	It("should return error if panic", func() {
-		f := physical.NewFuture(func() physical.Result {
-			panic("panic in future")
+	Context("Multiple futures", func() {
+		It("should combine data", func() {
+			var fs physical.Futures
+			fs = fs.Append(physical.NewFuture(func() physical.Result {
+				return physical.Success(physical.NewChunkIDs(1, 2, 3))
+			})).Append(physical.NewFuture(func() physical.Result {
+				return physical.Success(physical.NewChunkIDs(4, 5, 6))
+			}))
+
+			Eventually(func() bool {
+				return fs.IsComplete()
+			}).Should(BeTrue())
+			Eventually(func() physical.Data {
+				return fs.Value().Success()
+			}).Should(BeEquivalentTo([]physical.Data{physical.NewChunkIDs(1, 2, 3), physical.NewChunkIDs(4, 5, 6)}))
 		})
 
-		Eventually(func() bool {
-			return f.IsComplete()
-		}).Should(BeTrue())
-		Eventually(func() error {
-			return f.Value().Error()
-		}).Should(HaveOccurred())
+		It("should combine errors", func() {
+			err1, err2 := errors.New("first error"), errors.New("second error")
+
+			var fs physical.Futures
+			fs = fs.Append(physical.NewFuture(func() physical.Result {
+				return physical.Failure(err1)
+			})).Append(physical.NewFuture(func() physical.Result {
+				return physical.Failure(err2)
+			}))
+
+			Eventually(func() bool {
+				return fs.IsComplete()
+			}).Should(BeTrue())
+			Eventually(func() physical.Data {
+				return fs.Value().Success()
+			}).Should(BeNil())
+			Eventually(func() error {
+				return fs.Value().Error()
+			}).Should(HaveOccurred())
+		})
 	})
 })

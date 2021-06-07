@@ -18,6 +18,7 @@
 package physical
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -42,17 +43,24 @@ var _ Data = (DataGroup)(nil)
 type DataGroup []Data
 
 func (dg DataGroup) Append(data Data) (DataGroup, error) {
-	if dg.dataType() != Unknown && dg.dataType() != data.DataType() {
-		return dg, fmt.Errorf("fail to append data due to different data type, expect %v, actual %v", dg.dataType(), data.DataType())
+	if data == nil {
+		return dg, errors.New("fail to append nil data")
+	}
+	if dg.dataTypeOfLastData() != Unknown && dg.dataTypeOfLastData() != data.DataType() {
+		return dg, fmt.Errorf("fail to append data due to different data type, expect %v, actual %v", dg.dataTypeOfLastData(), data.DataType())
 	}
 	return append(dg, data), nil
 }
 
-func (dg DataGroup) dataType() DataType {
-	if len(dg) == 0 {
+func (dg DataGroup) dataTypeOfLastData() DataType {
+	if dg == nil || len(dg) == 0 {
 		return Unknown
 	}
-	return dg[len(dg)-1].DataType()
+	d := dg[len(dg)-1]
+	if d == nil {
+		return Unknown
+	}
+	return d.DataType()
 }
 
 func (dg DataGroup) DataType() DataType {

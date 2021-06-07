@@ -66,6 +66,7 @@ func (f Futures) Value() Result {
 		result := single.Value()
 		if result.Error() != nil {
 			globalErr = multierror.Append(globalErr, result.Error())
+			continue
 		}
 		var err error
 		dg, err = dg.Append(result.Success())
