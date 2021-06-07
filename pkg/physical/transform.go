@@ -17,7 +17,67 @@
 
 package physical
 
+import (
+	"errors"
+
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/pkg/logical"
+)
+
 type Transform interface {
 	Run(ExecutionContext) Future
 	AppendParent(...Future)
+}
+
+var _ Transform = (*paginationTransform)(nil)
+
+type paginationTransform struct {
+	params  *logical.Pagination
+	parents Futures
+}
+
+func (p *paginationTransform) Run(ExecutionContext) Future {
+	return p.parents.Then(func(result Result) (Data, error) {
+		successValues := result.Success()
+		if dg, ok := successValues.(DataGroup); ok {
+			var entities []*data.Trace
+			for _, d := range dg {
+				if traceEntities, ok := d.(*traces); ok {
+					entities = append(entities, traceEntities.traces...)
+				}
+			}
+			if int(p.params.Offset) < len(entities) {
+				if int(p.params.Offset+p.params.Limit) < len(entities) {
+					return NewTraceData(entities[p.params.Offset : p.params.Offset+p.params.Limit]...), nil
+				} else {
+					return NewTraceData(entities[p.params.Offset:]...), nil
+				}
+			} else {
+				return NewTraceData(), nil
+			}
+		}
+		return nil, errors.New("unsupported data type")
+	})
+}
+
+func (p *paginationTransform) AppendParent(f ...Future) {
+	p.parents = append(p.parents, f...)
+}
+
+var _ Transform = (*sortedMergeTransform)(nil)
+
+type sortedMergeTransform struct {
+	params  *logical.SortedMerge
+	parents Futures
+}
+
+func (s *sortedMergeTransform) Run(ec ExecutionContext) Future {
+	return s.parents.Then(func(result Result) (Data, error) {
+		// TODO(megrez): merge traces with hashMap and sort
+		panic("implement me")
+	})
+}
+
+func (s *sortedMergeTransform) AppendParent(f ...Future) {
+	s.parents = append(s.parents, f...)
 }

@@ -40,46 +40,46 @@ func NewRoot() Op {
 	return &rootOp{}
 }
 
-var _ Op = (*sortedMerge)(nil)
+var _ Op = (*SortedMerge)(nil)
 
-// sortedMerge define parameters for an aggregate operation,
-// queryOrder contains sorted field and sort algorithm
-type sortedMerge struct {
-	queryOrder *apiv1.QueryOrder
+// SortedMerge define parameters for an aggregate operation,
+// QueryOrder contains sorted field and sort algorithm
+type SortedMerge struct {
+	QueryOrder *apiv1.QueryOrder
 }
 
-func (s *sortedMerge) Name() string {
-	return fmt.Sprintf("SortedMerge{fieldName=%s,sort=%v}", string(s.queryOrder.KeyName()), s.queryOrder.Sort())
+func (s *SortedMerge) Name() string {
+	return fmt.Sprintf("SortedMerge{fieldName=%s,sort=%v}", string(s.QueryOrder.KeyName()), s.QueryOrder.Sort())
 }
 
-func (s *sortedMerge) OpType() string {
+func (s *SortedMerge) OpType() string {
 	return OpSortedMerge
 }
 
 func NewSortedMerge(queryOrder *apiv1.QueryOrder) Op {
-	return &sortedMerge{queryOrder: queryOrder}
+	return &SortedMerge{QueryOrder: queryOrder}
 }
 
-var _ Op = (*pagination)(nil)
+var _ Op = (*Pagination)(nil)
 
-// pagination defines parameters for paging
-type pagination struct {
-	offset uint32
-	limit  uint32
+// Pagination defines parameters for paging
+type Pagination struct {
+	Offset uint32
+	Limit  uint32
 }
 
-func (p *pagination) Name() string {
-	return fmt.Sprintf("Pagination{offset=%d,limit=%d}", p.offset, p.limit)
+func (p *Pagination) Name() string {
+	return fmt.Sprintf("Pagination{Offset=%d,Limit=%d}", p.Offset, p.Limit)
 }
 
-func (p *pagination) OpType() string {
+func (p *Pagination) OpType() string {
 	return OpPagination
 }
 
 func NewPagination(offset, limit uint32) Op {
-	return &pagination{
-		offset: offset,
-		limit:  limit,
+	return &Pagination{
+		Offset: offset,
+		Limit:  limit,
 	}
 }
 
