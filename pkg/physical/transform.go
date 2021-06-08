@@ -20,6 +20,7 @@ package physical
 import (
 	"errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
@@ -89,9 +90,34 @@ type chunkIDsMergeTransform struct {
 	parents Futures
 }
 
-func (c *chunkIDsMergeTransform) Run(context ExecutionContext) Future {
+func NewChunkIDsMergeTransform(params *logical.ChunkIDsMerge) Transform {
+	return &chunkIDsMergeTransform{
+		params: params,
+	}
+}
+
+func (c *chunkIDsMergeTransform) Run(ec ExecutionContext) Future {
 	return c.parents.Then(func(result Result) (Data, error) {
-		panic("implement me")
+		sucValues := result.Success()
+		if dg, ok := sucValues.(DataGroup); ok {
+			var chunkIdMap = make(map[common.ChunkID]struct{})
+			for _, d := range dg {
+				if chunkIdData, ok := d.(*chunkIDs); ok {
+					for _, cid := range chunkIdData.ids {
+						chunkIdMap[cid] = struct{}{}
+					}
+				} else {
+					return nil, errors.New("unsupported data type")
+				}
+			}
+			var resp []common.ChunkID
+			for k := range chunkIdMap {
+				resp = append(resp, k)
+			}
+			return NewChunkIDs(resp...), nil
+		} else {
+			return nil, errors.New("unsupported data type")
+		}
 	})
 }
 

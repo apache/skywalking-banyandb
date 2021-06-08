@@ -35,12 +35,17 @@ const (
 
 type Data interface {
 	DataType() DataType
+	Unwrap() interface{}
 }
 
 var _ Data = (DataGroup)(nil)
 
 // DataGroup is a group of Data with the same DataType
 type DataGroup []Data
+
+func (dg DataGroup) Unwrap() interface{} {
+	return dg
+}
 
 func (dg DataGroup) Append(data Data) (DataGroup, error) {
 	if data == nil {
@@ -73,6 +78,10 @@ type chunkIDs struct {
 	ids []common.ChunkID
 }
 
+func (c *chunkIDs) Unwrap() interface{} {
+	return c.ids
+}
+
 func (c *chunkIDs) DataType() DataType {
 	return ChunkID
 }
@@ -87,6 +96,10 @@ var _ Data = (*traces)(nil)
 
 type traces struct {
 	traces []*data.Trace
+}
+
+func (t *traces) Unwrap() interface{} {
+	return t.traces
 }
 
 func (t *traces) DataType() DataType {
