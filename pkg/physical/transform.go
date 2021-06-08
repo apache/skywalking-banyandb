@@ -19,10 +19,15 @@ package physical
 
 import (
 	"errors"
+	"reflect"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
+)
+
+var (
+	DataTypeNotSupportedErr = errors.New("unsupported data type")
 )
 
 type Transform interface {
@@ -57,7 +62,7 @@ func (p *paginationTransform) Run(ExecutionContext) Future {
 				return NewTraceData(), nil
 			}
 		}
-		return nil, errors.New("unsupported data type")
+		return nil, DataTypeNotSupportedErr
 	})
 }
 
@@ -100,14 +105,22 @@ func (c *chunkIDsMergeTransform) Run(ec ExecutionContext) Future {
 	return c.parents.Then(func(result Result) (Data, error) {
 		sucValues := result.Success()
 		if dg, ok := sucValues.(DataGroup); ok {
-			var chunkIdMap = make(map[common.ChunkID]struct{})
+			if len(dg) == 0 {
+
+			} else if len(dg) == 1 {
+
+			} else if len(dg) == 2 {
+
+			} else if len(dg) > 2 {
+
+			}
 			for _, d := range dg {
 				if chunkIdData, ok := d.(*chunkIDs); ok {
 					for _, cid := range chunkIdData.ids {
 						chunkIdMap[cid] = struct{}{}
 					}
 				} else {
-					return nil, errors.New("unsupported data type")
+					return nil, DataTypeNotSupportedErr
 				}
 			}
 			var resp []common.ChunkID
@@ -116,11 +129,33 @@ func (c *chunkIDsMergeTransform) Run(ec ExecutionContext) Future {
 			}
 			return NewChunkIDs(resp...), nil
 		} else {
-			return nil, errors.New("unsupported data type")
+			return nil, DataTypeNotSupportedErr
 		}
 	})
 }
 
 func (c *chunkIDsMergeTransform) AppendParent(f ...Future) {
 	c.parents = append(c.parents, f...)
+}
+
+// HashIntersection has complexity: O(n * x) where x is a factor of hash function efficiency (between 1 and 2)
+func HashIntersection(a interface{}, b interface{}) []interface{} {
+	set := make([]interface{}, 0)
+	hash := make(map[interface{}]bool)
+	av := reflect.ValueOf(a)
+	bv := reflect.ValueOf(b)
+
+	for i := 0; i < av.Len(); i++ {
+		el := av.Index(i).Interface()
+		hash[el] = true
+	}
+
+	for i := 0; i < bv.Len(); i++ {
+		el := bv.Index(i).Interface()
+		if _, found := hash[el]; found {
+			set = append(set, el)
+		}
+	}
+
+	return set
 }
