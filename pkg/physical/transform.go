@@ -41,6 +41,12 @@ type paginationTransform struct {
 	parents Futures
 }
 
+func NewPaginationTransform(params *logical.Pagination) Transform {
+	return &paginationTransform{
+		params: params,
+	}
+}
+
 func (p *paginationTransform) Run(ExecutionContext) Future {
 	return p.parents.Then(func(result Result) (Data, error) {
 		successValues := result.Success()

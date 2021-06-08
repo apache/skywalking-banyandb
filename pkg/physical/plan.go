@@ -31,8 +31,8 @@ type ExecutionContext interface {
 	IndexRepo() index.Repo
 }
 
-// plan is the physical plan
-type plan struct {
+// Plan is the physical Plan
+type Plan struct {
 	// steps is sorted by topology-sort algorithm
 	steps []Transform
 }
