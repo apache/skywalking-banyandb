@@ -197,7 +197,7 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 		transform.AppendParent(parent2.Run(ec2))
 		f := transform.Run(ec)
 
-		actualIDs := []common.ChunkID{1, 2, 3, 4, 5}
+		actualIDs := []common.ChunkID{3}
 
 		Expect(f).ShouldNot(BeNil())
 		Eventually(func() bool {
