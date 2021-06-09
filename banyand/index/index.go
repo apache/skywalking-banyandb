@@ -31,7 +31,7 @@ type Condition struct {
 }
 
 type Repo interface {
-	Search(indexName string, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
+	Search(index common.Metadata, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
 }
 
 type Builder interface {

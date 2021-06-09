@@ -463,7 +463,7 @@ func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
 	return nil
 }
 
-func (rcv *TraceSeries) UpdatedNanosecondsAt() uint64 {
+func (rcv *TraceSeries) UpdatedAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -471,7 +471,7 @@ func (rcv *TraceSeries) UpdatedNanosecondsAt() uint64 {
 	return 0
 }
 
-func (rcv *TraceSeries) MutateUpdatedNanosecondsAt(n uint64) bool {
+func (rcv *TraceSeries) MutateUpdatedAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(12, n)
 }
 
@@ -493,8 +493,8 @@ func TraceSeriesAddReservedFieldsMap(builder *flatbuffers.Builder, reservedField
 func TraceSeriesAddDuration(builder *flatbuffers.Builder, duration flatbuffers.UOffsetT) {
 	builder.PrependStructSlot(3, flatbuffers.UOffsetT(duration), 0)
 }
-func TraceSeriesAddUpdatedNanosecondsAt(builder *flatbuffers.Builder, updatedNanosecondsAt uint64) {
-	builder.PrependUint64Slot(4, updatedNanosecondsAt, 0)
+func TraceSeriesAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(4, updatedAtNanoseconds, 0)
 }
 func TraceSeriesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
@@ -632,7 +632,7 @@ func (rcv *IndexRule) ObjectsLength() int {
 	return 0
 }
 
-func (rcv *IndexRule) UpdatedNanosecondsAt() uint64 {
+func (rcv *IndexRule) UpdatedAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -640,7 +640,7 @@ func (rcv *IndexRule) UpdatedNanosecondsAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRule) MutateUpdatedNanosecondsAt(n uint64) bool {
+func (rcv *IndexRule) MutateUpdatedAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(8, n)
 }
 
@@ -656,8 +656,8 @@ func IndexRuleAddObjects(builder *flatbuffers.Builder, objects flatbuffers.UOffs
 func IndexRuleStartObjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func IndexRuleAddUpdatedNanosecondsAt(builder *flatbuffers.Builder, updatedNanosecondsAt uint64) {
-	builder.PrependUint64Slot(2, updatedNanosecondsAt, 0)
+func IndexRuleAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(2, updatedAtNanoseconds, 0)
 }
 func IndexRuleEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
@@ -801,7 +801,7 @@ func (rcv *IndexRuleBinding) SubjectsLength() int {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) BeginNanosecondsAt() uint64 {
+func (rcv *IndexRuleBinding) BeginAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -809,11 +809,11 @@ func (rcv *IndexRuleBinding) BeginNanosecondsAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateBeginNanosecondsAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateBeginAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(10, n)
 }
 
-func (rcv *IndexRuleBinding) ExpireNanosecondsAt() uint64 {
+func (rcv *IndexRuleBinding) ExpireAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -821,11 +821,11 @@ func (rcv *IndexRuleBinding) ExpireNanosecondsAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateExpireNanosecondsAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateExpireAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(12, n)
 }
 
-func (rcv *IndexRuleBinding) UpdatedNanosecondsAt() uint64 {
+func (rcv *IndexRuleBinding) UpdatedAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -833,7 +833,7 @@ func (rcv *IndexRuleBinding) UpdatedNanosecondsAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateUpdatedNanosecondsAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateUpdatedAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(14, n)
 }
 
@@ -852,14 +852,14 @@ func IndexRuleBindingAddSubjects(builder *flatbuffers.Builder, subjects flatbuff
 func IndexRuleBindingStartSubjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func IndexRuleBindingAddBeginNanosecondsAt(builder *flatbuffers.Builder, beginNanosecondsAt uint64) {
-	builder.PrependUint64Slot(3, beginNanosecondsAt, 0)
+func IndexRuleBindingAddBeginAtNanoseconds(builder *flatbuffers.Builder, beginAtNanoseconds uint64) {
+	builder.PrependUint64Slot(3, beginAtNanoseconds, 0)
 }
-func IndexRuleBindingAddExpireNanosecondsAt(builder *flatbuffers.Builder, expireNanosecondsAt uint64) {
-	builder.PrependUint64Slot(4, expireNanosecondsAt, 0)
+func IndexRuleBindingAddExpireAtNanoseconds(builder *flatbuffers.Builder, expireAtNanoseconds uint64) {
+	builder.PrependUint64Slot(4, expireAtNanoseconds, 0)
 }
-func IndexRuleBindingAddUpdatedNanosecondsAt(builder *flatbuffers.Builder, updatedNanosecondsAt uint64) {
-	builder.PrependUint64Slot(5, updatedNanosecondsAt, 0)
+func IndexRuleBindingAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(5, updatedAtNanoseconds, 0)
 }
 func IndexRuleBindingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

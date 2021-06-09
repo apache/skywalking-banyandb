@@ -21,6 +21,7 @@ package series
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
@@ -47,11 +48,11 @@ type ScanOptions struct {
 //TraceRepo contains trace and entity data
 type TraceRepo interface {
 	//FetchTrace returns data.Trace by traceID
-	FetchTrace(traceID string) (data.Trace, error)
+	FetchTrace(traceSeries common.Metadata, traceID string) (data.Trace, error)
 	//FetchEntity returns data.Entity by ChunkID
-	FetchEntity(chunkIDs []string, opt ScanOptions) ([]data.Entity, error)
+	FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt ScanOptions) ([]data.Entity, error)
 	//ScanEntity returns data.Entity between a duration by ScanOptions
-	ScanEntity(startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
+	ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
 }
 
 //UniModel combines Trace, Metric and Log repositories into a union interface
@@ -66,10 +67,12 @@ type SchemaRepo interface {
 	IndexRuleBinding() schema.IndexRuleBinding
 }
 
+type IndexObjectFilter func(object v1.IndexObject) bool
+
 //IndexFilter provides methods to find a specific index related objects
 type IndexFilter interface {
-	//RulesBySubject fetches IndexRule by Series defined in IndexRuleBinding
-	RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.IndexRule, error)
+	//IndexRules fetches v1.IndexRule by Series defined in IndexRuleBinding and a filter
+	IndexRules(ctx context.Context, subject v1.Series, filter IndexObjectFilter) ([]v1.IndexRule, error)
 }
 
 //Service provides operations how to access series module

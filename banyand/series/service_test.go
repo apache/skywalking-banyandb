@@ -30,25 +30,53 @@ import (
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
+	type args struct {
+		series v1.Series
+		filter IndexObjectFilter
+	}
 	tests := []struct {
 		name    string
-		arg     v1.Series
+		args    args
 		want    []v1.IndexRule
 		wantErr bool
 	}{
 		{
 			name: "golden path",
-			arg:  createSubject("sw", "default"),
+			args: args{
+				series: createSubject("sw", "default"),
+			},
 			want: getIndexRule("sw-index-rule", "default"),
+		},
+		{
+			name: "filter index object",
+			args: args{
+				series: createSubject("sw", "default"),
+				filter: func(object v1.IndexObject) bool {
+					return string(object.Fields(0)) == "trace_id"
+				},
+			},
+			want: getIndexRule("sw-index-rule", "default"),
+		},
+		{
+			name: "got empty result",
+			args: args{
+				series: createSubject("sw", "default"),
+				filter: func(object v1.IndexObject) bool {
+					return string(object.Fields(0)) == "invalid"
+				},
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &service{}
 			ctx := context.Background()
-			got, err := s.RulesBySubject(ctx, tt.arg)
+			got, err := s.IndexRules(ctx, tt.args.series, tt.args.filter)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("RulesBySubject() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(got) < 1 && len(tt.want) < 1 {
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {

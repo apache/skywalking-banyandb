@@ -53,7 +53,7 @@ func (s *service) IndexRuleBinding() schema.IndexRuleBinding {
 	return sw.NewIndexRuleBinding()
 }
 
-func (s *service) RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.IndexRule, error) {
+func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter IndexObjectFilter) ([]v1.IndexRule, error) {
 	group := subject.Series(nil).Group()
 	var groupStr string
 	if group != nil {
@@ -71,8 +71,8 @@ func (s *service) RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.I
 	foundRules := make([]v1.Metadata, 0)
 	for _, binding := range bindings {
 		spec := binding.Spec
-		if spec.BeginNanosecondsAt() > now ||
-			spec.ExpireNanosecondsAt() < now {
+		if spec.BeginAtNanoseconds() > now ||
+			spec.ExpireAtNanoseconds() < now {
 			continue
 		}
 		for i := 0; i < spec.SubjectsLength(); i++ {
@@ -92,7 +92,7 @@ func (s *service) RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.I
 			}
 		}
 	}
-	result := make([]v1.IndexRule, 0, len(foundRules))
+	result := make([]v1.IndexRule, 0)
 	var indexRuleErr error
 	for _, rule := range foundRules {
 		object, getErr := s.IndexRule().Get(ctx, common.Metadata{KindVersion: common.MetadataKindVersion, Spec: rule})
@@ -100,20 +100,35 @@ func (s *service) RulesBySubject(ctx context.Context, subject v1.Series) ([]v1.I
 			indexRuleErr = multierr.Append(indexRuleErr, err)
 			continue
 		}
-		result = append(result, object.Spec)
+		object.Spec.ObjectsLength()
+		r := object.Spec
+		if filter == nil {
+			result = append(result, r)
+			continue
+		}
+		for i := 0; i < r.ObjectsLength(); i++ {
+			indexObject := &v1.IndexObject{}
+			if !r.Objects(indexObject, i) {
+				continue
+			}
+			if filter(*indexObject) {
+				result = append(result, r)
+				continue
+			}
+		}
 	}
 	return result, indexRuleErr
 }
 
-func (s *service) FetchTrace(traceID string) (data.Trace, error) {
+func (s *service) FetchTrace(traceSeries common.Metadata, traceID string) (data.Trace, error) {
 	panic("implement me")
 }
 
-func (s *service) FetchEntity(chunkIDs []string, opt ScanOptions) ([]data.Entity, error) {
+func (s *service) FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt ScanOptions) ([]data.Entity, error) {
 	panic("implement me")
 }
 
-func (s *service) ScanEntity(startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error) {
+func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error) {
 	panic("implement me")
 }
 

@@ -61,8 +61,8 @@ table TraceSeries {
     reserved_fields_map:TraceFieldMap;
     // duration determines how long a TraceSeries keeps its data
     duration:Duration;
-    // updated_nanoseconds_at indicates when the TraceSeries is updated
-    updated_nanoseconds_at:uint64;
+    // updated_at_nanoseconds indicates when the TraceSeries is updated
+    updated_at_nanoseconds:uint64;
 }
 
 // Catalog refers to a placement contains objects belonged to a particular data type
@@ -106,15 +106,15 @@ table IndexObject {
 //            type: Numerical
 //        },
 //    ]
-//    update_nanoseconds_at: .......
+//    update_at_nanoseconds: .......
 // } 
 table IndexRule {
     // metadata define the rule's identity
     metadata:Metadata;
     // objects refer to which fields should be indexed
     objects:[IndexObject];
-    // updated_nanoseconds_at indicates when the IndexRule is updated
-    updated_nanoseconds_at:uint64;
+    // updated_at_nanoseconds indicates when the IndexRule is updated
+    updated_at_nanoseconds:uint64;
 }
 
 // Series defines which subject(series) would generate indices
@@ -132,7 +132,7 @@ table Series {
 }
 
 // IndexRuleBinding is a bridge to connect an IndexRule to several Seriess
-// This binding is valid between begin_nanoseconds_at and expire_nanoseconds_at, that provides flexible strategies
+// This binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies
 // to control how to generate time series indices.
 table IndexRuleBinding {
     // metadata is the identity of this binding
@@ -141,13 +141,13 @@ table IndexRuleBinding {
     rule_ref:Metadata;
     // subjects indicate the subjects of binding action
     subjects:[Series];
-    // begin_nanoseconds_at is the timestamp, after which the binding will be active
-    begin_nanoseconds_at:uint64;
-    // expire_nanoseconds_at it the timestamp, after which the binding will be inactive
-    // expire_nanoseconds_at must be larger than begin_nanoseconds_at
-    expire_nanoseconds_at:uint64;
-    // updated_nanoseconds_at indicates when the IndexRuleBinding is updated
-    updated_nanoseconds_at:uint64;
+    // begin_at_nanoseconds is the timestamp, after which the binding will be active
+    begin_at_nanoseconds:uint64;
+    // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
+    // expire_at_nanoseconds must be larger than begin_at_nanoseconds
+    expire_at_nanoseconds:uint64;
+    // updated_at_nanoseconds indicates when the IndexRuleBinding is updated
+    updated_at_nanoseconds:uint64;
 }
 
 root_type TraceSeries;
