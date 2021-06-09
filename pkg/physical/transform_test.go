@@ -62,7 +62,12 @@ var _ = Describe("TableScanTransform", func() {
 			Return(uniModel)
 		uniModel.
 			EXPECT().
-			ScanEntity(uint64(sT.UnixNano()), uint64(eT.UnixNano()), []string{}).
+			ScanEntity(common.Metadata{
+				KindVersion: common.MetadataKindVersion,
+				Spec:        *params.Metadata(),
+			}, uint64(sT.UnixNano()), uint64(eT.UnixNano()), series.ScanOptions{
+				Projection: params.Projection(),
+			}).
 			Return(nil, mockErr)
 
 		f := transform.Run(ec)
@@ -104,13 +109,23 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 		transform := physical.NewChunkIDsMergeTransform(nil)
 
 		indexRepo := index.NewMockRepo(ctrl)
+		indexFilter := series.NewMockIndexFilter(ctrl)
 
 		ec.
 			EXPECT().
 			IndexRepo().
 			Return(indexRepo)
 
+		ec.
+			EXPECT().
+			IndexFilter().
+			Return(indexFilter)
+
 		ids := []common.ChunkID{1, 2, 3}
+		indexFilter.
+			EXPECT().
+			IndexRules(ec, physical.CreateSubject("trace", "skywalking"), nil).
+			Return([]apiv1.IndexObject{clientutil.BuildIndexObject("duration", apiv1.IndexTypeNumerical)}, nil)
 		indexRepo.
 			EXPECT().
 			Search("duration", uint64(sT.UnixNano()), uint64(eT.UnixNano()), nil).

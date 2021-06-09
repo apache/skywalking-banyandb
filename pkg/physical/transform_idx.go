@@ -45,7 +45,7 @@ func (i *indexScanTransform) Run(ec ExecutionContext) Future {
 		// So far, we only support single-field indices
 		indexRules, err := ec.IndexFilter().IndexRules(
 			ec,
-			createSubject(string(i.params.Metadata().Name()), string(i.params.Metadata().Name())),
+			CreateSubject(string(i.params.Metadata().Name()), string(i.params.Metadata().Group())),
 			SingleFieldIndex(i.params.KeyName),
 		)
 		if err != nil {
@@ -75,7 +75,7 @@ func SingleFieldIndex(fieldName string) series.IndexObjectFilter {
 	}
 }
 
-func createSubject(name, group string) apiv1.Series {
+func CreateSubject(name, group string) apiv1.Series {
 	b := flatbuffers.NewBuilder(0)
 	namePos := b.CreateString(name)
 	groupPos := b.CreateString(group)

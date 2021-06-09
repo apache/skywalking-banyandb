@@ -54,7 +54,7 @@ type TraceRepo interface {
 	ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
 }
 
-//go:generate mockgen -destination=./series_mock.go -package=series . UniModel
+//go:generate mockgen -destination=./series_mock.go -package=series . UniModel,IndexFilter
 type UniModel interface {
 	TraceRepo
 }
