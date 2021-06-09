@@ -1,0 +1,75 @@
+{
+  "metadata": {
+    "name": "sw-index-rule",
+    "group": "default"
+  },
+  "objects": [
+    {
+      "fields": [
+        "trace_id"
+      ],
+      "type": "ID"
+    },
+    {
+      "fields": [
+        "service_id"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "service_instance_id"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "endpoint_id"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "http.method"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "status_code"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "db.type"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "db.instance"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "mq.queue"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "mq.topic"
+      ],
+      "type": "Text"
+    },
+    {
+      "fields": [
+        "mq.broker"
+      ],
+      "type": "Text"
+    }
+  ],
+  "updated_at_nanoseconds": 1622933202000000000
+}

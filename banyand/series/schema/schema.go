@@ -15,35 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
-package index
+package schema
 
 import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
 )
 
-type Condition struct {
+type ListOpt struct {
+	Group string
 }
 
-type Repo interface {
-	Search(index common.Metadata, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
+type TraceSeries interface {
+	Get(ctx context.Context, metadata common.Metadata) (apischema.TraceSeries, error)
+	List(ctx context.Context, opt ListOpt) ([]apischema.TraceSeries, error)
 }
 
-type Builder interface {
-	run.Config
-	run.PreRunner
+type IndexRule interface {
+	Get(ctx context.Context, metadata common.Metadata) (apischema.IndexRule, error)
+	List(ctx context.Context, opt ListOpt) ([]apischema.IndexRule, error)
 }
 
-type Service interface {
-	Repo
-	Builder
-}
-
-func NewService(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
-	return nil, nil
+type IndexRuleBinding interface {
+	Get(ctx context.Context, metadata common.Metadata) (apischema.IndexRuleBinding, error)
+	List(ctx context.Context, opt ListOpt) ([]apischema.IndexRuleBinding, error)
 }

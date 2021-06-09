@@ -15,35 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
-package index
+package common
 
-import (
-	"context"
+import v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-)
+var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
 
-type Condition struct {
-}
-
-type Repo interface {
-	Search(index common.Metadata, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
-}
-
-type Builder interface {
-	run.Config
-	run.PreRunner
-}
-
-type Service interface {
-	Repo
-	Builder
-}
-
-func NewService(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
-	return nil, nil
+type Metadata struct {
+	KindVersion
+	Spec v1.Metadata
 }

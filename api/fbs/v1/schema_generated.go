@@ -38,6 +38,36 @@ func (v DurationUint) String() string {
 	return "DurationUint(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
+type FieldType int8
+
+const (
+	FieldTypeString      FieldType = 0
+	FieldTypeInt         FieldType = 1
+	FieldTypeStringArray FieldType = 2
+	FieldTypeIntArray    FieldType = 3
+)
+
+var EnumNamesFieldType = map[FieldType]string{
+	FieldTypeString:      "String",
+	FieldTypeInt:         "Int",
+	FieldTypeStringArray: "StringArray",
+	FieldTypeIntArray:    "IntArray",
+}
+
+var EnumValuesFieldType = map[string]FieldType{
+	"String":      FieldTypeString,
+	"Int":         FieldTypeInt,
+	"StringArray": FieldTypeStringArray,
+	"IntArray":    FieldTypeIntArray,
+}
+
+func (v FieldType) String() string {
+	if s, ok := EnumNamesFieldType[v]; ok {
+		return s
+	}
+	return "FieldType(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
 type Catalog int8
 
 const (
@@ -68,21 +98,30 @@ func (v Catalog) String() string {
 type IndexType int8
 
 const (
-	IndexTypeText      IndexType = 0
-	IndexTypeNumerical IndexType = 1
-	IndexTypeID        IndexType = 2
+	IndexTypeText            IndexType = 0
+	IndexTypeNumerical       IndexType = 1
+	IndexTypeID              IndexType = 2
+	IndexTypeMultiText       IndexType = 3
+	IndexTypeMultiNumberical IndexType = 4
+	IndexTypeSeriesInternal  IndexType = 5
 )
 
 var EnumNamesIndexType = map[IndexType]string{
-	IndexTypeText:      "Text",
-	IndexTypeNumerical: "Numerical",
-	IndexTypeID:        "ID",
+	IndexTypeText:            "Text",
+	IndexTypeNumerical:       "Numerical",
+	IndexTypeID:              "ID",
+	IndexTypeMultiText:       "MultiText",
+	IndexTypeMultiNumberical: "MultiNumberical",
+	IndexTypeSeriesInternal:  "SeriesInternal",
 }
 
 var EnumValuesIndexType = map[string]IndexType{
-	"Text":      IndexTypeText,
-	"Numerical": IndexTypeNumerical,
-	"ID":        IndexTypeID,
+	"Text":            IndexTypeText,
+	"Numerical":       IndexTypeNumerical,
+	"ID":              IndexTypeID,
+	"MultiText":       IndexTypeMultiText,
+	"MultiNumberical": IndexTypeMultiNumberical,
+	"SeriesInternal":  IndexTypeSeriesInternal,
 }
 
 func (v IndexType) String() string {
@@ -127,6 +166,217 @@ func CreateDuration(builder *flatbuffers.Builder, val uint32, unit DurationUint)
 	return builder.Offset()
 }
 
+type FieldSpec struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsFieldSpec(buf []byte, offset flatbuffers.UOffsetT) *FieldSpec {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &FieldSpec{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsFieldSpec(buf []byte, offset flatbuffers.UOffsetT) *FieldSpec {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &FieldSpec{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *FieldSpec) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *FieldSpec) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *FieldSpec) Name() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *FieldSpec) Type() FieldType {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return FieldType(rcv._tab.GetInt8(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *FieldSpec) MutateType(n FieldType) bool {
+	return rcv._tab.MutateInt8Slot(6, int8(n))
+}
+
+func FieldSpecStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func FieldSpecAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(name), 0)
+}
+func FieldSpecAddType(builder *flatbuffers.Builder, type_ FieldType) {
+	builder.PrependInt8Slot(1, int8(type_), 0)
+}
+func FieldSpecEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
+type TraceStateMap struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsTraceStateMap(buf []byte, offset flatbuffers.UOffsetT) *TraceStateMap {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &TraceStateMap{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsTraceStateMap(buf []byte, offset flatbuffers.UOffsetT) *TraceStateMap {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &TraceStateMap{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *TraceStateMap) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *TraceStateMap) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *TraceStateMap) Field() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *TraceStateMap) ValSuccess() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *TraceStateMap) ValError() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func TraceStateMapStart(builder *flatbuffers.Builder) {
+	builder.StartObject(3)
+}
+func TraceStateMapAddField(builder *flatbuffers.Builder, field flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(field), 0)
+}
+func TraceStateMapAddValSuccess(builder *flatbuffers.Builder, valSuccess flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(valSuccess), 0)
+}
+func TraceStateMapAddValError(builder *flatbuffers.Builder, valError flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(valError), 0)
+}
+func TraceStateMapEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
+type TraceFieldMap struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsTraceFieldMap(buf []byte, offset flatbuffers.UOffsetT) *TraceFieldMap {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &TraceFieldMap{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsTraceFieldMap(buf []byte, offset flatbuffers.UOffsetT) *TraceFieldMap {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &TraceFieldMap{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *TraceFieldMap) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *TraceFieldMap) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *TraceFieldMap) TraceId() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *TraceFieldMap) SeriesId(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *TraceFieldMap) SeriesIdLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *TraceFieldMap) State(obj *TraceStateMap) *TraceStateMap {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(TraceStateMap)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func TraceFieldMapStart(builder *flatbuffers.Builder) {
+	builder.StartObject(3)
+}
+func TraceFieldMapAddTraceId(builder *flatbuffers.Builder, traceId flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(traceId), 0)
+}
+func TraceFieldMapAddSeriesId(builder *flatbuffers.Builder, seriesId flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(seriesId), 0)
+}
+func TraceFieldMapStartSeriesIdVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func TraceFieldMapAddState(builder *flatbuffers.Builder, state flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(state), 0)
+}
+func TraceFieldMapEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
 type TraceSeries struct {
 	_tab flatbuffers.Table
 }
@@ -167,8 +417,41 @@ func (rcv *TraceSeries) Metadata(obj *Metadata) *Metadata {
 	return nil
 }
 
-func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
+func (rcv *TraceSeries) Fields(obj *FieldSpec, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *TraceSeries) FieldsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *TraceSeries) ReservedFieldsMap(obj *TraceFieldMap) *TraceFieldMap {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(TraceFieldMap)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		x := o + rcv._tab.Pos
 		if obj == nil {
@@ -180,29 +463,38 @@ func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
 	return nil
 }
 
-func (rcv *TraceSeries) UpdatedAt() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+func (rcv *TraceSeries) UpdatedAtNanoseconds() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *TraceSeries) MutateUpdatedAt(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
+func (rcv *TraceSeries) MutateUpdatedAtNanoseconds(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(12, n)
 }
 
 func TraceSeriesStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(5)
 }
 func TraceSeriesAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metadata), 0)
 }
-func TraceSeriesAddDuration(builder *flatbuffers.Builder, duration flatbuffers.UOffsetT) {
-	builder.PrependStructSlot(1, flatbuffers.UOffsetT(duration), 0)
+func TraceSeriesAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(fields), 0)
 }
-func TraceSeriesAddUpdatedAt(builder *flatbuffers.Builder, updatedAt uint64) {
-	builder.PrependUint64Slot(2, updatedAt, 0)
+func TraceSeriesStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func TraceSeriesAddReservedFieldsMap(builder *flatbuffers.Builder, reservedFieldsMap flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(reservedFieldsMap), 0)
+}
+func TraceSeriesAddDuration(builder *flatbuffers.Builder, duration flatbuffers.UOffsetT) {
+	builder.PrependStructSlot(3, flatbuffers.UOffsetT(duration), 0)
+}
+func TraceSeriesAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(4, updatedAtNanoseconds, 0)
 }
 func TraceSeriesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
@@ -340,7 +632,7 @@ func (rcv *IndexRule) ObjectsLength() int {
 	return 0
 }
 
-func (rcv *IndexRule) UpdatedAt() uint64 {
+func (rcv *IndexRule) UpdatedAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -348,7 +640,7 @@ func (rcv *IndexRule) UpdatedAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRule) MutateUpdatedAt(n uint64) bool {
+func (rcv *IndexRule) MutateUpdatedAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(8, n)
 }
 
@@ -364,41 +656,41 @@ func IndexRuleAddObjects(builder *flatbuffers.Builder, objects flatbuffers.UOffs
 func IndexRuleStartObjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func IndexRuleAddUpdatedAt(builder *flatbuffers.Builder, updatedAt uint64) {
-	builder.PrependUint64Slot(2, updatedAt, 0)
+func IndexRuleAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(2, updatedAtNanoseconds, 0)
 }
 func IndexRuleEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type IndexSubject struct {
+type Series struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsIndexSubject(buf []byte, offset flatbuffers.UOffsetT) *IndexSubject {
+func GetRootAsSeries(buf []byte, offset flatbuffers.UOffsetT) *Series {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &IndexSubject{}
+	x := &Series{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsIndexSubject(buf []byte, offset flatbuffers.UOffsetT) *IndexSubject {
+func GetSizePrefixedRootAsSeries(buf []byte, offset flatbuffers.UOffsetT) *Series {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &IndexSubject{}
+	x := &Series{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *IndexSubject) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *Series) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *IndexSubject) Table() flatbuffers.Table {
+func (rcv *Series) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *IndexSubject) Catalog() Catalog {
+func (rcv *Series) Catalog() Catalog {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return Catalog(rcv._tab.GetInt8(o + rcv._tab.Pos))
@@ -406,11 +698,11 @@ func (rcv *IndexSubject) Catalog() Catalog {
 	return 0
 }
 
-func (rcv *IndexSubject) MutateCatalog(n Catalog) bool {
+func (rcv *Series) MutateCatalog(n Catalog) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
 
-func (rcv *IndexSubject) Series(obj *Metadata) *Metadata {
+func (rcv *Series) Series(obj *Metadata) *Metadata {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -423,16 +715,16 @@ func (rcv *IndexSubject) Series(obj *Metadata) *Metadata {
 	return nil
 }
 
-func IndexSubjectStart(builder *flatbuffers.Builder) {
+func SeriesStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func IndexSubjectAddCatalog(builder *flatbuffers.Builder, catalog Catalog) {
+func SeriesAddCatalog(builder *flatbuffers.Builder, catalog Catalog) {
 	builder.PrependInt8Slot(0, int8(catalog), 0)
 }
-func IndexSubjectAddSeries(builder *flatbuffers.Builder, series flatbuffers.UOffsetT) {
+func SeriesAddSeries(builder *flatbuffers.Builder, series flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(series), 0)
 }
-func IndexSubjectEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func SeriesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
@@ -489,7 +781,7 @@ func (rcv *IndexRuleBinding) RuleRef(obj *Metadata) *Metadata {
 	return nil
 }
 
-func (rcv *IndexRuleBinding) Subjects(obj *IndexSubject, j int) bool {
+func (rcv *IndexRuleBinding) Subjects(obj *Series, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -509,7 +801,7 @@ func (rcv *IndexRuleBinding) SubjectsLength() int {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) BeginAt() uint64 {
+func (rcv *IndexRuleBinding) BeginAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -517,11 +809,11 @@ func (rcv *IndexRuleBinding) BeginAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateBeginAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateBeginAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(10, n)
 }
 
-func (rcv *IndexRuleBinding) ExpireAt() uint64 {
+func (rcv *IndexRuleBinding) ExpireAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -529,11 +821,11 @@ func (rcv *IndexRuleBinding) ExpireAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateExpireAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateExpireAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(12, n)
 }
 
-func (rcv *IndexRuleBinding) UpdatedAt() uint64 {
+func (rcv *IndexRuleBinding) UpdatedAtNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -541,7 +833,7 @@ func (rcv *IndexRuleBinding) UpdatedAt() uint64 {
 	return 0
 }
 
-func (rcv *IndexRuleBinding) MutateUpdatedAt(n uint64) bool {
+func (rcv *IndexRuleBinding) MutateUpdatedAtNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(14, n)
 }
 
@@ -560,14 +852,14 @@ func IndexRuleBindingAddSubjects(builder *flatbuffers.Builder, subjects flatbuff
 func IndexRuleBindingStartSubjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func IndexRuleBindingAddBeginAt(builder *flatbuffers.Builder, beginAt uint64) {
-	builder.PrependUint64Slot(3, beginAt, 0)
+func IndexRuleBindingAddBeginAtNanoseconds(builder *flatbuffers.Builder, beginAtNanoseconds uint64) {
+	builder.PrependUint64Slot(3, beginAtNanoseconds, 0)
 }
-func IndexRuleBindingAddExpireAt(builder *flatbuffers.Builder, expireAt uint64) {
-	builder.PrependUint64Slot(4, expireAt, 0)
+func IndexRuleBindingAddExpireAtNanoseconds(builder *flatbuffers.Builder, expireAtNanoseconds uint64) {
+	builder.PrependUint64Slot(4, expireAtNanoseconds, 0)
 }
-func IndexRuleBindingAddUpdatedAt(builder *flatbuffers.Builder, updatedAt uint64) {
-	builder.PrependUint64Slot(5, updatedAt, 0)
+func IndexRuleBindingAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
+	builder.PrependUint64Slot(5, updatedAtNanoseconds, 0)
 }
 func IndexRuleBindingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

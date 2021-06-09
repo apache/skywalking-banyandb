@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "sw-index-rule-binding",
+    "group": "default"
+  },
+  "rule_ref": {
+    "name": "sw-index-rule",
+    "group": "default"
+  },
+  "subjects": [
+    {
+      "catalog": "Trace",
+      "series": {
+        "name": "sw",
+        "group": "default"
+      }
+    }
+  ],
+  "begin_at_nanoseconds": 1622933202000000000,
+  "expire_at_nanoseconds": 4778577979000000000,
+  "updated_at_nanoseconds": 1622933202000000000
+}
