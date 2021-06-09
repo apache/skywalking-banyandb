@@ -15,23 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
 package index
 
 import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Condition struct {
-}
-
+//go:generate mockgen -destination=./index_mock.go -package=index . Repo
 type Repo interface {
-	Search(index common.Metadata, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
+	Search(index common.Metadata, startTime, endTime uint64, conditions []*apiv1.PairQuery) ([]common.ChunkID, error)
 }
 
 type Builder interface {

@@ -41,7 +41,7 @@ func (t *TableScan) TimeRange() *apiv1.RangeQuery {
 	return t.timeRange
 }
 
-func (t *TableScan) Medata() *apiv1.Metadata {
+func (t *TableScan) Metadata() *apiv1.Metadata {
 	return t.metadata
 }
 
@@ -84,7 +84,7 @@ func (c *ChunkIDsFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (c *ChunkIDsFetch) Medata() *apiv1.Metadata {
+func (c *ChunkIDsFetch) Metadata() *apiv1.Metadata {
 	return c.metadata
 }
 
@@ -124,7 +124,7 @@ func (t *TraceIDFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (t *TraceIDFetch) Medata() *apiv1.Metadata {
+func (t *TraceIDFetch) Metadata() *apiv1.Metadata {
 	return t.metadata
 }
 

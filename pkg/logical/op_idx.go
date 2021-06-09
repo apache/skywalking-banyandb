@@ -53,7 +53,7 @@ func (is *IndexScan) TimeRange() *apiv1.RangeQuery {
 	return is.timeRange
 }
 
-func (is *IndexScan) Medata() *apiv1.Metadata {
+func (is *IndexScan) Metadata() *apiv1.Metadata {
 	return is.metadata
 }
 

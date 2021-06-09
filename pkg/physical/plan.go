@@ -33,6 +33,7 @@ type ExecutionContext interface {
 	context.Context
 	UniModel() series.UniModel
 	IndexRepo() index.Repo
+	IndexFilter() series.IndexFilter
 }
 
 // Plan is the physical Plan

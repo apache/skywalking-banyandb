@@ -41,7 +41,7 @@ type Op interface {
 
 type SourceOp interface {
 	TimeRange() *apiv1.RangeQuery
-	Medata() *apiv1.Metadata
+	Metadata() *apiv1.Metadata
 	Op
 }
 

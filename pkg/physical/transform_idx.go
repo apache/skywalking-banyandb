@@ -18,7 +18,11 @@
 package physical
 
 import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 var _ Transform = (*indexScanTransform)(nil)
@@ -37,8 +41,19 @@ func NewIndexScanTransform(params *logical.IndexScan) Transform {
 func (i *indexScanTransform) Run(ec ExecutionContext) Future {
 	return NewFuture(func() Result {
 		sT, eT := i.params.TimeRange().Begin(), i.params.TimeRange().End()
-		// TODO: condition?
-		cIDs, err := ec.IndexRepo().Search(i.params.KeyName, sT, eT, nil)
+		// So far, we only support single-field indices
+		indexRules, err := ec.IndexFilter().IndexRules(
+			ec,
+			createSubject(string(i.params.Metadata().Name()), string(i.params.Metadata().Name())),
+			SingleFieldIndex(i.params.KeyName),
+		)
+		if err != nil {
+			return Failure(err)
+		}
+		indexRuleMetadata := indexRules[0].Metadata(nil)
+		cIDs, err := ec.IndexRepo().Search(common.Metadata{
+			Spec: *indexRuleMetadata,
+		}, sT, eT, i.params.PairQueries)
 		if err != nil {
 			return Failure(err)
 		}
@@ -48,4 +63,28 @@ func (i *indexScanTransform) Run(ec ExecutionContext) Future {
 
 func (i *indexScanTransform) AppendParent(f ...Future) {
 	i.parents = i.parents.Append(f...)
+}
+
+func SingleFieldIndex(fieldName string) series.IndexObjectFilter {
+	return func(idxObj apiv1.IndexObject) bool {
+		if idxObj.FieldsLength() == 1 && string(idxObj.Fields(0)) == fieldName {
+			return true
+		}
+		return false
+	}
+}
+
+func createSubject(name, group string) apiv1.Series {
+	b := flatbuffers.NewBuilder(0)
+	namePos := b.CreateString(name)
+	groupPos := b.CreateString(group)
+	apiv1.MetadataStart(b)
+	apiv1.MetadataAddName(b, namePos)
+	apiv1.MetadataAddGroup(b, groupPos)
+	s := apiv1.MetadataEnd(b)
+	apiv1.IndexRuleStart(b)
+	apiv1.SeriesAddCatalog(b, apiv1.CatalogTrace)
+	apiv1.SeriesAddSeries(b, s)
+	b.Finish(apiv1.IndexRuleEnd(b))
+	return *apiv1.GetRootAsSeries(b.FinishedBytes(), 0)
 }
