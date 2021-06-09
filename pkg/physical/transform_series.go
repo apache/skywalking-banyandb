@@ -20,7 +20,9 @@ package physical
 import (
 	"errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
@@ -40,7 +42,13 @@ func NewTableScanTransform(params *logical.TableScan) Transform {
 func (t *tableScanTransform) Run(ec ExecutionContext) Future {
 	return NewFuture(func() Result {
 		sT, eT := t.params.TimeRange().Begin(), t.params.TimeRange().End()
-		entities, err := ec.UniModel().ScanEntity(sT, eT, t.params.Projection())
+		metadata := t.params.Metadata()
+		entities, err := ec.UniModel().ScanEntity(common.Metadata{
+			KindVersion: common.MetadataKindVersion,
+			Spec:        *metadata,
+		}, sT, eT, series.ScanOptions{
+			Projection: t.params.Projection(),
+		})
 		if err != nil {
 			return Failure(err)
 		}
@@ -73,7 +81,13 @@ func (c *chunkIDsFetchTransform) Run(ec ExecutionContext) Future {
 		}
 		v := result.Success()
 		if v.DataType() == ChunkID {
-			entities, err := ec.UniModel().FetchEntity(v.(*chunkIDs).ids, c.params.Projection())
+			metadata := c.params.Metadata()
+			entities, err := ec.UniModel().FetchEntity(common.Metadata{
+				KindVersion: common.MetadataKindVersion,
+				Spec:        *metadata,
+			}, v.(*chunkIDs).ids, series.ScanOptions{
+				Projection: c.params.Projection(),
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -103,7 +117,11 @@ func NewTraceIDFetchTransform(params *logical.TraceIDFetch) Transform {
 
 func (t *traceIDFetchTransform) Run(ec ExecutionContext) Future {
 	return NewFuture(func() Result {
-		trace, err := ec.UniModel().FetchTrace(t.params.TraceID)
+		metadata := t.params.Metadata()
+		trace, err := ec.UniModel().FetchTrace(common.Metadata{
+			KindVersion: common.MetadataKindVersion,
+			Spec:        *metadata,
+		}, t.params.TraceID)
 		if err != nil {
 			return Failure(err)
 		}

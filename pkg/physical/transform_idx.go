@@ -18,11 +18,12 @@
 package physical
 
 import (
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
-	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 var _ Transform = (*indexScanTransform)(nil)

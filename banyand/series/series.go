@@ -39,9 +39,9 @@ var (
 //ScanOptions contain options
 //nolint
 type ScanOptions struct {
-	projection []string
-	state      TraceState
-	limit      uint32
+	Projection []string
+	State      TraceState
+	Limit      uint32
 }
 
 //TraceRepo contains trace and entity data
