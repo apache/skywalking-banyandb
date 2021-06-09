@@ -206,3 +206,30 @@ func (f *future) handlePanic() {
 		}
 	}
 }
+
+var _ Future = (*emptyFuture)(nil)
+
+type emptyFuture struct {
+}
+
+func (e *emptyFuture) Await() Result {
+	return Success(nil)
+}
+
+func (e *emptyFuture) IsComplete() bool {
+	return true
+}
+
+func (e *emptyFuture) Value() Result {
+	return nil
+}
+
+func (e *emptyFuture) Then(callback Callback) Future {
+	return NewFuture(func() Result {
+		result, err := callback(nil)
+		if err != nil {
+			return Failure(err)
+		}
+		return Success(result)
+	})
+}

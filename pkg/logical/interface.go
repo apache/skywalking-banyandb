@@ -29,7 +29,7 @@ const (
 	OpTableChunkIDsFetch = "tableChunkIDsFetch"
 	OpTableTraceIDFetch  = "tableTraceIDFetch"
 	OpIndexScan          = "IndexScan"
-	OpSortedMerge        = "SortedMerge"
+	OpSortedMerge        = "SortMerge"
 	OpPagination         = "Pagination"
 	OpChunkIDsMerge      = "ChunkIDsMerge"
 )

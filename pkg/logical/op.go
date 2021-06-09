@@ -23,41 +23,41 @@ import (
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-var _ Op = (*rootOp)(nil)
+var _ Op = (*RootOp)(nil)
 
-type rootOp struct {
+type RootOp struct {
 }
 
-func (r *rootOp) Name() string {
+func (r *RootOp) Name() string {
 	return "Root{}"
 }
 
-func (r *rootOp) OpType() string {
+func (r *RootOp) OpType() string {
 	return OpRoot
 }
 
 func NewRoot() Op {
-	return &rootOp{}
+	return &RootOp{}
 }
 
-var _ Op = (*SortedMerge)(nil)
+var _ Op = (*SortMerge)(nil)
 
-// SortedMerge define parameters for an aggregate operation,
+// SortMerge define parameters for an aggregate operation,
 // QueryOrder contains sorted field and sort algorithm
-type SortedMerge struct {
+type SortMerge struct {
 	QueryOrder *apiv1.QueryOrder
 }
 
-func (s *SortedMerge) Name() string {
-	return fmt.Sprintf("SortedMerge{fieldName=%s,sort=%v}", string(s.QueryOrder.KeyName()), s.QueryOrder.Sort())
+func (s *SortMerge) Name() string {
+	return fmt.Sprintf("SortMerge{fieldName=%s,sort=%v}", string(s.QueryOrder.KeyName()), s.QueryOrder.Sort())
 }
 
-func (s *SortedMerge) OpType() string {
+func (s *SortMerge) OpType() string {
 	return OpSortedMerge
 }
 
 func NewSortedMerge(queryOrder *apiv1.QueryOrder) Op {
-	return &SortedMerge{QueryOrder: queryOrder}
+	return &SortMerge{QueryOrder: queryOrder}
 }
 
 var _ Op = (*Pagination)(nil)

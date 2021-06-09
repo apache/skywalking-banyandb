@@ -3,8 +3,9 @@ package physical
 import (
 	"errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/logical"
 	"github.com/hashicorp/terraform/dag"
+
+	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
 func ComposePhysicalPlan(logicalPlan *logical.Plan) (*Plan, error) {
@@ -12,33 +13,21 @@ func ComposePhysicalPlan(logicalPlan *logical.Plan) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	var stack []dag.Vertex
-	var visited = make(map[dag.Vertex]struct{})
-	dfs(rootVertex, logicalPlan.AcyclicGraph, stack, visited)
-	var topologySorted []Transform
-	for i := len(stack) - 1; i >= 0; i-- {
-		tf, err := convertToTransform(stack[i])
+	var steps = make(map[dag.Vertex]Transform)
+
+	err = logicalPlan.SortedDepthFirstWalk([]dag.Vertex{rootVertex}, func(vertex dag.Vertex, i int) error {
+		tf, err := convertToTransform(vertex)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		topologySorted = append(topologySorted, tf)
-	}
+		steps[vertex] = tf
+		return nil
+	})
 
 	return &Plan{
-		steps: topologySorted,
+		logicalPlan,
+		steps,
 	}, nil
-}
-
-func dfs(vertex dag.Vertex, graph *dag.AcyclicGraph, stack []dag.Vertex, visited map[dag.Vertex]struct{}) {
-	visited[vertex] = struct{}{}
-	downEdges := graph.EdgesFrom(vertex)
-	for _, downEdge := range downEdges {
-		if _, ok := visited[downEdge.Target()]; !ok {
-			dfs(downEdge.Target(), graph, stack, visited)
-		}
-	}
-
-	stack = append(stack, vertex)
 }
 
 func convertToTransform(v dag.Vertex) (Transform, error) {
@@ -53,11 +42,13 @@ func convertToTransform(v dag.Vertex) (Transform, error) {
 		case logical.OpIndexScan:
 			return NewIndexScanTransform(op.(*logical.IndexScan)), nil
 		case logical.OpSortedMerge:
-			panic("")
+			return NewSortMergeTransform(op.(*logical.SortMerge)), nil
 		case logical.OpPagination:
 			return NewPaginationTransform(op.(*logical.Pagination)), nil
 		case logical.OpChunkIDsMerge:
 			return NewChunkIDsMergeTransform(op.(*logical.ChunkIDsMerge)), nil
+		case logical.OpRoot:
+			return NewRootTransform(op.(*logical.RootOp)), nil
 		default:
 			return nil, errors.New("unsupported logical op")
 		}

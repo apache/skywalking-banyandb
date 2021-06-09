@@ -34,6 +34,26 @@ type Transform interface {
 	AppendParent(...Future)
 }
 
+var _ Transform = (*rootTransform)(nil)
+
+type rootTransform struct {
+	params *logical.RootOp
+}
+
+func NewRootTransform(params *logical.RootOp) Transform {
+	return &rootTransform{
+		params: params,
+	}
+}
+
+func (r *rootTransform) Run(ExecutionContext) Future {
+	return &emptyFuture{}
+}
+
+func (r *rootTransform) AppendParent(...Future) {
+	// do nothing
+}
+
 var _ Transform = (*paginationTransform)(nil)
 
 type paginationTransform struct {
@@ -75,21 +95,27 @@ func (p *paginationTransform) AppendParent(f ...Future) {
 	p.parents = append(p.parents, f...)
 }
 
-var _ Transform = (*sortedMergeTransform)(nil)
+var _ Transform = (*sortMergeTransform)(nil)
 
-type sortedMergeTransform struct {
-	params  *logical.SortedMerge
+type sortMergeTransform struct {
+	params  *logical.SortMerge
 	parents Futures
 }
 
-func (s *sortedMergeTransform) Run(ec ExecutionContext) Future {
+func NewSortMergeTransform(params *logical.SortMerge) Transform {
+	return &sortMergeTransform{
+		params: params,
+	}
+}
+
+func (s *sortMergeTransform) Run(ec ExecutionContext) Future {
 	return s.parents.Then(func(result Result) (Data, error) {
 		// TODO(megrez): merge traces with hashMap and sort
 		panic("implement me")
 	})
 }
 
-func (s *sortedMergeTransform) AppendParent(f ...Future) {
+func (s *sortMergeTransform) AppendParent(f ...Future) {
 	s.parents = append(s.parents, f...)
 }
 
