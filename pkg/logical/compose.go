@@ -27,7 +27,7 @@ import (
 )
 
 func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
-	g := dag.AcyclicGraph{}
+	g := &dag.AcyclicGraph{}
 
 	root := NewRoot()
 	g.Add(root)
