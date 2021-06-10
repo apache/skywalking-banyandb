@@ -123,7 +123,9 @@ func (s *sortMergeTransform) Run(ec ExecutionContext) Future {
 				ExternalSort(dg[0].(*entities).entities, s.params.FieldIdx, s.params.QueryOrder.Sort())
 				return dg[0].(*entities), nil
 			} else if len(dg) == 2 {
-				panic("two way merges")
+				ExternalSort(dg[0].(*entities).entities, s.params.FieldIdx, s.params.QueryOrder.Sort())
+				ExternalSort(dg[1].(*entities).entities, s.params.FieldIdx, s.params.QueryOrder.Sort())
+				return mergeEntities(dg[0].(*entities).entities, dg[1].(*entities).entities), nil
 			} else {
 				return nil, MultiWaysMergeNotSupportedErr
 			}
@@ -175,7 +177,6 @@ func (c *chunkIDsMergeTransform) AppendParent(f ...Future) {
 	c.parents = append(c.parents, f...)
 }
 
-// HashIntersection has complexity: O(n * x) where x is a factor of hash function efficiency (between 1 and 2)
 func HashIntersection(a, b []common.ChunkID) []common.ChunkID {
 	set := make([]common.ChunkID, 0)
 	hash := make(map[common.ChunkID]struct{})
@@ -234,4 +235,18 @@ func convertToInt64Bytes(i64 int64) []byte {
 	var buf = make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, uint64(i64))
 	return buf
+}
+
+func mergeEntities(a, b []*apiv1.Entity) *entities {
+	ets := new(entities)
+	hash := make(map[string]struct{})
+	for _, e := range a {
+		hash[string(e.EntityId())] = struct{}{}
+	}
+	for _, e := range b {
+		if _, ok := hash[string(e.EntityId())]; ok {
+			ets.entities = append(ets.entities, e)
+		}
+	}
+	return ets
 }
