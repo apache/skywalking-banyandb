@@ -22,14 +22,14 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
 type DataType uint8
 
 const (
 	ChunkID DataType = iota
-	Trace
+	Entity
 	Unknown
 )
 
@@ -92,22 +92,22 @@ func NewChunkIDs(ids ...common.ChunkID) Data {
 	}
 }
 
-var _ Data = (*traces)(nil)
+var _ Data = (*entities)(nil)
 
-type traces struct {
-	traces []*data.Trace
+type entities struct {
+	entities []*apiv1.Entity
 }
 
-func (t *traces) Unwrap() interface{} {
-	return t.traces
+func (t *entities) Unwrap() interface{} {
+	return t.entities
 }
 
-func (t *traces) DataType() DataType {
-	return Trace
+func (t *entities) DataType() DataType {
+	return Entity
 }
 
-func NewTraceData(input ...*data.Trace) Data {
-	return &traces{
-		traces: input,
+func NewTraceData(input ...*apiv1.Entity) Data {
+	return &entities{
+		entities: input,
 	}
 }

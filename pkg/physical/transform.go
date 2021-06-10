@@ -18,15 +18,21 @@
 package physical
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
+	"sort"
+
+	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
 var (
-	DataTypeNotSupportedErr = errors.New("unsupported data type")
+	DataTypeNotSupportedErr       = errors.New("unsupported data type")
+	MultiWaysMergeNotSupportedErr = errors.New("multi-way merge > 3 not supported")
 )
 
 type Transform interface {
@@ -71,17 +77,17 @@ func (p *paginationTransform) Run(ExecutionContext) Future {
 	return p.parents.Then(func(result Result) (Data, error) {
 		successValues := result.Success()
 		if dg, ok := successValues.(DataGroup); ok {
-			var entities []*data.Trace
+			var ets []*apiv1.Entity
 			for _, d := range dg {
-				if traceEntities, ok := d.(*traces); ok {
-					entities = append(entities, traceEntities.traces...)
+				if traceEntities, ok := d.(*entities); ok {
+					ets = append(ets, traceEntities.entities...)
 				}
 			}
-			if int(p.params.Offset) < len(entities) {
-				if int(p.params.Offset+p.params.Limit) < len(entities) {
-					return NewTraceData(entities[p.params.Offset : p.params.Offset+p.params.Limit]...), nil
+			if int(p.params.Offset) < len(ets) {
+				if int(p.params.Offset+p.params.Limit) < len(ets) {
+					return NewTraceData(ets[p.params.Offset : p.params.Offset+p.params.Limit]...), nil
 				} else {
-					return NewTraceData(entities[p.params.Offset:]...), nil
+					return NewTraceData(ets[p.params.Offset:]...), nil
 				}
 			} else {
 				return NewTraceData(), nil
@@ -110,8 +116,20 @@ func NewSortMergeTransform(params *logical.SortMerge) Transform {
 
 func (s *sortMergeTransform) Run(ec ExecutionContext) Future {
 	return s.parents.Then(func(result Result) (Data, error) {
-		// TODO(megrez): merge traces with hashMap and sort
-		panic("implement me")
+		sucValues := result.Success()
+		if dg, ok := sucValues.(DataGroup); ok {
+			if len(dg) == 1 {
+				// we have to know the field index in advance
+				ExternalSort(dg[0].(*entities).entities, 0, s.params.QueryOrder.Sort())
+				return dg[0].(*entities), nil
+			} else if len(dg) == 2 {
+				panic("two way merges")
+			} else {
+				return nil, MultiWaysMergeNotSupportedErr
+			}
+		} else {
+			return nil, DataTypeNotSupportedErr
+		}
 	})
 }
 
@@ -175,4 +193,45 @@ func HashIntersection(a, b []common.ChunkID) []common.ChunkID {
 	}
 
 	return set
+}
+
+func ExternalSort(traces []*apiv1.Entity, fieldIdx int, sortAlgorithm apiv1.Sort) {
+	sort.Slice(traces, func(i, j int) bool {
+		var iPair apiv1.Pair
+		traces[i].Fields(&iPair, fieldIdx)
+		var jPair apiv1.Pair
+		traces[j].Fields(&jPair, fieldIdx)
+		lField, _ := getFieldRaw(&iPair)
+		rField, _ := getFieldRaw(&jPair)
+		comp := bytes.Compare(lField, rField)
+		if sortAlgorithm == apiv1.SortASC {
+			return comp == -1
+		} else {
+			return comp == 1
+		}
+	})
+}
+
+func getFieldRaw(pair *apiv1.Pair) ([]byte, error) {
+	unionPair := new(flatbuffers.Table)
+	if ok := pair.Pair(unionPair); !ok {
+		return nil, errors.New("cannot read from pair")
+	}
+	if pair.PairType() == apiv1.TypedPairStrPair {
+		unionStrPairQuery := new(apiv1.StrPair)
+		unionStrPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+		return unionStrPairQuery.Values(0), nil
+	} else if pair.PairType() == apiv1.TypedPairIntPair {
+		unionIntPairQuery := new(apiv1.IntPair)
+		unionIntPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+		return convertToInt64Bytes(unionIntPairQuery.Values(0)), nil
+	} else {
+		return nil, errors.New("unsupported data types")
+	}
+}
+
+func convertToInt64Bytes(i64 int64) []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(i64))
+	return buf
 }

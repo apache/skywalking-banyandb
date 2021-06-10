@@ -45,7 +45,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria, indexRuleMeta *common.Metadat
 	var seriesOps []SeriesOp
 
 	if entityCriteria.FieldsLength() == 0 {
-		tableScanOp := NewTableScan(nil, rangeQuery, projection)
+		tableScanOp := NewTableScan(traceSeriesMetadata, rangeQuery, projection)
 		seriesOps = append(seriesOps, tableScanOp)
 		g.Add(tableScanOp)
 		g.Connect(dag.BasicEdge(root, tableScanOp))
