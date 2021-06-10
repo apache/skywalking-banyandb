@@ -20,6 +20,7 @@ package logical
 import (
 	"github.com/hashicorp/terraform/dag"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
@@ -41,7 +42,6 @@ type Op interface {
 
 type SourceOp interface {
 	TimeRange() *apiv1.RangeQuery
-	Metadata() *apiv1.Metadata
 	Op
 }
 
@@ -51,5 +51,6 @@ type IndexOp interface {
 
 type SeriesOp interface {
 	SourceOp
+	Metadata() *common.Metadata
 	Projection() []string
 }

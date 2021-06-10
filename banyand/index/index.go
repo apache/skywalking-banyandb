@@ -29,7 +29,7 @@ import (
 
 //go:generate mockgen -destination=./index_mock.go -package=index . Repo
 type Repo interface {
-	Search(index common.Metadata, startTime, endTime uint64, conditions []*apiv1.PairQuery) ([]common.ChunkID, error)
+	Search(indexRuleMeta common.Metadata, fields []string, startTime, endTime uint64, conditions []*apiv1.PairQuery) ([]common.ChunkID, error)
 }
 
 type Builder interface {

@@ -23,6 +23,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/hashicorp/terraform/dag"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
@@ -34,12 +35,16 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 
 	rangeQuery := entityCriteria.TimestampNanoseconds(nil)
 	metadata := entityCriteria.Metadata(nil)
+	traceSeriesMetadata := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *metadata,
+	}
 	projection := entityCriteria.Projection(nil)
 
 	var seriesOps []SeriesOp
 
 	if entityCriteria.FieldsLength() == 0 {
-		tableScanOp := NewTableScan(metadata, rangeQuery, projection)
+		tableScanOp := NewTableScan(nil, rangeQuery, projection)
 		seriesOps = append(seriesOps, tableScanOp)
 		g.Add(tableScanOp)
 		g.Connect(dag.BasicEdge(root, tableScanOp))
@@ -74,7 +79,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 							if f.Op() != apiv1.BinaryOpEQ {
 								return nil, errors.New("only `=` operator is supported for TraceID")
 							}
-							traceIDFetchOp := NewTraceIDFetch(metadata, projection, string(unionStrPairQuery.Values(0)))
+							traceIDFetchOp := NewTraceIDFetch(traceSeriesMetadata, projection, string(unionStrPairQuery.Values(0)))
 							seriesOps = append(seriesOps, traceIDFetchOp)
 							g.Add(traceIDFetchOp)
 							g.Connect(dag.BasicEdge(root, traceIDFetchOp))
@@ -95,7 +100,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 		// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
 		for k, v := range keyQueryMap {
 			// TODO(validation): check whether key is indexed?
-			idxScanOp := NewIndexScan(metadata, rangeQuery, k, v)
+			idxScanOp := NewIndexScan(nil, rangeQuery, []string{k}, v)
 			g.Add(idxScanOp)
 			idxOps = append(idxOps, idxScanOp)
 			g.Connect(dag.BasicEdge(root, idxScanOp))
@@ -111,7 +116,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 			}
 
 			// Retrieve from Series by chunkID(s)
-			chunkIDsFetchOp := NewChunkIDsFetch(metadata, projection)
+			chunkIDsFetchOp := NewChunkIDsFetch(traceSeriesMetadata, projection)
 			seriesOps = append(seriesOps, chunkIDsFetchOp)
 			g.Add(chunkIDsFetchOp)
 			g.Connect(dag.BasicEdge(chunkIdsMergeOp, chunkIDsFetchOp))

@@ -24,6 +24,7 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
@@ -43,35 +44,31 @@ var _ IndexOp = (*IndexScan)(nil)
 // IndexScan defines parameters for index-scan
 // metadata together with Catalog can be mapped to the IndexRuleBinding, and thus IndexRule via rule_refs, but how?
 type IndexScan struct {
-	metadata    *apiv1.Metadata
-	timeRange   *apiv1.RangeQuery
-	KeyName     string
-	PairQueries []*apiv1.PairQuery
+	IndexRuleMeta *common.Metadata
+	timeRange     *apiv1.RangeQuery
+	FieldNames    []string
+	PairQueries   []*apiv1.PairQuery
 }
 
 func (is *IndexScan) TimeRange() *apiv1.RangeQuery {
 	return is.timeRange
 }
 
-func (is *IndexScan) Metadata() *apiv1.Metadata {
-	return is.metadata
-}
-
 func (is *IndexScan) Name() string {
-	return fmt.Sprintf("IndexScan{begin=%d,end=%d,KeyName=%s,conditions=[%s],metadata={group=%s,name=%s}}",
-		is.timeRange.Begin(), is.timeRange.End(), is.KeyName, serializePairQueries(is.PairQueries), is.metadata.Group(), is.metadata.Name())
+	return fmt.Sprintf("IndexScan{begin=%d,end=%d,FieldNames=%v,conditions=[%s]}",
+		is.timeRange.Begin(), is.timeRange.End(), is.FieldNames, serializePairQueries(is.PairQueries))
 }
 
 func (is *IndexScan) OpType() string {
 	return OpIndexScan
 }
 
-func NewIndexScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, keyName string, pairQueries []*apiv1.PairQuery) IndexOp {
+func NewIndexScan(indexRuleMeta *common.Metadata, timeRange *apiv1.RangeQuery, fieldNames []string, pairQueries []*apiv1.PairQuery) IndexOp {
 	return &IndexScan{
-		metadata:    metadata,
-		timeRange:   timeRange,
-		KeyName:     keyName,
-		PairQueries: pairQueries,
+		IndexRuleMeta: indexRuleMeta,
+		timeRange:     timeRange,
+		FieldNames:    fieldNames,
+		PairQueries:   pairQueries,
 	}
 }
 

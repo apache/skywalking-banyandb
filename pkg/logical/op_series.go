@@ -20,6 +20,7 @@ package logical
 import (
 	"fmt"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
@@ -29,7 +30,7 @@ var _ SeriesOp = (*TableScan)(nil)
 // metadata can be mapped to the underlying storage
 type TableScan struct {
 	timeRange  *apiv1.RangeQuery
-	metadata   *apiv1.Metadata
+	metadata   *common.Metadata
 	projection *apiv1.Projection
 }
 
@@ -41,11 +42,11 @@ func (t *TableScan) TimeRange() *apiv1.RangeQuery {
 	return t.timeRange
 }
 
-func (t *TableScan) Metadata() *apiv1.Metadata {
+func (t *TableScan) Metadata() *common.Metadata {
 	return t.metadata
 }
 
-func NewTableScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, projection *apiv1.Projection) SeriesOp {
+func NewTableScan(metadata *common.Metadata, timeRange *apiv1.RangeQuery, projection *apiv1.Projection) SeriesOp {
 	return &TableScan{
 		timeRange:  timeRange,
 		metadata:   metadata,
@@ -54,11 +55,10 @@ func NewTableScan(metadata *apiv1.Metadata, timeRange *apiv1.RangeQuery, project
 }
 
 func (t *TableScan) Name() string {
-	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata={group=%s,name=%s},projection=%v}",
+	return fmt.Sprintf("TableScan{begin=%d,end=%d,metadata=%s,projection=%v}",
 		t.timeRange.Begin(),
 		t.timeRange.End(),
-		t.metadata.Group(),
-		t.metadata.Name(),
+		t.metadata.String(),
 		parseProjectionFields(t.projection))
 }
 
@@ -72,7 +72,7 @@ var _ SeriesOp = (*ChunkIDsFetch)(nil)
 // metadata can be mapped to the underlying storage
 // since we don't know chunkID(s) in advance, it will be collected in physical operation node
 type ChunkIDsFetch struct {
-	metadata   *apiv1.Metadata
+	metadata   *common.Metadata
 	projection *apiv1.Projection
 }
 
@@ -84,14 +84,13 @@ func (c *ChunkIDsFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (c *ChunkIDsFetch) Metadata() *apiv1.Metadata {
+func (c *ChunkIDsFetch) Metadata() *common.Metadata {
 	return c.metadata
 }
 
 func (c *ChunkIDsFetch) Name() string {
-	return fmt.Sprintf("ChunkIDsFetch{metadata={group=%s,name=%s},projection=%v}",
-		c.metadata.Group(),
-		c.metadata.Name(),
+	return fmt.Sprintf("ChunkIDsFetch{metadata=%s,projection=%v}",
+		c.metadata.String(),
 		parseProjectionFields(c.projection),
 	)
 }
@@ -100,7 +99,7 @@ func (c *ChunkIDsFetch) OpType() string {
 	return OpTableChunkIDsFetch
 }
 
-func NewChunkIDsFetch(metadata *apiv1.Metadata, projection *apiv1.Projection) SeriesOp {
+func NewChunkIDsFetch(metadata *common.Metadata, projection *apiv1.Projection) SeriesOp {
 	return &ChunkIDsFetch{
 		metadata:   metadata,
 		projection: projection,
@@ -111,7 +110,7 @@ var _ SeriesOp = (*TraceIDFetch)(nil)
 
 // TraceIDFetch defines parameters for fetching TraceID directly
 type TraceIDFetch struct {
-	metadata   *apiv1.Metadata
+	metadata   *common.Metadata
 	TraceID    string
 	projection *apiv1.Projection
 }
@@ -124,20 +123,23 @@ func (t *TraceIDFetch) TimeRange() *apiv1.RangeQuery {
 	return nil
 }
 
-func (t *TraceIDFetch) Metadata() *apiv1.Metadata {
+func (t *TraceIDFetch) Metadata() *common.Metadata {
 	return t.metadata
 }
 
 func (t *TraceIDFetch) Name() string {
-	return fmt.Sprintf("TraceIDFetch{TraceID=%s,metadata={group=%s,name=%s},projection=%v}",
-		t.TraceID, t.metadata.Group(), t.metadata.Name(), parseProjectionFields(t.projection))
+	return fmt.Sprintf("TraceIDFetch{TraceID=%s,metadata=%s},projection=%v}",
+		t.TraceID,
+		t.metadata.String(),
+		parseProjectionFields(t.projection),
+	)
 }
 
 func (t *TraceIDFetch) OpType() string {
 	return OpTableTraceIDFetch
 }
 
-func NewTraceIDFetch(metadata *apiv1.Metadata, projection *apiv1.Projection, traceID string) SeriesOp {
+func NewTraceIDFetch(metadata *common.Metadata, projection *apiv1.Projection, traceID string) SeriesOp {
 	return &TraceIDFetch{
 		metadata:   metadata,
 		TraceID:    traceID,

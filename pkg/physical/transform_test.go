@@ -49,7 +49,14 @@ var _ = Describe("TableScanTransform", func() {
 			builder.BuildOrderBy("startTime", apiv1.SortDESC),
 		)
 
-		params := logical.NewTableScan(criteria.Metadata(nil), criteria.TimestampNanoseconds(nil), criteria.Projection(nil))
+		meta := criteria.Metadata(nil)
+
+		traceSeriesMetadata := &common.Metadata{
+			KindVersion: common.MetadataKindVersion,
+			Spec:        *meta,
+		}
+
+		params := logical.NewTableScan(traceSeriesMetadata, criteria.TimestampNanoseconds(nil), criteria.Projection(nil))
 		transform := physical.NewTableScanTransform(params.(*logical.TableScan))
 		ec := physical.NewMockExecutionContext(ctrl)
 		uniModel := series.NewMockUniModel(ctrl)
@@ -62,10 +69,7 @@ var _ = Describe("TableScanTransform", func() {
 			Return(uniModel)
 		uniModel.
 			EXPECT().
-			ScanEntity(common.Metadata{
-				KindVersion: common.MetadataKindVersion,
-				Spec:        *params.Metadata(),
-			}, uint64(sT.UnixNano()), uint64(eT.UnixNano()), series.ScanOptions{
+			ScanEntity(*traceSeriesMetadata, uint64(sT.UnixNano()), uint64(eT.UnixNano()), series.ScanOptions{
 				Projection: params.Projection(),
 			}).
 			Return(nil, mockErr)
@@ -97,38 +101,36 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 			builder.BuildFields("duration", ">", 500),
 		)
 
+		meta := criteria.Metadata(nil)
+
+		indexRuleMeta := &common.Metadata{
+			KindVersion: common.MetadataKindVersion,
+			Spec:        *meta,
+		}
+
 		ec := physical.NewMockExecutionContext(ctrl)
 
 		var durationCondition apiv1.PairQuery
 		criteria.Fields(&durationCondition, 0)
-		parent := physical.NewIndexScanTransform(logical.NewIndexScan(criteria.Metadata(nil),
+		op := logical.NewIndexScan(indexRuleMeta,
 			criteria.TimestampNanoseconds(nil),
-			"duration",
-			[]*apiv1.PairQuery{&durationCondition}).(*logical.IndexScan))
+			[]string{"duration"},
+			[]*apiv1.PairQuery{&durationCondition}).(*logical.IndexScan)
+		parent := physical.NewIndexScanTransform(op)
 
 		transform := physical.NewChunkIDsMergeTransform(nil)
 
 		indexRepo := index.NewMockRepo(ctrl)
-		indexFilter := series.NewMockIndexFilter(ctrl)
 
 		ec.
 			EXPECT().
 			IndexRepo().
 			Return(indexRepo)
 
-		ec.
-			EXPECT().
-			IndexFilter().
-			Return(indexFilter)
-
 		ids := []common.ChunkID{1, 2, 3}
-		indexFilter.
-			EXPECT().
-			IndexRules(ec, physical.CreateSubject("trace", "skywalking"), nil).
-			Return([]apiv1.IndexObject{clientutil.BuildIndexObject("duration", apiv1.IndexTypeNumerical)}, nil)
 		indexRepo.
 			EXPECT().
-			Search("duration", uint64(sT.UnixNano()), uint64(eT.UnixNano()), nil).
+			Search(*indexRuleMeta, []string{"duration"}, uint64(sT.UnixNano()), uint64(eT.UnixNano()), op.PairQueries).
 			Return(ids, nil)
 
 		transform.AppendParent(parent.Run(ec))
@@ -164,12 +166,18 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 		// The first future
 		ec := physical.NewMockExecutionContext(ctrl)
 
+		indexRuleMeta := &common.Metadata{
+			KindVersion: common.KindVersion{},
+			Spec:        apiv1.Metadata{},
+		}
+
 		var durationCondition apiv1.PairQuery
 		criteria.Fields(&durationCondition, 0)
-		parent := physical.NewIndexScanTransform(logical.NewIndexScan(criteria.Metadata(nil),
+		durationOp := logical.NewIndexScan(indexRuleMeta,
 			criteria.TimestampNanoseconds(nil),
-			"duration",
-			[]*apiv1.PairQuery{&durationCondition}).(*logical.IndexScan))
+			[]string{"duration"},
+			[]*apiv1.PairQuery{&durationCondition}).(*logical.IndexScan)
+		parent := physical.NewIndexScanTransform(durationOp)
 
 		transform := physical.NewChunkIDsMergeTransform(nil)
 		indexRepo1 := index.NewMockRepo(ctrl)
@@ -182,17 +190,18 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 		ids := []common.ChunkID{1, 2, 3}
 		indexRepo1.
 			EXPECT().
-			Search("duration", uint64(sT.UnixNano()), uint64(eT.UnixNano()), nil).
+			Search(*indexRuleMeta, []string{"duration"}, uint64(sT.UnixNano()), uint64(eT.UnixNano()), durationOp.PairQueries).
 			Return(ids, nil)
 
 		// The second future
 		ec2 := physical.NewMockExecutionContext(ctrl)
 		var networkLatencyCondition apiv1.PairQuery
 		criteria.Fields(&networkLatencyCondition, 1)
-		parent2 := physical.NewIndexScanTransform(logical.NewIndexScan(criteria.Metadata(nil),
+		networkLatencyOp := logical.NewIndexScan(indexRuleMeta,
 			criteria.TimestampNanoseconds(nil),
-			"networkLatency",
-			[]*apiv1.PairQuery{&networkLatencyCondition}).(*logical.IndexScan))
+			[]string{"networkLatency"},
+			[]*apiv1.PairQuery{&networkLatencyCondition}).(*logical.IndexScan)
+		parent2 := physical.NewIndexScanTransform(networkLatencyOp)
 
 		anotherIDs := []common.ChunkID{3, 4, 5}
 		indexRepo2 := index.NewMockRepo(ctrl)
@@ -204,7 +213,7 @@ var _ = Describe("ChunkIDsMergeTransform", func() {
 
 		indexRepo2.
 			EXPECT().
-			Search("networkLatency", uint64(sT.UnixNano()), uint64(eT.UnixNano()), nil).
+			Search(*indexRuleMeta, []string{"networkLatency"}, uint64(sT.UnixNano()), uint64(eT.UnixNano()), networkLatencyOp.PairQueries).
 			Return(anotherIDs, nil)
 
 		// Append two futures as parents

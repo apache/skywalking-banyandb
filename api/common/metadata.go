@@ -17,11 +17,26 @@
 
 package common
 
-import v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+import (
+	"fmt"
+
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+)
+
+var _ fmt.Stringer = (*Metadata)(nil)
 
 var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
 
 type Metadata struct {
 	KindVersion
 	Spec v1.Metadata
+}
+
+func (metadata *Metadata) String() string {
+	return fmt.Sprintf("Metadata{KindVersion=%s/%s,Spec={group=%s,name=%s}}",
+		metadata.Kind,
+		metadata.Version,
+		metadata.Spec.Group(),
+		metadata.Spec.Name(),
+	)
 }

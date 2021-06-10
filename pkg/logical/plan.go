@@ -17,8 +17,13 @@
 
 package logical
 
-import "github.com/hashicorp/terraform/dag"
+import (
+	"github.com/hashicorp/terraform/dag"
+
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+)
 
 type Plan struct {
 	*dag.AcyclicGraph
+	Series apiv1.Series
 }
