@@ -20,7 +20,6 @@ package physical
 import (
 	"errors"
 
-	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
@@ -41,14 +40,13 @@ func NewTableScanTransform(params *logical.TableScan) Transform {
 func (t *tableScanTransform) Run(ec ExecutionContext) Future {
 	return NewFuture(func() Result {
 		sT, eT := t.params.TimeRange().Begin(), t.params.TimeRange().End()
-		entities, err := ec.UniModel().ScanEntity(*t.params.Metadata(), sT, eT, series.ScanOptions{
+		ets, err := ec.UniModel().ScanEntity(*t.params.Metadata(), sT, eT, series.ScanOptions{
 			Projection: t.params.Projection(),
 		})
 		if err != nil {
 			return Failure(err)
 		}
-		traceEntities := data.NewTraceWithEntities(entities)
-		return Success(NewTraceData(traceEntities))
+		return Success(NewTraceData(ets...))
 	})
 }
 
@@ -76,14 +74,13 @@ func (c *chunkIDsFetchTransform) Run(ec ExecutionContext) Future {
 		}
 		v := result.Success()
 		if v.DataType() == ChunkID {
-			entities, err := ec.UniModel().FetchEntity(*c.params.Metadata(), v.(*chunkIDs).ids, series.ScanOptions{
+			ets, err := ec.UniModel().FetchEntity(*c.params.Metadata(), v.(*chunkIDs).ids, series.ScanOptions{
 				Projection: c.params.Projection(),
 			})
 			if err != nil {
 				return nil, err
 			}
-			traceEntities := data.NewTraceWithEntities(entities)
-			return NewTraceData(traceEntities), nil
+			return NewTraceData(ets...), nil
 		}
 		return nil, errors.New("incompatible upstream data type")
 	})
@@ -112,7 +109,7 @@ func (t *traceIDFetchTransform) Run(ec ExecutionContext) Future {
 		if err != nil {
 			return Failure(err)
 		}
-		return Success(NewTraceData(&trace))
+		return Success(NewTraceData(trace.Entities...))
 	})
 }
 

@@ -26,7 +26,7 @@ var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
 
 type Trace struct {
 	common.KindVersion
-	entities []Entity
+	Entities []Entity
 }
 
 type Entity struct {
@@ -40,6 +40,6 @@ func NewTrace() *Trace {
 func NewTraceWithEntities(entities []Entity) *Trace {
 	return &Trace{
 		KindVersion: TraceKindVersion,
-		entities:    entities,
+		Entities:    entities,
 	}
 }

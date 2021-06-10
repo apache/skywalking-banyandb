@@ -26,6 +26,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
@@ -77,7 +78,7 @@ func (p *paginationTransform) Run(ExecutionContext) Future {
 	return p.parents.Then(func(result Result) (Data, error) {
 		successValues := result.Success()
 		if dg, ok := successValues.(DataGroup); ok {
-			var ets []*apiv1.Entity
+			var ets []data.Entity
 			for _, d := range dg {
 				if traceEntities, ok := d.(*entities); ok {
 					ets = append(ets, traceEntities.entities...)
@@ -196,7 +197,7 @@ func HashIntersection(a, b []common.ChunkID) []common.ChunkID {
 	return set
 }
 
-func ExternalSort(traces []*apiv1.Entity, fieldIdx int, sortAlgorithm apiv1.Sort) {
+func ExternalSort(traces []data.Entity, fieldIdx int, sortAlgorithm apiv1.Sort) {
 	sort.Slice(traces, func(i, j int) bool {
 		var iPair apiv1.Pair
 		traces[i].Fields(&iPair, fieldIdx)
@@ -237,7 +238,7 @@ func convertToInt64Bytes(i64 int64) []byte {
 	return buf
 }
 
-func mergeEntities(a, b []*apiv1.Entity) *entities {
+func mergeEntities(a, b []data.Entity) *entities {
 	ets := new(entities)
 	hash := make(map[string]struct{})
 	for _, e := range a {

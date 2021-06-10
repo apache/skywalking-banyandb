@@ -22,7 +22,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/api/data"
 )
 
 type DataType uint8
@@ -95,7 +95,7 @@ func NewChunkIDs(ids ...common.ChunkID) Data {
 var _ Data = (*entities)(nil)
 
 type entities struct {
-	entities []*apiv1.Entity
+	entities []data.Entity
 }
 
 func (t *entities) Unwrap() interface{} {
@@ -106,7 +106,7 @@ func (t *entities) DataType() DataType {
 	return Entity
 }
 
-func NewTraceData(input ...*apiv1.Entity) Data {
+func NewTraceData(input ...data.Entity) Data {
 	return &entities{
 		entities: input,
 	}
