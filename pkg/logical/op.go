@@ -45,6 +45,7 @@ var _ Op = (*SortMerge)(nil)
 // SortMerge define parameters for an aggregate operation,
 // QueryOrder contains sorted field and sort algorithm
 type SortMerge struct {
+	FieldIdx   int
 	QueryOrder *apiv1.QueryOrder
 }
 

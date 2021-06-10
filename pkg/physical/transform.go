@@ -120,7 +120,7 @@ func (s *sortMergeTransform) Run(ec ExecutionContext) Future {
 		if dg, ok := sucValues.(DataGroup); ok {
 			if len(dg) == 1 {
 				// we have to know the field index in advance
-				ExternalSort(dg[0].(*entities).entities, 0, s.params.QueryOrder.Sort())
+				ExternalSort(dg[0].(*entities).entities, s.params.FieldIdx, s.params.QueryOrder.Sort())
 				return dg[0].(*entities), nil
 			} else if len(dg) == 2 {
 				panic("two way merges")
