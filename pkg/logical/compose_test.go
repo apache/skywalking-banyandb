@@ -19,13 +19,12 @@ package logical_test
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/api/common"
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/clientutil"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
@@ -33,7 +32,6 @@ import (
 
 func TestTableScan(t *testing.T) {
 	tester := assert.New(t)
-	ctrl := gomock.NewController(t)
 	builder := clientutil.NewCriteriaBuilder()
 	criteria := builder.Build(
 		clientutil.AddLimit(0),
