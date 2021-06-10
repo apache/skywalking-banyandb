@@ -61,12 +61,24 @@ func AddOffset(offset uint32) ComponentBuilderFunc {
 	}
 }
 
+func BuildMetadataEntity(group, name string) *apiv1.Metadata {
+	b := flatbuffers.NewBuilder(0)
+	b.Finish(buildMetadata(group, name)(b))
+	return apiv1.GetRootAsMetadata(b.FinishedBytes(), 0)
+}
+
+func buildMetadata(group, name string) FlatBufferOffsetBuilder {
+	return func(b *flatbuffers.Builder) flatbuffers.UOffsetT {
+		g, n := b.CreateString(group), b.CreateString(name)
+		apiv1.MetadataStart(b)
+		apiv1.MetadataAddGroup(b, g)
+		apiv1.MetadataAddName(b, n)
+		return apiv1.MetadataEnd(b)
+	}
+}
+
 func (b *criteriaBuilder) BuildMetaData(group, name string) ComponentBuilderFunc {
-	g, n := b.CreateString(group), b.CreateString(name)
-	apiv1.MetadataStart(b.Builder)
-	apiv1.MetadataAddGroup(b.Builder, g)
-	apiv1.MetadataAddName(b.Builder, n)
-	metadata := apiv1.MetadataEnd(b.Builder)
+	metadata := buildMetadata(group, name)(b.Builder)
 	return func(b *flatbuffers.Builder) {
 		apiv1.EntityCriteriaAddMetadata(b, metadata)
 	}

@@ -27,7 +27,7 @@ import (
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
+func Compose(entityCriteria *apiv1.EntityCriteria, indexRuleMeta *common.Metadata) (*Plan, error) {
 	g := &dag.AcyclicGraph{}
 
 	root := NewRoot()
@@ -39,6 +39,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 		KindVersion: common.MetadataKindVersion,
 		Spec:        *metadata,
 	}
+
 	projection := entityCriteria.Projection(nil)
 
 	var seriesOps []SeriesOp
@@ -100,7 +101,7 @@ func Compose(entityCriteria *apiv1.EntityCriteria) (*Plan, error) {
 		// Generate IndexScanOp per Entry<string,[]*apiv1.PairQuery> in keyQueryMap
 		for k, v := range keyQueryMap {
 			// TODO(validation): check whether key is indexed?
-			idxScanOp := NewIndexScan(nil, rangeQuery, []string{k}, v)
+			idxScanOp := NewIndexScan(indexRuleMeta, rangeQuery, []string{k}, v)
 			g.Add(idxScanOp)
 			idxOps = append(idxOps, idxScanOp)
 			g.Connect(dag.BasicEdge(root, idxScanOp))

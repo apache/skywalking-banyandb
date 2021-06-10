@@ -19,9 +19,11 @@ package logical_test
 
 import (
 	"fmt"
+	"github.com/apache/skywalking-banyandb/api/common"
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
@@ -31,6 +33,7 @@ import (
 
 func TestTableScan(t *testing.T) {
 	tester := assert.New(t)
+	ctrl := gomock.NewController(t)
 	builder := clientutil.NewCriteriaBuilder()
 	criteria := builder.Build(
 		clientutil.AddLimit(0),
@@ -39,7 +42,13 @@ func TestTableScan(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
@@ -56,7 +65,13 @@ func TestIndexScan(t *testing.T) {
 		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
@@ -74,7 +89,13 @@ func TestMultiIndexesScan(t *testing.T) {
 		builder.BuildFields("duration", ">", 500, "duration", "<=", 1000, "component", "=", "mysql"),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
@@ -92,7 +113,13 @@ func TestTraceIDSearch(t *testing.T) {
 		builder.BuildFields("TraceID", "=", "aaaaaaaa"),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
@@ -109,7 +136,13 @@ func TestTraceIDSearchAndIndexSearch(t *testing.T) {
 		builder.BuildFields("TraceID", "=", "aaaaaaaa", "duration", "<=", 1000),
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
@@ -128,7 +161,13 @@ func TestProjection(t *testing.T) {
 		builder.BuildOrderBy("startTime", apiv1.SortDESC),
 		builder.BuildProjection("startTime", "TraceID"),
 	)
-	plan, err := logical.Compose(criteria)
+
+	indexRuleMeta := &common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec:        *clientutil.BuildMetadataEntity("skywalking", "trace"),
+	}
+
+	plan, err := logical.Compose(criteria, indexRuleMeta)
 	tester.NoError(err)
 	tester.NotNil(plan)
 	tester.NoError(plan.Validate())
