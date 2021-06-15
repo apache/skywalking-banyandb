@@ -46,7 +46,7 @@ table Field {
     value: ValueType;
 }
 
-table entityValue {
+table EntityValue {
     // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
     // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
@@ -56,7 +56,7 @@ table entityValue {
     // binary representation of segments, including tags, spans...
     data_binary: [ubyte];
     // support all of indexed fields in the fields.
-    // Pair only has value, as the value of PairValue match with the key
+    // Field only has value, as the value of ValueType match with the key
     // by the index rules and index rule bindings of Metadata group.
     // indexed fields of multiple entities are compression in the fields.
     fields: [Field];
@@ -66,7 +66,7 @@ table WriteEntity {
     // the mate_data is only required in the first write.
     meta_data: Metadata;
     // the entity is required.
-    entity: entityValue;
+    entity: EntityValue;
 }
 
 table WriteResponse {}

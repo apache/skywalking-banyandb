@@ -319,34 +319,34 @@ func FieldEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type entityValue struct {
+type EntityValue struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsentityValue(buf []byte, offset flatbuffers.UOffsetT) *entityValue {
+func GetRootAsEntityValue(buf []byte, offset flatbuffers.UOffsetT) *EntityValue {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &entityValue{}
+	x := &EntityValue{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsentityValue(buf []byte, offset flatbuffers.UOffsetT) *entityValue {
+func GetSizePrefixedRootAsEntityValue(buf []byte, offset flatbuffers.UOffsetT) *EntityValue {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &entityValue{}
+	x := &EntityValue{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *entityValue) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *EntityValue) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *entityValue) Table() flatbuffers.Table {
+func (rcv *EntityValue) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *entityValue) EntityId() []byte {
+func (rcv *EntityValue) EntityId() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -354,7 +354,7 @@ func (rcv *entityValue) EntityId() []byte {
 	return nil
 }
 
-func (rcv *entityValue) TimestampNanoseconds() uint64 {
+func (rcv *EntityValue) TimestampNanoseconds() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -362,11 +362,11 @@ func (rcv *entityValue) TimestampNanoseconds() uint64 {
 	return 0
 }
 
-func (rcv *entityValue) MutateTimestampNanoseconds(n uint64) bool {
+func (rcv *EntityValue) MutateTimestampNanoseconds(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *entityValue) DataBinary(j int) byte {
+func (rcv *EntityValue) DataBinary(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -375,7 +375,7 @@ func (rcv *entityValue) DataBinary(j int) byte {
 	return 0
 }
 
-func (rcv *entityValue) DataBinaryLength() int {
+func (rcv *EntityValue) DataBinaryLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -383,7 +383,7 @@ func (rcv *entityValue) DataBinaryLength() int {
 	return 0
 }
 
-func (rcv *entityValue) DataBinaryBytes() []byte {
+func (rcv *EntityValue) DataBinaryBytes() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -391,7 +391,7 @@ func (rcv *entityValue) DataBinaryBytes() []byte {
 	return nil
 }
 
-func (rcv *entityValue) MutateDataBinary(j int, n byte) bool {
+func (rcv *EntityValue) MutateDataBinary(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -400,7 +400,7 @@ func (rcv *entityValue) MutateDataBinary(j int, n byte) bool {
 	return false
 }
 
-func (rcv *entityValue) Fields(obj *Field, j int) bool {
+func (rcv *EntityValue) Fields(obj *Field, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -412,7 +412,7 @@ func (rcv *entityValue) Fields(obj *Field, j int) bool {
 	return false
 }
 
-func (rcv *entityValue) FieldsLength() int {
+func (rcv *EntityValue) FieldsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -420,28 +420,28 @@ func (rcv *entityValue) FieldsLength() int {
 	return 0
 }
 
-func entityValueStart(builder *flatbuffers.Builder) {
+func EntityValueStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }
-func entityValueAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
+func EntityValueAddEntityId(builder *flatbuffers.Builder, entityId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entityId), 0)
 }
-func entityValueAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds uint64) {
+func EntityValueAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds uint64) {
 	builder.PrependUint64Slot(1, timestampNanoseconds, 0)
 }
-func entityValueAddDataBinary(builder *flatbuffers.Builder, dataBinary flatbuffers.UOffsetT) {
+func EntityValueAddDataBinary(builder *flatbuffers.Builder, dataBinary flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(dataBinary), 0)
 }
-func entityValueStartDataBinaryVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func EntityValueStartDataBinaryVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
-func entityValueAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
+func EntityValueAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(fields), 0)
 }
-func entityValueStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func EntityValueStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func entityValueEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func EntityValueEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
@@ -485,12 +485,12 @@ func (rcv *WriteEntity) MetaData(obj *Metadata) *Metadata {
 	return nil
 }
 
-func (rcv *WriteEntity) Entity(obj *entityValue) *entityValue {
+func (rcv *WriteEntity) Entity(obj *EntityValue) *EntityValue {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
-			obj = new(entityValue)
+			obj = new(EntityValue)
 		}
 		obj.Init(rcv._tab.Bytes, x)
 		return obj
