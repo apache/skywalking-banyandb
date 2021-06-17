@@ -70,3 +70,5 @@ table WriteEntity {
 }
 
 table WriteResponse {}
+
+root_type WriteEntity;
