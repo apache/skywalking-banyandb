@@ -20,10 +20,6 @@ package series
 import (
 	"bytes"
 	"context"
-	"time"
-
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
@@ -31,12 +27,15 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"go.uber.org/multierr"
+	"time"
 )
 
 var _ Service = (*service)(nil)
 
 type service struct {
 	db storage.Database
+	addr string
 }
 
 //Methods for query objects in the schema
@@ -133,17 +132,19 @@ func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uin
 }
 
 func (s *service) Name() string {
-	panic("implement me")
+	return "series"
 }
 
 func (s *service) FlagSet() *run.FlagSet {
-	panic("implement me")
+	fs := run.NewFlagSet("series")
+	fs.StringVarP(&s.addr, "series", "", ":17911", "the address of banyand listens")
+	return fs
 }
 
 func (s *service) Validate() error {
-	panic("implement me")
+	return nil
 }
 
 func (s *service) PreRun() error {
-	panic("implement me")
+	return nil
 }

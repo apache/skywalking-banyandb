@@ -20,11 +20,12 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"net"
+	"time"
+
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/encoding"
-	"net"
-	"time"
 
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
