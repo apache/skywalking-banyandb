@@ -19,11 +19,12 @@ package grpc
 
 import (
 	"context"
-	"net"
-
+	"fmt"
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/encoding"
+	"net"
+	"time"
 
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -74,48 +75,57 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func (s *Server) WriteTraces(context context.Context, in *v1.WriteEntity) (*flatbuffers.Builder, error) {
+func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata) (*flatbuffers.Builder, error) {
 	s.log.Info("Write called...")
 	builder := flatbuffers.NewBuilder(0)
 	// Serialize MetaData
-	name := builder.CreateString("name")
-	group := builder.CreateString("group")
+	group, name := builder.CreateString(string(metaData.Group())), builder.CreateString(string(metaData.Name()))
 	v1.MetadataStart(builder)
 	v1.MetadataAddGroup(builder, group)
 	v1.MetadataAddName(builder, name)
 	v1.MetadataEnd(builder)
 	// Serialize Field
 	v1.FieldStart(builder)
+	//for i := 0; i < entityValue.FieldsLength(); i++ {
+	//	v1.FieldAddValueType(builder, v1.ValueTypeString)
+	//	field := builder.CreateString("test")
+	//	v1.FieldAddValue(builder, field)
+	//}
 	v1.FieldAddValueType(builder, v1.ValueTypeString)
 	field := builder.CreateString("test")
+	fmt.Println(field)
 	v1.FieldAddValue(builder, field)
 	v1.FieldEnd(builder)
 	// Serialize WriteEntity
-	dataBinaryLength := v1.EntityValue.DataBinaryLength(v1.EntityValue{})
+	dataBinaryLength := entityValue.DataBinaryLength()
 	v1.EntityStartDataBinaryVector(builder, dataBinaryLength)
 	for i := dataBinaryLength; i >= 0; i-- {
 		builder.PrependByte(byte(i))
 	}
 	dataBinary := builder.EndVector(dataBinaryLength)
-	entityId := builder.CreateString("id")
+	entityId := builder.CreateString(string(entityValue.EntityId()))
 	v1.EntityValueStart(builder)
 	v1.EntityValueAddEntityId(builder, entityId)
-	v1.EntityValueAddTimestampNanoseconds(builder, 1613526708000)
+	time := uint64(time.Now().UnixNano())
+	v1.EntityValueAddTimestampNanoseconds(builder, time)
 	v1.EntityValueAddDataBinary(builder, dataBinary)
 	v1.EntityValueStartFieldsVector(builder, 1)
 	builder.PrependUOffsetT(field)
 	fields := builder.EndVector(1)
 	v1.EntityValueAddFields(builder, fields)
 	v1.EntityValueEnd(builder)
+	trace := v1.WriteEntityEnd(builder)
 
-	builder.Finish(v1.WriteResponseEnd(builder))
+	builder.Finish(trace)
 
 	return builder, nil
 }
 
-func (s *Server) FetchTraces(ctx context.Context, in *v1.EntityCriteria) (*flatbuffers.Builder, error) {
+func (s *Server) FetchTraces(in *v1.EntityCriteria) (*flatbuffers.Builder, error) {
 	s.log.Info("Fetch called...")
 	builder := flatbuffers.NewBuilder(0)
+	//buf := builder.FinishedBytes()
+	//entityCriteria := v1.GetRootAsEntityCriteria(buf, 0)
 
 	return builder, nil
 }
