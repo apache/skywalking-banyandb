@@ -766,7 +766,7 @@ func (rcv *EntityCriteria) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *EntityCriteria) Metatdata(obj *Metadata) *Metadata {
+func (rcv *EntityCriteria) Metadata(obj *Metadata) *Metadata {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -865,8 +865,8 @@ func (rcv *EntityCriteria) Projection(obj *Projection) *Projection {
 func EntityCriteriaStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }
-func EntityCriteriaAddMetatdata(builder *flatbuffers.Builder, metatdata flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metatdata), 0)
+func EntityCriteriaAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metadata), 0)
 }
 func EntityCriteriaAddTimestampNanoseconds(builder *flatbuffers.Builder, timestampNanoseconds flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(timestampNanoseconds), 0)
