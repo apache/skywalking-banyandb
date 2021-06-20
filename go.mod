@@ -6,7 +6,7 @@ require (
 	github.com/dgraph-io/badger/v3 v3.2011.1
 	github.com/golang/mock v1.3.1
 	github.com/google/flatbuffers v2.0.0+incompatible
-	github.com/google/go-cmp v0.5.6 // indirect
+	github.com/google/go-cmp v0.5.6
 	github.com/oklog/run v1.1.0
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.1.3
