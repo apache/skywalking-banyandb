@@ -18,29 +18,52 @@
 package logical
 
 import (
+	"github.com/pkg/errors"
+
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-type fieldSchema struct {
-	fieldMap map[string]int
-	fields   []*apiv1.FieldSpec
+type fieldSpec struct {
+	idx  int
+	spec *apiv1.FieldSpec
 }
 
-func (fs *fieldSchema) RegisterField(name string, i int, spec *apiv1.FieldSpec) {
-	fs.fieldMap[name] = i
-	fs.fields = append(fs.fields, spec)
+type Schema struct {
+	fieldMap map[string]*fieldSpec
 }
 
-func (fs *fieldSchema) FieldDefined(name string) bool {
-	if _, ok := fs.fieldMap[name]; ok {
+func (s *Schema) RegisterField(name string, i int, spec *apiv1.FieldSpec) {
+	s.fieldMap[name] = &fieldSpec{
+		idx:  i,
+		spec: spec,
+	}
+}
+
+func (s *Schema) FieldDefined(name string) bool {
+	if _, ok := s.fieldMap[name]; ok {
 		return true
 	}
 	return false
 }
 
-func (fs *fieldSchema) CreateRef(name string) (Expr, error) {
-	if idx, ok := fs.fieldMap[name]; ok {
-		return NewFieldRef(name, idx, fs.fields[idx].Type()), nil
+func (s *Schema) CreateRef(name string) (*fieldRef, error) {
+	if fs, ok := s.fieldMap[name]; ok {
+		return NewFieldRef(name, fs), nil
 	}
-	return nil, FieldNotDefinedErr
+	return nil, errors.Wrap(FieldNotDefinedErr, name)
+}
+
+func (s *Schema) Map(refs ...*fieldRef) (Schema, error) {
+	if refs == nil || len(refs) == 0 {
+		return *s, nil
+	}
+	newS := Schema{}
+	for _, ref := range refs {
+		if s.FieldDefined(ref.name) {
+			newS.fieldMap[ref.name] = ref.spec
+		} else {
+			return newS, errors.Wrap(FieldNotDefinedErr, ref.name)
+		}
+	}
+	return newS, nil
 }

@@ -19,47 +19,45 @@ package logical
 
 import (
 	"fmt"
-	"strings"
+	"strconv"
 )
 
-var _ Plan = (*projection)(nil)
+var _ Expr = (*int64Literal)(nil)
 
-type projection struct {
-	fieldRefs []*fieldRef
-	input     Plan
+type int64Literal struct {
+	int64
 }
 
-func (p *projection) Schema() (Schema, error) {
-	schema, err := p.input.Schema()
-	if err != nil {
-		return Schema{}, err
-	}
-	return schema.Map(p.fieldRefs...)
+func (i *int64Literal) String() string {
+	return strconv.FormatInt(i.int64, 10)
 }
 
-func (p *projection) Type() PlanType {
-	return PlanProjection
+var _ Expr = (*int64Literal)(nil)
+
+type int64ArrayLiteral struct {
+	arr []int64
 }
 
-func (p *projection) String() string {
-	return fmt.Sprintf("Projection: %s", formatExpr(", ", p.fieldRefs...))
+func (i *int64ArrayLiteral) String() string {
+	return fmt.Sprintf("%v", i.arr)
 }
 
-func formatExpr(sep string, exprs ...*fieldRef) string {
-	var exprsStr []string
-	for i := 0; i < len(exprs); i++ {
-		exprsStr = append(exprsStr, exprs[i].String())
-	}
-	return strings.Join(exprsStr, sep)
+var _ Expr = (*strLiteral)(nil)
+
+type strLiteral struct {
+	string
 }
 
-func (p *projection) Children() []Plan {
-	return []Plan{p.input}
+func (s *strLiteral) String() string {
+	return s.string
 }
 
-func NewProjection(input Plan, expr []*fieldRef) Plan {
-	return &projection{
-		fieldRefs: expr,
-		input:     input,
-	}
+var _ Expr = (*strArrLiteral)(nil)
+
+type strArrLiteral struct {
+	arr []string
+}
+
+func (s *strArrLiteral) String() string {
+	return fmt.Sprintf("%v", s.arr)
 }

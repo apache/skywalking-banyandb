@@ -18,48 +18,25 @@
 package logical
 
 import (
-	"fmt"
 	"strings"
 )
 
-var _ Plan = (*projection)(nil)
-
-type projection struct {
-	fieldRefs []*fieldRef
-	input     Plan
+func Format(p Plan) string {
+	return formatWithIndent(p, 0)
 }
 
-func (p *projection) Schema() (Schema, error) {
-	schema, err := p.input.Schema()
-	if err != nil {
-		return Schema{}, err
+func formatWithIndent(p Plan, indent int) string {
+	res := ""
+	if indent > 1 {
+		res += strings.Repeat(" ", 5*(indent-1))
 	}
-	return schema.Map(p.fieldRefs...)
-}
-
-func (p *projection) Type() PlanType {
-	return PlanProjection
-}
-
-func (p *projection) String() string {
-	return fmt.Sprintf("Projection: %s", formatExpr(", ", p.fieldRefs...))
-}
-
-func formatExpr(sep string, exprs ...*fieldRef) string {
-	var exprsStr []string
-	for i := 0; i < len(exprs); i++ {
-		exprsStr = append(exprsStr, exprs[i].String())
+	if indent > 0 {
+		res += "+"
+		res += strings.Repeat("-", 4)
 	}
-	return strings.Join(exprsStr, sep)
-}
-
-func (p *projection) Children() []Plan {
-	return []Plan{p.input}
-}
-
-func NewProjection(input Plan, expr []*fieldRef) Plan {
-	return &projection{
-		fieldRefs: expr,
-		input:     input,
+	res += p.String() + "\n"
+	for _, child := range p.Children() {
+		res += formatWithIndent(child, indent+1)
 	}
+	return res
 }

@@ -28,15 +28,25 @@ var _ Plan = (*scan)(nil)
 type scan struct {
 	startTime  uint64
 	endTime    uint64
-	projection []Expr
+	projection []*fieldRef
+	schema     Schema
 	metadata   *common.Metadata
+}
+
+func (s *scan) Schema() (Schema, error) {
+	if s.projection == nil || len(s.projection) == 0 {
+		return s.schema, nil
+	}
+	return s.schema.Map(s.projection...)
 }
 
 func (s *scan) String() string {
 	if len(s.projection) == 0 {
-		return fmt.Sprintf("Scan: Metadata{group=%s,name=%s}; projection=None", s.metadata.Spec.Group(), s.metadata.Spec.Name())
+		return fmt.Sprintf("Scan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=None",
+			s.startTime, s.endTime, s.metadata.Spec.Group(), s.metadata.Spec.Name())
 	} else {
-		return fmt.Sprintf("Scan: Metadata{group=%s,name=%s}; projection=%s", s.metadata.Spec.Group(), s.metadata.Spec.Name(), formatExpr(", ", s.projection...))
+		return fmt.Sprintf("Scan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
+			s.startTime, s.endTime, s.metadata.Spec.Group(), s.metadata.Spec.Name(), formatExpr(", ", s.projection...))
 	}
 }
 
@@ -48,11 +58,12 @@ func (s *scan) Type() PlanType {
 	return PlanScan
 }
 
-func NewScan(startTime, endTime uint64, metadata *common.Metadata, projection ...Expr) Plan {
+func NewScan(startTime, endTime uint64, metadata *common.Metadata, schema Schema, projection ...*fieldRef) Plan {
 	return &scan{
 		startTime:  startTime,
 		endTime:    endTime,
 		projection: projection,
 		metadata:   metadata,
+		schema:     schema,
 	}
 }

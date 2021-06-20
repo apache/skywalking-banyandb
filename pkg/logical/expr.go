@@ -23,6 +23,17 @@ import (
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
+var binaryOpFactory = map[apiv1.BinaryOp]func(l, r Expr) Expr{
+	apiv1.BinaryOpEQ:         Eq,
+	apiv1.BinaryOpNE:         Ne,
+	apiv1.BinaryOpLT:         Lt,
+	apiv1.BinaryOpGT:         Gt,
+	apiv1.BinaryOpLE:         Le,
+	apiv1.BinaryOpGE:         Ge,
+	apiv1.BinaryOpHAVING:     Having,
+	apiv1.BinaryOpNOT_HAVING: NotHaving,
+}
+
 var _ Expr = (*fieldRef)(nil)
 
 // fieldRef is the reference to the field
@@ -30,20 +41,95 @@ var _ Expr = (*fieldRef)(nil)
 type fieldRef struct {
 	// name defines the key of the field
 	name string
-	// index is used to access the data quickly
-	index int
-	// typ defines the data type for the field
-	typ apiv1.FieldType
+	// spec contains the index of the key in the schema, as well as the underlying FieldSpec
+	spec *fieldSpec
 }
 
 func (f *fieldRef) String() string {
-	return fmt.Sprintf("#%s<%s>", f.name, apiv1.EnumNamesFieldType[f.typ])
+	return fmt.Sprintf("#%s<%s>", f.name, apiv1.EnumNamesFieldType[f.spec.spec.Type()])
 }
 
-func NewFieldRef(fieldName string, fieldIndex int, fieldType apiv1.FieldType) Expr {
+func NewFieldRef(fieldName string, fieldSpec *fieldSpec) *fieldRef {
 	return &fieldRef{
-		name:  fieldName,
-		index: fieldIndex,
-		typ:   fieldType,
+		name: fieldName,
+		spec: fieldSpec,
+	}
+}
+
+var _ Expr = (*binaryExpr)(nil)
+
+// binaryExpr is composed of two operands with one op as the operator
+// l is normally a reference to a field, while r is usually literals
+type binaryExpr struct {
+	op apiv1.BinaryOp
+	l  Expr
+	r  Expr
+}
+
+func (b *binaryExpr) String() string {
+	return fmt.Sprintf("%s %s %s", b.l.String(), apiv1.EnumNamesBinaryOp[b.op], b.r.String())
+}
+
+func Eq(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpEQ,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Ne(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpNE,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Lt(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpLT,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Le(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpLE,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Gt(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpGT,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Ge(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpGE,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Having(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpHAVING,
+		l:  l,
+		r:  r,
+	}
+}
+
+func NotHaving(l, r Expr) Expr {
+	return &binaryExpr{
+		op: apiv1.BinaryOpNOT_HAVING,
+		l:  l,
+		r:  r,
 	}
 }

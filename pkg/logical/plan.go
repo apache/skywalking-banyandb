@@ -28,6 +28,10 @@ type limit struct {
 	limitNum uint32
 }
 
+func (l *limit) Schema() (Schema, error) {
+	return l.input.Schema()
+}
+
 func (l *limit) String() string {
 	return fmt.Sprintf("Limit: %d", l.limitNum)
 }
@@ -52,6 +56,10 @@ var _ Plan = (*offset)(nil)
 type offset struct {
 	input     Plan
 	offsetNum uint32
+}
+
+func (l *offset) Schema() (Schema, error) {
+	return l.input.Schema()
 }
 
 func (l *offset) String() string {

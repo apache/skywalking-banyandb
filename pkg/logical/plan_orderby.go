@@ -31,6 +31,10 @@ type orderBy struct {
 	target Expr
 }
 
+func (o *orderBy) Schema() (Schema, error) {
+	return o.input.Schema()
+}
+
 func (o *orderBy) String() string {
 	return fmt.Sprintf("OrderBy: %s, sort=%s", o.target.String(), apiv1.EnumNamesSort[o.sort])
 }

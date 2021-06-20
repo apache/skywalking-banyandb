@@ -22,44 +22,39 @@ import (
 	"strings"
 )
 
-var _ Plan = (*projection)(nil)
+var _ Plan = (*selection)(nil)
 
-type projection struct {
-	fieldRefs []*fieldRef
-	input     Plan
+// selection defines the field selections as a Logical Plan.
+// The Expr(s) contained in the struct must be all satisfied,
+// which means they are implicitly combined with logical AND.
+type selection struct {
+	input       Plan
+	selectPlans []Expr
 }
 
-func (p *projection) Schema() (Schema, error) {
-	schema, err := p.input.Schema()
-	if err != nil {
-		return Schema{}, err
+func (s *selection) Schema() (Schema, error) {
+	return s.input.Schema()
+}
+
+func (s *selection) String() string {
+	var exprStr []string
+	for _, sp := range s.selectPlans {
+		exprStr = append(exprStr, sp.String())
 	}
-	return schema.Map(p.fieldRefs...)
+	return fmt.Sprintf("Selection: [%s]", strings.Join(exprStr, " AND "))
 }
 
-func (p *projection) Type() PlanType {
-	return PlanProjection
+func (s *selection) Children() []Plan {
+	return []Plan{s.input}
 }
 
-func (p *projection) String() string {
-	return fmt.Sprintf("Projection: %s", formatExpr(", ", p.fieldRefs...))
+func (s *selection) Type() PlanType {
+	return PlanSelection
 }
 
-func formatExpr(sep string, exprs ...*fieldRef) string {
-	var exprsStr []string
-	for i := 0; i < len(exprs); i++ {
-		exprsStr = append(exprsStr, exprs[i].String())
-	}
-	return strings.Join(exprsStr, sep)
-}
-
-func (p *projection) Children() []Plan {
-	return []Plan{p.input}
-}
-
-func NewProjection(input Plan, expr []*fieldRef) Plan {
-	return &projection{
-		fieldRefs: expr,
-		input:     input,
+func NewSelection(input Plan, expr ...Expr) Plan {
+	return &selection{
+		input:       input,
+		selectPlans: expr,
 	}
 }

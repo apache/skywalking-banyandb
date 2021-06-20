@@ -29,13 +29,16 @@ const (
 	PlanOffset
 	PlanScan
 	PlanOrderBy
+	PlanSelection
 )
 
 type Plan interface {
 	fmt.Stringer
 	Children() []Plan
 	Type() PlanType
+	Schema() (Schema, error)
 }
+
 type Expr interface {
 	fmt.Stringer
 }
