@@ -24,19 +24,59 @@ import (
 )
 
 var _ Plan = (*orderBy)(nil)
+var _ UnresolvedPlan = (*unresolvedOrderBy)(nil)
 
-type orderBy struct {
-	input  Plan
-	sort   apiv1.Sort
-	target Expr
+type unresolvedOrderBy struct {
+	input         UnresolvedPlan
+	sort          apiv1.Sort
+	targetLiteral string
 }
 
-func (o *orderBy) Schema() (Schema, error) {
+func (u *unresolvedOrderBy) Type() PlanType {
+	return PlanOrderBy
+}
+
+func (u *unresolvedOrderBy) Analyze(s Schema) (Plan, error) {
+	plan, err := u.input.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	parentSchema := plan.Schema()
+	ref, err := parentSchema.CreateRef(u.targetLiteral)
+	if err != nil {
+		return nil, err
+	}
+
+	return &orderBy{
+		input:     plan,
+		sort:      u.sort,
+		targetRef: ref[0],
+	}, nil
+}
+
+type orderBy struct {
+	input     Plan
+	sort      apiv1.Sort
+	targetRef *fieldRef
+}
+
+func (o *orderBy) Equal(plan Plan) bool {
+	if plan.Type() != PlanOrderBy {
+		return false
+	}
+	other := plan.(*orderBy)
+	if o.sort == other.sort && o.targetRef.Equal(other.targetRef) {
+		return o.input.Equal(other.input)
+	}
+	return false
+}
+
+func (o *orderBy) Schema() Schema {
 	return o.input.Schema()
 }
 
 func (o *orderBy) String() string {
-	return fmt.Sprintf("OrderBy: %s, sort=%s", o.target.String(), apiv1.EnumNamesSort[o.sort])
+	return fmt.Sprintf("OrderBy: %s, sort=%s", o.targetRef.String(), apiv1.EnumNamesSort[o.sort])
 }
 
 func (o *orderBy) Children() []Plan {
@@ -47,10 +87,10 @@ func (o *orderBy) Type() PlanType {
 	return PlanOrderBy
 }
 
-func NewOrderBy(input Plan, target Expr, sort apiv1.Sort) Plan {
-	return &orderBy{
-		input:  input,
-		sort:   sort,
-		target: target,
+func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.Sort) UnresolvedPlan {
+	return &unresolvedOrderBy{
+		input:         input,
+		sort:          sort,
+		targetLiteral: targetField,
 	}
 }

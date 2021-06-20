@@ -17,11 +17,21 @@
 
 package common
 
-import v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+import (
+	"bytes"
+
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+)
 
 var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
 
 type Metadata struct {
 	KindVersion
 	Spec v1.Metadata
+}
+
+func (md Metadata) Equal(other Metadata) bool {
+	return md.KindVersion.Kind == other.KindVersion.Kind && md.KindVersion.Version == other.KindVersion.Version &&
+		bytes.Equal(md.Spec.Group(), other.Spec.Group()) &&
+		bytes.Equal(md.Spec.Name(), other.Spec.Name())
 }

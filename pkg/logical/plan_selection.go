@@ -20,25 +20,56 @@ package logical
 import (
 	"fmt"
 	"strings"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 var _ Plan = (*selection)(nil)
+var _ UnresolvedPlan = (*selection)(nil)
 
 // selection defines the field selections as a Logical Plan.
 // The Expr(s) contained in the struct must be all satisfied,
 // which means they are implicitly combined with logical AND.
 type selection struct {
-	input       Plan
-	selectPlans []Expr
+	*parent
+	selectExprs []Expr
 }
 
-func (s *selection) Schema() (Schema, error) {
+func (s *selection) Equal(plan Plan) bool {
+	if plan.Type() != PlanSelection {
+		return false
+	}
+	other := plan.(*selection)
+	if cmp.Equal(s.selectExprs, other.selectExprs) {
+		return s.input.Equal(other.input)
+	}
+	return false
+}
+
+func (s *selection) Analyze(schema Schema) (Plan, error) {
+	var err error
+	s.input, err = s.unresolvedInput.Analyze(schema)
+	if err != nil {
+		return nil, err
+	}
+	for _, expr := range s.selectExprs {
+		if resolvable, ok := expr.(ResolvableExpr); ok {
+			err := resolvable.Resolve(s.input)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return s, nil
+}
+
+func (s *selection) Schema() Schema {
 	return s.input.Schema()
 }
 
 func (s *selection) String() string {
 	var exprStr []string
-	for _, sp := range s.selectPlans {
+	for _, sp := range s.selectExprs {
 		exprStr = append(exprStr, sp.String())
 	}
 	return fmt.Sprintf("Selection: [%s]", strings.Join(exprStr, " AND "))
@@ -52,9 +83,11 @@ func (s *selection) Type() PlanType {
 	return PlanSelection
 }
 
-func NewSelection(input Plan, expr ...Expr) Plan {
+func Selection(input UnresolvedPlan, expr ...Expr) UnresolvedPlan {
 	return &selection{
-		input:       input,
-		selectPlans: expr,
+		parent: &parent{
+			unresolvedInput: input,
+		},
+		selectExprs: expr,
 	}
 }

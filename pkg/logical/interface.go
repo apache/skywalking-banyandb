@@ -19,6 +19,8 @@ package logical
 
 import (
 	"fmt"
+
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
 type PlanType uint8
@@ -32,13 +34,48 @@ const (
 	PlanSelection
 )
 
+type UnresolvedPlan interface {
+	Type() PlanType
+	Analyze(Schema) (Plan, error)
+}
+
 type Plan interface {
 	fmt.Stringer
-	Children() []Plan
 	Type() PlanType
-	Schema() (Schema, error)
+	Children() []Plan
+	Schema() Schema
+	Equal(Plan) bool
 }
 
 type Expr interface {
 	fmt.Stringer
+	FieldType() apiv1.FieldType
+	Equal(Expr) bool
+}
+
+type ResolvableExpr interface {
+	Expr
+	Resolve(Plan) error
+}
+
+type Optimizer interface {
+	Apply(Plan) (Plan, error)
+}
+
+var predefinedOptimizers = Optimizers{
+	NewProjectionPushDown(),
+}
+
+var _ Optimizer = (Optimizers)(nil)
+
+type Optimizers []Optimizer
+
+func (o Optimizers) Apply(plan Plan) (Plan, error) {
+	for _, opt := range o {
+		var err error
+		if plan, err = opt.Apply(plan); err != nil {
+			return nil, err
+		}
+	}
+	return plan, nil
 }

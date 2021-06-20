@@ -20,6 +20,8 @@ package logical
 import (
 	"fmt"
 
+	"github.com/pkg/errors"
+
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
@@ -34,10 +36,10 @@ var binaryOpFactory = map[apiv1.BinaryOp]func(l, r Expr) Expr{
 	apiv1.BinaryOpNOT_HAVING: NotHaving,
 }
 
-var _ Expr = (*fieldRef)(nil)
+var _ ResolvableExpr = (*fieldRef)(nil)
 
 // fieldRef is the reference to the field
-// also it hold the definition/schema of the field
+// also it holds the definition/schema of the field
 type fieldRef struct {
 	// name defines the key of the field
 	name string
@@ -45,18 +47,41 @@ type fieldRef struct {
 	spec *fieldSpec
 }
 
+func (f *fieldRef) Equal(expr Expr) bool {
+	if other, ok := expr.(*fieldRef); ok {
+		return other.name == f.name && other.spec.spec.Type() == f.spec.spec.Type()
+	}
+	return false
+}
+
+func (f *fieldRef) FieldType() apiv1.FieldType {
+	if f.spec == nil {
+		panic("should be resolved first")
+	}
+	return f.spec.spec.Type()
+}
+
+func (f *fieldRef) Resolve(plan Plan) error {
+	s := plan.Schema()
+	specs, err := s.CreateRef(f.name)
+	if err != nil {
+		return err
+	}
+	f.spec = specs[0].spec
+	return nil
+}
+
 func (f *fieldRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.name, apiv1.EnumNamesFieldType[f.spec.spec.Type()])
 }
 
-func NewFieldRef(fieldName string, fieldSpec *fieldSpec) *fieldRef {
+func NewFieldRef(fieldName string) *fieldRef {
 	return &fieldRef{
 		name: fieldName,
-		spec: fieldSpec,
 	}
 }
 
-var _ Expr = (*binaryExpr)(nil)
+var _ ResolvableExpr = (*binaryExpr)(nil)
 
 // binaryExpr is composed of two operands with one op as the operator
 // l is normally a reference to a field, while r is usually literals
@@ -64,6 +89,39 @@ type binaryExpr struct {
 	op apiv1.BinaryOp
 	l  Expr
 	r  Expr
+}
+
+func (b *binaryExpr) Equal(expr Expr) bool {
+	if other, ok := expr.(*binaryExpr); ok {
+		return b.op == other.op && b.l.Equal(other.l) && b.r.Equal(other.r)
+	}
+	return false
+}
+
+func (b *binaryExpr) FieldType() apiv1.FieldType {
+	panic("Boolean should be added")
+}
+
+func (b *binaryExpr) Resolve(plan Plan) error {
+	if lr, ok := b.l.(ResolvableExpr); ok {
+		err := lr.Resolve(plan)
+		if err != nil {
+			return err
+		}
+	}
+	if rr, ok := b.l.(ResolvableExpr); ok {
+		err := rr.Resolve(plan)
+		if err != nil {
+			return err
+		}
+	}
+	if b.l.FieldType() != b.r.FieldType() {
+		return errors.Wrapf(IncompatibleQueryConditionErr, "left is %v while right is %v",
+			apiv1.EnumNamesFieldType[b.l.FieldType()],
+			apiv1.EnumNamesFieldType[b.r.FieldType()],
+		)
+	}
+	return nil
 }
 
 func (b *binaryExpr) String() string {

@@ -22,13 +22,39 @@ import (
 )
 
 var _ Plan = (*limit)(nil)
+var _ UnresolvedPlan = (*limit)(nil)
+
+type parent struct {
+	unresolvedInput UnresolvedPlan
+	input           Plan
+}
 
 type limit struct {
-	input    Plan
+	*parent
 	limitNum uint32
 }
 
-func (l *limit) Schema() (Schema, error) {
+func (l *limit) Equal(plan Plan) bool {
+	if plan.Type() != PlanLimit {
+		return false
+	}
+	other := plan.(*limit)
+	if l.limitNum == other.limitNum {
+		return l.input.Equal(other.input)
+	}
+	return false
+}
+
+func (l *limit) Analyze(s Schema) (Plan, error) {
+	var err error
+	l.input, err = l.unresolvedInput.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *limit) Schema() Schema {
 	return l.input.Schema()
 }
 
@@ -44,21 +70,44 @@ func (l *limit) Type() PlanType {
 	return PlanLimit
 }
 
-func NewLimit(input Plan, num uint32) Plan {
+func Limit(input UnresolvedPlan, num uint32) UnresolvedPlan {
 	return &limit{
-		input:    input,
+		parent: &parent{
+			unresolvedInput: input,
+		},
 		limitNum: num,
 	}
 }
 
 var _ Plan = (*offset)(nil)
+var _ UnresolvedPlan = (*offset)(nil)
 
 type offset struct {
-	input     Plan
+	*parent
 	offsetNum uint32
 }
 
-func (l *offset) Schema() (Schema, error) {
+func (l *offset) Equal(plan Plan) bool {
+	if plan.Type() != PlanOffset {
+		return false
+	}
+	other := plan.(*offset)
+	if l.offsetNum == other.offsetNum {
+		return l.input.Equal(other.input)
+	}
+	return false
+}
+
+func (l *offset) Analyze(s Schema) (Plan, error) {
+	var err error
+	l.input, err = l.unresolvedInput.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *offset) Schema() Schema {
 	return l.input.Schema()
 }
 
@@ -74,9 +123,11 @@ func (l *offset) Type() PlanType {
 	return PlanOffset
 }
 
-func NewOffset(input Plan, num uint32) Plan {
+func Offset(input UnresolvedPlan, num uint32) UnresolvedPlan {
 	return &offset{
-		input:     input,
+		parent: &parent{
+			unresolvedInput: input,
+		},
 		offsetNum: num,
 	}
 }

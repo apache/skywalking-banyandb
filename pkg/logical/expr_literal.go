@@ -20,6 +20,10 @@ package logical
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/google/go-cmp/cmp"
+
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
 var _ Expr = (*int64Literal)(nil)
@@ -28,17 +32,51 @@ type int64Literal struct {
 	int64
 }
 
+func (i *int64Literal) Equal(expr Expr) bool {
+	if other, ok := expr.(*int64Literal); ok {
+		return other.int64 == i.int64
+	}
+
+	return false
+}
+
+func Int(num int64) Expr {
+	return &int64Literal{num}
+}
+
+func (i *int64Literal) FieldType() apiv1.FieldType {
+	return apiv1.FieldTypeInt
+}
+
 func (i *int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
 
-var _ Expr = (*int64Literal)(nil)
+var _ Expr = (*int64ArrLiteral)(nil)
 
-type int64ArrayLiteral struct {
+type int64ArrLiteral struct {
 	arr []int64
 }
 
-func (i *int64ArrayLiteral) String() string {
+func (i *int64ArrLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*int64ArrLiteral); ok {
+		return cmp.Equal(other.arr, i.arr)
+	}
+
+	return false
+}
+
+func Ints(ints ...int64) Expr {
+	return &int64ArrLiteral{
+		arr: ints,
+	}
+}
+
+func (i *int64ArrLiteral) FieldType() apiv1.FieldType {
+	return apiv1.FieldTypeIntArray
+}
+
+func (i *int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
 
@@ -46,6 +84,22 @@ var _ Expr = (*strLiteral)(nil)
 
 type strLiteral struct {
 	string
+}
+
+func (s *strLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*strLiteral); ok {
+		return other.string == s.string
+	}
+
+	return false
+}
+
+func Str(str string) Expr {
+	return &strLiteral{str}
+}
+
+func (s *strLiteral) FieldType() apiv1.FieldType {
+	return apiv1.FieldTypeString
 }
 
 func (s *strLiteral) String() string {
@@ -56,6 +110,24 @@ var _ Expr = (*strArrLiteral)(nil)
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func (s *strArrLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*strArrLiteral); ok {
+		return cmp.Equal(other.arr, s.arr)
+	}
+
+	return false
+}
+
+func Strs(strs ...string) Expr {
+	return &strArrLiteral{
+		arr: strs,
+	}
+}
+
+func (s *strArrLiteral) FieldType() apiv1.FieldType {
+	return apiv1.FieldTypeStringArray
 }
 
 func (s *strArrLiteral) String() string {

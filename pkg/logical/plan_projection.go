@@ -20,21 +20,56 @@ package logical
 import (
 	"fmt"
 	"strings"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 var _ Plan = (*projection)(nil)
+var _ UnresolvedPlan = (*unresolvedProjection)(nil)
 
-type projection struct {
-	fieldRefs []*fieldRef
-	input     Plan
+type unresolvedProjection struct {
+	input  UnresolvedPlan
+	fields []string
 }
 
-func (p *projection) Schema() (Schema, error) {
-	schema, err := p.input.Schema()
+func (u *unresolvedProjection) Type() PlanType {
+	return PlanProjection
+}
+
+func (u *unresolvedProjection) Analyze(s Schema) (Plan, error) {
+	p, err := u.input.Analyze(s)
 	if err != nil {
-		return Schema{}, err
+		return nil, err
 	}
-	return schema.Map(p.fieldRefs...)
+	ps := p.Schema()
+	refs, err := ps.CreateRef(u.fields...)
+	if err != nil {
+		return nil, err
+	}
+	return &projection{
+		input:     p,
+		fieldRefs: refs,
+	}, nil
+}
+
+type projection struct {
+	input     Plan
+	fieldRefs []*fieldRef
+}
+
+func (p *projection) Equal(plan Plan) bool {
+	if plan.Type() != PlanProjection {
+		return false
+	}
+	other := plan.(*projection)
+	if cmp.Equal(p.fieldRefs, other.fieldRefs) {
+		return p.input.Equal(other.input)
+	}
+	return false
+}
+
+func (p *projection) Schema() Schema {
+	return NewSchema(p.fieldRefs...)
 }
 
 func (p *projection) Type() PlanType {
@@ -57,9 +92,9 @@ func (p *projection) Children() []Plan {
 	return []Plan{p.input}
 }
 
-func NewProjection(input Plan, expr []*fieldRef) Plan {
-	return &projection{
-		fieldRefs: expr,
-		input:     input,
+func Projection(input UnresolvedPlan, fields []string) UnresolvedPlan {
+	return &unresolvedProjection{
+		fields: fields,
+		input:  input,
 	}
 }

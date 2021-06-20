@@ -25,8 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	apischema "github.com/apache/skywalking-banyandb/api/schema"
-	"github.com/apache/skywalking-banyandb/banyand/series/schema"
+	seriesSchema "github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
 
@@ -36,6 +35,7 @@ var (
 	InvalidConditionTypeErr       = errors.New("invalid pair type")
 	TypePairInspectionErr         = errors.New("pair cannot be inspected")
 	IncompatibleQueryConditionErr = errors.New("incompatible query condition type")
+	InvalidSchemaErr              = errors.New("invalid schema")
 )
 
 var (
@@ -43,7 +43,7 @@ var (
 )
 
 type analyzer struct {
-	traceSeries schema.TraceSeries
+	traceSeries seriesSchema.TraceSeries
 }
 
 func DefaultAnalyzer() *analyzer {
@@ -52,19 +52,14 @@ func DefaultAnalyzer() *analyzer {
 	}
 }
 
-func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria) (Plan, error) {
-	traceMetadata := common.Metadata{
-		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
-	}
+func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadata) (Schema, error) {
+	traceSeries, err := a.traceSeries.Get(ctx, metadata)
 
-	var traceSeries apischema.TraceSeries
-	var err error
-	if traceSeries, err = a.traceSeries.Get(ctx, traceMetadata); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
-	fs := &Schema{
+	fs := &schema{
 		fieldMap: make(map[string]*fieldSpec),
 	}
 
@@ -78,9 +73,13 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria) 
 		}
 	}
 
+	return fs, nil
+}
+
+func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
 	// parse scan
 	timeRange := criteria.TimestampNanoseconds(nil)
-	plan := NewScan(timeRange.Begin(), timeRange.End(), &traceMetadata, *fs)
+	plan := Scan(timeRange.Begin(), timeRange.End(), traceMetadata)
 
 	// parse selection
 	if criteria.FieldsLength() > 0 {
@@ -95,27 +94,13 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria) 
 					if pair.PairType() == apiv1.TypedPairStrPair {
 						unionStrPair := new(apiv1.StrPair)
 						unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
-						queryRef, err := fs.CreateRef(string(unionStrPair.Key()))
-						if err != nil {
-							return nil, err
-						}
-						if err := queryTypeCompatible(queryRef.spec.spec.Type(), apiv1.TypedPairStrPair); err != nil {
-							return nil, err
-						}
 						lit := parseStrLiteral(unionStrPair)
-						fieldExprs = append(fieldExprs, binaryOpFactory[op](queryRef, lit))
+						fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionStrPair.Key())), lit))
 					} else if pair.PairType() == apiv1.TypedPairIntPair {
 						unionIntPair := new(apiv1.IntPair)
 						unionIntPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
-						queryRef, err := fs.CreateRef(string(unionIntPair.Key()))
-						if err != nil {
-							return nil, err
-						}
-						if err := queryTypeCompatible(queryRef.spec.spec.Type(), apiv1.TypedPairStrPair); err != nil {
-							return nil, err
-						}
 						lit := parseIntLiteral(unionIntPair)
-						fieldExprs = append(fieldExprs, binaryOpFactory[op](queryRef, lit))
+						fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionIntPair.Key())), lit))
 					} else {
 						return nil, InvalidConditionTypeErr
 					}
@@ -126,45 +111,37 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria) 
 				return nil, PairQueryInspectionErr
 			}
 		}
-		plan = NewSelection(plan, fieldExprs...)
+		plan = Selection(plan, fieldExprs...)
 	}
 
 	// parse orderBy
 	queryOrder := criteria.OrderBy(nil)
 	if queryOrder != nil {
-		orderExpr, err := fs.CreateRef(string(queryOrder.KeyName()))
-		if err != nil {
-			return nil, err
-		}
-		plan = NewOrderBy(plan, orderExpr, queryOrder.Sort())
+		plan = OrderBy(plan, string(queryOrder.KeyName()), queryOrder.Sort())
 	}
 
 	// parse offset
-	plan = NewOffset(plan, criteria.Offset())
+	plan = Offset(plan, criteria.Offset())
 
 	// parse limit
 	limitParameter := criteria.Limit()
 	if limitParameter == 0 {
 		limitParameter = DefaultLimit
 	}
-	plan = NewLimit(plan, limitParameter)
+	plan = Limit(plan, limitParameter)
 
 	// parse projection
 	proj := criteria.Projection(nil)
 	if proj != nil {
-		var projExpr []*fieldRef
+		var projStr []string
 		for i := 0; i < proj.KeyNamesLength(); i++ {
-			ref, err := fs.CreateRef(string(proj.KeyNames(i)))
-			if err != nil {
-				return nil, err
-			}
-			projExpr = append(projExpr, ref)
+			projStr = append(projStr, string(proj.KeyNames(i)))
 		}
 
-		plan = NewProjection(plan, projExpr)
+		plan = Projection(plan, projStr)
 	}
 
-	return plan, nil
+	return plan.Analyze(s)
 }
 
 func parseStrLiteral(pair *apiv1.StrPair) Expr {
@@ -190,21 +167,5 @@ func parseIntLiteral(pair *apiv1.IntPair) Expr {
 	for i := 0; i < pair.ValuesLength(); i++ {
 		arr = append(arr, pair.Values(i))
 	}
-	return &int64ArrayLiteral{arr: arr}
-}
-
-func queryTypeCompatible(fieldType apiv1.FieldType, queryType apiv1.TypedPair) error {
-	if queryType == apiv1.TypedPairStrPair {
-		if fieldType == apiv1.FieldTypeString || fieldType == apiv1.FieldTypeStringArray {
-			return nil
-		}
-		return errors.Wrapf(IncompatibleQueryConditionErr, "expect %s, but actual is %s", apiv1.EnumNamesFieldType[fieldType], apiv1.EnumNamesTypedPair[apiv1.TypedPairStrPair])
-	} else if queryType == apiv1.TypedPairIntPair {
-		if fieldType == apiv1.FieldTypeInt || fieldType == apiv1.FieldTypeIntArray {
-			return nil
-		}
-		return errors.Wrapf(IncompatibleQueryConditionErr, "expect %s, but actual is %s", apiv1.EnumNamesFieldType[fieldType], apiv1.EnumNamesTypedPair[apiv1.TypedPairIntPair])
-	}
-
-	return errors.Wrapf(IncompatibleQueryConditionErr, "expect %s, but actual is %s", apiv1.EnumNamesFieldType[fieldType], apiv1.EnumNamesTypedPair[queryType])
+	return &int64ArrLiteral{arr: arr}
 }

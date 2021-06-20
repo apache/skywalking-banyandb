@@ -25,7 +25,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
 )
 
@@ -42,7 +44,15 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 	)
 
-	plan, err := ana.Analyze(context.TODO(), criteria)
+	metadata := &common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        *criteria.Metadata(nil),
+	}
+
+	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
+	assert.NoError(err)
+
+	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
 	fmt.Print(logical.Format(plan))
@@ -64,7 +74,15 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 		builder.BuildProjection("trace_id", "service_id"),
 	)
 
-	plan, err := ana.Analyze(context.TODO(), criteria)
+	metadata := &common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        *criteria.Metadata(nil),
+	}
+
+	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
+	assert.NoError(err)
+
+	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
 	fmt.Print(logical.Format(plan))
@@ -86,7 +104,15 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 		builder.BuildProjection("trace_id", "service_id"),
 	)
 
-	_, err := ana.Analyze(context.TODO(), criteria)
+	metadata := &common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        *criteria.Metadata(nil),
+	}
+
+	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
+	assert.NoError(err)
+
+	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
 
@@ -105,7 +131,15 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 		builder.BuildProjection("trace_id", "service_id"),
 	)
 
-	_, err := ana.Analyze(context.TODO(), criteria)
+	metadata := &common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        *criteria.Metadata(nil),
+	}
+
+	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
+	assert.NoError(err)
+
+	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
 
@@ -123,6 +157,14 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 		builder.BuildProjection("duration", "service_id"),
 	)
 
-	_, err := ana.Analyze(context.TODO(), criteria)
+	metadata := &common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        *criteria.Metadata(nil),
+	}
+
+	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
+	assert.NoError(err)
+
+	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
