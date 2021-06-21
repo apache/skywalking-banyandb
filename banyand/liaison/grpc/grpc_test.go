@@ -15,20 +15,4 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package liaison
-
-import (
-	"context"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-)
-
-type Endpoint interface {
-	run.Config
-	run.Service
-}
-
-func NewEndpoint(ctx context.Context, pipeline queue.Queue) (Endpoint, error) {
-	return grpc.NewServer(ctx, pipeline), nil
-}
+package grpc_test

@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"time"
@@ -76,8 +77,8 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata) (*flatbuffers.Builder, error) {
-	s.log.Info("WriteTraces called...")
+func WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata) []byte {
+	fmt.Println("Write called...")
 	builder := flatbuffers.NewBuilder(0)
 	// Serialize MetaData
 	group, name := builder.CreateString(string(metaData.Group())), builder.CreateString(string(metaData.Name()))
@@ -90,7 +91,7 @@ func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata)
 	var fieldList []flatbuffers.UOffsetT
 	for i := 0; i < entityValue.FieldsLength(); i++ {
 		var f v1.Field
-		var s string
+		var str string
 		if ok := entityValue.Fields(&f, i); ok {
 			unionValueType := new(flatbuffers.Table)
 			if f.Value(unionValueType) {
@@ -99,7 +100,7 @@ func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata)
 					unionStr := new(v1.String)
 					unionStr.Init(unionValueType.Bytes, unionValueType.Pos)
 					v1.FieldAddValueType(builder, v1.ValueTypeString)
-					s = string(unionStr.Value())
+					str = string(unionStr.Value())
 				} else if valueType == v1.ValueTypeInt {
 					unionInt := new(v1.Int)
 					unionInt.Init(unionValueType.Bytes, unionValueType.Pos)
@@ -110,32 +111,32 @@ func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata)
 				} else if valueType == v1.ValueTypeStringArray {
 					unionStrArray := new(v1.StringArray)
 					unionStrArray.Init(unionValueType.Bytes, unionValueType.Pos)
-					len := unionStrArray.ValueLength()
-					if len == 1 {
-						s += string(unionStrArray.Value(0))
+					l := unionStrArray.ValueLength()
+					if l == 1 {
+						str += string(unionStrArray.Value(0))
 					} else {
-						s += "["
-						for i := 0; i < len; i++ {
-							s += string(unionStrArray.Value(i))
+						str += "["
+						for j := 0; j < l; j++ {
+							str += string(unionStrArray.Value(j))
 						}
-						s += "]"
+						str += "]"
 					}
 				} else if valueType == v1.ValueTypeIntArray {
 					unionIntArray := new(v1.IntArray)
 					unionIntArray.Init(unionValueType.Bytes, unionValueType.Pos)
 					l := unionIntArray.ValueLength()
 					if l == 1 {
-						s += strconv.FormatInt(unionIntArray.Value(0), 10)
+						str += strconv.FormatInt(unionIntArray.Value(0), 10)
 					} else if l > 1{
-						s += "["
-						for i := 0; i < l; i++ {
-							s += strconv.FormatInt(unionIntArray.Value(i), 10)
+						str += "["
+						for j := 0; j < l; j++ {
+							str += strconv.FormatInt(unionIntArray.Value(j), 10)
 						}
-						s += "]"
+						str += "]"
 					}
 				}
 				if valueType == v1.ValueTypeIntArray || valueType == v1.ValueTypeStringArray || valueType == v1.ValueTypeString {
-					field := builder.CreateString(s)
+					field := builder.CreateString(str)
 					v1.FieldAddValue(builder, field)
 					fieldList = append(fieldList, field)
 				}
@@ -167,14 +168,20 @@ func (s *Server) WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata)
 
 	builder.Finish(trace)
 
-	return builder, nil
+	return builder.Bytes[builder.Head():]
 }
 
-func (s *Server) FetchTraces(in *v1.EntityCriteria) (*flatbuffers.Builder, error) {
-	s.log.Info("Fetch called...")
-	builder := flatbuffers.NewBuilder(0)
-	//buf := builder.FinishedBytes()
-	//entityCriteria := v1.GetRootAsEntityCriteria(buf, 0)
+type ComponentBuilderFunc func(*flatbuffers.Builder)
 
-	return builder, nil
+func ReadTraces(funcs ...ComponentBuilderFunc) *v1.Entity {
+	b := flatbuffers.NewBuilder(1024)
+	v1.EntityStart(b)
+	for _, fun := range funcs {
+		fun(b)
+	}
+	entityOffset := v1.EntityEnd(b)
+	b.Finish(entityOffset)
+
+	buf := b.Bytes[b.Head():]
+	return v1.GetRootAsEntity(buf, 0)
 }
