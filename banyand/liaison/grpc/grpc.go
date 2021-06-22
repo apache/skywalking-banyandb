@@ -77,9 +77,11 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func WriteTraces(entityValue *v1.EntityValue, metaData *v1.Metadata) []byte {
+func WriteTraces(writeEntity *v1.WriteEntity) []byte {
 	fmt.Println("Write called...")
 	builder := flatbuffers.NewBuilder(0)
+	metaData := writeEntity.MetaData(nil)
+	entityValue := writeEntity.Entity(nil)
 	// Serialize MetaData
 	group, name := builder.CreateString(string(metaData.Group())), builder.CreateString(string(metaData.Name()))
 	v1.MetadataStart(builder)

@@ -16,3 +16,52 @@
 // under the License.
 
 package grpc_test
+
+import (
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/stretchr/testify/assert"
+	"testing"
+)
+
+type ComponentBuilderFunc func(*flatbuffers.Builder)
+type criteriaBuilder struct {
+	*flatbuffers.Builder
+}
+func NewCriteriaBuilder() *criteriaBuilder {
+	return &criteriaBuilder{
+		flatbuffers.NewBuilder(1024),
+	}
+}
+
+func (b *criteriaBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntity {
+	v1.WriteEntityStart(b.Builder)
+	for _, fun := range funcs {
+		fun(b.Builder)
+	}
+	entityOffset := v1.WriteEntityEnd(b.Builder)
+	b.Builder.Finish(entityOffset)
+
+	buf := b.Bytes[b.Head():]
+	return v1.GetRootAsWriteEntity(buf, 0)
+}
+func BenchmarkWriteTraces(t *testing.T) {
+	tester := assert.New(t)
+	builder := NewCriteriaBuilder()
+	entity := builder.Build(
+	)
+	res := grpc.WriteTraces(entity)
+	//tester.NoError(err)
+	tester.NotNil(res)
+	//tester.NoError(plan.Validate())
+}
+
+func BenchmarkReadTraces(t *testing.T) {
+	tester := assert.New(t)
+	builder := NewCriteriaBuilder()
+	entity := builder.Build()
+	res := grpc.ReadTraces(entity)
+	tester.NotNil(res)
+}
