@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	seriesSchema "github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
@@ -36,6 +37,7 @@ var (
 	TypePairInspectionErr         = errors.New("pair cannot be inspected")
 	IncompatibleQueryConditionErr = errors.New("incompatible query condition type")
 	InvalidSchemaErr              = errors.New("invalid schema")
+	IndexNotDefinedErr            = errors.New("index is not define for the field")
 )
 
 var (
@@ -44,11 +46,13 @@ var (
 
 type analyzer struct {
 	traceSeries seriesSchema.TraceSeries
+	indexRule   seriesSchema.IndexRule
 }
 
 func DefaultAnalyzer() *analyzer {
 	return &analyzer{
 		sw.NewTraceSeries(),
+		sw.NewIndexRule(),
 	}
 }
 
@@ -59,59 +63,95 @@ func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 		return nil, err
 	}
 
-	fs := &schema{
-		fieldMap: make(map[string]*fieldSpec),
+	indexRule, err := a.indexRule.Get(ctx, metadata)
+
+	if err != nil {
+		return nil, err
+	}
+
+	s := &schema{
+		indexRule: indexRule,
+		fieldMap:  make(map[string]*fieldSpec),
 	}
 
 	// generate the schema of the fields for the traceSeries
 	for i := 0; i < traceSeries.Spec.FieldsLength(); i++ {
-		var fieldSpec apiv1.FieldSpec
-		if ok := traceSeries.Spec.Fields(&fieldSpec, i); ok {
-			fs.RegisterField(string(fieldSpec.Name()), i, &fieldSpec)
-		} else {
+		var fs apiv1.FieldSpec
+		if ok := traceSeries.Spec.Fields(&fs, i); !ok {
 			return nil, err
 		}
+		s.RegisterField(string(fs.Name()), i, &fs)
 	}
 
-	return fs, nil
+	return s, nil
 }
 
 func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
-	// parse scan
+	// parse tableScan
 	timeRange := criteria.TimestampNanoseconds(nil)
-	plan := Scan(timeRange.Begin(), timeRange.End(), traceMetadata)
+
+	var projStr []string
+	// parse projection
+	proj := criteria.Projection(nil)
+	if proj != nil {
+		for i := 0; i < proj.KeyNamesLength(); i++ {
+			projStr = append(projStr, string(proj.KeyNames(i)))
+		}
+	}
+
+	var plan UnresolvedPlan
 
 	// parse selection
 	if criteria.FieldsLength() > 0 {
+		// mark if there is indexScan request
+		useIndexScan := false
 		var fieldExprs []Expr
+		traceState := series.TraceStateDefault
 		for i := 0; i < criteria.FieldsLength(); i++ {
 			var pairQuery apiv1.PairQuery
-			if criteria.Fields(&pairQuery, i) {
-				op := pairQuery.Op()
-				pair := pairQuery.Condition(nil)
-				unionPairTable := new(flatbuffers.Table)
-				if pair.Pair(unionPairTable) {
-					if pair.PairType() == apiv1.TypedPairStrPair {
-						unionStrPair := new(apiv1.StrPair)
-						unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
-						lit := parseStrLiteral(unionStrPair)
-						fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionStrPair.Key())), lit))
-					} else if pair.PairType() == apiv1.TypedPairIntPair {
-						unionIntPair := new(apiv1.IntPair)
-						unionIntPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
-						lit := parseIntLiteral(unionIntPair)
-						fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionIntPair.Key())), lit))
-					} else {
-						return nil, InvalidConditionTypeErr
-					}
-				} else {
-					return nil, TypePairInspectionErr
-				}
-			} else {
+			if ok := criteria.Fields(&pairQuery, i); !ok {
 				return nil, PairQueryInspectionErr
 			}
+			op := pairQuery.Op()
+			pair := pairQuery.Condition(nil)
+			unionPairTable := new(flatbuffers.Table)
+			if ok := pair.Pair(unionPairTable); !ok {
+				return nil, TypePairInspectionErr
+			}
+			if pair.PairType() == apiv1.TypedPairStrPair {
+				unionStrPair := new(apiv1.StrPair)
+				unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+				// check special field `trace_id`
+				if string(unionStrPair.Key()) == "trace_id" {
+					return TraceIDFetch(string(unionStrPair.Values(0)), traceMetadata, s), nil
+				}
+				useIndexScan = true
+				lit := parseStrLiteral(unionStrPair)
+				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionStrPair.Key())), lit))
+			} else if pair.PairType() == apiv1.TypedPairIntPair {
+				unionIntPair := new(apiv1.IntPair)
+				unionIntPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+				// check special field `state`
+				if string(unionIntPair.Key()) == "state" {
+					traceState = series.TraceState(unionIntPair.Values(0))
+					continue
+				}
+				lit := parseIntLiteral(unionIntPair)
+				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionIntPair.Key())), lit))
+				useIndexScan = true
+			} else {
+				return nil, InvalidConditionTypeErr
+			}
 		}
-		plan = Selection(plan, fieldExprs...)
+
+		// first check if we can use index-scan
+		if useIndexScan {
+			plan = IndexScan(timeRange.Begin(), timeRange.End(), traceMetadata, fieldExprs, traceState, projStr...)
+		} else {
+			plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, projStr...)
+		}
+	} else {
+		plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, projStr...)
 	}
 
 	// parse orderBy
@@ -129,17 +169,6 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, 
 		limitParameter = DefaultLimit
 	}
 	plan = Limit(plan, limitParameter)
-
-	// parse projection
-	proj := criteria.Projection(nil)
-	if proj != nil {
-		var projStr []string
-		for i := 0; i < proj.KeyNamesLength(); i++ {
-			projStr = append(projStr, string(proj.KeyNames(i)))
-		}
-
-		plan = Projection(plan, projStr)
-	}
 
 	return plan.Analyze(s)
 }

@@ -26,23 +26,23 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 )
 
-var _ Plan = (*scan)(nil)
-var _ UnresolvedPlan = (*unresolvedScan)(nil)
+var _ Plan = (*tableScan)(nil)
+var _ UnresolvedPlan = (*unresolvedTableScan)(nil)
 
-type unresolvedScan struct {
+type unresolvedTableScan struct {
 	startTime        uint64
 	endTime          uint64
 	projectionFields []string
 	metadata         *common.Metadata
 }
 
-func (u *unresolvedScan) Type() PlanType {
-	return PlanScan
+func (u *unresolvedTableScan) Type() PlanType {
+	return PlanTableScan
 }
 
-func (u *unresolvedScan) Analyze(schema Schema) (Plan, error) {
+func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	if u.projectionFields == nil || len(u.projectionFields) == 0 {
-		return &scan{
+		return &tableScan{
 			startTime:           u.startTime,
 			endTime:             u.endTime,
 			projectionFieldRefs: nil,
@@ -59,7 +59,7 @@ func (u *unresolvedScan) Analyze(schema Schema) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &scan{
+	return &tableScan{
 		startTime:           u.startTime,
 		endTime:             u.endTime,
 		projectionFieldRefs: fieldRefs,
@@ -68,7 +68,7 @@ func (u *unresolvedScan) Analyze(schema Schema) (Plan, error) {
 	}, nil
 }
 
-type scan struct {
+type tableScan struct {
 	startTime           uint64
 	endTime             uint64
 	projectionFieldRefs []*fieldRef
@@ -76,48 +76,44 @@ type scan struct {
 	metadata            *common.Metadata
 }
 
-func (s *scan) Equal(plan Plan) bool {
-	if plan.Type() != PlanScan {
+func (s *tableScan) Equal(plan Plan) bool {
+	if plan.Type() != PlanTableScan {
 		return false
 	}
-	other := plan.(*scan)
+	other := plan.(*tableScan)
 	return s.startTime == other.startTime && s.endTime == other.endTime &&
 		cmp.Equal(s.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(s.schema, other.schema) &&
 		cmp.Equal(s.metadata, other.metadata)
 }
 
-func (s *scan) Analyze() (Plan, error) {
-	return s, nil
-}
-
-func (s *scan) Schema() Schema {
+func (s *tableScan) Schema() Schema {
 	if s.projectionFieldRefs == nil || len(s.projectionFieldRefs) == 0 {
 		return s.schema
 	}
-	return NewSchema(s.projectionFieldRefs...)
+	return s.schema.Map(s.projectionFieldRefs...)
 }
 
-func (s *scan) String() string {
+func (s *tableScan) String() string {
 	if len(s.projectionFieldRefs) == 0 {
-		return fmt.Sprintf("Scan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=None",
+		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=None",
 			s.startTime, s.endTime, s.metadata.Spec.Group(), s.metadata.Spec.Name())
 	} else {
-		return fmt.Sprintf("Scan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
+		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
 			s.startTime, s.endTime, s.metadata.Spec.Group(), s.metadata.Spec.Name(), formatExpr(", ", s.projectionFieldRefs...))
 	}
 }
 
-func (s *scan) Children() []Plan {
+func (s *tableScan) Children() []Plan {
 	return []Plan{}
 }
 
-func (s *scan) Type() PlanType {
-	return PlanScan
+func (s *tableScan) Type() PlanType {
+	return PlanTableScan
 }
 
-func Scan(startTime, endTime uint64, metadata *common.Metadata, projection ...string) UnresolvedPlan {
-	return &unresolvedScan{
+func TableScan(startTime, endTime uint64, metadata *common.Metadata, projection ...string) UnresolvedPlan {
+	return &unresolvedTableScan{
 		startTime:        startTime,
 		endTime:          endTime,
 		projectionFields: projection,

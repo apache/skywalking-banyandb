@@ -69,7 +69,7 @@ func (p *projection) Equal(plan Plan) bool {
 }
 
 func (p *projection) Schema() Schema {
-	return NewSchema(p.fieldRefs...)
+	return p.input.Schema().Map(p.fieldRefs...)
 }
 
 func (p *projection) Type() PlanType {

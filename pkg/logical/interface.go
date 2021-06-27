@@ -29,9 +29,10 @@ const (
 	PlanProjection PlanType = iota
 	PlanLimit
 	PlanOffset
-	PlanScan
+	PlanTableScan
 	PlanOrderBy
-	PlanSelection
+	PlanIndexScan
+	PlanTraceIDFetch
 )
 
 type UnresolvedPlan interface {
@@ -55,27 +56,5 @@ type Expr interface {
 
 type ResolvableExpr interface {
 	Expr
-	Resolve(Plan) error
-}
-
-type Optimizer interface {
-	Apply(Plan) (Plan, error)
-}
-
-var predefinedOptimizers = Optimizers{
-	NewProjectionPushDown(),
-}
-
-var _ Optimizer = (Optimizers)(nil)
-
-type Optimizers []Optimizer
-
-func (o Optimizers) Apply(plan Plan) (Plan, error) {
-	for _, opt := range o {
-		var err error
-		if plan, err = opt.Apply(plan); err != nil {
-			return nil, err
-		}
-	}
-	return plan, nil
+	Resolve(Schema) error
 }

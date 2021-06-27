@@ -61,8 +61,7 @@ func (f *fieldRef) FieldType() apiv1.FieldType {
 	return f.spec.spec.Type()
 }
 
-func (f *fieldRef) Resolve(plan Plan) error {
-	s := plan.Schema()
+func (f *fieldRef) Resolve(s Schema) error {
 	specs, err := s.CreateRef(f.name)
 	if err != nil {
 		return err
@@ -102,15 +101,15 @@ func (b *binaryExpr) FieldType() apiv1.FieldType {
 	panic("Boolean should be added")
 }
 
-func (b *binaryExpr) Resolve(plan Plan) error {
+func (b *binaryExpr) Resolve(s Schema) error {
 	if lr, ok := b.l.(ResolvableExpr); ok {
-		err := lr.Resolve(plan)
+		err := lr.Resolve(s)
 		if err != nil {
 			return err
 		}
 	}
 	if rr, ok := b.l.(ResolvableExpr); ok {
-		err := rr.Resolve(plan)
+		err := rr.Resolve(s)
 		if err != nil {
 			return err
 		}
