@@ -15,23 +15,46 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package common
+package logical
 
 import (
-	"bytes"
+	"fmt"
 
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 )
 
-var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
+type PlanType uint8
 
-type Metadata struct {
-	KindVersion
-	Spec v1.Metadata
+const (
+	PlanProjection PlanType = iota
+	PlanLimit
+	PlanOffset
+	PlanTableScan
+	PlanOrderBy
+	PlanIndexScan
+	PlanTraceIDFetch
+)
+
+type UnresolvedPlan interface {
+	Type() PlanType
+	Analyze(Schema) (Plan, error)
 }
 
-func (md Metadata) Equal(other Metadata) bool {
-	return md.KindVersion.Kind == other.KindVersion.Kind && md.KindVersion.Version == other.KindVersion.Version &&
-		bytes.Equal(md.Spec.Group(), other.Spec.Group()) &&
-		bytes.Equal(md.Spec.Name(), other.Spec.Name())
+type Plan interface {
+	fmt.Stringer
+	Type() PlanType
+	Children() []Plan
+	Schema() Schema
+	Equal(Plan) bool
+}
+
+type Expr interface {
+	fmt.Stringer
+	FieldType() apiv1.FieldType
+	Equal(Expr) bool
+}
+
+type ResolvableExpr interface {
+	Expr
+	Resolve(Schema) error
 }

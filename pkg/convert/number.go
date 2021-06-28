@@ -42,3 +42,27 @@ func IntToInt64(numbers ...int) []int64 {
 	}
 	return arr
 }
+
+func Int8ToInt64(numbers ...int8) []int64 {
+	var arr []int64
+	for i := 0; i < len(numbers); i++ {
+		arr = append(arr, int64(numbers[i]))
+	}
+	return arr
+}
+
+func Int16ToInt64(numbers ...int16) []int64 {
+	var arr []int64
+	for i := 0; i < len(numbers); i++ {
+		arr = append(arr, int64(numbers[i]))
+	}
+	return arr
+}
+
+func Int32ToInt64(numbers ...int32) []int64 {
+	var arr []int64
+	for i := 0; i < len(numbers); i++ {
+		arr = append(arr, int64(numbers[i]))
+	}
+	return arr
+}

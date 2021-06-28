@@ -45,7 +45,7 @@ table TraceStateMap {
 table TraceFieldMap {
     // trace_id the unique identity of a single trace
     trace_id:string;
-    // series_id groups entites into a storage bucket
+    // series_id groups entities into a storage bucket
     series_id:[string];
     // state indicates the trace is "success" or "error"
     state:TraceStateMap;
@@ -70,13 +70,13 @@ enum Catalog:byte { Trace = 0, Log = 1, Metric = 2 }
 
 // IndexType determine the index structure under the hood
 // Fields with SeriesInternal type is reserved by Series module, would not be indexed by Index module.
-enum IndexType:byte { Text = 0, Numerical = 1, ID = 2, MultiText = 3, MultiNumberical = 4, SeriesInternal = 5 }
+enum IndexType:byte { Text = 0, Numerical = 1, ID = 2, MultiText = 3, MultiNumerical = 4, SeriesInternal = 5 }
 
 // IndexObject defines who should be indexed.
 table IndexObject {
     // fields are the combination that refers to an indexed object
     // If the elements in fields are more than 1, the object will generate a multi-field index
-    // Caveat: All fields in a multi-field index MUST have an identical IndexTypee
+    // Caveat: All fields in a multi-field index MUST have an identical IndexType
     fields:[string];
     // type is the IndexType of this IndexObject.
     type:IndexType;
@@ -102,7 +102,7 @@ table IndexObject {
 //            type: Text
 //        },
 //        { 
-//            fields: latency]
+//            fields: [latency]
 //            type: Numerical
 //        },
 //    ]
@@ -131,7 +131,7 @@ table Series {
     series:Metadata;
 }
 
-// IndexRuleBinding is a bridge to connect an IndexRule to several Seriess
+// IndexRuleBinding is a bridge to connect an IndexRule to several Series
 // This binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies
 // to control how to generate time series indices.
 table IndexRuleBinding {

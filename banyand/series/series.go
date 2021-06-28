@@ -32,9 +32,10 @@ import (
 // TraceState represents the state of a trace link
 type TraceState int
 
-var (
-	TraceStateSuccess = 0
-	TraceStateError   = 1
+const (
+	TraceStateDefault TraceState = iota
+	TraceStateSuccess
+	TraceStateError
 )
 
 //ScanOptions contain options
