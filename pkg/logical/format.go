@@ -15,23 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package common
+package logical
 
 import (
-	"bytes"
-
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"strings"
 )
 
-var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
-
-type Metadata struct {
-	KindVersion
-	Spec v1.Metadata
+func Format(p Plan) string {
+	return formatWithIndent(p, 0)
 }
 
-func (md Metadata) Equal(other Metadata) bool {
-	return md.KindVersion.Kind == other.KindVersion.Kind && md.KindVersion.Version == other.KindVersion.Version &&
-		bytes.Equal(md.Spec.Group(), other.Spec.Group()) &&
-		bytes.Equal(md.Spec.Name(), other.Spec.Name())
+func formatWithIndent(p Plan, indent int) string {
+	res := ""
+	if indent > 1 {
+		res += strings.Repeat(" ", 5*(indent-1))
+	}
+	if indent > 0 {
+		res += "+"
+		res += strings.Repeat("-", 4)
+	}
+	res += p.String() + "\n"
+	for _, child := range p.Children() {
+		res += formatWithIndent(child, indent+1)
+	}
+	return res
 }

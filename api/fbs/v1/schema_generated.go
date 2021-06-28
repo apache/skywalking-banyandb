@@ -98,30 +98,30 @@ func (v Catalog) String() string {
 type IndexType int8
 
 const (
-	IndexTypeText            IndexType = 0
-	IndexTypeNumerical       IndexType = 1
-	IndexTypeID              IndexType = 2
-	IndexTypeMultiText       IndexType = 3
-	IndexTypeMultiNumberical IndexType = 4
-	IndexTypeSeriesInternal  IndexType = 5
+	IndexTypeText           IndexType = 0
+	IndexTypeNumerical      IndexType = 1
+	IndexTypeID             IndexType = 2
+	IndexTypeMultiText      IndexType = 3
+	IndexTypeMultiNumerical IndexType = 4
+	IndexTypeSeriesInternal IndexType = 5
 )
 
 var EnumNamesIndexType = map[IndexType]string{
-	IndexTypeText:            "Text",
-	IndexTypeNumerical:       "Numerical",
-	IndexTypeID:              "ID",
-	IndexTypeMultiText:       "MultiText",
-	IndexTypeMultiNumberical: "MultiNumberical",
-	IndexTypeSeriesInternal:  "SeriesInternal",
+	IndexTypeText:           "Text",
+	IndexTypeNumerical:      "Numerical",
+	IndexTypeID:             "ID",
+	IndexTypeMultiText:      "MultiText",
+	IndexTypeMultiNumerical: "MultiNumerical",
+	IndexTypeSeriesInternal: "SeriesInternal",
 }
 
 var EnumValuesIndexType = map[string]IndexType{
-	"Text":            IndexTypeText,
-	"Numerical":       IndexTypeNumerical,
-	"ID":              IndexTypeID,
-	"MultiText":       IndexTypeMultiText,
-	"MultiNumberical": IndexTypeMultiNumberical,
-	"SeriesInternal":  IndexTypeSeriesInternal,
+	"Text":           IndexTypeText,
+	"Numerical":      IndexTypeNumerical,
+	"ID":             IndexTypeID,
+	"MultiText":      IndexTypeMultiText,
+	"MultiNumerical": IndexTypeMultiNumerical,
+	"SeriesInternal": IndexTypeSeriesInternal,
 }
 
 func (v IndexType) String() string {
