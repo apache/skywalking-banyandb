@@ -20,6 +20,10 @@ package series
 import (
 	"bytes"
 	"context"
+	"time"
+
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
@@ -27,14 +31,12 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"go.uber.org/multierr"
-	"time"
 )
 
 var _ Service = (*service)(nil)
 
 type service struct {
-	db storage.Database
+	db   storage.Database
 	addr string
 }
 
