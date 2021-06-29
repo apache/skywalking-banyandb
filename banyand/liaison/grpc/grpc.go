@@ -20,14 +20,15 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
-	"io"
-	"net"
 )
 
 type Server struct {
@@ -54,7 +55,7 @@ func (s *Server) FlagSet() *run.FlagSet {
 func (s *Server) Validate() error {
 	return nil
 }
-func init(){
+func init() {
 	//encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
 }
 func (s *Server) Serve() error {
@@ -63,7 +64,6 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal("Failed to listen", logger.Error(err))
 	}
-
 
 	s.ser = grpclib.NewServer(grpclib.CustomCodec(flatbuffers.FlatbuffersCodec{}))
 	//s.ser = grpclib.NewServer()
@@ -88,19 +88,19 @@ type TraceServer struct {
 func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 	for {
 		writeEntity, err := TraceWriteServer.Recv()
-		fmt.Println(123, writeEntity)
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
+		fmt.Println(123, writeEntity)
 		t.writeData = append(t.writeData, writeEntity)
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
 		builder.Finish(v1.WriteResponseEnd(builder))
-		if error := TraceWriteServer.Send(builder); error != nil {
-			return error
+		if errSend := TraceWriteServer.Send(builder); errSend != nil {
+			return errSend
 		}
 		//writeEntity.Entity().Fields()
 		//writeEntity.MetaData(nil).Group()
