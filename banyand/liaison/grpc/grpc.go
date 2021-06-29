@@ -28,7 +28,6 @@ import (
 	grpclib "google.golang.org/grpc"
 	"io"
 	"net"
-	"sync"
 )
 
 type Server struct {
@@ -36,7 +35,6 @@ type Server struct {
 	log      *logger.Logger
 	ser      *grpclib.Server
 	pipeline queue.Queue
-	writeEntity *v1.WriteEntity
 }
 
 func NewServer(ctx context.Context, pipeline queue.Queue) *Server {
@@ -85,13 +83,12 @@ func (s *Server) GracefulStop() {
 type TraceServer struct {
 	v1.UnimplementedTraceServer
 	writeData []*v1.WriteEntity
-	mu         sync.Mutex
 }
 
 func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 	for {
 		writeEntity, err := TraceWriteServer.Recv()
-		fmt.Println(writeEntity)
+		fmt.Println(123, writeEntity)
 		if err == io.EOF {
 			return nil
 		}
@@ -102,8 +99,8 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
 		builder.Finish(v1.WriteResponseEnd(builder))
-		if err := TraceWriteServer.Send(builder); err != nil {
-			return err
+		if error := TraceWriteServer.Send(builder); error != nil {
+			return error
 		}
 		//writeEntity.Entity().Fields()
 		//writeEntity.MetaData(nil).Group()

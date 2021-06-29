@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -282,14 +281,13 @@ func Test_grpc_write(t *testing.T) {
 	defer conn.Close()
 
 	client := v1.NewTraceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
 	b := NewCriteriaBuilder()
-	binary := byte(123)
+	binary := byte(12)
 	entity := b.Build(
 		b.BuildEntity("entityId", []byte{binary}, "service_name", "endpoint_id"),
 		b.BuildMetaData("default", "trace"),
 	)
-	fmt.Println(entity)
 	builder, e := runWrite(entity)
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", err)
@@ -299,13 +297,11 @@ func Test_grpc_write(t *testing.T) {
 	if er != nil {
 		log.Fatalf("%v.runWrite(_) = _, %v", client, err)
 	}
-	//waitc := make(chan struct{})
 	go func() {
 		for {
 			writeResponse, err := stream.Recv()
 			if err == io.EOF {
 				// read done.
-				//close(waitc)
 				return
 			}
 			if err != nil {
@@ -318,5 +314,4 @@ func Test_grpc_write(t *testing.T) {
 		log.Fatalf("Failed to send a note: %v", err)
 	}
 	stream.CloseSend()
-	//<-waitc
 }
