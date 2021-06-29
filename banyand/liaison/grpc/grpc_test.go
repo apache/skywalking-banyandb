@@ -19,14 +19,15 @@ package grpc
 
 import (
 	"context"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	flatbuffers "github.com/google/flatbuffers/go"
-	"google.golang.org/grpc"
 	"io"
 	"log"
 	"testing"
 	"time"
+
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	flatbuffers "github.com/google/flatbuffers/go"
+	"google.golang.org/grpc"
 )
 
 var serverAddr = "localhost:17912"
@@ -35,6 +36,7 @@ type ComponentBuilderFunc func(*flatbuffers.Builder)
 type writeEntityBuilder struct {
 	*flatbuffers.Builder
 }
+
 func NewCriteriaBuilder() *writeEntityBuilder {
 	return &writeEntityBuilder{
 		flatbuffers.NewBuilder(1024),
@@ -77,7 +79,7 @@ func (b *writeEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 	}
 }
 
-func (b *writeEntityBuilder) BuildField(val interface{}) flatbuffers.UOffsetT  {
+func (b *writeEntityBuilder) BuildField(val interface{}) flatbuffers.UOffsetT {
 	var ValueTypeOffset flatbuffers.UOffsetT
 	var valType v1.ValueType
 	switch v := val.(type) {
@@ -159,7 +161,7 @@ func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntit
 	return v1.GetRootAsWriteEntity(buf, 0)
 }
 
-func runWrite (writeEntity *v1.WriteEntity) (*flatbuffers.Builder, error) {
+func runWrite(writeEntity *v1.WriteEntity) (*flatbuffers.Builder, error) {
 	builder := flatbuffers.NewBuilder(0)
 	metaData := writeEntity.MetaData(nil)
 	entityValue := writeEntity.Entity(nil)
@@ -270,7 +272,7 @@ func runWrite (writeEntity *v1.WriteEntity) (*flatbuffers.Builder, error) {
 	position := v1.WriteEntityEnd(builder)
 	builder.Finish(position)
 
-	return  builder, nil
+	return builder, nil
 }
 
 func Test_grpc_write(t *testing.T) {
@@ -281,7 +283,7 @@ func Test_grpc_write(t *testing.T) {
 	defer conn.Close()
 
 	client := v1.NewTraceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+	ctx := context.Background()
 	b := NewCriteriaBuilder()
 	binary := byte(12)
 	entity := b.Build(
@@ -292,26 +294,29 @@ func Test_grpc_write(t *testing.T) {
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
-	defer cancel()
 	stream, er := client.Write(ctx)
 	if er != nil {
 		log.Fatalf("%v.runWrite(_) = _, %v", client, err)
 	}
+	waitc := make(chan struct{})
 	go func() {
 		for {
-			writeResponse, err := stream.Recv()
-			if err == io.EOF {
+			writeResponse, errRecv := stream.Recv()
+			if errRecv == io.EOF {
 				// read done.
+				close(waitc)
 				return
 			}
-			if err != nil {
+			if errRecv != nil {
 				log.Fatalf("Failed to receive data : %v", err)
 			}
-			println( writeResponse)
+			println(writeResponse)
 		}
 	}()
-	if error := stream.Send(builder); error != nil {
-		log.Fatalf("Failed to send a note: %v", err)
+	if errSend := stream.Send(builder); errSend != nil {
+		log.Fatalf("Failed to send a note: %v", errSend)
 	}
+
 	stream.CloseSend()
+	<-waitc
 }
