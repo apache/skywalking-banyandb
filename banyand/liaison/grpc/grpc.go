@@ -19,8 +19,8 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"log"
 	"net"
 
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
@@ -94,7 +94,7 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(123, writeEntity)
+		log.Println("writeEntity:", writeEntity)
 		t.writeData = append(t.writeData, writeEntity)
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
@@ -108,18 +108,16 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		//seriesID := hash(fieds, f1, f2)
 		//shardID := shardingFunc(seriesID, shardNum)
 		//queue
-		//for _, l := range t.writeData {
-		//	if err := TraceWriteServer.Send(l); err != nil {
-		//		return err
-		//	}
-		//}
 	}
 }
 
 func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
+	log.Println("entityCriteria:", entityCriteria)
+
+	// receive entity, then serialize entity
 	b := flatbuffers.NewBuilder(0)
-	v1.EntityCriteriaStart(b)
-	b.Finish(v1.EntityCriteriaEnd(b))
+	v1.EntityStart(b)
+	b.Finish(v1.EntityEnd(b))
 
 	return b, nil
 }

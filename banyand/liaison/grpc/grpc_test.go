@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package grpc
+package grpc_test
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logical"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"google.golang.org/grpc"
 )
@@ -33,15 +34,17 @@ import (
 var serverAddr = "localhost:17912"
 
 type ComponentBuilderFunc func(*flatbuffers.Builder)
+
 type writeEntityBuilder struct {
 	*flatbuffers.Builder
 }
 
-func NewCriteriaBuilder() *writeEntityBuilder {
+func NewEntityBuilder() *writeEntityBuilder {
 	return &writeEntityBuilder{
 		flatbuffers.NewBuilder(1024),
 	}
 }
+
 func (b *writeEntityBuilder) BuildMetaData(group, name string) ComponentBuilderFunc {
 	g, n := b.Builder.CreateString(group), b.Builder.CreateString(name)
 	v1.MetadataStart(b.Builder)
@@ -84,22 +87,22 @@ func (b *writeEntityBuilder) BuildField(val interface{}) flatbuffers.UOffsetT {
 	var valType v1.ValueType
 	switch v := val.(type) {
 	case int:
-		ValueTypeOffset = b.buildInt(int64(v))
+		ValueTypeOffset = b.BuildInt(int64(v))
 		valType = v1.ValueTypeInt
 	case []int:
-		ValueTypeOffset = b.buildInt(convert.IntToInt64(v...)...)
+		ValueTypeOffset = b.BuildInt(convert.IntToInt64(v...)...)
 		valType = v1.ValueTypeIntArray
 	case int64:
-		ValueTypeOffset = b.buildInt(v)
+		ValueTypeOffset = b.BuildInt(v)
 		valType = v1.ValueTypeInt
 	case []int64:
-		ValueTypeOffset = b.buildInt(v...)
+		ValueTypeOffset = b.BuildInt(v...)
 		valType = v1.ValueTypeIntArray
 	case string:
-		ValueTypeOffset = b.buildStrValueType(v)
+		ValueTypeOffset = b.BuildStrValueType(v)
 		valType = v1.ValueTypeString
 	case []string:
-		ValueTypeOffset = b.buildStrValueType(v...)
+		ValueTypeOffset = b.BuildStrValueType(v...)
 		valType = v1.ValueTypeStringArray
 	default:
 		panic("not supported values")
@@ -111,7 +114,7 @@ func (b *writeEntityBuilder) BuildField(val interface{}) flatbuffers.UOffsetT {
 	return v1.FieldEnd(b.Builder)
 }
 
-func (b *writeEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOffsetT {
+func (b *writeEntityBuilder) BuildStrValueType(values ...string) flatbuffers.UOffsetT {
 	var strOffsets []flatbuffers.UOffsetT
 	for i := 0; i < len(values); i++ {
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
@@ -126,7 +129,7 @@ func (b *writeEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOf
 	return v1.IntArrayEnd(b.Builder)
 }
 
-func (b *writeEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
+func (b *writeEntityBuilder) BuildInt(values ...int64) flatbuffers.UOffsetT {
 	v1.IntArrayStartValueVector(b.Builder, len(values))
 	for i := 0; i < len(values); i++ {
 		b.Builder.PrependInt64(values[i])
@@ -161,7 +164,7 @@ func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntit
 	return v1.GetRootAsWriteEntity(buf, 0)
 }
 
-func runWrite(writeEntity *v1.WriteEntity) (*flatbuffers.Builder, error) {
+func SerializeWrite(writeEntity *v1.WriteEntity) (*flatbuffers.Builder, error) {
 	builder := flatbuffers.NewBuilder(0)
 	metaData := writeEntity.MetaData(nil)
 	entityValue := writeEntity.Entity(nil)
@@ -284,15 +287,15 @@ func Test_grpc_write(t *testing.T) {
 
 	client := v1.NewTraceClient(conn)
 	ctx := context.Background()
-	b := NewCriteriaBuilder()
+	b := NewEntityBuilder()
 	binary := byte(12)
 	entity := b.Build(
 		b.BuildEntity("entityId", []byte{binary}, "service_name", "endpoint_id"),
 		b.BuildMetaData("default", "trace"),
 	)
-	builder, e := runWrite(entity)
+	builder, e := SerializeWrite(entity)
 	if e != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		log.Fatalf("Failed to connect: %v", e)
 	}
 	stream, er := client.Write(ctx)
 	if er != nil {
@@ -310,7 +313,7 @@ func Test_grpc_write(t *testing.T) {
 			if errRecv != nil {
 				log.Fatalf("Failed to receive data : %v", err)
 			}
-			println(writeResponse)
+			log.Println("writeResponse: ", writeResponse)
 		}
 	}()
 	if errSend := stream.Send(builder); errSend != nil {
@@ -319,4 +322,45 @@ func Test_grpc_write(t *testing.T) {
 
 	stream.CloseSend()
 	<-waitc
+}
+
+func SerializeQuery(entityCriteria *v1.EntityCriteria) (*flatbuffers.Builder, error){
+	builder := flatbuffers.NewBuilder(0)
+	//metaData := entityCriteria.Metadata(nil)
+	//fields := entityCriteria.Fields()
+	v1.EntityCriteriaStart(builder)
+	position := v1.EntityCriteriaEnd(builder)
+	builder.Finish(position)
+
+	return builder, nil
+}
+
+func Test_grpc_query(t *testing.T)  {
+	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure(), grpc.WithDefaultCallOptions(grpc.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	client := v1.NewTraceClient(conn)
+	ctx := context.Background()
+	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
+
+	builder := logical.NewCriteriaBuilder()
+	criteria := builder.Build(
+		logical.AddLimit(0),
+		logical.AddOffset(0),
+		builder.BuildMetaData("default", "trace"),
+		builder.BuildTimeStampNanoSeconds(sT, eT),
+	)
+	b, err := SerializeQuery(criteria)
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	stream, errRev := client.Query(ctx, b)
+	if errRev != nil {
+		log.Fatalf("Retrieve client failed: %v", errRev)
+	}
+
+	log.Println("QueryResponse: ", stream)
 }

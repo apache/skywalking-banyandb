@@ -39,10 +39,10 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(0),
-		AddOffset(0),
+		logical.AddLimit(0),
+		logical.AddOffset(0),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(sT, eT),
 	)
@@ -76,10 +76,10 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(sT, eT),
 		builder.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
@@ -121,10 +121,10 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 
 	ana := logical.DefaultAnalyzer()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildFields("trace_id", "=", "123"),
 	)
@@ -151,10 +151,10 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 
 	ana := logical.DefaultAnalyzer()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("duration", ">", 500),
@@ -179,10 +179,10 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 
 	ana := logical.DefaultAnalyzer()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildOrderBy("duration", apiv1.SortDESC),
@@ -206,10 +206,10 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 
 	ana := logical.DefaultAnalyzer()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildProjection("duration", "service_id"),
@@ -232,10 +232,10 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 
 	ana := logical.DefaultAnalyzer()
 
-	builder := NewCriteriaBuilder()
+	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		AddLimit(5),
-		AddOffset(10),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildFields("service_name", "=", "app"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
