@@ -22,7 +22,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
@@ -48,31 +47,31 @@ func newStandaloneCmd() *cobra.Command {
 	ctx := context.Background()
 	repo, err := discovery.NewServiceRepo(ctx)
 	if err != nil {
-		l.Fatal("failed to initiate service repository", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate service repository")
 	}
 	pipeline, err := queue.NewQueue(ctx, repo)
 	if err != nil {
-		l.Fatal("failed to initiate data pipeline", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
 	db, err := storage.NewDB(ctx, repo)
 	if err != nil {
-		l.Fatal("failed to initiate database", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate database")
 	}
 	idx, err := index.NewService(ctx, repo, pipeline)
 	if err != nil {
-		l.Fatal("failed to initiate index builder", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate index builder")
 	}
 	s, err := series.NewService(ctx, db)
 	if err != nil {
-		l.Fatal("failed to initiate series", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate series")
 	}
 	q, err := query.NewExecutor(ctx, idx, s)
 	if err != nil {
-		l.Fatal("failed to initiate query executor", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline)
 	if err != nil {
-		l.Fatal("failed to initiate Endpoint transport layer", logger.Error(err))
+		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
 
 	// Register the run Group units.
@@ -97,11 +96,10 @@ func newStandaloneCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info("starting as a standalone server")
+			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
 			if err := g.Run(); err != nil {
-				logger.GetLogger().WithOptions(zap.AddStacktrace(zap.FatalLevel)).
-					Error("exit: ", logger.String("name", g.Name), logger.Error(err))
+				logger.GetLogger().Error().Err(err).Stack().Str("name", g.Name).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil

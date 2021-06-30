@@ -19,10 +19,8 @@ package kv
 
 import (
 	"log"
-	"strconv"
 
 	"github.com/dgraph-io/badger/v3"
-	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -95,24 +93,17 @@ type badgerLog struct {
 }
 
 func (l *badgerLog) Errorf(f string, v ...interface{}) {
-	l.delegated.Error(f, convToFields(v...)...)
+	l.delegated.Error().Msgf(f, v)
 }
 
 func (l *badgerLog) Warningf(f string, v ...interface{}) {
-	l.delegated.Warn(f, convToFields(v...)...)
+	l.delegated.Warn().Msgf(f, v)
 }
 
 func (l *badgerLog) Infof(f string, v ...interface{}) {
-	l.delegated.Info(f, convToFields(v...)...)
+	l.delegated.Info().Msgf(f, v)
 }
 
 func (l *badgerLog) Debugf(f string, v ...interface{}) {
-	l.delegated.Debug(f, convToFields(v...)...)
-}
-
-func convToFields(vv ...interface{}) (fields []zap.Field) {
-	for i, v := range vv {
-		fields = append(fields, zap.Any(strconv.Itoa(i), v))
-	}
-	return fields
+	l.delegated.Debug().Msgf(f)
 }
