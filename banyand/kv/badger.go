@@ -93,17 +93,17 @@ type badgerLog struct {
 }
 
 func (l *badgerLog) Errorf(f string, v ...interface{}) {
-	l.delegated.Error().Msgf(f, v)
+	l.delegated.Error().Msgf(f, v...)
 }
 
 func (l *badgerLog) Warningf(f string, v ...interface{}) {
-	l.delegated.Warn().Msgf(f, v)
+	l.delegated.Warn().Msgf(f, v...)
 }
 
 func (l *badgerLog) Infof(f string, v ...interface{}) {
-	l.delegated.Info().Msgf(f, v)
+	l.delegated.Info().Msgf(f, v...)
 }
 
 func (l *badgerLog) Debugf(f string, v ...interface{}) {
-	l.delegated.Debug().Msgf(f)
+	l.delegated.Debug().Msgf(f, v...)
 }
