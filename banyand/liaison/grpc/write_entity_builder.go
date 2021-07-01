@@ -145,7 +145,7 @@ func (b *writeEntityBuilder) BuildDataBinary(binary []byte) flatbuffers.UOffsetT
 	return dataBinaryOffset
 }
 
-func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntity {
+func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {
 	v1.WriteEntityStart(b.Builder)
 	for _, fun := range funcs {
 		fun(b.Builder)
@@ -153,17 +153,5 @@ func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntit
 	entityOffset := v1.WriteEntityEnd(b.Builder)
 	b.Builder.Finish(entityOffset)
 
-	buf := b.Bytes[b.Head():]
-	return v1.GetRootAsWriteEntity(buf, 0)
-}
-
-func (b *writeEntityBuilder) BuildBB(funcs ...ComponentBuilderFunc) *flatbuffers.Builder {
-	v1.WriteEntityStart(b.Builder)
-	for _, fun := range funcs {
-		fun(b.Builder)
-	}
-	entityOffset := v1.WriteEntityEnd(b.Builder)
-	b.Builder.Finish(entityOffset)
-
-	return b.Builder
+	return b.Builder, nil
 }

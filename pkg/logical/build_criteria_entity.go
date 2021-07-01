@@ -230,3 +230,14 @@ func (b *criteriaBuilder) Build(funcs ...ComponentBuilderFunc) *apiv1.EntityCrit
 	buf := b.Bytes[b.Head():]
 	return apiv1.GetRootAsEntityCriteria(buf, 0)
 }
+
+func (b *criteriaBuilder) BuildEntity(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {
+	apiv1.EntityCriteriaStart(b.Builder)
+	for _, fun := range funcs {
+		fun(b.Builder)
+	}
+	criteriaOffset := apiv1.EntityCriteriaEnd(b.Builder)
+	b.Builder.Finish(criteriaOffset)
+
+	return b.Builder, nil
+}

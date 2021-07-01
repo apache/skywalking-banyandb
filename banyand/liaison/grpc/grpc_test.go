@@ -45,11 +45,11 @@ func Test_trace_write(t *testing.T) {
 	ctx := context.Background()
 	b := grpc.NewEntityBuilder()
 	binary := byte(12)
-	entity := b.Build(
+	builder, e := b.Build(
 		b.BuildEntity("entityId", []byte{binary}, "service_name", "endpoint_id"),
 		b.BuildMetaData("default", "trace"),
 	)
-	builder, e := grpc.SerializeWrite(entity)
+	//builder, e := grpc.SerializeWrite(entity)
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", e)
 	}
@@ -91,22 +91,21 @@ func Test_trace_query(t *testing.T) {
 	ctx := context.Background()
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := logical.NewCriteriaBuilder()
-	criteria := builder.Build(
+	b := logical.NewCriteriaBuilder()
+	builder, e := b.BuildEntity(
 		logical.AddLimit(5),
 		logical.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildTimeStampNanoSeconds(sT, eT),
-		builder.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
-		builder.BuildProjection("http.method", "service_id", "service_instance_id"),
-		builder.BuildOrderBy("service_instance_id", v1.SortDESC),
+		b.BuildMetaData("default", "trace"),
+		b.BuildTimeStampNanoSeconds(sT, eT),
+		b.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
+		b.BuildProjection("http.method", "service_id", "service_instance_id"),
+		b.BuildOrderBy("service_instance_id", v1.SortDESC),
 	)
-	b, e := grpc.SerializeQuery(criteria)
+	//b, e := grpc.SerializeQuery(criteria)
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", e)
 	}
-	stream, errRev := client.Query(ctx, b)
-	log.Println("entityCriteria:", criteria)
+	stream, errRev := client.Query(ctx, builder)
 	if errRev != nil {
 		log.Fatalf("Retrieve client failed: %v", errRev)
 	}
