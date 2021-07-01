@@ -79,7 +79,7 @@ func (b *writeEntityBuilder) BuildField(val interface{}) flatbuffers.UOffsetT {
 		ValueTypeOffset = b.BuildStrValueType(v...)
 		valType = v1.ValueTypeStringArray
 	default:
-		panic("not supported values")
+		panic("not supported value")
 	}
 
 	v1.FieldStart(b.Builder)

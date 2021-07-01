@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func SerializeRangeQuery()  {
+	
+}
+
 func SerializeQuery(criteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
 	builder := flatbuffers.NewBuilder(0)
 	// Serialize timeRange
@@ -57,24 +61,24 @@ func SerializeQuery(criteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
 					if pair.PairType() == v1.TypedPairStrPair {
 						unionStrPair := new(v1.StrPair)
 						unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
-						strLen := unionStrPair.ValuesLength()
+						l := unionStrPair.ValuesLength()
 						// Serialize Pair
 						v1.PairStart(builder)
 						v1.PairAddPairType(builder, v1.TypedPairStrPair)
 						v1.PairEnd(builder)
 						var offsets []flatbuffers.UOffsetT
-						for j := 0; j < strLen; j++ {
+						for j := 0; j < l; j++ {
 							v := builder.CreateString(string(unionStrPair.Values(j)))
 							v1.StrPairStart(builder)
 							v1.StrPairAddValues(builder, v)
 							offset := v1.StrPairEnd(builder)
 							offsets = append(offsets, offset)
 						}
-						v1.StrPairStartValuesVector(builder, strLen)
+						v1.StrPairStartValuesVector(builder, l)
 						for o := range offsets {
 							builder.PrependUOffsetT(flatbuffers.UOffsetT(o))
 						}
-						f := builder.EndVector(strLen)
+						f := builder.EndVector(l)
 						PairList = append(PairList, f)
 					} else if pair.PairType() == v1.TypedPairIntPair {
 						unionIntPair := new(v1.IntPair)
