@@ -1,14 +1,12 @@
 package grpc
 
 import (
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	flatbuffers "github.com/google/flatbuffers/go"
 	"time"
-)
 
-func SerializeRangeQuery()  {
-	
-}
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+)
 
 func SerializeQuery(criteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
 	builder := flatbuffers.NewBuilder(0)

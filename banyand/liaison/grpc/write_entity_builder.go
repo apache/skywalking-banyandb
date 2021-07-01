@@ -1,10 +1,12 @@
 package grpc
 
 import (
+	"time"
+
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	flatbuffers "github.com/google/flatbuffers/go"
-	"time"
 )
 
 type ComponentBuilderFunc func(*flatbuffers.Builder)
@@ -136,4 +138,15 @@ func (b *writeEntityBuilder) Build(funcs ...ComponentBuilderFunc) *v1.WriteEntit
 
 	buf := b.Bytes[b.Head():]
 	return v1.GetRootAsWriteEntity(buf, 0)
+}
+
+func (b *writeEntityBuilder) BuildBB(funcs ...ComponentBuilderFunc) *flatbuffers.Builder {
+	v1.WriteEntityStart(b.Builder)
+	for _, fun := range funcs {
+		fun(b.Builder)
+	}
+	entityOffset := v1.WriteEntityEnd(b.Builder)
+	b.Builder.Finish(entityOffset)
+
+	return b.Builder
 }
