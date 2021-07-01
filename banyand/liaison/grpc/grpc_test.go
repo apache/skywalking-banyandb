@@ -101,7 +101,6 @@ func Test_trace_query(t *testing.T) {
 		b.BuildProjection("http.method", "service_id", "service_instance_id"),
 		b.BuildOrderBy("service_instance_id", v1.SortDESC),
 	)
-	//b, e := grpc.SerializeQuery(criteria)
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", e)
 	}
