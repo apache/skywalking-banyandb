@@ -23,12 +23,13 @@ import (
 	"log"
 	"net"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+	grpclib "google.golang.org/grpc"
+
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	flatbuffers "github.com/google/flatbuffers/go"
-	grpclib "google.golang.org/grpc"
 )
 
 type Server struct {

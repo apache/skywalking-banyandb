@@ -24,11 +24,12 @@ import (
 	"testing"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+	"google.golang.org/grpc"
+
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
-	flatbuffers "github.com/google/flatbuffers/go"
-	"google.golang.org/grpc"
 )
 
 var serverAddr = "localhost:17912"
@@ -324,18 +325,128 @@ func Test_grpc_write(t *testing.T) {
 	<-waitc
 }
 
-func SerializeQuery(entityCriteria *v1.EntityCriteria) (*flatbuffers.Builder, error){
+func SerializeQuery(criteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
 	builder := flatbuffers.NewBuilder(0)
-	//metaData := entityCriteria.Metadata(nil)
-	//fields := entityCriteria.Fields()
+	// Serialize timeRange
+	timeRange := criteria.TimestampNanoseconds(nil)
+	v1.RangeQueryStart(builder)
+	v1.RangeQueryAddBegin(builder, timeRange.Begin())
+	v1.RangeQueryAddEnd(builder, timeRange.End())
+	v1.RangeQueryEnd(builder)
+	// Serialize projection
+	var projStr []flatbuffers.UOffsetT
+	proj := criteria.Projection(nil)
+	if proj != nil {
+		for i := 0; i < proj.KeyNamesLength(); i++ {
+			keyName := builder.CreateString(string(proj.KeyNames(i)))
+			projStr = append(projStr, keyName)
+		}
+	}
+	v1.ProjectionStart(builder)
+	for p := range projStr {
+		v1.ProjectionAddKeyNames(builder, flatbuffers.UOffsetT(p))
+	}
+	v1.ProjectionEnd(builder)
+	// Serialize MetaData
+	metaData := criteria.Metadata(nil)
+	group, name := builder.CreateString(string(metaData.Group())), builder.CreateString(string(metaData.Name()))
+	v1.MetadataStart(builder)
+	v1.MetadataAddGroup(builder, group)
+	v1.MetadataAddName(builder, name)
+	v1.MetadataEnd(builder)
+	// Serialize OrderBy
+	queryOrder := criteria.OrderBy(nil)
+	if queryOrder != nil {
+		keyName := builder.CreateString(string(queryOrder.KeyName()))
+		v1.QueryOrderStart(builder)
+		v1.QueryOrderAddKeyName(builder, keyName)
+		v1.QueryOrderAddSort(builder, queryOrder.Sort())
+		v1.QueryOrderEnd(builder)
+	}
+	// Serialize Fields
+	var PairList []flatbuffers.UOffsetT
+	if criteria.FieldsLength() > 0 {
+		for i := 0; i < criteria.FieldsLength(); i++ {
+			var pairQuery v1.PairQuery
+			if ok := criteria.Fields(&pairQuery, i); ok {
+				op := pairQuery.Op()
+				pair := pairQuery.Condition(nil)
+				unionPairTable := new(flatbuffers.Table)
+				if ok := pair.Pair(unionPairTable); ok {
+					if pair.PairType() == v1.TypedPairStrPair {
+						unionStrPair := new(v1.StrPair)
+						unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+						strLen := unionStrPair.ValuesLength()
+						// Serialize Pair
+						v1.PairStart(builder)
+						v1.PairAddPairType(builder, v1.TypedPairStrPair)
+						v1.PairEnd(builder)
+						var offsets []flatbuffers.UOffsetT
+						for j := 0; j < strLen; j++ {
+							v := builder.CreateString(string(unionStrPair.Values(j)))
+							v1.StrPairStart(builder)
+							v1.StrPairAddValues(builder, v)
+							offset := v1.StrPairEnd(builder)
+							offsets = append(offsets, offset)
+						}
+						v1.StrPairStartValuesVector(builder, strLen)
+						for o := range offsets {
+							builder.PrependUOffsetT(flatbuffers.UOffsetT(o))
+						}
+						f := builder.EndVector(strLen)
+						PairList = append(PairList, f)
+					} else if pair.PairType() == v1.TypedPairIntPair {
+						unionIntPair := new(v1.IntPair)
+						unionIntPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+						// Serialize Pair
+						v1.PairStart(builder)
+						v1.PairAddPairType(builder, v1.TypedPairStrPair)
+						v1.PairEnd(builder)
+						l := unionIntPair.ValuesLength()
+						var offsets []flatbuffers.UOffsetT
+						for j := 0; j < l; j++ {
+							v1.IntPairStart(builder)
+							v1.IntPairAddValues(builder, flatbuffers.UOffsetT(unionIntPair.Values(j)))
+							offset := v1.IntPairEnd(builder)
+							offsets = append(offsets, offset)
+						}
+						v1.IntPairStartValuesVector(builder, l)
+						for o := range offsets {
+							builder.PrependUOffsetT(flatbuffers.UOffsetT(o))
+						}
+						f := builder.EndVector(l)
+						PairList = append(PairList, f)
+					}
+					// Serialize PairQuery
+					v1.PairQueryStart(builder)
+					v1.PairQueryAddOp(builder, op)
+					for p := range PairList {
+						v1.PairQueryAddCondition(builder, flatbuffers.UOffsetT(p))
+					}
+					v1.PairQueryEnd(builder)
+				}
+			}
+		}
+	}
+	// Serialize EntityCriteria
+	v1.EntityCriteriaStartFieldsVector(builder, len(PairList))
+	for val := range PairList {
+		builder.PrependUOffsetT(flatbuffers.UOffsetT(val))
+	}
+	PairListP := builder.EndVector(len(PairList))
+	offset := criteria.Offset()
+	limit := criteria.Limit()
 	v1.EntityCriteriaStart(builder)
+	v1.EntityCriteriaAddOffset(builder, offset)
+	v1.EntityCriteriaAddLimit(builder, limit)
+	v1.EntityCriteriaAddFields(builder, PairListP)
 	position := v1.EntityCriteriaEnd(builder)
 	builder.Finish(position)
 
 	return builder, nil
 }
 
-func Test_grpc_query(t *testing.T)  {
+func Test_grpc_query(t *testing.T) {
 	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure(), grpc.WithDefaultCallOptions(grpc.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
@@ -348,16 +459,20 @@ func Test_grpc_query(t *testing.T)  {
 
 	builder := logical.NewCriteriaBuilder()
 	criteria := builder.Build(
-		logical.AddLimit(0),
-		logical.AddOffset(0),
+		logical.AddLimit(5),
+		logical.AddOffset(10),
 		builder.BuildMetaData("default", "trace"),
 		builder.BuildTimeStampNanoSeconds(sT, eT),
+		builder.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
+		builder.BuildProjection("http.method", "service_id", "service_instance_id"),
+		builder.BuildOrderBy("service_instance_id", v1.SortDESC),
 	)
-	b, err := SerializeQuery(criteria)
-	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+	b, e := SerializeQuery(criteria)
+	if e != nil {
+		log.Fatalf("Failed to connect: %v", e)
 	}
 	stream, errRev := client.Query(ctx, b)
+	log.Println("entityCriteria:", criteria)
 	if errRev != nil {
 		log.Fatalf("Retrieve client failed: %v", errRev)
 	}
