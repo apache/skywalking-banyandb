@@ -59,7 +59,7 @@ func (s *Server) Serve() error {
 	s.log = logger.GetLogger("grpc")
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
-		s.log.Fatal("Failed to listen", logger.Error(err))
+		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 
 	encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
@@ -69,6 +69,6 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) GracefulStop() {
-	s.log.Info("stopping")
+	s.log.Info().Msg("stopping")
 	s.ser.GracefulStop()
 }
