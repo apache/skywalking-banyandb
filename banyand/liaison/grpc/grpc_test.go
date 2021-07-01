@@ -34,7 +34,7 @@ import (
 
 var serverAddr = "localhost:17912"
 
-func Test_grpc_write(t *testing.T) {
+func Test_trace_write(t *testing.T) {
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions(grpclib.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
@@ -80,7 +80,7 @@ func Test_grpc_write(t *testing.T) {
 	<-waitc
 }
 
-func Test_grpc_query(t *testing.T) {
+func Test_trace_query(t *testing.T) {
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions(grpclib.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
