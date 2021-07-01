@@ -18,11 +18,14 @@
 package logger
 
 import (
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/rs/zerolog"
 )
 
 var (
@@ -36,7 +39,8 @@ func GetLogger(scope ...string) *Logger {
 		return root
 	}
 	module := strings.Join(scope, ".")
-	return &Logger{module: module, Logger: root.Logger.Named(module)}
+	subLogger := root.Logger.With().Str("module", module).Logger()
+	return &Logger{module: module, Logger: &subLogger}
 }
 
 // Bootstrap logging for system boot
@@ -53,7 +57,7 @@ func Bootstrap() (err error) {
 	return nil
 }
 
-// Init initializes a zap logger from user config
+// Init initializes a rs/zerolog logger from user config
 func Init(cfg Logging) (err error) {
 	once.Do(func() {
 		root, err = getLogger(cfg)
@@ -66,24 +70,30 @@ func Init(cfg Logging) (err error) {
 
 // getLogger initializes a root logger
 func getLogger(cfg Logging) (*Logger, error) {
-	// parse logging level
-	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
-	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
-		return nil, err
-	}
-	var encoderConfig zap.Config
-	switch cfg.Env {
-	case "dev":
-		encoderConfig = zap.NewDevelopmentConfig()
-		encoderConfig.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-		break
-	default:
-		encoderConfig = zap.NewProductionConfig()
-	}
-	encoderConfig.Level = level
-	l, err := encoderConfig.Build()
+	lvl, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
 	}
-	return &Logger{module: "root", Logger: l}, nil
+	var w io.Writer
+	switch cfg.Env {
+	case "dev":
+		cw := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+		cw.FormatLevel = func(i interface{}) string {
+			return strings.ToUpper(fmt.Sprintf("| %-6s|", i))
+		}
+		cw.FormatMessage = func(i interface{}) string {
+			return fmt.Sprintf("***%s****", i)
+		}
+		cw.FormatFieldName = func(i interface{}) string {
+			return fmt.Sprintf("%s:", i)
+		}
+		cw.FormatFieldValue = func(i interface{}) string {
+			return strings.ToUpper(fmt.Sprintf("%s", i))
+		}
+		w = io.Writer(cw)
+	default:
+		w = os.Stderr
+	}
+	l := zerolog.New(w).Level(lvl).With().Timestamp().Logger()
+	return &Logger{module: "root", Logger: &l}, nil
 }

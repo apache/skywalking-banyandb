@@ -73,7 +73,7 @@ func (b *block) createKV(pluginID string, defines []KVSpec) (err error) {
 	for _, define := range defines {
 		storeID := getStoreID(pluginID, define.Name)
 		path := fmt.Sprintf("%s/%s", b.path, storeID)
-		b.l.Info("open kv store", logger.String("path", path), logger.Any("type", define.Type))
+		b.l.Info().Str("path", path).Uint8("type", uint8(define.Type)).Msg("open kv store")
 		switch define.Type {
 		case KVTypeNormal:
 			var s kv.Store

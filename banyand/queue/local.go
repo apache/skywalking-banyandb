@@ -72,7 +72,7 @@ func (e *Local) FlagSet() *run.FlagSet {
 }
 
 func (e *Local) Validate() error {
-	e.logger.Info("test", logger.String("val", e.test))
+	e.logger.Info().Str("val", e.test).Msg("test")
 	return nil
 }
 

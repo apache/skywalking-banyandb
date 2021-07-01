@@ -25,7 +25,6 @@ import (
 	"github.com/oklog/run"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -184,20 +183,17 @@ func (g *Group) RegisterFlags() *FlagSet {
 		if g.c[idx] == nil {
 			continue
 		}
-		nameField := logger.String("name", g.c[idx].Name())
-		indexField := logger.Uint32("registered", uint32(idx+1))
-		g.log.Debug("register flags", nameField, indexField,
-			logger.Uint32("total", uint32(len(g.c))))
+		g.log.Debug().Str("name", g.c[idx].Name()).Uint32("registered", uint32(idx+1)).Uint32("total", uint32(len(g.c))).Msg("register flags")
 		fs[idx] = g.c[idx].FlagSet()
 		if fs[idx] == nil {
 			// no FlagSet returned
-			g.log.Debug("config object did not return a flagset", nameField)
+			g.log.Debug().Str("name", g.c[idx].Name()).Msg("config object did not return a flagset")
 			continue
 		}
 		fs[idx].VisitAll(func(f *pflag.Flag) {
 			if g.f.Lookup(f.Name) != nil {
 				// log duplicate flag
-				g.log.Warn("ignoring duplicate flag", logger.String("name", f.Name), indexField)
+				g.log.Warn().Str("name", f.Name).Uint32("registered", uint32(idx+1)).Msg("ignoring duplicate flag")
 				return
 			}
 			g.f.AddFlag(f)
@@ -224,7 +220,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 
 	defer func() {
 		if err != nil {
-			g.log.Error("unexpected exit", logger.Error(err))
+			g.log.Error().Err(err).Msg("unexpected exit")
 		}
 	}()
 
@@ -243,13 +239,11 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 	// Validate Config inputs
 	for idx := range g.c {
 		// a Config might have been deregistered during Run
-		indexField := logger.Uint32("ran", uint32(idx+1))
 		if g.c[idx] == nil {
-			g.log.Debug("skipping validate", indexField)
+			g.log.Debug().Uint32("ran", uint32(idx+1)).Msg("skipping validate")
 			continue
 		}
-		g.log.Debug("validate config", logger.String("name", g.c[idx].Name()), indexField,
-			logger.Uint32("total", uint32(len(g.c))))
+		g.log.Debug().Str("name", g.c[idx].Name()).Uint32("ran", uint32(idx+1)).Uint32("total", uint32(len(g.c))).Msg("validate config")
 		if vErr := g.c[idx].Validate(); vErr != nil {
 			err = multierr.Append(err, vErr)
 		}
@@ -261,7 +255,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 	}
 
 	// log binary name and version
-	g.log.Info("started")
+	g.log.Info().Msg("started")
 
 	return false, nil
 }
@@ -298,7 +292,7 @@ func (g *Group) Run() (err error) {
 	}
 	defer func() {
 		if err != nil {
-			g.log.WithOptions(zap.AddStacktrace(zap.FatalLevel)).Error("unexpected exit", logger.Error(err))
+			g.log.Fatal().Err(err).Stack().Msg("unexpected exit")
 		}
 	}()
 
@@ -308,8 +302,7 @@ func (g *Group) Run() (err error) {
 		if g.p[idx] == nil {
 			continue
 		}
-		g.log.Debug("pre-run:", logger.String("name", g.p[idx].Name()),
-			logger.Uint32("ran", uint32(idx+1)), logger.Uint32("total", uint32(len(g.p))))
+		g.log.Debug().Uint32("ran", uint32(idx+1)).Uint32("total", uint32(len(g.p))).Str("name", g.p[idx].Name()).Msg("pre-run")
 		if err := g.p[idx].PreRun(); err != nil {
 			return err
 		}
@@ -323,13 +316,11 @@ func (g *Group) Run() (err error) {
 			continue
 		}
 
-		g.log.Debug("serve:", logger.String("name", s.Name()),
-			logger.Uint32("ran", uint32(idx+1)), logger.Uint32("total", uint32(len(g.s))))
+		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
 			return s.Serve()
 		}, func(_ error) {
-			g.log.Debug("stop:", logger.String("name", s.Name()),
-				logger.Uint32("ran", uint32(idx+1)), logger.Uint32("total", uint32(len(g.s))))
+			g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stop")
 			s.GracefulStop()
 		})
 	}
