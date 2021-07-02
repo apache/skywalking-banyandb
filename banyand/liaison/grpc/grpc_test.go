@@ -49,13 +49,12 @@ func Test_trace_write(t *testing.T) {
 		b.BuildEntity("entityId", []byte{binary}, "service_name", "endpoint_id"),
 		b.BuildMetaData("default", "trace"),
 	)
-	//builder, e := grpc.SerializeWrite(entity)
 	if e != nil {
 		log.Fatalf("Failed to connect: %v", e)
 	}
 	stream, er := client.Write(ctx)
 	if er != nil {
-		log.Fatalf("%v.runWrite(_) = _, %v", client, err)
+		log.Fatalf("%v.Test_trace_write(_) = _, %v", client, er)
 	}
 	waitc := make(chan struct{})
 	go func() {
@@ -75,8 +74,9 @@ func Test_trace_write(t *testing.T) {
 	if errSend := stream.Send(builder); errSend != nil {
 		log.Fatalf("Failed to send a note: %v", errSend)
 	}
-
-	stream.CloseSend()
+	if errCloseSend := stream.CloseSend(); errCloseSend != nil {
+		log.Fatalf("Failed to close send a note: %v", errCloseSend)
+	}
 	<-waitc
 }
 
