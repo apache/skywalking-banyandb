@@ -145,7 +145,7 @@ func (b *WriteEntityBuilder) buildDataBinary(binary []byte) flatbuffers.UOffsetT
 	return dataBinaryOffset
 }
 
-func (b *WriteEntityBuilder) Build(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {
+func (b *WriteEntityBuilder) BuildWriteEntity(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {
 	v1.WriteEntityStart(b.Builder)
 	for _, fun := range funcs {
 		fun(b.Builder)
