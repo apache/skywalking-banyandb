@@ -32,7 +32,7 @@ type WriteEntityBuilder struct {
 	*flatbuffers.Builder
 }
 
-func NewEntityBuilder() *WriteEntityBuilder {
+func NewWriteEntityBuilder() *WriteEntityBuilder {
 	return &WriteEntityBuilder{
 		flatbuffers.NewBuilder(1024),
 	}
