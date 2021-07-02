@@ -74,7 +74,6 @@ func Test_trace_write(t *testing.T) {
 	if errSend := stream.Send(builder); errSend != nil {
 		log.Fatalf("Failed to send a note: %v", errSend)
 	}
-
 	if errorSend := stream.CloseSend(); errorSend != nil {
 		log.Fatalf("Failed to send a note: %v", errorSend)
 	}
