@@ -18,9 +18,17 @@
 package logical
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/pkg/errors"
+
+	"github.com/apache/skywalking-banyandb/api/data"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/executor"
 )
 
 var _ Plan = (*orderBy)(nil)
@@ -60,6 +68,33 @@ type orderBy struct {
 	targetRef *fieldRef
 }
 
+func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+	entities, err := o.input.Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(entities) <= 1 {
+		return entities, nil
+	}
+
+	sort.Slice(entities, func(i, j int) bool {
+		var iPair, jPair apiv1.Pair
+		entities[i].Fields(&iPair, o.targetRef.spec.idx)
+		entities[j].Fields(&jPair, o.targetRef.spec.idx)
+		lField, _ := getFieldRaw(&iPair)
+		rField, _ := getFieldRaw(&jPair)
+		comp := bytes.Compare(lField, rField)
+		if o.sort == apiv1.SortASC {
+			return comp == -1
+		} else {
+			return comp == 1
+		}
+	})
+
+	return entities, nil
+}
+
 func (o *orderBy) Equal(plan Plan) bool {
 	if plan.Type() != PlanOrderBy {
 		return false
@@ -92,5 +127,23 @@ func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.Sort) Unresolv
 		input:         input,
 		sort:          sort,
 		targetLiteral: targetField,
+	}
+}
+
+func getFieldRaw(pair *apiv1.Pair) ([]byte, error) {
+	unionPair := new(flatbuffers.Table)
+	if ok := pair.Pair(unionPair); !ok {
+		return nil, errors.New("cannot read from pair")
+	}
+	if pair.PairType() == apiv1.TypedPairStrPair {
+		unionStrPairQuery := new(apiv1.StrPair)
+		unionStrPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+		return unionStrPairQuery.Values(0), nil
+	} else if pair.PairType() == apiv1.TypedPairIntPair {
+		unionIntPairQuery := new(apiv1.IntPair)
+		unionIntPairQuery.Init(unionPair.Bytes, unionPair.Pos)
+		return convert.Int64ToBytes(unionIntPairQuery.Values(0)), nil
+	} else {
+		return nil, errors.New("unsupported data types")
 	}
 }

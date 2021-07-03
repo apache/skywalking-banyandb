@@ -19,6 +19,9 @@ package logical
 
 import (
 	"fmt"
+
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/pkg/executor"
 )
 
 var _ Plan = (*limit)(nil)
@@ -32,6 +35,19 @@ type parent struct {
 type limit struct {
 	*parent
 	limitNum uint32
+}
+
+func (l *limit) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+	entities, err := l.parent.input.Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(entities) > int(l.limitNum) {
+		return entities[:l.limitNum], nil
+	}
+
+	return entities, nil
 }
 
 func (l *limit) Equal(plan Plan) bool {
@@ -85,6 +101,19 @@ var _ UnresolvedPlan = (*offset)(nil)
 type offset struct {
 	*parent
 	offsetNum uint32
+}
+
+func (l *offset) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+	entities, err := l.parent.input.Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(entities) > int(l.offsetNum) {
+		return entities[l.offsetNum:], nil
+	}
+
+	return []data.Entity{}, nil
 }
 
 func (l *offset) Equal(plan Plan) bool {

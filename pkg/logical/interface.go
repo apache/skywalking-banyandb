@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/executor"
 )
 
 type PlanType uint8
@@ -42,6 +43,7 @@ type UnresolvedPlan interface {
 
 type Plan interface {
 	fmt.Stringer
+	executor.Executable
 	Type() PlanType
 	Children() []Plan
 	Schema() Schema
@@ -52,6 +54,11 @@ type Expr interface {
 	fmt.Stringer
 	FieldType() apiv1.FieldType
 	Equal(Expr) bool
+}
+
+type LiteralExpr interface {
+	Expr
+	Bytes() [][]byte
 }
 
 type ResolvableExpr interface {

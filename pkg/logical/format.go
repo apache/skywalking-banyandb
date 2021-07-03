@@ -40,3 +40,11 @@ func formatWithIndent(p Plan, indent int) string {
 	}
 	return res
 }
+
+func formatExpr(sep string, exprs ...*fieldRef) string {
+	var exprsStr []string
+	for i := 0; i < len(exprs); i++ {
+		exprsStr = append(exprsStr, exprs[i].String())
+	}
+	return strings.Join(exprsStr, sep)
+}

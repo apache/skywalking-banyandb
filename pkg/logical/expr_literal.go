@@ -24,12 +24,17 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var _ Expr = (*int64Literal)(nil)
+var _ LiteralExpr = (*int64Literal)(nil)
 
 type int64Literal struct {
 	int64
+}
+
+func (i *int64Literal) Bytes() [][]byte {
+	return [][]byte{convert.Int64ToBytes(i.int64)}
 }
 
 func (i *int64Literal) Equal(expr Expr) bool {
@@ -52,10 +57,18 @@ func (i *int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
 
-var _ Expr = (*int64ArrLiteral)(nil)
+var _ LiteralExpr = (*int64ArrLiteral)(nil)
 
 type int64ArrLiteral struct {
 	arr []int64
+}
+
+func (i *int64ArrLiteral) Bytes() [][]byte {
+	var b [][]byte
+	for _, i := range i.arr {
+		b = append(b, convert.Int64ToBytes(i))
+	}
+	return b
 }
 
 func (i *int64ArrLiteral) Equal(expr Expr) bool {
@@ -80,10 +93,14 @@ func (i *int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
 
-var _ Expr = (*strLiteral)(nil)
+var _ LiteralExpr = (*strLiteral)(nil)
 
 type strLiteral struct {
 	string
+}
+
+func (s *strLiteral) Bytes() [][]byte {
+	return [][]byte{[]byte(s.string)}
 }
 
 func (s *strLiteral) Equal(expr Expr) bool {
@@ -106,10 +123,18 @@ func (s *strLiteral) String() string {
 	return s.string
 }
 
-var _ Expr = (*strArrLiteral)(nil)
+var _ LiteralExpr = (*strArrLiteral)(nil)
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func (s *strArrLiteral) Bytes() [][]byte {
+	var b [][]byte
+	for _, str := range s.arr {
+		b = append(b, []byte(str))
+	}
+	return b
 }
 
 func (s *strArrLiteral) Equal(expr Expr) bool {

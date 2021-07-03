@@ -15,24 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package data
+package executor
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 )
 
-var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
-
-type Trace struct {
-	common.KindVersion
-	Entities []Entity
+//go:generate mockgen -destination=./executor_mock.go -package=executor . Executor
+type Executor interface {
+	Execute(Executable) ([]data.Entity, error)
 }
 
-type Entity struct {
-	v1.Entity
+//go:generate mockgen -destination=./execution_context_mock.go -package=executor . ExecutionContext
+type ExecutionContext interface {
+	series.TraceRepo
+	index.Repo
 }
 
-func NewTrace() *Trace {
-	return &Trace{KindVersion: TraceKindVersion}
+type Executable interface {
+	Execute(ExecutionContext) ([]data.Entity, error)
 }

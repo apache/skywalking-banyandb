@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// TraceState represents the state of a trace link
+// TraceState represents the State of a trace link
 type TraceState int
 
 const (
@@ -41,9 +41,9 @@ const (
 //ScanOptions contain options
 //nolint
 type ScanOptions struct {
-	projection []string
-	state      TraceState
-	limit      uint32
+	Projection []string
+	State      TraceState
+	Limit      uint32
 }
 
 //TraceRepo contains trace and entity data
