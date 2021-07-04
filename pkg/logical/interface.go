@@ -27,8 +27,7 @@ import (
 type PlanType uint8
 
 const (
-	PlanProjection PlanType = iota
-	PlanLimit
+	PlanLimit PlanType = iota
 	PlanOffset
 	PlanTableScan
 	PlanOrderBy
@@ -36,11 +35,13 @@ const (
 	PlanTraceIDFetch
 )
 
+//go:generate mockgen -destination=./plan_unresolved_mock.go -package=logical . UnresolvedPlan
 type UnresolvedPlan interface {
 	Type() PlanType
 	Analyze(Schema) (Plan, error)
 }
 
+//go:generate mockgen -destination=./plan_mock.go -package=logical . Plan
 type Plan interface {
 	fmt.Stringer
 	executor.Executable

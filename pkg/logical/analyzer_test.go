@@ -61,7 +61,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.NotNil(plan)
 	correctPlan, err := logical.Limit(
 		logical.Offset(
-			logical.TableScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata),
+			logical.TableScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata, series.TraceStateDefault),
 			0),
 		20).
 		Analyze(schema)

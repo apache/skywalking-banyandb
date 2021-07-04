@@ -23,11 +23,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series"
 )
 
-//go:generate mockgen -destination=./executor_mock.go -package=executor . Executor
-type Executor interface {
-	Execute(Executable) ([]data.Entity, error)
-}
-
 //go:generate mockgen -destination=./execution_context_mock.go -package=executor . ExecutionContext
 type ExecutionContext interface {
 	series.TraceRepo

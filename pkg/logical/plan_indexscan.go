@@ -107,7 +107,7 @@ type indexScan struct {
 }
 
 func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
-	chunkSet := common.ChunkIDs{}
+	var chunkSet common.ChunkIDs
 	for _, exprs := range i.conditionMap {
 		// TODO: Discuss which metadata should be used!
 		// 1) traceSeries Metadata: indirect mapping
