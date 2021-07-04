@@ -1,4 +1,3 @@
-//
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package logical_test
 
 import (
@@ -95,7 +95,7 @@ func GeneratorFromArray(chunkIDs []common.ChunkID) ChunkIDGenerator {
 
 func GenerateEntities(g ChunkIDGenerator) []data.Entity {
 	entities := make([]data.Entity, 0)
-	for ; g.HasNext(); {
+	for g.HasNext() {
 		b := fb.NewQueryEntityBuilder()
 		et := b.BuildEntity(
 			b.BuildEntityID(strconv.FormatUint(uint64(g.Next()), 10)),
