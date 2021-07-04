@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/executor"
 	"github.com/apache/skywalking-banyandb/pkg/logical"
@@ -198,4 +199,51 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			assert.Len(entities, tt.wantLength)
 		})
 	}
+}
+
+func TestPlanExecution_OrderBy(t *testing.T) {
+	assert := require.New(t)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m, s := prepareSchema(assert)
+
+	tests := []struct {
+		name        string
+		targetField string
+		// TODO: avoid hardcoded index?
+		targetFieldIdx int
+		sortDirection  apiv1.Sort
+	}{
+		{
+			name:           "Sort By trace_id ASC",
+			targetField:    "trace_id",
+			targetFieldIdx: 0,
+			sortDirection:  apiv1.SortASC,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := require.New(t)
+			p, err := logical.OrderBy(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), tt.targetField, tt.sortDirection).Analyze(s)
+			assert.NoError(err)
+			assert.NotNil(p)
+
+			ec := executor.NewMockExecutionContext(ctrl)
+			entities, err := p.Execute(ec)
+			assert.NoError(err)
+			assert.NotNil(entities)
+
+			assert.True(logical.Sorted(entities, tt.targetFieldIdx, tt.sortDirection))
+			assert.False(logical.Sorted(entities, tt.targetFieldIdx, reverseSortDirection(tt.sortDirection)))
+		})
+	}
+}
+
+func reverseSortDirection(sort apiv1.Sort) apiv1.Sort {
+	if sort == apiv1.SortDESC {
+		return apiv1.SortASC
+	}
+	return apiv1.SortDESC
 }

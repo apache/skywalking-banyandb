@@ -78,19 +78,7 @@ func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 		return entities, nil
 	}
 
-	sort.Slice(entities, func(i, j int) bool {
-		var iPair, jPair apiv1.Pair
-		entities[i].Fields(&iPair, o.targetRef.spec.idx)
-		entities[j].Fields(&jPair, o.targetRef.spec.idx)
-		lField, _ := getFieldRaw(&iPair)
-		rField, _ := getFieldRaw(&jPair)
-		comp := bytes.Compare(lField, rField)
-		if o.sort == apiv1.SortASC {
-			return comp == -1
-		} else {
-			return comp == 1
-		}
-	})
+	sort.Slice(entities, sortMethod(entities, o.targetRef.spec.idx, o.sort))
 
 	return entities, nil
 }
@@ -145,5 +133,25 @@ func getFieldRaw(pair *apiv1.Pair) ([]byte, error) {
 		return convert.Int64ToBytes(unionIntPairQuery.Values(0)), nil
 	} else {
 		return nil, errors.New("unsupported data types")
+	}
+}
+
+func Sorted(entities []data.Entity, fieldIdx int, sortDirection apiv1.Sort) bool {
+	return sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, sortDirection))
+}
+
+func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.Sort) func(i, j int) bool {
+	return func(i, j int) bool {
+		var iPair, jPair apiv1.Pair
+		entities[i].Fields(&iPair, fieldIdx)
+		entities[j].Fields(&jPair, fieldIdx)
+		lField, _ := getFieldRaw(&iPair)
+		rField, _ := getFieldRaw(&jPair)
+		comp := bytes.Compare(lField, rField)
+		if sortDirection == apiv1.SortASC {
+			return comp == -1
+		} else {
+			return comp == 1
+		}
 	}
 }

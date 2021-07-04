@@ -19,7 +19,10 @@ package logical_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -95,16 +98,22 @@ func GeneratorFromArray(chunkIDs []common.ChunkID) ChunkIDGenerator {
 
 func GenerateEntities(g ChunkIDGenerator) []data.Entity {
 	entities := make([]data.Entity, 0)
+	rand.Seed(time.Now().UnixNano())
 	for g.HasNext() {
 		b := fb.NewQueryEntityBuilder()
 		et := b.BuildEntity(
 			b.BuildEntityID(strconv.FormatUint(uint64(g.Next()), 10)),
-			b.BuildFields("http.method", "GET"),
+			b.BuildFields("trace_id", generateRndServiceName(rand.Int63()), "http.method", "GET"),
 			b.BuildTimeStamp(time.Now()),
 		)
 		entities = append(entities, data.Entity{Entity: *et})
 	}
 	return entities
+}
+
+func generateRndServiceName(rndNum int64) string {
+	h := sha256.Sum256([]byte(strconv.FormatInt(rndNum, 10)))
+	return base64.StdEncoding.EncodeToString(h[:])
 }
 
 type mockDataFactory struct {
@@ -126,6 +135,7 @@ func NewMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata,
 func (f *mockDataFactory) MockParentPlan() logical.UnresolvedPlan {
 	p := logical.NewMockPlan(f.ctrl)
 	p.EXPECT().Execute(gomock.Any()).Return(GenerateEntities(GeneratorFromRange(0, common.ChunkID(f.num-1))), nil)
+	p.EXPECT().Schema().Return(f.s).AnyTimes()
 	up := logical.NewMockUnresolvedPlan(f.ctrl)
 	up.EXPECT().Analyze(f.s).Return(p, nil)
 	return up

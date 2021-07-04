@@ -59,7 +59,7 @@ func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 		fieldOffsets = append(fieldOffsets, o)
 	}
 	v1.EntityStartFieldsVector(b.Builder, len(fieldOffsets))
-	for i := 0; i < len(fieldOffsets); i++ {
+	for i := len(fieldOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(fieldOffsets[i])
 	}
 	fields := b.EndVector(len(fieldOffsets))
@@ -113,7 +113,7 @@ func (b *WriteEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOf
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
 	}
 	v1.StringArrayStartValueVector(b.Builder, len(values))
-	for i := 0; i < len(strOffsets); i++ {
+	for i := len(strOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(strOffsets[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
@@ -124,7 +124,7 @@ func (b *WriteEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOf
 
 func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
 	v1.IntArrayStartValueVector(b.Builder, len(values))
-	for i := 0; i < len(values); i++ {
+	for i := len(values) - 1; i >= 0; i-- {
 		b.Builder.PrependInt64(values[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
@@ -227,7 +227,7 @@ func (b *criteriaBuilder) BuildProjection(keyNames ...string) ComponentBuilderFu
 		keyNamesOffsets = append(keyNamesOffsets, b.Builder.CreateString(keyNames[i]))
 	}
 	v1.ProjectionStartKeyNamesVector(b.Builder, len(keyNames))
-	for i := 0; i < len(keyNamesOffsets); i++ {
+	for i := len(keyNamesOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(keyNamesOffsets[i])
 	}
 	strArr := b.Builder.EndVector(len(keyNames))
@@ -241,7 +241,7 @@ func (b *criteriaBuilder) BuildProjection(keyNames ...string) ComponentBuilderFu
 
 func buildIntPair(b *flatbuffers.Builder, key string, values ...int64) flatbuffers.UOffsetT {
 	v1.IntPairStartValuesVector(b, len(values))
-	for i := 0; i < len(values); i++ {
+	for i := len(values) - 1; i >= 0; i-- {
 		b.PrependInt64(values[i])
 	}
 	int64Arr := b.EndVector(len(values))
@@ -259,7 +259,7 @@ func buildStrPair(b *flatbuffers.Builder, key string, values ...string) flatbuff
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
 	}
 	v1.StrPairStartValuesVector(b, len(values))
-	for i := 0; i < len(strOffsets); i++ {
+	for i := len(strOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(strOffsets[i])
 	}
 	int64Arr := b.EndVector(len(values))
@@ -338,7 +338,7 @@ func (b *criteriaBuilder) BuildFields(items ...interface{}) ComponentBuilderFunc
 		pairQueryOffsets = append(pairQueryOffsets, v1.PairQueryEnd(b.Builder))
 	}
 	v1.EntityCriteriaStartFieldsVector(b.Builder, l)
-	for i := 0; i < len(pairQueryOffsets); i++ {
+	for i := len(pairQueryOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(pairQueryOffsets[i])
 	}
 	fields := b.EndVector(l)
@@ -408,7 +408,7 @@ func (b *queryEntityBuilder) BuildFields(items ...interface{}) ComponentBuilderF
 	}
 
 	v1.EntityStartFieldsVector(b.Builder, l)
-	for i := 0; i < len(pairOffsets); i++ {
+	for i := len(pairOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(pairOffsets[i])
 	}
 	fields := b.EndVector(l)
