@@ -36,7 +36,8 @@ import (
 var _ Service = (*service)(nil)
 
 type service struct {
-	db storage.Database
+	db   storage.Database
+	addr string
 }
 
 //Methods for query objects in the schema
@@ -133,17 +134,19 @@ func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uin
 }
 
 func (s *service) Name() string {
-	panic("implement me")
+	return "series"
 }
 
 func (s *service) FlagSet() *run.FlagSet {
-	panic("implement me")
+	fs := run.NewFlagSet("series")
+	fs.StringVarP(&s.addr, "series", "", ":17911", "the address of banyand listens")
+	return fs
 }
 
 func (s *service) Validate() error {
-	panic("implement me")
+	return nil
 }
 
 func (s *service) PreRun() error {
-	panic("implement me")
+	return nil
 }

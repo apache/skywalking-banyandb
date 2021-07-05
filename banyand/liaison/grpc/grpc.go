@@ -19,12 +19,14 @@ package grpc
 
 import (
 	"context"
+	"io"
+	"log"
 	"net"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/encoding"
 
+	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -54,7 +56,9 @@ func (s *Server) FlagSet() *run.FlagSet {
 func (s *Server) Validate() error {
 	return nil
 }
-
+func init() {
+	//encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
+}
 func (s *Server) Serve() error {
 	s.log = logger.GetLogger("grpc")
 	lis, err := net.Listen("tcp", s.addr)
@@ -62,8 +66,10 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 
-	encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
-	s.ser = grpclib.NewServer()
+	s.ser = grpclib.NewServer(grpclib.CustomCodec(flatbuffers.FlatbuffersCodec{}))
+	//s.ser = grpclib.NewServer()
+
+	v1.RegisterTraceServer(s.ser, &TraceServer{})
 
 	return s.ser.Serve(lis)
 }
@@ -71,4 +77,48 @@ func (s *Server) Serve() error {
 func (s *Server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	s.ser.GracefulStop()
+}
+
+//var _ gomock.TestHelper = (*TraceServer)(nil)
+
+type TraceServer struct {
+	v1.UnimplementedTraceServer
+	writeData []*v1.WriteEntity
+}
+
+func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
+	for {
+		writeEntity, err := TraceWriteServer.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		log.Println("writeEntity:", writeEntity)
+		t.writeData = append(t.writeData, writeEntity)
+		builder := flatbuffers.NewBuilder(0)
+		v1.WriteResponseStart(builder)
+		builder.Finish(v1.WriteResponseEnd(builder))
+		if errSend := TraceWriteServer.Send(builder); errSend != nil {
+			return errSend
+		}
+		//writeEntity.Entity().Fields()
+		//writeEntity.MetaData(nil).Group()
+		//serviceID+instanceID
+		//seriesID := hash(fieds, f1, f2)
+		//shardID := shardingFunc(seriesID, shardNum)
+		//queue
+	}
+}
+
+func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
+	log.Println("entityCriteria:", entityCriteria)
+
+	// receive entity, then serialize entity
+	b := flatbuffers.NewBuilder(0)
+	v1.EntityStart(b)
+	b.Finish(v1.EntityEnd(b))
+
+	return b, nil
 }
