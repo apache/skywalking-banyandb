@@ -18,7 +18,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io/ioutil"
@@ -26,20 +25,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v3/y"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func TestDB_Create_Directory(t *testing.T) {
-	tempDir, _ := setUp(t, nil)
+	ctrl := gomock.NewController(t)
+	p := NewMockPlugin(ctrl)
+	p.EXPECT().Meta().Return(PluginMeta{
+		ID:          "sw",
+		Group:       "default",
+		ShardNumber: 1,
+		KVSpecs: []KVSpec{
+			{
+				Name:          "test",
+				Type:          KVTypeTimeSeries,
+				CompressLevel: 3,
+			},
+		},
+	}).AnyTimes()
+	p.EXPECT().Init(gomock.Any(), gomock.Any()).AnyTimes()
+	tempDir, _ := setUp(t, p)
 	defer removeDir(tempDir)
-	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
+	shardPath := fmt.Sprintf(shardTemplate, tempDir+"/sw", 0)
 	validateDirectory(t, shardPath)
 	now := time.Now()
 	segPath := fmt.Sprintf(segTemplate, shardPath, now.Format(segFormat))
@@ -50,9 +61,12 @@ func TestDB_Create_Directory(t *testing.T) {
 func TestDB_Store(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	var ap AccessPoint
-	p := mockPlugin(ctrl, func(get GetAccessPoint) {
-		ap = get()
+	now := uint64(time.Now().UnixNano())
+	var ap WritePoint
+	var repo StoreRepo
+	p := mockPlugin(ctrl, func(r StoreRepo, get GetWritePoint) {
+		ap = get(now)
+		repo = r
 	})
 
 	tempDir, db := setUp(t, p)
@@ -61,88 +75,42 @@ func TestDB_Store(t *testing.T) {
 		removeDir(tempDir)
 	}()
 
-	s := ap.Store("normal")
-	assert.NoError(t, s.Put([]byte("key1"), []byte{12}))
-	val, err := s.Get([]byte("key1"))
+	assert.NoError(t, ap.Writer(0, "normal").Put([]byte("key1"), []byte{12}))
+	val, err := repo.Reader(0, "normal", now, now).Get([]byte("key1"))
 	assert.NoError(t, err)
 	assert.Equal(t, []byte{12}, val)
 
-	s = ap.Store("auto-gen")
-	key, addErr := s.Add([]byte{11})
-	assert.NoError(t, addErr)
-	val, err = s.Get(convert.Uint64ToBytes(key))
-	assert.NoError(t, err)
-	assert.Equal(t, []byte{11}, val)
-
-	tss := ap.TimeSeriesStore("time-series")
-	assert.NoError(t, tss.Put([]byte("key11"), []byte{33}, 1))
-	val, err = tss.Get([]byte("key11"), 1)
+	assert.NoError(t, ap.TimeSeriesWriter(1, "time-series").Put([]byte("key11"), []byte{33}, 1))
+	val, err = repo.TimeSeriesReader(1, "time-series", now, now).Get([]byte("key11"), 1)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte{33}, val)
-	vals, allErr := tss.GetAll([]byte("key11"))
+	vals, allErr := repo.TimeSeriesReader(1, "time-series", now, now).GetAll([]byte("key11"))
 	assert.NoError(t, allErr)
 	assert.Equal(t, [][]byte{{33}}, vals)
 }
 
-func mockPlugin(ctrl *gomock.Controller, f func(get GetAccessPoint)) Plugin {
+func mockPlugin(ctrl *gomock.Controller, f func(repo StoreRepo, get GetWritePoint)) Plugin {
 	p := NewMockPlugin(ctrl)
-	p.
-		EXPECT().
-		ID().
-		Return("foo").
-		AnyTimes()
-	p.
-		EXPECT().
-		Init().
-		Return([]KVSpec{
+	p.EXPECT().Meta().Return(PluginMeta{
+		ID:          "sw",
+		Group:       "default",
+		ShardNumber: 2,
+		KVSpecs: []KVSpec{
 			{
 				Name: "normal",
 				Type: KVTypeNormal,
 			},
 			{
-				Name:       "auto-gen",
-				Type:       KVTypeNormal,
-				AutoGenKey: true,
+				Name:          "time-series",
+				Type:          KVTypeTimeSeries,
+				CompressLevel: 3,
 			},
-			{
-				Name:           "time-series",
-				Type:           KVTypeTimeSeries,
-				TimeSeriesHook: mockHook(ctrl),
-			},
-		}).
-		AnyTimes()
-	p.
-		EXPECT().
-		Start(gomock.Any()).
-		Do(f).
-		AnyTimes()
+		},
+	}).AnyTimes()
+	p.EXPECT().Init(gomock.Any(), gomock.Any()).Do(func(r StoreRepo, wp GetWritePoint) {
+		f(r, wp)
+	}).AnyTimes()
 	return p
-}
-
-func mockHook(ctrl *gomock.Controller) kv.Hook {
-	h := kv.NewMockHook(ctrl)
-	h.
-		EXPECT().
-		Reduce(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(left bytes.Buffer, right y.ValueStruct) bytes.Buffer {
-			return left
-		}).
-		AnyTimes()
-	h.
-		EXPECT().
-		Extract(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(raw []byte, ts uint64) ([]byte, error) {
-			return raw, nil
-		}).
-		AnyTimes()
-	h.
-		EXPECT().
-		Split(gomock.Any()).
-		DoAndReturn(func(raw []byte) ([][]byte, error) {
-			return [][]byte{raw}, nil
-		}).
-		AnyTimes()
-	return h
 }
 
 func setUp(t *testing.T, p Plugin) (tempDir string, db Database) {
@@ -158,7 +126,7 @@ func setUp(t *testing.T, p Plugin) (tempDir string, db Database) {
 	tempDir, tempDirErr = ioutil.TempDir("", "banyandb-test-*")
 	require.Nil(t, tempDirErr)
 
-	require.NoError(t, db.FlagSet().Parse([]string{"--root-path", tempDir, "--shards", "1"}))
+	require.NoError(t, db.FlagSet().Parse([]string{"--root-path", tempDir}))
 	if p != nil {
 		db.Register(p)
 	}

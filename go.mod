@@ -3,6 +3,7 @@ module github.com/apache/skywalking-banyandb
 go 1.16
 
 require (
+	github.com/cespare/xxhash v1.1.0
 	github.com/dgraph-io/badger/v3 v3.2011.1
 	github.com/golang/mock v1.3.1
 	github.com/google/flatbuffers v2.0.0+incompatible
@@ -19,4 +20,4 @@ require (
 	google.golang.org/grpc v1.37.0
 )
 
-replace github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20210527215642-f1c960d2de88
+replace github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20210624023741-bd2dcfcaaa74

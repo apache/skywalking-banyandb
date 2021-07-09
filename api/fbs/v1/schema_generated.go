@@ -131,6 +131,78 @@ func (v IndexType) String() string {
 	return "IndexType(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
+type ShardInfo struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsShardInfo(buf []byte, offset flatbuffers.UOffsetT) *ShardInfo {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &ShardInfo{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsShardInfo(buf []byte, offset flatbuffers.UOffsetT) *ShardInfo {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &ShardInfo{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *ShardInfo) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *ShardInfo) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *ShardInfo) Number() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ShardInfo) MutateNumber(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(4, n)
+}
+
+func (rcv *ShardInfo) RoutingFields(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *ShardInfo) RoutingFieldsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func ShardInfoStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func ShardInfoAddNumber(builder *flatbuffers.Builder, number uint32) {
+	builder.PrependUint32Slot(0, number, 0)
+}
+func ShardInfoAddRoutingFields(builder *flatbuffers.Builder, routingFields flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(routingFields), 0)
+}
+func ShardInfoStartRoutingFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func ShardInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
 type Duration struct {
 	_tab flatbuffers.Struct
 }
@@ -450,8 +522,21 @@ func (rcv *TraceSeries) ReservedFieldsMap(obj *TraceFieldMap) *TraceFieldMap {
 	return nil
 }
 
-func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
+func (rcv *TraceSeries) Shard(obj *ShardInfo) *ShardInfo {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(ShardInfo)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := o + rcv._tab.Pos
 		if obj == nil {
@@ -464,7 +549,7 @@ func (rcv *TraceSeries) Duration(obj *Duration) *Duration {
 }
 
 func (rcv *TraceSeries) UpdatedAtNanoseconds() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -472,11 +557,11 @@ func (rcv *TraceSeries) UpdatedAtNanoseconds() uint64 {
 }
 
 func (rcv *TraceSeries) MutateUpdatedAtNanoseconds(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(12, n)
+	return rcv._tab.MutateUint64Slot(14, n)
 }
 
 func TraceSeriesStart(builder *flatbuffers.Builder) {
-	builder.StartObject(5)
+	builder.StartObject(6)
 }
 func TraceSeriesAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metadata), 0)
@@ -490,11 +575,14 @@ func TraceSeriesStartFieldsVector(builder *flatbuffers.Builder, numElems int) fl
 func TraceSeriesAddReservedFieldsMap(builder *flatbuffers.Builder, reservedFieldsMap flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(reservedFieldsMap), 0)
 }
+func TraceSeriesAddShard(builder *flatbuffers.Builder, shard flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(shard), 0)
+}
 func TraceSeriesAddDuration(builder *flatbuffers.Builder, duration flatbuffers.UOffsetT) {
-	builder.PrependStructSlot(3, flatbuffers.UOffsetT(duration), 0)
+	builder.PrependStructSlot(4, flatbuffers.UOffsetT(duration), 0)
 }
 func TraceSeriesAddUpdatedAtNanoseconds(builder *flatbuffers.Builder, updatedAtNanoseconds uint64) {
-	builder.PrependUint64Slot(4, updatedAtNanoseconds, 0)
+	builder.PrependUint64Slot(5, updatedAtNanoseconds, 0)
 }
 func TraceSeriesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

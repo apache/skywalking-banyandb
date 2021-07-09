@@ -28,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -61,11 +61,11 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate index builder")
 	}
-	s, err := series.NewService(ctx, db)
+	traceSeries, err := trace.NewService(ctx, db)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate series")
+		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	q, err := query.NewExecutor(ctx, idx, s)
+	q, err := query.NewExecutor(ctx, idx, traceSeries)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}
@@ -74,12 +74,12 @@ func newStandaloneCmd() *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
 
-	// Register the run Group units.
+	// Meta the run Group units.
 	g.Register(
 		new(signal.Handler),
 		repo,
+		traceSeries,
 		db,
-		s,
 		idx,
 		q,
 		tcp,

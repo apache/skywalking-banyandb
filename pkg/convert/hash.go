@@ -15,11 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package common
+package convert
 
-type ChunkID []byte
-type SeriesID uint64
+import "github.com/cespare/xxhash"
 
-const (
-	DataBinaryFieldName = "data_binary"
-)
+func Hash(key []byte) uint64 {
+	return xxhash.Sum64(key)
+}

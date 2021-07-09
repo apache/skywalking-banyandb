@@ -15,11 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package common
+package partition
 
-type ChunkID []byte
-type SeriesID uint64
+import "github.com/apache/skywalking-banyandb/pkg/convert"
 
-const (
-	DataBinaryFieldName = "data_binary"
-)
+func ShardID(key []byte, shardNum uint) uint {
+	encodeKey := convert.Hash(key)
+	return uint(encodeKey % uint64(shardNum))
+}

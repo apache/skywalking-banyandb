@@ -19,6 +19,11 @@ include "database.fbs";
 
 namespace banyandb.v1;
 
+table ShardInfo {
+    number:uint;
+    routing_fields:[string];
+}
+
 enum DurationUint:byte { Hour = 0, Day = 1, Week = 2, Month = 3 }
 
 // Duration represents the elapsed time between two instants
@@ -59,6 +64,8 @@ table TraceSeries {
     fields:[FieldSpec];
     // reserved_fields_map indicates how to index reserved fields to ingested fields
     reserved_fields_map:TraceFieldMap;
+    // shard indicates how trace data distributes
+    shard:ShardInfo;
     // duration determines how long a TraceSeries keeps its data
     duration:Duration;
     // updated_at_nanoseconds indicates when the TraceSeries is updated
