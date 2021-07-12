@@ -116,7 +116,13 @@ func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error
 		if err != nil {
 			return nil, err
 		}
-		chunkSet = chunkSet.HashIntersect(chunks)
+		if chunkSet == nil {
+			// chunkSet is nil before the first assignment
+			chunkSet = chunks
+		} else {
+			// afterwards, it must not be nil
+			chunkSet = chunkSet.HashIntersect(chunks)
+		}
 	}
 
 	return ec.FetchEntity(*i.traceMetadata, chunkSet, series.ScanOptions{

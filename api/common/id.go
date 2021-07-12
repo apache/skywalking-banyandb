@@ -25,14 +25,6 @@ type ChunkIDs []ChunkID
 // without any assumptions on the order. It uses a HashMap to mark
 // the existence of a item.
 func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
-	if c == nil && other == nil {
-		return []ChunkID{}
-	} else if c == nil && other != nil {
-		return other
-	} else if c != nil && other == nil {
-		return c
-	}
-
 	if len(c) == 0 || len(other) == 0 {
 		return []ChunkID{}
 	}
