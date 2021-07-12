@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"net"
 	"testing"
 	"time"
 
@@ -28,10 +29,25 @@ import (
 	grpclib "google.golang.org/grpc"
 
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
 )
 
 var serverAddr = "localhost:17912"
+
+func Test_server_start(t *testing.T) {
+	go func() {
+		lis, err := net.Listen("tcp", serverAddr)
+		if err != nil {
+			log.Fatalf("failed to listen: %v", err)
+		}
+		ser := grpclib.NewServer(grpclib.CustomCodec(flatbuffers.FlatbuffersCodec{}))
+		v1.RegisterTraceServer(ser, &grpc.TraceServer{})
+		if err := ser.Serve(lis); err != nil {
+			log.Fatalf("Failed to serve: %v", err)
+		}
+	}()
+}
 
 func Test_trace_write(t *testing.T) {
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions(grpclib.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
