@@ -22,17 +22,22 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -78,11 +83,16 @@ type service struct {
 	db        storage.Database
 	schemaMap map[string]*traceSeries
 	l         *logger.Logger
+	repo      discovery.ServiceRepo
+	stopCh    chan struct{}
 }
 
 //NewService returns a new service
-func NewService(_ context.Context, db storage.Database) (series.Service, error) {
-	return &service{db: db}, nil
+func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo) (series.Service, error) {
+	return &service{
+		db:   db,
+		repo: repo,
+	}, nil
 }
 
 func (s *service) Name() string {
@@ -107,6 +117,33 @@ func (s *service) PreRun() error {
 		s.l.Info().Str("id", id).Msg("initialize Trace series")
 	}
 	return err
+}
+
+func (s *service) Serve() error {
+	for _, sMeta := range s.schemaMap {
+		for i := 0; i < int(sMeta.shardNum); i++ {
+			now := time.Now().UnixNano()
+			_, err := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), fb.BuildShardEvent(
+				s.repo.NodeID(),
+				sMeta.name,
+				sMeta.group,
+				uint(i),
+				sMeta.shardNum,
+			)))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	s.stopCh = make(chan struct{})
+	<-s.stopCh
+	return nil
+}
+
+func (s *service) GracefulStop() {
+	if s.stopCh != nil {
+		close(s.stopCh)
+	}
 }
 
 func (s *service) FetchTrace(traceSeries common.Metadata, traceID string, opt series.ScanOptions) (data.Trace, error) {

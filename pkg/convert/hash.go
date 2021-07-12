@@ -22,3 +22,7 @@ import "github.com/cespare/xxhash"
 func Hash(key []byte) uint64 {
 	return xxhash.Sum64(key)
 }
+
+func HashStr(key string) uint64 {
+	return xxhash.Sum64String(key)
+}

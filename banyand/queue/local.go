@@ -21,7 +21,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	bus2 "github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -34,33 +34,33 @@ type Component interface {
 
 type DataSubscriber interface {
 	Component
-	Sub(subscriber bus.Subscriber) error
+	Sub(subscriber bus2.Subscriber) error
 }
 
 type DataPublisher interface {
 	Component
-	Pub(publisher bus.Publisher) error
+	Pub(publisher bus2.Publisher) error
 }
 
 var _ run.PreRunner = (*Local)(nil)
 var _ run.Config = (*Local)(nil)
-var _ bus.Publisher = (*Local)(nil)
-var _ bus.Subscriber = (*Local)(nil)
+var _ bus2.Publisher = (*Local)(nil)
+var _ bus2.Subscriber = (*Local)(nil)
 
 type Local struct {
 	logger  *logger.Logger
 	test    string
-	dataBus *bus.Bus
+	dataBus *bus2.Bus
 	dps     []DataPublisher
 	dss     []DataSubscriber
 	repo    discovery.ServiceRepo
 }
 
-func (e *Local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
+func (e *Local) Subscribe(topic bus2.Topic, listener bus2.MessageListener) error {
 	return nil
 }
 
-func (e *Local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
+func (e *Local) Publish(topic bus2.Topic, message ...bus2.Message) (bus2.Future, error) {
 	return nil, nil
 }
 
@@ -82,7 +82,7 @@ func (e Local) Name() string {
 
 func (e *Local) PreRun() error {
 	var err error
-	e.dataBus = bus.NewBus()
+	e.dataBus = bus2.NewBus()
 	for _, dp := range e.dps {
 		err = multierr.Append(err, dp.Pub(e.dataBus))
 	}

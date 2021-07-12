@@ -145,20 +145,33 @@ func (rcv *Shard) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Shard) Id() int64 {
+func (rcv *Shard) Id() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *Shard) MutateId(n int64) bool {
-	return rcv._tab.MutateInt64Slot(4, n)
+func (rcv *Shard) MutateId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *Shard) Series(obj *Metadata) *Metadata {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(Metadata)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
 }
 
 func (rcv *Shard) Node(obj *Node) *Node {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -170,8 +183,20 @@ func (rcv *Shard) Node(obj *Node) *Node {
 	return nil
 }
 
+func (rcv *Shard) Total() byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetByte(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Shard) MutateTotal(n byte) bool {
+	return rcv._tab.MutateByteSlot(10, n)
+}
+
 func (rcv *Shard) UpdateTime() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -179,11 +204,11 @@ func (rcv *Shard) UpdateTime() int64 {
 }
 
 func (rcv *Shard) MutateUpdateTime(n int64) bool {
-	return rcv._tab.MutateInt64Slot(8, n)
+	return rcv._tab.MutateInt64Slot(12, n)
 }
 
 func (rcv *Shard) CreateTime() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -191,23 +216,29 @@ func (rcv *Shard) CreateTime() int64 {
 }
 
 func (rcv *Shard) MutateCreateTime(n int64) bool {
-	return rcv._tab.MutateInt64Slot(10, n)
+	return rcv._tab.MutateInt64Slot(14, n)
 }
 
 func ShardStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(6)
 }
-func ShardAddId(builder *flatbuffers.Builder, id int64) {
-	builder.PrependInt64Slot(0, id, 0)
+func ShardAddId(builder *flatbuffers.Builder, id uint64) {
+	builder.PrependUint64Slot(0, id, 0)
+}
+func ShardAddSeries(builder *flatbuffers.Builder, series flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(series), 0)
 }
 func ShardAddNode(builder *flatbuffers.Builder, node flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(node), 0)
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(node), 0)
+}
+func ShardAddTotal(builder *flatbuffers.Builder, total byte) {
+	builder.PrependByteSlot(3, total, 0)
 }
 func ShardAddUpdateTime(builder *flatbuffers.Builder, updateTime int64) {
-	builder.PrependInt64Slot(2, updateTime, 0)
+	builder.PrependInt64Slot(4, updateTime, 0)
 }
 func ShardAddCreateTime(builder *flatbuffers.Builder, createTime int64) {
-	builder.PrependInt64Slot(3, createTime, 0)
+	builder.PrependInt64Slot(5, createTime, 0)
 }
 func ShardEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

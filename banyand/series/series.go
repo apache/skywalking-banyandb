@@ -81,4 +81,5 @@ type Service interface {
 	SchemaRepo
 	IndexFilter
 	run.PreRunner
+	run.Service
 }

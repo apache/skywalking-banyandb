@@ -58,7 +58,7 @@ func setup(t *testing.T) (*traceSeries, func()) {
 	db, err := storage.NewDB(context.TODO(), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, db.FlagSet().Parse(nil))
-	svc, err := NewService(context.TODO(), db)
+	svc, err := NewService(context.TODO(), db, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, svc.PreRun())
 	assert.NoError(t, db.PreRun())

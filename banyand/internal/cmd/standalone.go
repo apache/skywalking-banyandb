@@ -61,7 +61,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate index builder")
 	}
-	traceSeries, err := trace.NewService(ctx, db)
+	traceSeries, err := trace.NewService(ctx, db, repo)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
@@ -69,7 +69,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline)
+	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
