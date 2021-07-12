@@ -28,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*orderBy)(nil)
@@ -68,7 +68,7 @@ type orderBy struct {
 	targetRef *fieldRef
 }
 
-func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+func (o *orderBy) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
 	entities, err := o.input.Execute(ec)
 	if err != nil {
 		return nil, err

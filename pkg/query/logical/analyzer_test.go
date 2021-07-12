@@ -30,13 +30,13 @@ import (
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
-	"github.com/apache/skywalking-banyandb/pkg/logical"
+	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
@@ -59,9 +59,9 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical.Limit(
-		logical.Offset(
-			logical.TableScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata, series.TraceStateDefault),
+	correctPlan, err := logical2.Limit(
+		logical2.Offset(
+			logical2.TableScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata, series.TraceStateDefault),
 			0),
 		20).
 		Analyze(schema)
@@ -73,7 +73,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
@@ -100,12 +100,12 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.Limit(
-		logical.Offset(
-			logical.OrderBy(logical.IndexScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata,
-				[]logical.Expr{
-					logical.Eq(logical.NewFieldRef("service_instance_id"), logical.Str("my_app")),
-					logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
+	correctPlan, err := logical2.Limit(
+		logical2.Offset(
+			logical2.OrderBy(logical2.IndexScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata,
+				[]logical2.Expr{
+					logical2.Eq(logical2.NewFieldRef("service_instance_id"), logical2.Str("my_app")),
+					logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
 				},
 				series.TraceStateDefault),
 				"service_instance_id", apiv1.SortDESC),
@@ -120,7 +120,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	builder := fb.NewCriteriaBuilder()
 	criteria := builder.BuildEntityCriteria(
@@ -142,7 +142,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan := logical.TraceIDFetch("123", metadata, schema)
+	correctPlan := logical2.TraceIDFetch("123", metadata, schema)
 	assert.NotNil(correctPlan)
 	cmp.Equal(plan, correctPlan)
 }
@@ -150,7 +150,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	builder := fb.NewCriteriaBuilder()
 	criteria := builder.BuildEntityCriteria(
@@ -172,13 +172,13 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	builder := fb.NewCriteriaBuilder()
 	criteria := builder.BuildEntityCriteria(
@@ -199,13 +199,13 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	builder := fb.NewCriteriaBuilder()
 	criteria := builder.BuildEntityCriteria(
@@ -225,13 +225,13 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical.DefaultAnalyzer()
+	ana := logical2.DefaultAnalyzer()
 
 	builder := fb.NewCriteriaBuilder()
 	criteria := builder.BuildEntityCriteria(
@@ -252,5 +252,5 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.IndexNotDefinedErr)
+	assert.ErrorIs(err, logical2.IndexNotDefinedErr)
 }

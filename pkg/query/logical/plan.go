@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/pkg/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*limit)(nil)
@@ -37,7 +37,7 @@ type limit struct {
 	limitNum uint32
 }
 
-func (l *limit) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+func (l *limit) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
 	entities, err := l.parent.input.Execute(ec)
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ type offset struct {
 	offsetNum uint32
 }
 
-func (l *offset) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+func (l *offset) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
 	entities, err := l.parent.input.Execute(ec)
 	if err != nil {
 		return nil, err

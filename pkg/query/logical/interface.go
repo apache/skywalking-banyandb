@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/pkg/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 type PlanType uint8
@@ -44,7 +44,7 @@ type UnresolvedPlan interface {
 //go:generate mockgen -destination=./plan_mock.go -package=logical . Plan
 type Plan interface {
 	fmt.Stringer
-	executor.Executable
+	executor2.Executable
 	Type() PlanType
 	Children() []Plan
 	Schema() Schema

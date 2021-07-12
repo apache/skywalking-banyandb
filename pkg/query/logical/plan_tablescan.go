@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*tableScan)(nil)
@@ -84,7 +84,7 @@ type tableScan struct {
 	traceMetadata       *common.Metadata
 }
 
-func (s *tableScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+func (s *tableScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
 	return ec.ScanEntity(*s.traceMetadata, s.startTime, s.endTime, series.ScanOptions{
 		Projection: s.projectionFields,
 		State:      s.traceState,

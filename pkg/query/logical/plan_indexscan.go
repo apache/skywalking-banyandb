@@ -29,7 +29,7 @@ import (
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
@@ -106,7 +106,7 @@ type indexScan struct {
 	traceState          series.TraceState
 }
 
-func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
 	var chunkSet common.ChunkIDs
 	for _, exprs := range i.conditionMap {
 		// TODO: Discuss which metadata should be used!
