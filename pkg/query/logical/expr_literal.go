@@ -64,7 +64,7 @@ type int64ArrLiteral struct {
 }
 
 func (i *int64ArrLiteral) Bytes() [][]byte {
-	var b [][]byte
+	b := make([][]byte, 0, len(i.arr))
 	for _, i := range i.arr {
 		b = append(b, convert.Int64ToBytes(i))
 	}
@@ -130,7 +130,7 @@ type strArrLiteral struct {
 }
 
 func (s *strArrLiteral) Bytes() [][]byte {
-	var b [][]byte
+	b := make([][]byte, 0, len(s.arr))
 	for _, str := range s.arr {
 		b = append(b, []byte(str))
 	}
