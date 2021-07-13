@@ -20,6 +20,7 @@ package liaison
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -27,9 +28,10 @@ import (
 
 type Endpoint interface {
 	run.Config
+	run.PreRunner
 	run.Service
 }
 
-func NewEndpoint(ctx context.Context, pipeline queue.Queue) (Endpoint, error) {
-	return grpc.NewServer(ctx, pipeline), nil
+func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) (Endpoint, error) {
+	return grpc.NewServer(ctx, pipeline, repo), nil
 }

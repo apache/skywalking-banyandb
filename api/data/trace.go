@@ -30,7 +30,11 @@ type Trace struct {
 }
 
 type Entity struct {
-	v1.Entity
+	*v1.Entity
+}
+
+type EntityValue struct {
+	*v1.EntityValue
 }
 
 func NewTrace() *Trace {

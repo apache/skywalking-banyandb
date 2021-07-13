@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package series
+package trace
 
 import (
 	"context"
@@ -26,13 +26,14 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
 	type args struct {
 		series v1.Series
-		filter IndexObjectFilter
+		filter series.IndexObjectFilter
 	}
 	tests := []struct {
 		name    string
@@ -90,7 +91,7 @@ func getIndexRule(name, group string) []v1.IndexRule {
 	b := flatbuffers.NewBuilder(0)
 	b.Finish(createMetadata(b, name, group))
 	md := v1.GetRootAsMetadata(b.FinishedBytes(), 0)
-	indexRule, _ := sw.NewIndexRule().Get(context.Background(), common.Metadata{KindVersion: common.MetadataKindVersion, Spec: *md})
+	indexRule, _ := sw.NewIndexRule().Get(context.Background(), common.Metadata{KindVersion: common.MetadataKindVersion, Spec: md})
 	return []v1.IndexRule{indexRule.Spec}
 }
 

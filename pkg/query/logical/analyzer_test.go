@@ -50,7 +50,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -90,7 +90,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -132,7 +132,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -156,7 +156,7 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	criteria := builder.BuildEntityCriteria(
 		fb.AddLimit(5),
 		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
+		builder.BuildMetaData("default", "sw"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
 		builder.BuildFields("duration", ">", 500),
 		builder.BuildOrderBy("service_instance_id", apiv1.SortDESC),
@@ -165,7 +165,7 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -192,7 +192,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -211,14 +211,14 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	criteria := builder.BuildEntityCriteria(
 		fb.AddLimit(5),
 		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
+		builder.BuildMetaData("default", "sw"),
 		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildProjection("duration", "service_id"),
+		builder.BuildProjection("duration", "service_id", "unknown"),
 	)
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -245,7 +245,7 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)

@@ -26,9 +26,12 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -51,12 +54,12 @@ var _ Database = (*DB)(nil)
 // Notice: The current status of DB is under WIP. It only contains feats support to verify the series module.
 type DB struct {
 	root      string
-	shards    int
-	sLst      []*shard
+	seriesLst []*series
 	repo      discovery.ServiceRepo
 	pluginLst []Plugin
 
 	stopCh chan struct{}
+	log    *logger.Logger
 }
 
 func (d *DB) Serve() error {
@@ -66,10 +69,12 @@ func (d *DB) Serve() error {
 }
 
 func (d *DB) GracefulStop() {
-	for _, s := range d.sLst {
+	for _, s := range d.seriesLst {
 		s.stop()
 	}
-	close(d.stopCh)
+	if d.stopCh != nil {
+		close(d.stopCh)
+	}
 }
 
 func (d *DB) Register(plugin Plugin) {
@@ -83,7 +88,6 @@ func (d *DB) Name() string {
 func (d *DB) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&d.root, "root-path", "/tmp", "the root path of database")
-	flagS.IntVar(&d.shards, "shards", 1, "total shards size")
 	return flagS
 }
 
@@ -92,52 +96,140 @@ func (d *DB) Validate() error {
 }
 
 func (d *DB) PreRun() error {
+	d.log = logger.GetLogger("database")
 	if err := d.init(); err != nil {
 		return fmt.Errorf("failed to initialize db: %v", err)
 	}
 	return nil
 }
 
+type series struct {
+	sLst     []*shard
+	init     bool
+	location string
+}
+
+func (s *series) Reader(shard uint, name string, start, end uint64) kv.Reader {
+	//TODO: find targets in all blocks
+	b, ok := s.sLst[shard].activeBlock.Load().(*block)
+	if !ok {
+		return nil
+	}
+	return b.stores[name]
+}
+
+func (s *series) TimeSeriesReader(shard uint, name string, start, end uint64) kv.TimeSeriesReader {
+	//TODO: find targets in all blocks
+	b, ok := s.sLst[shard].activeBlock.Load().(*block)
+	if !ok {
+		return nil
+	}
+	return b.tsStores[name]
+}
+
+func (s *series) load(meta PluginMeta) error {
+	//TODO: to implement load instead of removing old contents
+	return os.RemoveAll(s.location)
+}
+
+func (s *series) create(meta PluginMeta, plugin Plugin) (err error) {
+	if _, err = mkdir(s.location); err != nil {
+		return err
+	}
+
+	for i := 0; i < int(meta.ShardNumber); i++ {
+		var shardLocation string
+		if shardLocation, err = mkdir(shardTemplate, s.location, i); err != nil {
+			return err
+		}
+		so := newShard(i, shardLocation)
+		if sErr := so.init(plugin); sErr != nil {
+			err = multierr.Append(err, sErr)
+			continue
+		}
+		s.sLst = append(s.sLst, so)
+	}
+	return err
+
+}
+
+func (s *series) stop() {
+	for _, sa := range s.sLst {
+		sa.stop()
+	}
+}
+
 func (d *DB) init() (err error) {
 	if _, err = mkdir(d.root); err != nil {
 		return fmt.Errorf("failed to create %s: %v", d.root, err)
 	}
-	var entris []fs.FileInfo
-	if entris, err = ioutil.ReadDir(d.root); err != nil {
+	d.log.Info().Str("path", d.root).Msg("initialize database")
+	var entries []fs.FileInfo
+	if entries, err = ioutil.ReadDir(d.root); err != nil {
 		return fmt.Errorf("failed to read directory contents failed: %v", err)
 	}
-	if len(entris) < 1 {
-		return d.createShards()
+	for _, plugin := range d.pluginLst {
+		meta := plugin.Meta()
+
+		s := &series{location: d.root + "/" + meta.ID}
+		d.seriesLst = append(d.seriesLst, s)
+		for _, entry := range entries {
+			if entry.Name() == meta.ID && entry.IsDir() {
+				err = s.load(meta)
+				if err != nil {
+					return err
+				}
+				d.log.Info().Str("ID", meta.ID).Msg("loaded series")
+				break
+			}
+		}
+		if !s.init {
+			err = s.create(meta, plugin)
+			if err != nil {
+				return err
+			}
+			d.log.Info().Str("ID", meta.ID).Msg("created series")
+		}
+		plugin.Init(s, func(_ uint64) WritePoint {
+			bLst := make([]*block, len(s.sLst))
+			for i, sa := range s.sLst {
+				b, ok := sa.activeBlock.Load().(*block)
+				if !ok {
+					continue
+				}
+				bLst[i] = b
+			}
+			return &writePoint{bLst: bLst}
+		})
+		d.log.Info().Str("ID", meta.ID).Msg("initialized plugin")
 	}
-	return d.loadShards(entris)
+	return err
 }
 
-func (d *DB) loadShards(_ []fs.FileInfo) (err error) {
-	//TODO load existing shards
+var _ WritePoint = (*writePoint)(nil)
+
+type writePoint struct {
+	bLst []*block
+}
+
+func (w *writePoint) Close() error {
 	return nil
 }
 
-func (d *DB) createShards() (err error) {
-	for i := 0; i < d.shards; i++ {
-		var shardLocation string
-		if shardLocation, err = mkdir(shardTemplate, d.root, i); err != nil {
-			return err
-		}
-		s := newShard(i, shardLocation)
-		if sErr := s.init(d.pluginLst); sErr != nil {
-			err = multierr.Append(err, sErr)
-			continue
-		}
-		d.sLst = append(d.sLst, s)
-	}
-	return err
+func (w *writePoint) Writer(shard uint, name string) kv.Writer {
+	return w.bLst[shard].stores[name]
+}
+
+func (w *writePoint) TimeSeriesWriter(shard uint, name string) kv.TimeSeriesWriter {
+	return w.bLst[shard].tsStores[name]
 }
 
 type shard struct {
 	id  int
 	lst []*segment
 	sync.Mutex
-	location string
+	location    string
+	activeBlock atomic.Value
 }
 
 func newShard(id int, location string) *shard {
@@ -147,23 +239,29 @@ func newShard(id int, location string) *shard {
 	}
 }
 
-func (s *shard) newSeg(path string) *segment {
+func (s *shard) newSeg(shardID int, path string) *segment {
 	s.Lock()
 	defer s.Unlock()
 	seg := &segment{
-		path: path,
+		path:    path,
+		shardID: shardID,
 	}
 	s.lst = append(s.lst, seg)
 	return seg
 }
 
-func (s *shard) init(plugins []Plugin) error {
+func (s *shard) init(plugin Plugin) error {
 	segPath, err := mkdir(segTemplate, s.location, time.Now().Format(segFormat))
 	if err != nil {
 		return fmt.Errorf("failed to make segment directory: %v", err)
 	}
-	seg := s.newSeg(segPath)
-	return seg.init(plugins)
+
+	seg := s.newSeg(s.id, segPath)
+	return seg.init(plugin, s.updateActiveBlock)
+}
+
+func (s *shard) updateActiveBlock(newBlock *block) {
+	s.activeBlock.Store(newBlock)
 }
 
 func (s *shard) stop() {
@@ -183,7 +281,8 @@ func mkdir(format string, a ...interface{}) (path string, err error) {
 type segment struct {
 	lst []*block
 	sync.Mutex
-	path string
+	path    string
+	shardID int
 }
 
 func (s *segment) addBlock(b *block) {
@@ -192,21 +291,22 @@ func (s *segment) addBlock(b *block) {
 	s.lst = append(s.lst, b)
 }
 
-func (s *segment) init(plugins []Plugin) error {
+func (s *segment) init(plugin Plugin, activeBlock func(newBlock *block)) error {
 	blockPath, err := mkdir(blockTemplate, s.path, time.Now().Format(blockFormat))
 	if err != nil {
 		return fmt.Errorf("failed to make block directory: %v", err)
 	}
 	var b *block
-	if b, err = newBlock(blockPath, plugins); err != nil {
+	if b, err = newBlock(s.shardID, blockPath, plugin); err != nil {
 		return fmt.Errorf("failed to create segment: %v", err)
 	}
+	activeBlock(b)
 	s.addBlock(b)
 	return b.init()
 }
 
 func (s *segment) close() {
-	for _, block := range s.lst {
-		block.close()
+	for _, b := range s.lst {
+		b.close()
 	}
 }

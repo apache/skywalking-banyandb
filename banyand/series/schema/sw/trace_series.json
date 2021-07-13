@@ -9,6 +9,10 @@
       "type": "String"
     },
     {
+      "name": "state",
+      "type": "Int"
+    },
+    {
       "name": "service_id",
       "type": "String"
     },
@@ -33,7 +37,11 @@
       "type": "String"
     },
     {
-      "name": "state",
+      "name": "duration",
+      "type": "Int"
+    },
+    {
+      "name": "start_time",
       "type": "Int"
     },
     {
@@ -76,6 +84,14 @@
       "val_success": "0",
       "val_error": "1"
     }
+  },
+  "shard": {
+    "number": 2,
+    "routing_fields": [
+      "service_id", 
+      "service_instance_id",
+      "endpoint_id"
+    ]
   },
   "duration": {
     "val": 7,

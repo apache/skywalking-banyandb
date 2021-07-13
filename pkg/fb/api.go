@@ -50,8 +50,12 @@ func (b *WriteEntityBuilder) BuildMetaData(group, name string) ComponentBuilderF
 }
 
 func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...interface{}) ComponentBuilderFunc {
+	return b.BuildEntityWithTS(id, binary, uint64(time.Now().UnixNano()), items...)
+}
+
+func (b *WriteEntityBuilder) BuildEntityWithTS(id string, binary []byte, ts uint64, items ...interface{}) ComponentBuilderFunc {
 	entityID := b.Builder.CreateString(id)
-	binaryOffset := b.buildDataBinary(binary)
+	binaryOffset := b.CreateByteVector(binary)
 	l := len(items)
 	var fieldOffsets []flatbuffers.UOffsetT
 	for i := 0; i < l; i++ {
@@ -65,8 +69,7 @@ func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 	fields := b.EndVector(len(fieldOffsets))
 	v1.EntityStart(b.Builder)
 	v1.EntityAddEntityId(b.Builder, entityID)
-	t := uint64(time.Now().UnixNano())
-	v1.EntityAddTimestampNanoseconds(b.Builder, t)
+	v1.EntityAddTimestampNanoseconds(b.Builder, ts)
 	v1.EntityAddDataBinary(b.Builder, binaryOffset)
 	v1.EntityAddFields(b.Builder, fields)
 	entity := v1.EntityEnd(b.Builder)
@@ -76,53 +79,68 @@ func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 }
 
 func (b *WriteEntityBuilder) buildField(val interface{}) flatbuffers.UOffsetT {
-	var ValueTypeOffset flatbuffers.UOffsetT
+	if val == nil {
+		v1.FieldStart(b.Builder)
+		v1.FieldAddValueType(b.Builder, v1.ValueTypeNONE)
+		return v1.FieldEnd(b.Builder)
+	}
+	var valueTypeOffset flatbuffers.UOffsetT
 	var valType v1.ValueType
 	switch v := val.(type) {
 	case int:
-		ValueTypeOffset = b.buildInt(int64(v))
+		valueTypeOffset = b.buildInt(int64(v))
 		valType = v1.ValueTypeInt
 	case []int:
-		ValueTypeOffset = b.buildInt(convert.IntToInt64(v...)...)
+		valueTypeOffset = b.buildInt(convert.IntToInt64(v...)...)
 		valType = v1.ValueTypeIntArray
 	case int64:
-		ValueTypeOffset = b.buildInt(v)
+		valueTypeOffset = b.buildInt(v)
 		valType = v1.ValueTypeInt
 	case []int64:
-		ValueTypeOffset = b.buildInt(v...)
+		valueTypeOffset = b.buildInt(v...)
 		valType = v1.ValueTypeIntArray
 	case string:
-		ValueTypeOffset = b.buildStrValueType(v)
+		valueTypeOffset = b.buildStrValueType(v)
 		valType = v1.ValueTypeString
 	case []string:
-		ValueTypeOffset = b.buildStrValueType(v...)
+		valueTypeOffset = b.buildStrValueType(v...)
 		valType = v1.ValueTypeStringArray
 	default:
 		panic("not supported value")
 	}
 
 	v1.FieldStart(b.Builder)
-	v1.FieldAddValue(b.Builder, ValueTypeOffset)
+	v1.FieldAddValue(b.Builder, valueTypeOffset)
 	v1.FieldAddValueType(b.Builder, valType)
 	return v1.FieldEnd(b.Builder)
 }
 
 func (b *WriteEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOffsetT {
-	var strOffsets []flatbuffers.UOffsetT
+	strOffsets := make([]flatbuffers.UOffsetT, 0)
 	for i := 0; i < len(values); i++ {
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
+	}
+	if len(values) == 1 {
+		v1.StringStart(b.Builder)
+		v1.StringAddValue(b.Builder, strOffsets[0])
+		return v1.StringEnd(b.Builder)
 	}
 	v1.StringArrayStartValueVector(b.Builder, len(values))
 	for i := len(strOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(strOffsets[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
-	v1.IntArrayStart(b.Builder)
-	v1.IntArrayAddValue(b.Builder, int64Arr)
-	return v1.IntArrayEnd(b.Builder)
+	v1.StringArrayStart(b.Builder)
+	v1.StringArrayAddValue(b.Builder, int64Arr)
+	return v1.StringArrayEnd(b.Builder)
 }
 
 func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
+	if len(values) == 1 {
+		v1.IntStart(b.Builder)
+		v1.IntAddValue(b.Builder, values[0])
+		return v1.IntEnd(b.Builder)
+	}
 	v1.IntArrayStartValueVector(b.Builder, len(values))
 	for i := len(values) - 1; i >= 0; i-- {
 		b.Builder.PrependInt64(values[i])
@@ -132,17 +150,6 @@ func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
 	v1.IntArrayStart(b.Builder)
 	v1.IntArrayAddValue(b.Builder, int64Arr)
 	return v1.IntArrayEnd(b.Builder)
-}
-
-func (b *WriteEntityBuilder) buildDataBinary(binary []byte) flatbuffers.UOffsetT {
-	dataBinaryLength := len(binary)
-	v1.EntityStartDataBinaryVector(b.Builder, dataBinaryLength)
-	for i := dataBinaryLength; i >= 0; i-- {
-		b.Builder.PrependByte(byte(i))
-	}
-	dataBinaryOffset := b.Builder.EndVector(dataBinaryLength)
-
-	return dataBinaryOffset
 }
 
 func (b *WriteEntityBuilder) BuildWriteEntity(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {

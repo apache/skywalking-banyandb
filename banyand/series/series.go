@@ -25,11 +25,10 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// TraceState represents the State of a trace link
+// TraceState represents the State of a traceSeries link
 type TraceState int
 
 const (
@@ -46,10 +45,10 @@ type ScanOptions struct {
 	Limit      uint32
 }
 
-//TraceRepo contains trace and entity data
+//TraceRepo contains traceSeries and entity data
 type TraceRepo interface {
 	//FetchTrace returns data.Trace by traceID
-	FetchTrace(traceSeries common.Metadata, traceID string) (data.Trace, error)
+	FetchTrace(traceSeries common.Metadata, traceID string, opt ScanOptions) (data.Trace, error)
 	//FetchEntity returns data.Entity by ChunkID
 	FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt ScanOptions) ([]data.Entity, error)
 	//ScanEntity returns data.Entity between a duration by ScanOptions
@@ -81,11 +80,6 @@ type Service interface {
 	UniModel
 	SchemaRepo
 	IndexFilter
-	run.Config
 	run.PreRunner
-}
-
-//NewService returns a new service
-func NewService(ctx context.Context, db storage.Database) (Service, error) {
-	return &service{db: db}, nil
+	run.Service
 }

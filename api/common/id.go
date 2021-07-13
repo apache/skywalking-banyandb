@@ -18,6 +18,11 @@
 package common
 
 type ChunkID uint64
+type SeriesID uint64
+
+const (
+	DataBinaryFieldName = "data_binary"
+)
 
 type ChunkIDs []ChunkID
 
@@ -28,12 +33,13 @@ func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
 	if len(c) == 0 || len(other) == 0 {
 		return []ChunkID{}
 	}
-	intersection := make([]ChunkID, 0, min(len(c), len(other)))
+	smaller, larger, minLen := min(c, other)
+	intersection := make([]ChunkID, 0, minLen)
 	hash := make(map[ChunkID]struct{})
-	for _, item := range c {
+	for _, item := range smaller {
 		hash[item] = struct{}{}
 	}
-	for _, item := range other {
+	for _, item := range larger {
 		if _, exist := hash[item]; exist {
 			intersection = append(intersection, item)
 		}
@@ -41,9 +47,11 @@ func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
 	return intersection
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func min(a, b ChunkIDs) (ChunkIDs, ChunkIDs, int) {
+	aLen := len(a)
+	bLen := len(b)
+	if aLen < bLen {
+		return a, b, aLen
 	}
-	return b
+	return b, a, bLen
 }

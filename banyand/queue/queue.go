@@ -21,15 +21,15 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	bus2 "github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type Queue interface {
 	run.Config
 	run.PreRunner
-	bus.Subscriber
-	bus.Publisher
+	bus2.Subscriber
+	bus2.Publisher
 }
 
 func NewQueue(ctx context.Context, repo discovery.ServiceRepo) (Queue, error) {

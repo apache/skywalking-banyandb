@@ -22,15 +22,15 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var _ TimeSeriesStore = (*badgerTSS)(nil)
 
 type badgerTSS struct {
-	dbOpts badger.Options
-	db     *badger.DB
+	shardID int
+	dbOpts  badger.Options
+	db      *badger.DB
 	badger.TSet
 }
 
@@ -44,18 +44,44 @@ func (b *badgerTSS) Close() error {
 var _ Store = (*badgerDB)(nil)
 
 type badgerDB struct {
-	dbOpts badger.Options
-	db     *badger.DB
-	seqKey string
-	seq    *badger.Sequence
+	shardID int
+	dbOpts  badger.Options
+	db      *badger.DB
+	seqKey  string
+	seq     *badger.Sequence
 }
 
-func (b *badgerDB) Add(val []byte) (uint64, error) {
-	id, err := b.seq.Next()
-	if err != nil {
-		return 0, err
-	}
-	return id, b.Put(convert.Uint64ToBytes(id), val)
+func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
+	err := b.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = opt.PrefetchSize
+		opts.PrefetchValues = opt.PrefetchValues
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(key); it.Valid(); it.Next() {
+			item := it.Item()
+			k := item.Key()
+			err := f(b.shardID, k, func() ([]byte, error) {
+				var val []byte
+				err := item.Value(func(v []byte) error {
+					val = v
+					return nil
+				})
+				if err != nil {
+					return nil, err
+				}
+				return val, nil
+			})
+			if err == ErrStopScan {
+				break
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 func (b *badgerDB) Close() error {
