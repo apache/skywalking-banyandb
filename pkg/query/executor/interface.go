@@ -15,28 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logical
+package executor
 
 import (
-	"strings"
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 )
 
-func Format(p Plan) string {
-	return formatWithIndent(p, 0)
+//go:generate mockgen -destination=./execution_context_mock.go -package=executor . ExecutionContext
+type ExecutionContext interface {
+	series.TraceRepo
+	index.Repo
 }
 
-func formatWithIndent(p Plan, indent int) string {
-	res := ""
-	if indent > 1 {
-		res += strings.Repeat(" ", 5*(indent-1))
-	}
-	if indent > 0 {
-		res += "+"
-		res += strings.Repeat("-", 4)
-	}
-	res += p.String() + "\n"
-	for _, child := range p.Children() {
-		res += formatWithIndent(child, indent+1)
-	}
-	return res
+type Executable interface {
+	Execute(ExecutionContext) ([]data.Entity, error)
 }

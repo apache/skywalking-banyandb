@@ -18,3 +18,32 @@
 package common
 
 type ChunkID uint64
+
+type ChunkIDs []ChunkID
+
+// HashIntersect returns an intersection of two ChunkID arrays
+// without any assumptions on the order. It uses a HashMap to mark
+// the existence of a item.
+func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
+	if len(c) == 0 || len(other) == 0 {
+		return []ChunkID{}
+	}
+	intersection := make([]ChunkID, 0, min(len(c), len(other)))
+	hash := make(map[ChunkID]struct{})
+	for _, item := range c {
+		hash[item] = struct{}{}
+	}
+	for _, item := range other {
+		if _, exist := hash[item]; exist {
+			intersection = append(intersection, item)
+		}
+	}
+	return intersection
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

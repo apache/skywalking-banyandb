@@ -30,7 +30,7 @@ clean: default  ## Clean artifacts in all projects
 generate: ## Generate API codes
 	$(MAKE) -C api/fbs generate
 	$(MAKE) format
-	go install github.com/golang/mock/mockgen@v1.5.0
+	go install github.com/golang/mock/mockgen@v1.6.0
 	go generate ./...
 	$(MAKE) format
 

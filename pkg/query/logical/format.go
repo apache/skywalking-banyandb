@@ -15,24 +15,36 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package data
+package logical
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"strings"
 )
 
-var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
-
-type Trace struct {
-	common.KindVersion
-	Entities []Entity
+func Format(p Plan) string {
+	return formatWithIndent(p, 0)
 }
 
-type Entity struct {
-	v1.Entity
+func formatWithIndent(p Plan, indent int) string {
+	res := ""
+	if indent > 1 {
+		res += strings.Repeat(" ", 5*(indent-1))
+	}
+	if indent > 0 {
+		res += "+"
+		res += strings.Repeat("-", 4)
+	}
+	res += p.String() + "\n"
+	for _, child := range p.Children() {
+		res += formatWithIndent(child, indent+1)
+	}
+	return res
 }
 
-func NewTrace() *Trace {
-	return &Trace{KindVersion: TraceKindVersion}
+func formatExpr(sep string, exprs ...*fieldRef) string {
+	var exprsStr []string
+	for i := 0; i < len(exprs); i++ {
+		exprsStr = append(exprsStr, exprs[i].String())
+	}
+	return strings.Join(exprsStr, sep)
 }
