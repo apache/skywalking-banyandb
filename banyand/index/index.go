@@ -22,12 +22,16 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type Condition struct {
+	Key    string
+	Values [][]byte
+	Op     apiv1.BinaryOp
 }
 
 type Repo interface {

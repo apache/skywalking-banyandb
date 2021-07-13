@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package series
+package trace
 
 import (
 	"bytes"
@@ -25,20 +25,11 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
-
-var _ Service = (*service)(nil)
-
-type service struct {
-	db   storage.Database
-	addr string
-}
 
 //Methods for query objects in the schema
 
@@ -54,7 +45,7 @@ func (s *service) IndexRuleBinding() schema.IndexRuleBinding {
 	return sw.NewIndexRuleBinding()
 }
 
-func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter IndexObjectFilter) ([]v1.IndexRule, error) {
+func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter series.IndexObjectFilter) ([]v1.IndexRule, error) {
 	group := subject.Series(nil).Group()
 	var groupStr string
 	if group != nil {
@@ -69,7 +60,7 @@ func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter Inde
 		return nil, nil
 	}
 	now := uint64(time.Now().UnixNano())
-	foundRules := make([]v1.Metadata, 0)
+	foundRules := make([]*v1.Metadata, 0)
 	for _, binding := range bindings {
 		spec := binding.Spec
 		if spec.BeginAtNanoseconds() > now ||
@@ -86,7 +77,7 @@ func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter Inde
 					bytes.Equal(s1.Group(), subjectSeries.Group()) {
 					ruleRef := spec.RuleRef(nil)
 					if ruleRef != nil {
-						foundRules = append(foundRules, *ruleRef)
+						foundRules = append(foundRules, ruleRef)
 					}
 				}
 				break
@@ -119,34 +110,4 @@ func (s *service) IndexRules(ctx context.Context, subject v1.Series, filter Inde
 		}
 	}
 	return result, indexRuleErr
-}
-
-func (s *service) FetchTrace(traceSeries common.Metadata, traceID string) (data.Trace, error) {
-	panic("implement me")
-}
-
-func (s *service) FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt ScanOptions) ([]data.Entity, error) {
-	panic("implement me")
-}
-
-func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error) {
-	panic("implement me")
-}
-
-func (s *service) Name() string {
-	return "series"
-}
-
-func (s *service) FlagSet() *run.FlagSet {
-	fs := run.NewFlagSet("series")
-	fs.StringVarP(&s.addr, "series", "", ":17911", "the address of banyand listens")
-	return fs
-}
-
-func (s *service) Validate() error {
-	return nil
-}
-
-func (s *service) PreRun() error {
-	return nil
 }

@@ -15,30 +15,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package event
+package series
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"time"
 )
 
-var (
-	ShardEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "event-shard",
-	}
-	TopicShardEvent = bus.Topic{
-		ID:   ShardEventKindVersion.String(),
-		Type: bus.ChTypeUnidirectional,
-	}
+const (
+	timeStampLen = 41 + 1
+	shardIDLen   = 22
 )
 
-type Shard struct {
-	common.KindVersion
-	Payload v1.ShardEvent
+var startTime = uint64(time.Date(2021, 07, 01, 23, 0, 0, 0, time.UTC).UTC().UnixNano() / 1e6)
+
+type IDGen interface {
+	Next(shard uint, ts uint64) uint64
+	ParseShardID(ID uint64) (uint, error)
+	ParseTS(ID uint64) (uint64, error)
 }
 
-func NewShard() *Shard {
-	return &Shard{KindVersion: ShardEventKindVersion}
+func NewIDGen() IDGen {
+	return &localID{}
+}
+
+var _ IDGen = (*localID)(nil)
+
+type localID struct {
+}
+
+func (l *localID) Next(shard uint, ts uint64) uint64 {
+	df := ts/1e6 - startTime
+	id := (df << shardIDLen) | uint64(shard)
+	return id
+}
+
+func (l *localID) ParseShardID(ID uint64) (uint, error) {
+	shardID := (ID << timeStampLen) >> timeStampLen
+	return uint(shardID), nil
+}
+
+func (l *localID) ParseTS(ID uint64) (uint64, error) {
+	return (ID>>shardIDLen + startTime) * 1e6, nil
 }

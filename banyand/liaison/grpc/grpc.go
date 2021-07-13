@@ -26,8 +26,11 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
 
+	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -37,10 +40,33 @@ type Server struct {
 	log      *logger.Logger
 	ser      *grpclib.Server
 	pipeline queue.Queue
+	repo     discovery.ServiceRepo
 }
 
-func NewServer(ctx context.Context, pipeline queue.Queue) *Server {
-	return &Server{pipeline: pipeline}
+func (s *Server) Rev(message bus.Message) (resp bus.Message) {
+	data, ok := message.Data().([]byte)
+	if !ok {
+		s.log.Warn().Msg("invalid event data type")
+		return
+	}
+	shardEvent := v1.GetRootAsShardEvent(data, 0)
+	s.log.Info().
+		Str("action", shardEvent.Action().String()).
+		Uint64("shardID", shardEvent.Shard(nil).Id()).
+		Msg("received a shard event")
+	return
+}
+
+func (s *Server) PreRun() error {
+	s.log = logger.GetLogger("liaison-grpc")
+	return s.repo.Subscribe(event.TopicShardEvent, s)
+}
+
+func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
+	return &Server{
+		pipeline: pipeline,
+		repo:     repo,
+	}
 }
 
 func (s *Server) Name() string {
@@ -60,7 +86,6 @@ func init() {
 	//encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
 }
 func (s *Server) Serve() error {
-	s.log = logger.GetLogger("grpc")
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")

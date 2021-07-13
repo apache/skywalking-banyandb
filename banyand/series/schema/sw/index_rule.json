@@ -30,6 +30,12 @@
     },
     {
       "fields": [
+        "duration"
+      ],
+      "type": "Numerical"
+    },
+    {
+      "fields": [
         "http.method"
       ],
       "type": "Text"

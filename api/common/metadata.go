@@ -27,7 +27,7 @@ var MetadataKindVersion = KindVersion{Version: "v1", Kind: "metadata"}
 
 type Metadata struct {
 	KindVersion
-	Spec v1.Metadata
+	Spec *v1.Metadata
 }
 
 func (md Metadata) Equal(other Metadata) bool {

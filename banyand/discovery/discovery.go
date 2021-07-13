@@ -20,17 +20,39 @@ package discovery
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/bus"
+	bus2 "github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type ServiceRepo interface {
-	run.Config
-	run.Service
-	bus.Subscriber
-	bus.Publisher
+	NodeID() string
+	run.Unit
+	bus2.Subscriber
+	bus2.Publisher
 }
 
-func NewServiceRepo(ctx context.Context) (ServiceRepo, error) {
-	return nil, nil
+type repo struct {
+	local *bus2.Bus
+}
+
+func (r *repo) NodeID() string {
+	return "local"
+}
+
+func (r *repo) Name() string {
+	return "service-discovery"
+}
+
+func (r *repo) Subscribe(topic bus2.Topic, listener bus2.MessageListener) error {
+	return r.local.Subscribe(topic, listener)
+}
+
+func (r *repo) Publish(topic bus2.Topic, message ...bus2.Message) (bus2.Future, error) {
+	return r.local.Publish(topic, message...)
+}
+
+func NewServiceRepo(_ context.Context) (ServiceRepo, error) {
+	return &repo{
+		local: bus2.NewBus(),
+	}, nil
 }

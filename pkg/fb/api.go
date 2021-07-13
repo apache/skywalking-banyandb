@@ -50,8 +50,12 @@ func (b *WriteEntityBuilder) BuildMetaData(group, name string) ComponentBuilderF
 }
 
 func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...interface{}) ComponentBuilderFunc {
+	return b.BuildEntityWithTS(id, binary, uint64(time.Now().UnixNano()), items...)
+}
+
+func (b *WriteEntityBuilder) BuildEntityWithTS(id string, binary []byte, ts uint64, items ...interface{}) ComponentBuilderFunc {
 	entityID := b.Builder.CreateString(id)
-	binaryOffset := b.buildDataBinary(binary)
+	binaryOffset := b.CreateByteVector(binary)
 	l := len(items)
 	var fieldOffsets []flatbuffers.UOffsetT
 	for i := 0; i < l; i++ {
@@ -59,14 +63,13 @@ func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 		fieldOffsets = append(fieldOffsets, o)
 	}
 	v1.EntityStartFieldsVector(b.Builder, len(fieldOffsets))
-	for i := 0; i < len(fieldOffsets); i++ {
+	for i := len(fieldOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(fieldOffsets[i])
 	}
 	fields := b.EndVector(len(fieldOffsets))
 	v1.EntityStart(b.Builder)
 	v1.EntityAddEntityId(b.Builder, entityID)
-	t := uint64(time.Now().UnixNano())
-	v1.EntityAddTimestampNanoseconds(b.Builder, t)
+	v1.EntityAddTimestampNanoseconds(b.Builder, ts)
 	v1.EntityAddDataBinary(b.Builder, binaryOffset)
 	v1.EntityAddFields(b.Builder, fields)
 	entity := v1.EntityEnd(b.Builder)
@@ -76,55 +79,70 @@ func (b *WriteEntityBuilder) BuildEntity(id string, binary []byte, items ...inte
 }
 
 func (b *WriteEntityBuilder) buildField(val interface{}) flatbuffers.UOffsetT {
-	var ValueTypeOffset flatbuffers.UOffsetT
+	if val == nil {
+		v1.FieldStart(b.Builder)
+		v1.FieldAddValueType(b.Builder, v1.ValueTypeNONE)
+		return v1.FieldEnd(b.Builder)
+	}
+	var valueTypeOffset flatbuffers.UOffsetT
 	var valType v1.ValueType
 	switch v := val.(type) {
 	case int:
-		ValueTypeOffset = b.buildInt(int64(v))
+		valueTypeOffset = b.buildInt(int64(v))
 		valType = v1.ValueTypeInt
 	case []int:
-		ValueTypeOffset = b.buildInt(convert.IntToInt64(v...)...)
+		valueTypeOffset = b.buildInt(convert.IntToInt64(v...)...)
 		valType = v1.ValueTypeIntArray
 	case int64:
-		ValueTypeOffset = b.buildInt(v)
+		valueTypeOffset = b.buildInt(v)
 		valType = v1.ValueTypeInt
 	case []int64:
-		ValueTypeOffset = b.buildInt(v...)
+		valueTypeOffset = b.buildInt(v...)
 		valType = v1.ValueTypeIntArray
 	case string:
-		ValueTypeOffset = b.buildStrValueType(v)
+		valueTypeOffset = b.buildStrValueType(v)
 		valType = v1.ValueTypeString
 	case []string:
-		ValueTypeOffset = b.buildStrValueType(v...)
+		valueTypeOffset = b.buildStrValueType(v...)
 		valType = v1.ValueTypeStringArray
 	default:
 		panic("not supported value")
 	}
 
 	v1.FieldStart(b.Builder)
-	v1.FieldAddValue(b.Builder, ValueTypeOffset)
+	v1.FieldAddValue(b.Builder, valueTypeOffset)
 	v1.FieldAddValueType(b.Builder, valType)
 	return v1.FieldEnd(b.Builder)
 }
 
 func (b *WriteEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOffsetT {
-	var strOffsets []flatbuffers.UOffsetT
+	strOffsets := make([]flatbuffers.UOffsetT, 0)
 	for i := 0; i < len(values); i++ {
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
 	}
+	if len(values) == 1 {
+		v1.StringStart(b.Builder)
+		v1.StringAddValue(b.Builder, strOffsets[0])
+		return v1.StringEnd(b.Builder)
+	}
 	v1.StringArrayStartValueVector(b.Builder, len(values))
-	for i := 0; i < len(strOffsets); i++ {
+	for i := len(strOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(strOffsets[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
-	v1.IntArrayStart(b.Builder)
-	v1.IntArrayAddValue(b.Builder, int64Arr)
-	return v1.IntArrayEnd(b.Builder)
+	v1.StringArrayStart(b.Builder)
+	v1.StringArrayAddValue(b.Builder, int64Arr)
+	return v1.StringArrayEnd(b.Builder)
 }
 
 func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
+	if len(values) == 1 {
+		v1.IntStart(b.Builder)
+		v1.IntAddValue(b.Builder, values[0])
+		return v1.IntEnd(b.Builder)
+	}
 	v1.IntArrayStartValueVector(b.Builder, len(values))
-	for i := 0; i < len(values); i++ {
+	for i := len(values) - 1; i >= 0; i-- {
 		b.Builder.PrependInt64(values[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
@@ -132,17 +150,6 @@ func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
 	v1.IntArrayStart(b.Builder)
 	v1.IntArrayAddValue(b.Builder, int64Arr)
 	return v1.IntArrayEnd(b.Builder)
-}
-
-func (b *WriteEntityBuilder) buildDataBinary(binary []byte) flatbuffers.UOffsetT {
-	dataBinaryLength := len(binary)
-	v1.EntityStartDataBinaryVector(b.Builder, dataBinaryLength)
-	for i := dataBinaryLength; i >= 0; i-- {
-		b.Builder.PrependByte(byte(i))
-	}
-	dataBinaryOffset := b.Builder.EndVector(dataBinaryLength)
-
-	return dataBinaryOffset
 }
 
 func (b *WriteEntityBuilder) BuildWriteEntity(funcs ...ComponentBuilderFunc) (*flatbuffers.Builder, error) {
@@ -227,7 +234,7 @@ func (b *criteriaBuilder) BuildProjection(keyNames ...string) ComponentBuilderFu
 		keyNamesOffsets = append(keyNamesOffsets, b.Builder.CreateString(keyNames[i]))
 	}
 	v1.ProjectionStartKeyNamesVector(b.Builder, len(keyNames))
-	for i := 0; i < len(keyNamesOffsets); i++ {
+	for i := len(keyNamesOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(keyNamesOffsets[i])
 	}
 	strArr := b.Builder.EndVector(len(keyNames))
@@ -239,86 +246,86 @@ func (b *criteriaBuilder) BuildProjection(keyNames ...string) ComponentBuilderFu
 	}
 }
 
-func (b *criteriaBuilder) buildIntPair(key string, values ...int64) flatbuffers.UOffsetT {
-	v1.IntPairStartValuesVector(b.Builder, len(values))
-	for i := 0; i < len(values); i++ {
-		b.Builder.PrependInt64(values[i])
+func buildIntPair(b *flatbuffers.Builder, key string, values ...int64) flatbuffers.UOffsetT {
+	v1.IntPairStartValuesVector(b, len(values))
+	for i := len(values) - 1; i >= 0; i-- {
+		b.PrependInt64(values[i])
 	}
-	int64Arr := b.Builder.EndVector(len(values))
+	int64Arr := b.EndVector(len(values))
 
 	keyOffset := b.CreateString(key)
-	v1.IntPairStart(b.Builder)
-	v1.IntPairAddKey(b.Builder, keyOffset)
-	v1.IntPairAddValues(b.Builder, int64Arr)
-	return v1.IntPairEnd(b.Builder)
+	v1.IntPairStart(b)
+	v1.IntPairAddKey(b, keyOffset)
+	v1.IntPairAddValues(b, int64Arr)
+	return v1.IntPairEnd(b)
 }
 
-func (b *criteriaBuilder) buildStrPair(key string, values ...string) flatbuffers.UOffsetT {
+func buildStrPair(b *flatbuffers.Builder, key string, values ...string) flatbuffers.UOffsetT {
 	var strOffsets []flatbuffers.UOffsetT
 	for i := 0; i < len(values); i++ {
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
 	}
-	v1.StrPairStartValuesVector(b.Builder, len(values))
-	for i := 0; i < len(strOffsets); i++ {
-		b.Builder.PrependUOffsetT(strOffsets[i])
+	v1.StrPairStartValuesVector(b, len(values))
+	for i := len(strOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(strOffsets[i])
 	}
-	int64Arr := b.Builder.EndVector(len(values))
+	int64Arr := b.EndVector(len(values))
 
 	keyOffset := b.CreateString(key)
-	v1.IntPairStart(b.Builder)
-	v1.IntPairAddKey(b.Builder, keyOffset)
-	v1.IntPairAddValues(b.Builder, int64Arr)
-	return v1.IntPairEnd(b.Builder)
+	v1.IntPairStart(b)
+	v1.IntPairAddKey(b, keyOffset)
+	v1.IntPairAddValues(b, int64Arr)
+	return v1.IntPairEnd(b)
 }
 
-func (b *criteriaBuilder) buildCondition(key string, value interface{}) flatbuffers.UOffsetT {
+func buildPair(b *flatbuffers.Builder, key string, value interface{}) flatbuffers.UOffsetT {
 	var pairOffset flatbuffers.UOffsetT
 	var pairType v1.TypedPair
 	switch v := value.(type) {
 	case int:
-		pairOffset = b.buildIntPair(key, int64(v))
+		pairOffset = buildIntPair(b, key, int64(v))
 		pairType = v1.TypedPairIntPair
 	case []int:
-		pairOffset = b.buildIntPair(key, convert.IntToInt64(v...)...)
+		pairOffset = buildIntPair(b, key, convert.IntToInt64(v...)...)
 		pairType = v1.TypedPairIntPair
 	case int8:
-		pairOffset = b.buildIntPair(key, int64(v))
+		pairOffset = buildIntPair(b, key, int64(v))
 		pairType = v1.TypedPairIntPair
 	case []int8:
-		pairOffset = b.buildIntPair(key, convert.Int8ToInt64(v...)...)
+		pairOffset = buildIntPair(b, key, convert.Int8ToInt64(v...)...)
 		pairType = v1.TypedPairIntPair
 	case int16:
-		pairOffset = b.buildIntPair(key, int64(v))
+		pairOffset = buildIntPair(b, key, int64(v))
 		pairType = v1.TypedPairIntPair
 	case []int16:
-		pairOffset = b.buildIntPair(key, convert.Int16ToInt64(v...)...)
+		pairOffset = buildIntPair(b, key, convert.Int16ToInt64(v...)...)
 		pairType = v1.TypedPairIntPair
 	case int32:
-		pairOffset = b.buildIntPair(key, int64(v))
+		pairOffset = buildIntPair(b, key, int64(v))
 		pairType = v1.TypedPairIntPair
 	case []int32:
-		pairOffset = b.buildIntPair(key, convert.Int32ToInt64(v...)...)
+		pairOffset = buildIntPair(b, key, convert.Int32ToInt64(v...)...)
 		pairType = v1.TypedPairIntPair
 	case int64:
-		pairOffset = b.buildIntPair(key, v)
+		pairOffset = buildIntPair(b, key, v)
 		pairType = v1.TypedPairIntPair
 	case []int64:
-		pairOffset = b.buildIntPair(key, v...)
+		pairOffset = buildIntPair(b, key, v...)
 		pairType = v1.TypedPairIntPair
 	case string:
-		pairOffset = b.buildStrPair(key, v)
+		pairOffset = buildStrPair(b, key, v)
 		pairType = v1.TypedPairStrPair
 	case []string:
-		pairOffset = b.buildStrPair(key, v...)
+		pairOffset = buildStrPair(b, key, v...)
 		pairType = v1.TypedPairStrPair
 	default:
 		panic("not supported values")
 	}
 
-	v1.PairStart(b.Builder)
-	v1.PairAddPair(b.Builder, pairOffset)
-	v1.PairAddPairType(b.Builder, pairType)
-	return v1.PairEnd(b.Builder)
+	v1.PairStart(b)
+	v1.PairAddPair(b, pairOffset)
+	v1.PairAddPairType(b, pairType)
+	return v1.PairEnd(b)
 }
 
 func (b *criteriaBuilder) BuildFields(items ...interface{}) ComponentBuilderFunc {
@@ -329,7 +336,7 @@ func (b *criteriaBuilder) BuildFields(items ...interface{}) ComponentBuilderFunc
 	var pairQueryOffsets []flatbuffers.UOffsetT
 	for i := 0; i < l; i++ {
 		key, op, values := items[i*3+0], items[i*3+1], items[i*3+2]
-		condition := b.buildCondition(key.(string), values)
+		condition := buildPair(b.Builder, key.(string), values)
 		v1.PairQueryStart(b.Builder)
 		// add op
 		v1.PairQueryAddOp(b.Builder, binaryOpsMap[op.(string)])
@@ -338,7 +345,7 @@ func (b *criteriaBuilder) BuildFields(items ...interface{}) ComponentBuilderFunc
 		pairQueryOffsets = append(pairQueryOffsets, v1.PairQueryEnd(b.Builder))
 	}
 	v1.EntityCriteriaStartFieldsVector(b.Builder, l)
-	for i := 0; i < len(pairQueryOffsets); i++ {
+	for i := len(pairQueryOffsets) - 1; i >= 0; i-- {
 		b.PrependUOffsetT(pairQueryOffsets[i])
 	}
 	fields := b.EndVector(l)
@@ -368,4 +375,64 @@ func (b *criteriaBuilder) BuildQueryEntity(funcs ...ComponentBuilderFunc) (*flat
 	b.Builder.Finish(criteriaOffset)
 
 	return b.Builder, nil
+}
+
+type queryEntityBuilder struct {
+	*flatbuffers.Builder
+}
+
+func NewQueryEntityBuilder() *queryEntityBuilder {
+	return &queryEntityBuilder{
+		flatbuffers.NewBuilder(1024),
+	}
+}
+
+func (b *queryEntityBuilder) BuildEntityID(entityID string) ComponentBuilderFunc {
+	eID := b.Builder.CreateString(entityID)
+	return func(b *flatbuffers.Builder) {
+		v1.EntityAddDataBinary(b, eID)
+	}
+}
+
+func (b *queryEntityBuilder) BuildTimeStamp(t time.Time) ComponentBuilderFunc {
+	return func(b *flatbuffers.Builder) {
+		v1.EntityAddTimestampNanoseconds(b, uint64(t.UnixNano()))
+	}
+}
+
+func (b *queryEntityBuilder) BuildFields(items ...interface{}) ComponentBuilderFunc {
+	if len(items)%2 != 0 {
+		panic("invalid fields list")
+	}
+
+	l := len(items) / 2
+
+	var pairOffsets []flatbuffers.UOffsetT
+	for i := 0; i < l; i++ {
+		key, values := items[i*2+0], items[i*2+1]
+		pair := buildPair(b.Builder, key.(string), values)
+		pairOffsets = append(pairOffsets, pair)
+	}
+
+	v1.EntityStartFieldsVector(b.Builder, l)
+	for i := len(pairOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(pairOffsets[i])
+	}
+	fields := b.EndVector(l)
+
+	return func(b *flatbuffers.Builder) {
+		v1.EntityAddFields(b, fields)
+	}
+}
+
+func (b *queryEntityBuilder) BuildEntity(funcs ...ComponentBuilderFunc) *v1.Entity {
+	v1.EntityStart(b.Builder)
+	for _, fun := range funcs {
+		fun(b.Builder)
+	}
+	criteriaOffset := v1.EntityEnd(b.Builder)
+	b.Builder.Finish(criteriaOffset)
+
+	buf := b.Bytes[b.Head():]
+	return v1.GetRootAsEntity(buf, 0)
 }

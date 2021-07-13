@@ -15,30 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package event
+package convert
 
-import (
-	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-)
+import "github.com/cespare/xxhash"
 
-var (
-	ShardEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "event-shard",
-	}
-	TopicShardEvent = bus.Topic{
-		ID:   ShardEventKindVersion.String(),
-		Type: bus.ChTypeUnidirectional,
-	}
-)
-
-type Shard struct {
-	common.KindVersion
-	Payload v1.ShardEvent
+func Hash(key []byte) uint64 {
+	return xxhash.Sum64(key)
 }
 
-func NewShard() *Shard {
-	return &Shard{KindVersion: ShardEventKindVersion}
+func HashStr(key string) uint64 {
+	return xxhash.Sum64String(key)
 }

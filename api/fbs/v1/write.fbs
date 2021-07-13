@@ -46,7 +46,7 @@ table Field {
     value: ValueType;
 }
 
-table entityValue {
+table EntityValue {
     // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
     entity_id: string;
     // timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
@@ -66,7 +66,10 @@ table WriteEntity {
     // the mate_data is only required in the first write.
     meta_data: Metadata;
     // the entity is required.
-    entity: entityValue;
+    entity: EntityValue;
 }
 
 table WriteResponse {}
+
+root_type WriteEntity;
+root_type EntityValue;
