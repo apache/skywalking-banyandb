@@ -148,10 +148,10 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, 
 		if useIndexScan {
 			plan = IndexScan(timeRange.Begin(), timeRange.End(), traceMetadata, fieldExprs, traceState, projStr...)
 		} else {
-			plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, projStr...)
+			plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, traceState, projStr...)
 		}
 	} else {
-		plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, projStr...)
+		plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, series.TraceStateDefault, projStr...)
 	}
 
 	// parse orderBy

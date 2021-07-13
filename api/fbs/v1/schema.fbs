@@ -60,7 +60,7 @@ table TraceFieldMap {
 table TraceSeries {
     // metadata is the identity of a trace series
     metadata:Metadata;
-    // fields defines accetped fields
+    // fields defines accepted fields
     fields:[FieldSpec];
     // reserved_fields_map indicates how to index reserved fields to ingested fields
     reserved_fields_map:TraceFieldMap;
@@ -113,7 +113,7 @@ table IndexObject {
 //            type: Numerical
 //        },
 //    ]
-//    update_at_nanoseconds: .......
+//    updated_at_nanoseconds: .......
 // } 
 table IndexRule {
     // metadata define the rule's identity

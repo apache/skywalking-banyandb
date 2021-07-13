@@ -15,39 +15,36 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
-package index
+package logical
 
 import (
-	"context"
-
-	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"strings"
 )
 
-type Condition struct {
-	Key    string
-	Values [][]byte
-	Op     apiv1.BinaryOp
+func Format(p Plan) string {
+	return formatWithIndent(p, 0)
 }
 
-type Repo interface {
-	Search(index common.Metadata, startTime, endTime uint64, conditions []Condition) ([]common.ChunkID, error)
+func formatWithIndent(p Plan, indent int) string {
+	res := ""
+	if indent > 1 {
+		res += strings.Repeat(" ", 5*(indent-1))
+	}
+	if indent > 0 {
+		res += "+"
+		res += strings.Repeat("-", 4)
+	}
+	res += p.String() + "\n"
+	for _, child := range p.Children() {
+		res += formatWithIndent(child, indent+1)
+	}
+	return res
 }
 
-type Builder interface {
-	run.Config
-	run.PreRunner
-}
-
-type Service interface {
-	Repo
-	Builder
-}
-
-func NewService(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
-	return nil, nil
+func formatExpr(sep string, exprs ...*fieldRef) string {
+	var exprsStr []string
+	for i := 0; i < len(exprs); i++ {
+		exprsStr = append(exprsStr, exprs[i].String())
+	}
+	return strings.Join(exprsStr, sep)
 }

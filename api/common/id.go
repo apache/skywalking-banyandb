@@ -17,9 +17,45 @@
 
 package common
 
+import (
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+)
+
 type ChunkID []byte
 type SeriesID uint64
 
 const (
 	DataBinaryFieldName = "data_binary"
 )
+
+type ChunkIDs []ChunkID
+
+// HashIntersect returns an intersection of two ChunkID arrays
+// without any assumptions on the order. It uses a HashMap to mark
+// the existence of a item.
+func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
+	if len(c) == 0 || len(other) == 0 {
+		return []ChunkID{}
+	}
+	smaller, larger, minLen := min(c, other)
+	intersection := make([]ChunkID, 0, minLen)
+	hash := make(map[uint64]struct{})
+	for _, item := range smaller {
+		hash[convert.Hash(item)] = struct{}{}
+	}
+	for _, item := range larger {
+		if _, exist := hash[convert.Hash(item)]; exist {
+			intersection = append(intersection, item)
+		}
+	}
+	return intersection
+}
+
+func min(a, b ChunkIDs) (ChunkIDs, ChunkIDs, int) {
+	aLen := len(a)
+	bLen := len(b)
+	if aLen < bLen {
+		return a, b, aLen
+	}
+	return b, a, bLen
+}

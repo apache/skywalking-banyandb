@@ -21,13 +21,13 @@ import (
 	"fmt"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 type PlanType uint8
 
 const (
-	PlanProjection PlanType = iota
-	PlanLimit
+	PlanLimit PlanType = iota
 	PlanOffset
 	PlanTableScan
 	PlanOrderBy
@@ -35,13 +35,16 @@ const (
 	PlanTraceIDFetch
 )
 
+//go:generate mockgen -destination=./plan_unresolved_mock.go -package=logical . UnresolvedPlan
 type UnresolvedPlan interface {
 	Type() PlanType
 	Analyze(Schema) (Plan, error)
 }
 
+//go:generate mockgen -destination=./plan_mock.go -package=logical . Plan
 type Plan interface {
 	fmt.Stringer
+	executor2.Executable
 	Type() PlanType
 	Children() []Plan
 	Schema() Schema
@@ -52,6 +55,11 @@ type Expr interface {
 	fmt.Stringer
 	FieldType() apiv1.FieldType
 	Equal(Expr) bool
+}
+
+type LiteralExpr interface {
+	Expr
+	Bytes() [][]byte
 }
 
 type ResolvableExpr interface {

@@ -142,7 +142,7 @@ func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {
 		return v1.IntEnd(b.Builder)
 	}
 	v1.IntArrayStartValueVector(b.Builder, len(values))
-	for i := 0; i < len(values); i++ {
+	for i := len(values) - 1; i >= 0; i-- {
 		b.Builder.PrependInt64(values[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))

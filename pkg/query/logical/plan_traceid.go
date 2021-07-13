@@ -23,6 +23,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*traceIDFetch)(nil)
@@ -31,6 +33,14 @@ type traceIDFetch struct {
 	metadata *common.Metadata
 	schema   Schema
 	traceID  string
+}
+
+func (t *traceIDFetch) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
+	traceData, err := ec.FetchTrace(*t.metadata, t.traceID)
+	if err != nil {
+		return nil, err
+	}
+	return traceData.Entities, nil
 }
 
 func (t *traceIDFetch) String() string {
