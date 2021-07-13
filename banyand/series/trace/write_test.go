@@ -199,7 +199,7 @@ func Test_traceSeries_Write(t *testing.T) {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if err == nil && len([]byte(got)) < 1 {
+			if err == nil && got < 1 {
 				t.Error("Write() got empty chunkID")
 			}
 		})

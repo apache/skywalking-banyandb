@@ -17,11 +17,7 @@
 
 package common
 
-import (
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-)
-
-type ChunkID []byte
+type ChunkID uint64
 type SeriesID uint64
 
 const (
@@ -39,12 +35,12 @@ func (c ChunkIDs) HashIntersect(other ChunkIDs) ChunkIDs {
 	}
 	smaller, larger, minLen := min(c, other)
 	intersection := make([]ChunkID, 0, minLen)
-	hash := make(map[uint64]struct{})
+	hash := make(map[ChunkID]struct{})
 	for _, item := range smaller {
-		hash[convert.Hash(item)] = struct{}{}
+		hash[item] = struct{}{}
 	}
 	for _, item := range larger {
-		if _, exist := hash[convert.Hash(item)]; exist {
+		if _, exist := hash[item]; exist {
 			intersection = append(intersection, item)
 		}
 	}

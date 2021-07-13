@@ -108,7 +108,7 @@ func GenerateEntities(g ChunkIDGenerator) []data.Entity {
 			b.BuildFields("trace_id", generateRndServiceName(rand.Int63()), "http.method", "GET"),
 			b.BuildTimeStamp(time.Now()),
 		)
-		entities = append(entities, data.Entity{Entity: *et})
+		entities = append(entities, data.Entity{Entity: et})
 	}
 	return entities
 }
@@ -145,7 +145,7 @@ func (f *mockDataFactory) MockParentPlan() logical2.UnresolvedPlan {
 
 func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor2.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
-	ec.EXPECT().FetchTrace(*f.traceMetadata, traceID).Return(data.Trace{
+	ec.EXPECT().FetchTrace(*f.traceMetadata, traceID, series.ScanOptions{}).Return(data.Trace{
 		KindVersion: common.KindVersion{},
 		Entities:    GenerateEntities(GeneratorFromRange(0, common.ChunkID(f.num-1))),
 	}, nil)
@@ -184,7 +184,7 @@ func prepareSchema(assert *require.Assertions) (*common.Metadata, logical2.Schem
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *criteria.Metadata(nil),
+		Spec:        criteria.Metadata(nil),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)

@@ -54,7 +54,7 @@ func (t *traceSeries) FetchTrace(traceID string, opt series.ScanOptions) (trace 
 	}
 	chunkIDs := make([]common.ChunkID, len(bb))
 	for i, b := range bb {
-		chunkIDs[i] = b
+		chunkIDs[i] = common.ChunkID(convert.BytesToUint64(b))
 	}
 	entities, errEntity := t.FetchEntity(chunkIDs, opt)
 	if errEntity != nil {
@@ -113,7 +113,7 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 					}
 					chunk := make([]byte, len(key)-8-1)
 					copy(chunk, key[8+1:])
-					chunkID := common.ChunkID(chunk)
+					chunkID := common.ChunkID(convert.BytesToUint64(chunk))
 					chunkIDs = append(chunkIDs, chunkID)
 					num++
 					if num > total {
@@ -149,7 +149,8 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 	if !fetchDataBinary && len(fetchFieldsIndices) < 1 {
 		return nil, ErrProjectionEmpty
 	}
-	for _, chunkID := range chunkIDs {
+	for _, id := range chunkIDs {
+		chunkID := uint64(id)
 		shardID, errParseID := t.idGen.ParseShardID(chunkID)
 		if errParseID != nil {
 			err = multierr.Append(err, errParseID)
@@ -158,7 +159,7 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 		if errParseTS != nil {
 			err = multierr.Append(err, errParseTS)
 		}
-		ref, chunkErr := t.reader.Reader(shardID, chunkIDMapping, ts, ts).Get(chunkID)
+		ref, chunkErr := t.reader.Reader(shardID, chunkIDMapping, ts, ts).Get(convert.Uint64ToBytes(chunkID))
 		if chunkErr != nil {
 			err = multierr.Append(err, chunkErr)
 			continue
@@ -168,7 +169,7 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 		state := sRef[0]
 
 		t.l.Debug().
-			Hex("chunk_id", chunkID).
+			Uint64("chunk_id", chunkID).
 			Hex("id", ref).
 			Uint64("series_id", convert.BytesToUint64(seriesID)).
 			Uint("shard_id", shardID).

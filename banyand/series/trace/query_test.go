@@ -32,7 +32,7 @@ import (
 func Test_traceSeries_FetchEntity(t *testing.T) {
 	type args struct {
 		chunkIDIndices []int
-		chunkIDs       []string
+		chunkIDs       common.ChunkIDs
 		opt            series.ScanOptions
 	}
 	tests := []struct {
@@ -92,7 +92,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 		{
 			name: "invalid chunk ids",
 			args: args{
-				chunkIDs: []string{"x"},
+				chunkIDs: common.ChunkIDs{0},
 				opt:      series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
 			wantErr: true,
@@ -100,7 +100,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 		{
 			name: "mix up invalid/valid ids",
 			args: args{
-				chunkIDs:       []string{"undefined"},
+				chunkIDs:       common.ChunkIDs{0},
 				chunkIDIndices: []int{0, 1},
 				opt:            series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
@@ -136,7 +136,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 				chunkIDCriteria = append(chunkIDCriteria, chunkIDs[i])
 			}
 			for _, id := range tt.args.chunkIDs {
-				chunkIDCriteria = append(chunkIDCriteria, common.ChunkID(id))
+				chunkIDCriteria = append(chunkIDCriteria, id)
 			}
 			entities, err := ts.FetchEntity(chunkIDCriteria, tt.args.opt)
 			if (err != nil) != tt.wantErr {
@@ -212,7 +212,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		start uint64
 		end   uint64
 	}
-	baseTS := uint64(time.Now().UnixNano())
+	baseTS := uint64((time.Now().UnixNano() / 1e6) * 1e6)
 	tests := []struct {
 		name         string
 		args         args

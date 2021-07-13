@@ -18,18 +18,20 @@
 package series
 
 import (
-	"github.com/pkg/errors"
-
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"time"
 )
 
-var ErrInvalidID = errors.New("invalid id")
+const (
+	timeStampLen = 41 + 1
+	shardIDLen   = 22
+)
+
+var startTime = uint64(time.Date(2021, 07, 01, 23, 0, 0, 0, time.UTC).UTC().UnixNano() / 1e6)
 
 type IDGen interface {
-	Next(shard uint, ts uint64) []byte
-	ParseShardID(ID []byte) (uint, error)
-	ParseTS(ID []byte) (uint64, error)
+	Next(shard uint, ts uint64) uint64
+	ParseShardID(ID uint64) (uint, error)
+	ParseTS(ID uint64) (uint64, error)
 }
 
 func NewIDGen() IDGen {
@@ -41,20 +43,17 @@ var _ IDGen = (*localID)(nil)
 type localID struct {
 }
 
-func (l *localID) Next(shard uint, ts uint64) []byte {
-	return bytes.Join(convert.Uint32ToBytes(uint32(shard)), convert.Uint64ToBytes(ts))
+func (l *localID) Next(shard uint, ts uint64) uint64 {
+	df := ts/1e6 - startTime
+	id := (df << shardIDLen) | uint64(shard)
+	return id
 }
 
-func (l *localID) ParseShardID(ID []byte) (uint, error) {
-	if len(ID) < 12 {
-		return 0, ErrInvalidID
-	}
-	return uint(convert.BytesToUint32(ID[:4])), nil
+func (l *localID) ParseShardID(ID uint64) (uint, error) {
+	shardID := (ID << timeStampLen) >> timeStampLen
+	return uint(shardID), nil
 }
 
-func (l *localID) ParseTS(ID []byte) (uint64, error) {
-	if len(ID) < 12 {
-		return 0, ErrInvalidID
-	}
-	return convert.BytesToUint64(ID[4:]), nil
+func (l *localID) ParseTS(ID uint64) (uint64, error) {
+	return (ID>>shardIDLen + startTime) * 1e6, nil
 }

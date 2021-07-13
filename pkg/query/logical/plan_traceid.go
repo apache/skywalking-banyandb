@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
@@ -36,7 +37,7 @@ type traceIDFetch struct {
 }
 
 func (t *traceIDFetch) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
-	traceData, err := ec.FetchTrace(*t.metadata, t.traceID)
+	traceData, err := ec.FetchTrace(*t.metadata, t.traceID, series.ScanOptions{})
 	if err != nil {
 		return nil, err
 	}

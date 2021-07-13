@@ -261,7 +261,7 @@ func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 		if err != nil {
 			t.Error("Write() got error")
 		}
-		if len([]byte(got)) < 1 {
+		if got < 1 {
 			t.Error("Write() got empty chunkID")
 		}
 		chunkIDs = append(chunkIDs, got)
