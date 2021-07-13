@@ -29,6 +29,10 @@ type Executor interface {
 	run.PreRunner
 }
 
-func NewExecutor(ctx context.Context, idx index.Repo, s series.UniModel) (Executor, error) {
-	return nil, nil
+func NewExecutor(ctx context.Context, indexRepo index.Repo, uniModel series.UniModel, schemaRepo series.SchemaRepo) (Executor, error) {
+	return &queryProcessor{
+		Repo:       indexRepo,
+		UniModel:   uniModel,
+		schemaRepo: schemaRepo,
+	}, nil
 }

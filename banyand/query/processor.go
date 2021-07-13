@@ -2,15 +2,17 @@ package query
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -18,14 +20,18 @@ const (
 	moduleName = "query-processor"
 )
 
-var _ Executor = (*queryProcessor)(nil)
-var _ bus.MessageListener = (*queryProcessor)(nil)
+var (
+	_ Executor                  = (*queryProcessor)(nil)
+	_ bus.MessageListener       = (*queryProcessor)(nil)
+	_ executor.ExecutionContext = (*queryProcessor)(nil)
+)
 
 type queryProcessor struct {
-	executor.ExecutionContext
-	log     *logger.Logger
-	stopCh  chan struct{}
-	liaison bus.Subscriber
+	index.Repo
+	series.UniModel
+	schemaRepo series.SchemaRepo
+	log        *logger.Logger
+	liaison    bus.Subscriber
 }
 
 func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
@@ -37,7 +43,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	queryCriteria := v1.GetRootAsEntityCriteria(data, 0)
 	q.log.Info().
 		Msg("received a query event")
-	analyzer := logical.DefaultAnalyzer()
+	analyzer := logical.NewAnalyzer(q.schemaRepo)
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
 		Spec:        queryCriteria.Metadata(nil),

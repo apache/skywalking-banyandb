@@ -65,7 +65,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	q, err := query.NewExecutor(ctx, idx, traceSeries)
+	q, err := query.NewExecutor(ctx, idx, traceSeries, traceSeries)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}
