@@ -77,7 +77,7 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 		states = append(states, StateSuccess)
 	case series.TraceStateError:
 		states = append(states, StateError)
-	default:
+	case series.TraceStateDefault:
 		states = append(states, StateSuccess, StateError)
 	}
 	seekKeys := make([][]byte, 0, len(states))
