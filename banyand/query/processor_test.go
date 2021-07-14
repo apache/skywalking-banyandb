@@ -56,7 +56,7 @@ func TestQueryProcessor(t *testing.T) {
 
 	// Init `Query` module
 	executor, err := NewExecutor(context.TODO(), repo, nil, traceSvc, traceSvc)
-	tester.NotNil(executor)
+	tester.NoError(err)
 
 	// :PreRun:
 	// 1) TraceSeries,
