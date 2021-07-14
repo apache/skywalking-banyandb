@@ -19,7 +19,6 @@ package trace
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -41,7 +40,6 @@ import (
 )
 
 const (
-	traceSeriesIDTemp = "%s:%s"
 	// KV stores
 	chunkIDMapping = "chunkIDMapping"
 	startTimeIndex = "startTimeIndex"
@@ -111,7 +109,7 @@ func (s *service) PreRun() error {
 			return errTS
 		}
 		s.db.Register(ts)
-		id := fmt.Sprintf(traceSeriesIDTemp, ts.name, ts.group)
+		id := formatTraceSeriesID(ts.name, ts.group)
 		s.schemaMap[id] = ts
 		s.l.Info().Str("id", id).Msg("initialize Trace series")
 	}
@@ -184,7 +182,7 @@ func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uin
 }
 
 func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
-	id := getTraceSeriesID(traceSeries)
+	id := formatTraceSeriesID(traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
 	s.l.Debug().Str("id", id).Msg("got Trace series")
 	ts, ok := s.schemaMap[id]
 	if !ok {
@@ -193,8 +191,8 @@ func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
 	return ts, nil
 }
 
-func getTraceSeriesID(traceSeries common.Metadata) string {
-	return fmt.Sprintf(traceSeriesIDTemp, traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
+func formatTraceSeriesID(name, group string) string {
+	return name + ":" + group
 }
 
 type traceSeries struct {
