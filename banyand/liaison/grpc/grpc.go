@@ -35,14 +35,20 @@ import (
 )
 
 type Server struct {
-	addr     string
-	log      *logger.Logger
-	ser      *grpclib.Server
-	pipeline queue.Queue
-	repo     discovery.ServiceRepo
+	addr       string
+	log        *logger.Logger
+	ser        *grpclib.Server
+	pipeline   queue.Queue
+	repo       discovery.ServiceRepo
+	shardInfo  *shardInfo
+	seriesInfo *seriesInfo
 }
 
-func (s *Server) Rev(message bus.Message) (resp bus.Message) {
+type shardInfo struct {
+	log *logger.Logger
+}
+
+func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 	data, ok := message.Data().([]byte)
 	if !ok {
 		s.log.Warn().Msg("invalid event data type")
@@ -56,15 +62,42 @@ func (s *Server) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
+type seriesInfo struct {
+	log *logger.Logger
+}
+
+func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
+	data, ok := message.Data().([]byte)
+	if !ok {
+		s.log.Warn().Msg("invalid event data type")
+		return
+	}
+	seriesEvent := v1.GetRootAsSeriesEvent(data, 0)
+	s.log.Info().
+		Str("action", seriesEvent.Action().String()).
+		Str("name", string(seriesEvent.Series(nil).Name())).
+		Str("group", string(seriesEvent.Series(nil).Group())).
+		Msg("received a shard event")
+	return
+}
+
 func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
-	return s.repo.Subscribe(event.TopicShardEvent, s)
+	s.shardInfo.log = s.log
+	s.seriesInfo.log = s.log
+	err := s.repo.Subscribe(event.TopicShardEvent, s.shardInfo)
+	if err != nil {
+		return err
+	}
+	return s.repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
 }
 
 func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
 	return &Server{
-		pipeline: pipeline,
-		repo:     repo,
+		pipeline:   pipeline,
+		repo:       repo,
+		shardInfo:  &shardInfo{},
+		seriesInfo: &seriesInfo{},
 	}
 }
 

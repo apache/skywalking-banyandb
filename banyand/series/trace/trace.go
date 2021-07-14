@@ -120,18 +120,26 @@ func (s *service) PreRun() error {
 }
 
 func (s *service) Serve() error {
+	now := time.Now().UnixNano()
 	for _, sMeta := range s.schemaMap {
+		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), fb.BuildSeriesEvent(
+			sMeta.name,
+			sMeta.group,
+			sMeta.fieldsNamesCompositeSeriesID,
+		)))
+		if err != nil {
+			return err
+		}
 		for i := 0; i < int(sMeta.shardNum); i++ {
-			now := time.Now().UnixNano()
-			_, err := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), fb.BuildShardEvent(
+			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), fb.BuildShardEvent(
 				s.repo.NodeID(),
 				sMeta.name,
 				sMeta.group,
 				uint(i),
 				sMeta.shardNum,
 			)))
-			if err != nil {
-				return err
+			if errShard != nil {
+				return errShard
 			}
 		}
 	}
@@ -185,24 +193,25 @@ func getTraceSeriesID(traceSeries common.Metadata) string {
 }
 
 type traceSeries struct {
-	name               string
-	group              string
-	idGen              series.IDGen
-	l                  *logger.Logger
-	schema             apischema.TraceSeries
-	reader             storage.StoreRepo
-	writePoint         storage.GetWritePoint
-	shardNum           uint
-	fieldIndex         map[string]uint
-	traceIDIndex       uint
-	traceIDFieldName   string
-	stateFieldName     string
-	stateFieldType     v1.FieldType
-	strStateSuccessVal string
-	strStateErrorVal   string
-	intStateSuccessVal int64
-	intStateErrorVal   int64
-	stateIndex         uint
+	name                         string
+	group                        string
+	idGen                        series.IDGen
+	l                            *logger.Logger
+	schema                       apischema.TraceSeries
+	reader                       storage.StoreRepo
+	writePoint                   storage.GetWritePoint
+	shardNum                     uint
+	fieldIndex                   map[string]uint
+	traceIDIndex                 uint
+	traceIDFieldName             string
+	stateFieldName               string
+	stateFieldType               v1.FieldType
+	strStateSuccessVal           string
+	strStateErrorVal             string
+	intStateSuccessVal           int64
+	intStateErrorVal             int64
+	stateIndex                   uint
+	fieldsNamesCompositeSeriesID [][]byte
 }
 
 func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger) (*traceSeries, error) {
@@ -292,6 +301,7 @@ func (t *traceSeries) buildFieldIndex() error {
 
 	fieldsLen := spec.FieldsLength()
 	index := make(map[string]uint, fieldsLen)
+	t.fieldIndex = index
 	for i := 0; i < fieldsLen; i++ {
 		fieldSpec := new(v1.FieldSpec)
 		if !spec.Fields(fieldSpec, i) {
@@ -322,7 +332,11 @@ func (t *traceSeries) buildFieldIndex() error {
 	}
 	t.stateFieldName = string(stateFieldName)
 
-	t.fieldIndex = index
+	t.fieldsNamesCompositeSeriesID = make([][]byte, 0, reservedMap.SeriesIdLength())
+	for i := 0; i < reservedMap.SeriesIdLength(); i++ {
+		t.fieldsNamesCompositeSeriesID = append(t.fieldsNamesCompositeSeriesID, reservedMap.SeriesId(i))
+	}
+
 	return nil
 }
 

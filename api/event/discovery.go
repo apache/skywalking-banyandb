@@ -32,6 +32,14 @@ var (
 		ID:   ShardEventKindVersion.String(),
 		Type: bus.ChTypeUnidirectional,
 	}
+	SeriesEventKindVersion = common.KindVersion{
+		Version: "v1",
+		Kind:    "event-series",
+	}
+	TopicSeriesEvent = bus.Topic{
+		ID:   SeriesEventKindVersion.String(),
+		Type: bus.ChTypeUnidirectional,
+	}
 )
 
 type Shard struct {
@@ -39,6 +47,7 @@ type Shard struct {
 	Payload v1.ShardEvent
 }
 
-func NewShard() *Shard {
-	return &Shard{KindVersion: ShardEventKindVersion}
+type Series struct {
+	common.KindVersion
+	Payload v1.SeriesEvent
 }

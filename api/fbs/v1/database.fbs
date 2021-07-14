@@ -41,6 +41,13 @@ table ShardEvent {
     time:int64;
 }
 
+table SeriesEvent {
+    series:Metadata;
+    field_names_composite_series_id:[string];
+    action:Action;
+    time:int64;
+}
+
 // Metadata is for multi-tenant, multi-model use
 table Metadata {
     // group contains a set of options, like retention policy, max
