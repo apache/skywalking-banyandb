@@ -57,3 +57,30 @@ func BuildShardEvent(nodeID, seriesName, seriesGroup string, shardID, totalShard
 	b.Finish(v1.ShardEventEnd(b))
 	return b.FinishedBytes()
 }
+
+func BuildSeriesEvent(seriesName, seriesGroup string, fieldNames [][]byte) []byte {
+	now := time.Now().UnixNano()
+	b := flatbuffers.NewBuilder(0)
+	name := b.CreateString(seriesName)
+	group := b.CreateString(seriesGroup)
+	v1.MetadataStart(b)
+	v1.MetadataAddName(b, name)
+	v1.MetadataAddGroup(b, group)
+	md := v1.MetadataEnd(b)
+	var nameOffsets []flatbuffers.UOffsetT
+	for _, fieldName := range fieldNames {
+		nameOffsets = append(nameOffsets, b.CreateByteString(fieldName))
+	}
+	v1.SeriesEventStartFieldNamesCompositeSeriesIdVector(b, len(fieldNames))
+	for i := len(nameOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(nameOffsets[i])
+	}
+	names := b.EndVector(len(fieldNames))
+	v1.SeriesEventStart(b)
+	v1.SeriesEventAddSeries(b, md)
+	v1.SeriesEventAddFieldNamesCompositeSeriesId(b, names)
+	v1.SeriesEventAddAction(b, v1.ActionPut)
+	v1.SeriesEventAddTime(b, now)
+	b.Finish(v1.SeriesEventEnd(b))
+	return b.FinishedBytes()
+}

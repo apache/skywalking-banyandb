@@ -324,6 +324,109 @@ func ShardEventEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
+type SeriesEvent struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsSeriesEvent(buf []byte, offset flatbuffers.UOffsetT) *SeriesEvent {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &SeriesEvent{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsSeriesEvent(buf []byte, offset flatbuffers.UOffsetT) *SeriesEvent {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &SeriesEvent{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *SeriesEvent) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *SeriesEvent) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *SeriesEvent) Series(obj *Metadata) *Metadata {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(Metadata)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *SeriesEvent) FieldNamesCompositeSeriesId(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *SeriesEvent) FieldNamesCompositeSeriesIdLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *SeriesEvent) Action() Action {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return Action(rcv._tab.GetInt8(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *SeriesEvent) MutateAction(n Action) bool {
+	return rcv._tab.MutateInt8Slot(8, int8(n))
+}
+
+func (rcv *SeriesEvent) Time() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SeriesEvent) MutateTime(n int64) bool {
+	return rcv._tab.MutateInt64Slot(10, n)
+}
+
+func SeriesEventStart(builder *flatbuffers.Builder) {
+	builder.StartObject(4)
+}
+func SeriesEventAddSeries(builder *flatbuffers.Builder, series flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(series), 0)
+}
+func SeriesEventAddFieldNamesCompositeSeriesId(builder *flatbuffers.Builder, fieldNamesCompositeSeriesId flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(fieldNamesCompositeSeriesId), 0)
+}
+func SeriesEventStartFieldNamesCompositeSeriesIdVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func SeriesEventAddAction(builder *flatbuffers.Builder, action Action) {
+	builder.PrependInt8Slot(2, int8(action), 0)
+}
+func SeriesEventAddTime(builder *flatbuffers.Builder, time int64) {
+	builder.PrependInt64Slot(3, time, 0)
+}
+func SeriesEventEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
 type Metadata struct {
 	_tab flatbuffers.Table
 }
