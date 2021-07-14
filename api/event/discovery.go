@@ -28,18 +28,12 @@ var (
 		Version: "v1",
 		Kind:    "event-shard",
 	}
-	TopicShardEvent = bus.Topic{
-		ID:   ShardEventKindVersion.String(),
-		Type: bus.ChTypeUnidirectional,
-	}
+	TopicShardEvent        = bus.UniTopic(ShardEventKindVersion.String())
 	SeriesEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "event-series",
 	}
-	TopicSeriesEvent = bus.Topic{
-		ID:   SeriesEventKindVersion.String(),
-		Type: bus.ChTypeUnidirectional,
-	}
+	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
 )
 
 type Shard struct {
