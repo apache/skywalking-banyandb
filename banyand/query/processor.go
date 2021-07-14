@@ -8,6 +8,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -29,18 +30,17 @@ var (
 type queryProcessor struct {
 	index.Repo
 	series.UniModel
-	schemaRepo series.SchemaRepo
-	log        *logger.Logger
-	liaison    bus.Subscriber
+	schemaRepo  series.SchemaRepo
+	log         *logger.Logger
+	serviceRepo discovery.ServiceRepo
 }
 
 func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
+	queryCriteria, ok := message.Data().(*v1.EntityCriteria)
 	if !ok {
 		q.log.Warn().Msg("invalid event data type")
 		return
 	}
-	queryCriteria := v1.GetRootAsEntityCriteria(data, 0)
 	q.log.Info().
 		Msg("received a query event")
 	analyzer := logical.NewAnalyzer(q.schemaRepo)
@@ -75,5 +75,5 @@ func (q *queryProcessor) Name() string {
 
 func (q *queryProcessor) PreRun() error {
 	q.log = logger.GetLogger(moduleName)
-	return q.liaison.Subscribe(event.TopicShardEvent, q)
+	return q.serviceRepo.Subscribe(event.TopicQueryEvent, q)
 }

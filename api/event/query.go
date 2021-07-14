@@ -10,5 +10,7 @@ var (
 		Version: "v1",
 		Kind:    "event-query",
 	}
-	TopicQueryEvent = bus.UniTopic(QueryEventKindVersion.String())
+	// TopicQueryEvent is a bidirectional topic for request/response communication
+	// between Liaison and Query module
+	TopicQueryEvent = bus.BiTopic(QueryEventKindVersion.String())
 )
