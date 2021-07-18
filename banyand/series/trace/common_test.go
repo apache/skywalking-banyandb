@@ -53,8 +53,11 @@ func (b ByEntityID) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
 }
 
-func setup(t *testing.T) (*traceSeries, func()) {
-	_ = logger.Bootstrap()
+func setup(t testing.TB) (*traceSeries, func()) {
+	_ = logger.Init(logger.Logging{
+		Env:   "test",
+		Level: "warn",
+	})
 	db, err := storage.NewDB(context.TODO(), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, db.FlagSet().Parse(nil))
@@ -241,7 +244,7 @@ func getEntityWithTS(id string, binary []byte, ts uint64, items ...interface{}) 
 	}
 }
 
-func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity) (chunkIDs []common.ChunkID) {
+func setUpTestData(t testing.TB, ts *traceSeries, seriesEntities []seriesEntity) (chunkIDs []common.ChunkID) {
 	chunkIDs = make([]common.ChunkID, 0, len(seriesEntities))
 	for _, se := range seriesEntities {
 		seriesID := []byte(se.seriesID)

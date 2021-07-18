@@ -30,10 +30,21 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
+
+var (
+	stateMap = make([][]byte, 3)
+)
+
+func init() {
+	stateMap[series.TraceStateDefault] = []byte{StateSuccess, StateError}
+	stateMap[series.TraceStateSuccess] = []byte{StateSuccess}
+	stateMap[series.TraceStateError] = []byte{StateError}
+}
 
 func (t *traceSeries) FetchTrace(traceID string, opt series.ScanOptions) (trace data.Trace, err error) {
 	if traceID == "" {
@@ -71,23 +82,16 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 	if total < 1 {
 		total = 10
 	}
-	states := make([]byte, 0, 2)
-	switch opt.State {
-	case series.TraceStateSuccess:
-		states = append(states, StateSuccess)
-	case series.TraceStateError:
-		states = append(states, StateError)
-	case series.TraceStateDefault:
-		states = append(states, StateSuccess, StateError)
-	}
-	seekKeys := make([][]byte, 0, len(states))
-	startTimeBytes := convert.Uint64ToBytes(startTime)
+	states := stateMap[opt.State]
+	var seekKeys []byte
+	buf := bytes.Borrow()
+	defer bytes.Return(buf)
 	for _, state := range states {
-		key := make([]byte, 8+1)
-		key[0] = state
-		copy(key[1:], startTimeBytes)
-		seekKeys = append(seekKeys, key)
+		_, _ = buf.AppendByte(state)
+		_, _ = buf.AppendUInt64(startTime)
 	}
+	seekKeys = buf.Bytes()
+	defer bytes.Return(buf)
 	chunkIDs := make([]common.ChunkID, 0, total)
 	var num uint32
 	opts := kv.DefaultScanOpts
@@ -95,10 +99,10 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 	opts.PrefetchSize = int(total)
 	var errAll error
 	for i := uint(0); i < t.shardNum; i++ {
-		for _, seekKey := range seekKeys {
-			state := seekKey[0]
+		for j := 0; j < len(states); j++ {
+			state := seekKeys[j*9]
 			err := t.reader.Reader(i, startTimeIndex, startTime, endTime).Scan(
-				seekKey,
+				seekKeys[j*9:j*9+9],
 				opts,
 				func(shardID int, key []byte, _ func() ([]byte, error)) error {
 					if len(key) <= 9 {
@@ -111,9 +115,7 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 					if ts > endTime {
 						return nil
 					}
-					chunk := make([]byte, len(key)-8-1)
-					copy(chunk, key[8+1:])
-					chunkID := common.ChunkID(convert.BytesToUint64(chunk))
+					chunkID := common.ChunkID(convert.BytesToUint64(key[8+1:]))
 					chunkIDs = append(chunkIDs, chunkID)
 					num++
 					if num > total {
@@ -149,6 +151,8 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 	if !fetchDataBinary && len(fetchFieldsIndices) < 1 {
 		return nil, ErrProjectionEmpty
 	}
+	buf := bytes.Borrow()
+	defer bytes.Return(buf)
 	for _, id := range chunkIDs {
 		chunkID := uint64(id)
 		shardID, errParseID := t.idGen.ParseShardID(chunkID)
@@ -159,7 +163,9 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 		if errParseTS != nil {
 			err = multierr.Append(err, errParseTS)
 		}
-		ref, chunkErr := t.reader.Reader(shardID, chunkIDMapping, ts, ts).Get(convert.Uint64ToBytes(chunkID))
+		_, _ = buf.AppendUInt64(chunkID)
+		ref, chunkErr := t.reader.Reader(shardID, chunkIDMapping, ts, ts).Get(buf.Bytes())
+		buf.Reset()
 		if chunkErr != nil {
 			err = multierr.Append(err, chunkErr)
 			continue
