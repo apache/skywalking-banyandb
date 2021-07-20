@@ -207,12 +207,14 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		str = strings.Join(arr, "")
 		seriesID := []byte(str)
 		shardNum := shardEventData.Shard(nil).Id()
+		if shardNum < 1 {
+			shardNum = 1
+		}
 		shardID, shardIdError := partition.ShardID(seriesID, uint(shardNum))
-		log.Println("shardNum", shardIdError)
 		if shardIdError != nil {
 			return shardIdError
 		}
-		log.Println(shardID)
+		log.Println("shardID:", shardID)
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
 		builder.Finish(v1.WriteResponseEnd(builder))

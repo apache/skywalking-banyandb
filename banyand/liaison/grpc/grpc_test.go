@@ -61,7 +61,7 @@ func Test_trace_write(t *testing.T) {
 	b := fb.NewWriteEntityBuilder()
 	binary := byte(12)
 	criteria, e := b.BuildWriteEntity(
-		b.BuildEntity("entityId", []byte{binary}, "service_instance_id", "service_id"),
+		b.BuildEntity("entityId", []byte{binary}, "service_instance_id", "service_id_1234", "service_instance_id_43543"),
 		b.BuildMetaData("default", "trace"),
 	)
 	if e != nil {
