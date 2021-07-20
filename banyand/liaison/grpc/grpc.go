@@ -21,10 +21,12 @@ import (
 	"context"
 	"github.com/apache/skywalking-banyandb/api/common"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"io"
 	"log"
 	"net"
+	"strings"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
@@ -51,7 +53,7 @@ type Server struct {
 type shardInfo struct {
 	log *logger.Logger
 }
-
+var shardEventData *v1.ShardEvent
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 	data, ok := message.Data().([]byte)
 	if !ok {
@@ -165,25 +167,40 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 			return  ruleError
 		}
 		seriesIdLen := seriesEventData.FieldNamesCompositeSeriesIdLength()
+		var str string
 		for i := 0; i < seriesIdLen; i++ {
 			id := seriesEventData.FieldNamesCompositeSeriesId(i)
 			if defined, sub := schema.FieldSubscript(string(id)); defined {
-				log.Println("FieldSubscript", sub)
 				var field v1.Field
 				if ok := writeEntity.Entity(nil).Fields(&field, sub); !ok {
 					return nil
 				}
-
+				unionValueTable := new(flatbuffers.Table)
+				if ok := field.Value(unionValueTable); !ok {
+					return nil
+				}
+				var arr []string
+				if field.ValueType() == v1.ValueTypeStringArray {
+					unionStrArr := new(v1.StringArray)
+					unionStrArr.Init(unionValueTable.Bytes, unionValueTable.Pos)
+					for i := 0; i < unionStrArr.ValueLength(); i++ {
+						arr = append(arr, string(unionStrArr.Value(i)))
+					}
+				}
+				str = strings.Join(arr, "")
 			}
 		}
+		seriesID := []byte(str)
+		shardNum := shardEventData.Shard(nil).Id()
+		shardID := partition.ShardID(seriesID, uint(shardNum))
+
+		log.Println(shardID)
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
 		builder.Finish(v1.WriteResponseEnd(builder))
 		if errSend := TraceWriteServer.Send(builder); errSend != nil {
 			return errSend
 		}
-		//writeEntity.Entity().Fields()
-		//writeEntity.MetaData(nil).Group()
 		//serviceID+instanceID
 		//seriesID := hash(fieds, f1, f2)
 		//shardID := shardingFunc(seriesID, shardNum)
