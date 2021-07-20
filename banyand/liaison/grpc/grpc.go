@@ -19,25 +19,24 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"github.com/apache/skywalking-banyandb/api/common"
-	apischema "github.com/apache/skywalking-banyandb/api/schema"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
-	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
-	"io"
-	"log"
-	"net"
-	"strings"
-
-	flatbuffers "github.com/google/flatbuffers/go"
-	grpclib "google.golang.org/grpc"
-
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
+	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	flatbuffers "github.com/google/flatbuffers/go"
+	grpclib "google.golang.org/grpc"
+	"io"
+	"log"
+	"net"
+	"strings"
 )
 
 type Server struct {
@@ -61,6 +60,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	shardEvent := v1.GetRootAsShardEvent(data, 0)
+	shardEventData = shardEvent
 	s.log.Info().
 		Str("action", shardEvent.Action().String()).
 		Uint64("shardID", shardEvent.Shard(nil).Id()).
@@ -168,6 +168,7 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		}
 		seriesIdLen := seriesEventData.FieldNamesCompositeSeriesIdLength()
 		var str string
+		var arr []string
 		for i := 0; i < seriesIdLen; i++ {
 			id := seriesEventData.FieldNamesCompositeSeriesId(i)
 			if defined, sub := schema.FieldSubscript(string(id)); defined {
@@ -179,21 +180,38 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 				if ok := field.Value(unionValueTable); !ok {
 					return nil
 				}
-				var arr []string
 				if field.ValueType() == v1.ValueTypeStringArray {
 					unionStrArr := new(v1.StringArray)
 					unionStrArr.Init(unionValueTable.Bytes, unionValueTable.Pos)
-					for i := 0; i < unionStrArr.ValueLength(); i++ {
-						arr = append(arr, string(unionStrArr.Value(i)))
+					for j := 0; j < unionStrArr.ValueLength(); j++ {
+						arr = append(arr, string(unionStrArr.Value(j)))
 					}
+				} else if field.ValueType() == v1.ValueTypeIntArray {
+					unionIntArr := new(v1.IntArray)
+					unionIntArr.Init(unionValueTable.Bytes, unionValueTable.Pos)
+					for t := 0; t < unionIntArr.ValueLength(); t++ {
+						arr = append(arr, fmt.Sprint(unionIntArr.Value(t)))
+					}
+				} else if field.ValueType() == v1.ValueTypeInt {
+					unionInt := new(v1.Int)
+					unionInt.Init(unionValueTable.Bytes, unionValueTable.Pos)
+					arr = append(arr, fmt.Sprint(unionInt.Value()))
+				} else if field.ValueType() == v1.ValueTypeString {
+					unionStr := new(v1.String)
+					unionStr.Init(unionValueTable.Bytes, unionValueTable.Pos)
+					arr = append(arr, string(unionStr.Value()))
 				}
-				str = strings.Join(arr, "")
 			}
+
 		}
+		str = strings.Join(arr, "")
 		seriesID := []byte(str)
 		shardNum := shardEventData.Shard(nil).Id()
-		shardID := partition.ShardID(seriesID, uint(shardNum))
-
+		shardID, shardIdError := partition.ShardID(seriesID, uint(shardNum))
+		log.Println("shardNum", shardIdError)
+		if shardIdError != nil {
+			return shardIdError
+		}
 		log.Println(shardID)
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
@@ -201,9 +219,6 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		if errSend := TraceWriteServer.Send(builder); errSend != nil {
 			return errSend
 		}
-		//serviceID+instanceID
-		//seriesID := hash(fieds, f1, f2)
-		//shardID := shardingFunc(seriesID, shardNum)
 		//queue
 	}
 }

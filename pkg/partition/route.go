@@ -18,8 +18,12 @@
 package partition
 
 import "github.com/apache/skywalking-banyandb/pkg/convert"
+import "github.com/pkg/errors"
 
-func ShardID(key []byte, shardNum uint) uint {
+func ShardID(key []byte, shardNum uint) (uint, error) {
+	if shardNum < 1 {
+		return 0, errors.New("invalid shardNum")
+	}
 	encodeKey := convert.Hash(key)
-	return uint(encodeKey % uint64(shardNum))
+	return uint(encodeKey % uint64(shardNum)), nil
 }
