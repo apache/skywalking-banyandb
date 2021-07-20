@@ -60,8 +60,8 @@ func Test_trace_write(t *testing.T) {
 	ctx := context.Background()
 	b := fb.NewWriteEntityBuilder()
 	binary := byte(12)
-	builder, e := b.BuildWriteEntity(
-		b.BuildEntity("entityId", []byte{binary}, "service_name", "endpoint_id"),
+	criteria, e := b.BuildWriteEntity(
+		b.BuildEntity("entityId", []byte{binary}, "service_instance_id", "service_id"),
 		b.BuildMetaData("default", "trace"),
 	)
 	if e != nil {
@@ -86,7 +86,7 @@ func Test_trace_write(t *testing.T) {
 			log.Println("writeResponse: ", writeResponse)
 		}
 	}()
-	if errSend := stream.Send(builder); errSend != nil {
+	if errSend := stream.Send(criteria); errSend != nil {
 		log.Fatalf("Failed to send a note: %v", errSend)
 	}
 	if errorSend := stream.CloseSend(); errorSend != nil {

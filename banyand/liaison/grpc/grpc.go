@@ -19,6 +19,9 @@ package grpc
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/api/common"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"io"
 	"log"
 	"net"
@@ -67,6 +70,7 @@ type seriesInfo struct {
 	log *logger.Logger
 }
 
+var seriesEventData *v1.SeriesEvent
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 	data, ok := message.Data().([]byte)
 	if !ok {
@@ -74,6 +78,7 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	seriesEvent := v1.GetRootAsSeriesEvent(data, 0)
+	seriesEventData = seriesEvent
 	s.log.Info().
 		Str("action", seriesEvent.Action().String()).
 		Str("name", string(seriesEvent.Series(nil).Name())).
@@ -115,9 +120,7 @@ func (s *Server) FlagSet() *run.FlagSet {
 func (s *Server) Validate() error {
 	return nil
 }
-func init() {
-	//encoding.RegisterCodec(flatbuffers.FlatbuffersCodec{})
-}
+
 func (s *Server) Serve() error {
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
@@ -137,11 +140,8 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-//var _ gomock.TestHelper = (*TraceServer)(nil)
-
 type TraceServer struct {
 	v1.UnimplementedTraceServer
-	writeData []*v1.WriteEntity
 }
 
 func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
@@ -153,8 +153,29 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		if err != nil {
 			return err
 		}
-		log.Println("writeEntity:", writeEntity)
-		t.writeData = append(t.writeData, writeEntity)
+
+		//log.Println("writeEntity:", writeEntity)
+		ana := logical.DefaultAnalyzer()
+		metadata := common.Metadata{
+			KindVersion: apischema.SeriesKindVersion,
+			Spec:        writeEntity.MetaData(nil),
+		}
+		schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
+		if ruleError != nil {
+			return  ruleError
+		}
+		seriesIdLen := seriesEventData.FieldNamesCompositeSeriesIdLength()
+		for i := 0; i < seriesIdLen; i++ {
+			id := seriesEventData.FieldNamesCompositeSeriesId(i)
+			if defined, sub := schema.FieldSubscript(string(id)); defined {
+				log.Println("FieldSubscript", sub)
+				var field v1.Field
+				if ok := writeEntity.Entity(nil).Fields(&field, sub); !ok {
+					return nil
+				}
+
+			}
+		}
 		builder := flatbuffers.NewBuilder(0)
 		v1.WriteResponseStart(builder)
 		builder.Finish(v1.WriteResponseEnd(builder))

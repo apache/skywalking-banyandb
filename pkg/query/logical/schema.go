@@ -30,6 +30,7 @@ import (
 type Schema interface {
 	IndexDefined(string) (bool, *apiv1.IndexObject)
 	FieldDefined(string) bool
+	FieldSubscript(string) (bool, int)
 	CreateRef(names ...string) ([]*fieldRef, error)
 	Map(refs ...*fieldRef) Schema
 	Equal(Schema) bool
@@ -67,6 +68,23 @@ func (s *schema) IndexDefined(field string) (bool, *apiv1.IndexObject) {
 		}
 	}
 	return false, nil
+}
+
+func (s *schema) FieldSubscript(field string) (bool, int) {
+	idxRule := s.indexRule.Spec
+	for i := 0; i < idxRule.ObjectsLength(); i++ {
+		var idxObj apiv1.IndexObject
+		if ok := idxRule.Objects(&idxObj, i); ok {
+			for j := 0; j < idxObj.FieldsLength(); j++ {
+				if field == string(idxObj.Fields(j)) {
+					return true, i
+				}
+			}
+		} else {
+			return false, -1
+		}
+	}
+	return false, -1
 }
 
 func (s *schema) Equal(s2 Schema) bool {
