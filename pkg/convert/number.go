@@ -31,6 +31,12 @@ func Int64ToBytes(i int64) []byte {
 	return buf
 }
 
+func Uint16ToBytes(u uint16) []byte {
+	bs := make([]byte, 2)
+	binary.BigEndian.PutUint16(bs, u)
+	return bs
+}
+
 func Uint32ToBytes(u uint32) []byte {
 	bs := make([]byte, 4)
 	binary.BigEndian.PutUint32(bs, u)
@@ -43,6 +49,10 @@ func BytesToUint64(b []byte) uint64 {
 
 func BytesToUint32(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
+}
+
+func BytesToUint16(b []byte) uint16 {
+	return binary.BigEndian.Uint16(b)
 }
 
 func IntToInt64(numbers ...int) []int64 {

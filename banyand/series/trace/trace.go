@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 const (
@@ -162,12 +163,12 @@ func (s *service) FetchTrace(traceSeries common.Metadata, traceID string, opt se
 	return ts.FetchTrace(traceID, opt)
 }
 
-func (s *service) FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt series.ScanOptions) ([]data.Entity, error) {
+func (s *service) FetchEntity(traceSeries common.Metadata, shardID uint, chunkIDs posting2.List, opt series.ScanOptions) ([]data.Entity, error) {
 	ts, err := s.getSeries(traceSeries)
 	if err != nil {
 		return nil, err
 	}
-	return ts.FetchEntity(chunkIDs, opt)
+	return ts.FetchEntity(chunkIDs, shardID, opt)
 }
 
 func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt series.ScanOptions) ([]data.Entity, error) {

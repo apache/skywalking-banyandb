@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
+	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -50,7 +51,7 @@ type TraceRepo interface {
 	//FetchTrace returns data.Trace by traceID
 	FetchTrace(traceSeries common.Metadata, traceID string, opt ScanOptions) (data.Trace, error)
 	//FetchEntity returns data.Entity by ChunkID
-	FetchEntity(traceSeries common.Metadata, chunkIDs []common.ChunkID, opt ScanOptions) ([]data.Entity, error)
+	FetchEntity(traceSeries common.Metadata, shardID uint, chunkIDs posting2.List, opt ScanOptions) ([]data.Entity, error)
 	//ScanEntity returns data.Entity between a duration by ScanOptions
 	ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
 }

@@ -33,6 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
+	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 )
 
 func (t *traceSeries) FetchTrace(traceID string, opt series.ScanOptions) (trace data.Trace, err error) {
@@ -52,13 +54,22 @@ func (t *traceSeries) FetchTrace(traceID string, opt series.ScanOptions) (trace 
 	if len(bb) < 1 {
 		return trace, nil
 	}
-	chunkIDs := make([]common.ChunkID, len(bb))
-	for i, b := range bb {
-		chunkIDs[i] = common.ChunkID(convert.BytesToUint64(b))
+	dataMap := make(map[uint]posting.List)
+	for _, b := range bb {
+		id := idWithShard{
+			id:      common.ChunkID(convert.BytesToUint64(b[2:])),
+			shardID: uint(convert.BytesToUint16(b[:2])),
+		}
+		placeID(dataMap, id)
 	}
-	entities, errEntity := t.FetchEntity(chunkIDs, opt)
-	if errEntity != nil {
-		return trace, errEntity
+	var entities []data.Entity
+	for s, c := range dataMap {
+		ee, errEntity := t.FetchEntity(c, s, opt)
+		if errEntity != nil {
+			err = multierr.Append(err, errEntity)
+			continue
+		}
+		entities = append(entities, ee...)
 	}
 	return data.Trace{
 		KindVersion: data.TraceKindVersion,
@@ -88,13 +99,14 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 		copy(key[1:], startTimeBytes)
 		seekKeys = append(seekKeys, key)
 	}
-	chunkIDs := make([]common.ChunkID, 0, total)
+	entities := make([]data.Entity, 0, total)
 	var num uint32
 	opts := kv.DefaultScanOpts
 	opts.PrefetchValues = false
 	opts.PrefetchSize = int(total)
 	var errAll error
 	for i := uint(0); i < t.shardNum; i++ {
+		chunkIDs := roaring.NewPostingList()
 		for _, seekKey := range seekKeys {
 			state := seekKey[0]
 			err := t.reader.Reader(i, startTimeIndex, startTime, endTime).Scan(
@@ -113,8 +125,7 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 					}
 					chunk := make([]byte, len(key)-8-1)
 					copy(chunk, key[8+1:])
-					chunkID := common.ChunkID(convert.BytesToUint64(chunk))
-					chunkIDs = append(chunkIDs, chunkID)
+					chunkIDs.Insert(common.ChunkID(convert.BytesToUint64(chunk)))
 					num++
 					if num > total {
 						return kv.ErrStopScan
@@ -125,23 +136,25 @@ func (t *traceSeries) ScanEntity(startTime, endTime uint64, opt series.ScanOptio
 				errAll = multierr.Append(errAll, err)
 			}
 		}
-	}
-	if len(chunkIDs) < 1 {
-		return nil, errAll
-	}
-	entities, err := t.FetchEntity(chunkIDs, opt)
-	if err != nil {
-		errAll = multierr.Append(errAll, err)
+		if chunkIDs.IsEmpty() {
+			continue
+		}
+		ee, err := t.FetchEntity(chunkIDs, i, opt)
+		if err != nil {
+			errAll = multierr.Append(errAll, err)
+			continue
+		}
+		entities = append(entities, ee...)
 	}
 	return entities, errAll
 }
 
-func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOptions) (entities []data.Entity, err error) {
-	chunkIDsLen := len(chunkIDs)
+func (t *traceSeries) FetchEntity(chunkIDs posting.List, shardID uint, opt series.ScanOptions) (entities []data.Entity, err error) {
+	chunkIDsLen := chunkIDs.Len()
 	if chunkIDsLen < 1 {
 		return nil, ErrChunkIDsEmpty
 	}
-	entities = make([]data.Entity, 0, len(chunkIDs))
+	entities = make([]data.Entity, 0, chunkIDsLen)
 	fetchDataBinary, fetchFieldsIndices, errInfo := t.parseFetchInfo(opt)
 	if errInfo != nil {
 		return nil, errInfo
@@ -149,12 +162,10 @@ func (t *traceSeries) FetchEntity(chunkIDs []common.ChunkID, opt series.ScanOpti
 	if !fetchDataBinary && len(fetchFieldsIndices) < 1 {
 		return nil, ErrProjectionEmpty
 	}
-	for _, id := range chunkIDs {
+
+	for iter := chunkIDs.Iterator(); iter.Next(); {
+		id := iter.Current()
 		chunkID := uint64(id)
-		shardID, errParseID := t.idGen.ParseShardID(chunkID)
-		if errParseID != nil {
-			err = multierr.Append(err, errParseID)
-		}
 		ts, errParseTS := t.idGen.ParseTS(chunkID)
 		if errParseTS != nil {
 			err = multierr.Append(err, errParseTS)
@@ -251,4 +262,20 @@ func (t *traceSeries) getEntityByInternalRef(seriesID []byte, state State, fetch
 	return data.Entity{
 		Entity: v1.GetRootAsEntity(b.FinishedBytes(), 0),
 	}, nil
+}
+
+type idWithShard struct {
+	id      common.ChunkID
+	shardID uint
+}
+
+func placeID(chunkIDCriteria map[uint]posting.List, data idWithShard) {
+	list, ok := chunkIDCriteria[data.shardID]
+	if ok {
+		list.Insert(data.id)
+		return
+	}
+	list = roaring.NewPostingList()
+	list.Insert(data.id)
+	chunkIDCriteria[data.shardID] = list
 }

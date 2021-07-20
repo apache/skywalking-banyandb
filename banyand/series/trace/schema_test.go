@@ -59,7 +59,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 			want: getIndexRule("sw-index-rule", "default"),
 		},
 		{
-			name: "got empty result",
+			name: "got empty idWithShard",
 			args: args{
 				series: createSubject("sw", "default"),
 				filter: func(object v1.IndexObject) bool {

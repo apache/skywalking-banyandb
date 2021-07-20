@@ -44,7 +44,8 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		return 0, errGetState
 	}
 	stateBytes := []byte{byte(state)}
-	chunkID := t.idGen.Next(shardID, entity.TimestampNanoseconds())
+	tts := entity.TimestampNanoseconds()
+	chunkID := t.idGen.Next(tts)
 	ts, errParseTS := t.idGen.ParseTS(chunkID)
 	if errParseTS != nil {
 		return 0, errors.Wrap(errParseTS, "failed to parse timestamp from chunk id")
@@ -70,7 +71,7 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		return 0, errors.Wrap(err, "failed to write chunkID index")
 	}
 	traceIDShardID := partition.ShardID(traceID, t.shardNum)
-	if err = wp.TimeSeriesWriter(traceIDShardID, traceIndex).Put(traceID, chunkIDBytes, entity.TimestampNanoseconds()); err != nil {
+	if err = wp.TimeSeriesWriter(traceIDShardID, traceIndex).Put(traceID, bydb_bytes.Join(convert.Uint16ToBytes(uint16(shardID)), chunkIDBytes), entity.TimestampNanoseconds()); err != nil {
 		return 0, errors.Wrap(err, "failed to Trace index")
 	}
 	err = wp.Writer(shardID, startTimeIndex).Put(bydb_bytes.Join(stateBytes, tsBytes, chunkIDBytes), nil)

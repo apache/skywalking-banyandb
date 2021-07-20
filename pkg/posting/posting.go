@@ -15,40 +15,55 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
-package index
+package posting
 
 import (
-	"context"
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	posting "github.com/apache/skywalking-banyandb/pkg/posting"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Condition struct {
-	Key    string
-	Values [][]byte
-	Op     apiv1.BinaryOp
+var ErrListEmpty = errors.New("postings list is empty")
+
+// List is a collection of common.ChunkID.
+type List interface {
+	Contains(id common.ChunkID) bool
+
+	IsEmpty() bool
+
+	Max() (common.ChunkID, error)
+
+	Len() int
+
+	Iterator() Iterator
+
+	Clone() List
+
+	Equal(other List) bool
+
+	Insert(i common.ChunkID)
+
+	Intersect(other List) error
+
+	Difference(other List) error
+
+	Union(other List) error
+
+	UnionMany(others []List) error
+
+	AddIterator(iter Iterator) error
+
+	AddRange(min, max common.ChunkID) error
+
+	RemoveRange(min, max common.ChunkID) error
+
+	Reset()
 }
 
-type Repo interface {
-	Search(index common.Metadata, shardID uint, startTime, endTime uint64, conditions []Condition) (posting.List, error)
-}
+type Iterator interface {
+	Next() bool
 
-type Builder interface {
-	run.Config
-	run.PreRunner
-}
+	Current() common.ChunkID
 
-type Service interface {
-	Repo
-	Builder
-}
-
-func NewService(ctx context.Context, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
-	return nil, nil
+	Close() error
 }

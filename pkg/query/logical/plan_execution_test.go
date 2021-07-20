@@ -24,9 +24,9 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -156,7 +156,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical2.IndexScan(uint64(st.UnixNano()), uint64(et.UnixNano()), m, []logical2.Expr{
 				logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
 			}, series.TraceStateDefault),
-			indexMatchers: []*indexMatcher{NewIndexMatcher("http.method", []common.ChunkID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})},
+			indexMatchers: []*indexMatcher{NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
 			wantLength:    10,
 		},
 		{
@@ -166,8 +166,8 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 				logical2.Eq(logical2.NewFieldRef("status_code"), logical2.Str("200")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
-				NewIndexMatcher("http.method", []common.ChunkID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}),
-				NewIndexMatcher("status_code", []common.ChunkID{1, 3, 5, 7, 9}),
+				NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+				NewIndexMatcher("status_code", roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
 			},
 			wantLength: 5,
 		},
@@ -178,8 +178,8 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 				logical2.Eq(logical2.NewFieldRef("status_code"), logical2.Str("200")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
-				NewIndexMatcher("http.method", []common.ChunkID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}),
-				NewIndexMatcher("status_code", []common.ChunkID{}),
+				NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+				NewIndexMatcher("status_code", roaring.NewPostingList()),
 			},
 			wantLength: 0,
 		},

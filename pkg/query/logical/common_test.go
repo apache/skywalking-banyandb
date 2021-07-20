@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/fb"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -76,25 +77,24 @@ func GeneratorFromRange(l, r common.ChunkID) ChunkIDGenerator {
 var _ ChunkIDGenerator = (*arrayChunkIDGenerator)(nil)
 
 type arrayChunkIDGenerator struct {
-	chunkIDs []common.ChunkID
-	ptr      int
+	hasNext bool
+	iter    posting.Iterator
 }
 
 func (a *arrayChunkIDGenerator) Next() common.ChunkID {
-	defer func() {
-		a.ptr++
-	}()
-	return a.chunkIDs[a.ptr]
+	a.hasNext = a.iter.Next()
+	return a.iter.Current()
 }
 
 func (a *arrayChunkIDGenerator) HasNext() bool {
-	return a.ptr < len(a.chunkIDs)
+	return a.hasNext
 }
 
-func GeneratorFromArray(chunkIDs []common.ChunkID) ChunkIDGenerator {
+func GeneratorFromArray(chunkIDs posting.List) ChunkIDGenerator {
+	iter := chunkIDs.Iterator()
 	return &arrayChunkIDGenerator{
-		chunkIDs: chunkIDs,
-		ptr:      0,
+		iter:    iter,
+		hasNext: iter.Next(),
 	}
 }
 
@@ -152,18 +152,19 @@ func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor2.ExecutionCo
 	return ec
 }
 
+//TODO: pass correct shardID
 func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor2.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
 	for _, im := range indexMatches {
 		ec.
 			EXPECT().
-			Search(*f.traceMetadata, uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), im).
+			Search(*f.traceMetadata, uint(0), uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), im).
 			Return(im.chunkIDs, nil)
 	}
 	ec.
 		EXPECT().
-		FetchEntity(*f.traceMetadata, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ common.Metadata, chunkIDs []common.ChunkID, _ series.ScanOptions) ([]data.Entity, error) {
+		FetchEntity(*f.traceMetadata, uint(0), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ common.Metadata, _ uint, chunkIDs posting.List, _ series.ScanOptions) ([]data.Entity, error) {
 			return GenerateEntities(GeneratorFromArray(chunkIDs)), nil
 		})
 	return ec
@@ -196,7 +197,7 @@ var _ gomock.Matcher = (*indexMatcher)(nil)
 
 type indexMatcher struct {
 	key      string
-	chunkIDs []common.ChunkID
+	chunkIDs posting.List
 }
 
 func (i *indexMatcher) Matches(x interface{}) bool {
@@ -214,7 +215,7 @@ func (i *indexMatcher) String() string {
 	return fmt.Sprintf("is search for key %s", i.key)
 }
 
-func NewIndexMatcher(key string, chunkIDs []common.ChunkID) *indexMatcher {
+func NewIndexMatcher(key string, chunkIDs posting.List) *indexMatcher {
 	return &indexMatcher{
 		key:      key,
 		chunkIDs: chunkIDs,

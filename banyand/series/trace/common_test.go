@@ -241,8 +241,8 @@ func getEntityWithTS(id string, binary []byte, ts uint64, items ...interface{}) 
 	}
 }
 
-func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity) (chunkIDs []common.ChunkID) {
-	chunkIDs = make([]common.ChunkID, 0, len(seriesEntities))
+func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity) (results []idWithShard) {
+	results = make([]idWithShard, 0, len(seriesEntities))
 	for _, se := range seriesEntities {
 		seriesID := []byte(se.seriesID)
 		b := fb.NewWriteEntityBuilder()
@@ -255,7 +255,8 @@ func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 		)
 		assert.NoError(t, err)
 		we := v1.GetRootAsWriteEntity(builder.FinishedBytes(), 0)
-		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), partition.ShardID(seriesID, 2), data.EntityValue{
+		shardID := partition.ShardID(seriesID, 2)
+		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), shardID, data.EntityValue{
 			EntityValue: we.Entity(nil),
 		})
 		if err != nil {
@@ -264,7 +265,10 @@ func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 		if got < 1 {
 			t.Error("Write() got empty chunkID")
 		}
-		chunkIDs = append(chunkIDs, got)
+		results = append(results, idWithShard{
+			id:      got,
+			shardID: shardID,
+		})
 	}
-	return chunkIDs
+	return results
 }
