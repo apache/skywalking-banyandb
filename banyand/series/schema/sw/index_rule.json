@@ -5,72 +5,77 @@
   },
   "objects": [
     {
+      "name": "trace_id",
       "fields": [
         "trace_id"
       ],
       "type": "ID"
     },
     {
+      "name": "service_id",
       "fields": [
         "service_id"
       ],
       "type": "Text"
     },
     {
+      "name": "service_instance_id",
       "fields": [
         "service_instance_id"
       ],
       "type": "Text"
     },
     {
+      "name": "endpoint_id",
       "fields": [
         "endpoint_id"
       ],
       "type": "Text"
     },
     {
+      "name": "duration",
       "fields": [
         "duration"
       ],
       "type": "Numerical"
     },
     {
+      "name": "http.method",
       "fields": [
         "http.method"
       ],
       "type": "Text"
     },
     {
-      "fields": [
-        "status_code"
-      ],
-      "type": "Text"
-    },
-    {
+      "name": "db.type",
       "fields": [
         "db.type"
       ],
       "type": "Text"
     },
     {
+      "name": "db.instance",
       "fields": [
         "db.instance"
       ],
       "type": "Text"
     },
     {
+      "name": "mq.queue",
       "fields": [
         "mq.queue"
       ],
       "type": "Text"
     },
     {
+      "name": "mq.topic",
       "fields": [
         "mq.topic"
       ],
       "type": "Text"
     },
     {
+      "name": "mq.broker",
       "fields": [
         "mq.broker"
       ],

@@ -36,7 +36,7 @@ type Condition struct {
 }
 
 type Repo interface {
-	Search(index common.Metadata, shardID uint, startTime, endTime uint64, conditions []Condition) (posting.List, error)
+	Search(series common.Metadata, shardID uint, startTime, endTime uint64, conditions []Condition) (posting.List, error)
 }
 
 type Builder interface {
