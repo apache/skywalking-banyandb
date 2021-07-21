@@ -19,7 +19,7 @@ include "database.fbs";
 
 namespace banyandb.v1;
 
-table String {
+table Str {
     value: string;
 }
 
@@ -27,7 +27,7 @@ table Int {
     value: int64;
 }
 
-table StringArray {
+table StrArray {
     value: [string];
 }
 
@@ -36,8 +36,8 @@ table IntArray {
 }
 
 union ValueType {
-    String,
-    StringArray,
+    Str,
+    StrArray,
     Int,
     IntArray
 }

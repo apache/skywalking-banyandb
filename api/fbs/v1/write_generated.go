@@ -11,27 +11,27 @@ import (
 type ValueType byte
 
 const (
-	ValueTypeNONE        ValueType = 0
-	ValueTypeString      ValueType = 1
-	ValueTypeStringArray ValueType = 2
-	ValueTypeInt         ValueType = 3
-	ValueTypeIntArray    ValueType = 4
+	ValueTypeNONE     ValueType = 0
+	ValueTypeStr      ValueType = 1
+	ValueTypeStrArray ValueType = 2
+	ValueTypeInt      ValueType = 3
+	ValueTypeIntArray ValueType = 4
 )
 
 var EnumNamesValueType = map[ValueType]string{
-	ValueTypeNONE:        "NONE",
-	ValueTypeString:      "String",
-	ValueTypeStringArray: "StringArray",
-	ValueTypeInt:         "Int",
-	ValueTypeIntArray:    "IntArray",
+	ValueTypeNONE:     "NONE",
+	ValueTypeStr:      "Str",
+	ValueTypeStrArray: "StrArray",
+	ValueTypeInt:      "Int",
+	ValueTypeIntArray: "IntArray",
 }
 
 var EnumValuesValueType = map[string]ValueType{
-	"NONE":        ValueTypeNONE,
-	"String":      ValueTypeString,
-	"StringArray": ValueTypeStringArray,
-	"Int":         ValueTypeInt,
-	"IntArray":    ValueTypeIntArray,
+	"NONE":     ValueTypeNONE,
+	"Str":      ValueTypeStr,
+	"StrArray": ValueTypeStrArray,
+	"Int":      ValueTypeInt,
+	"IntArray": ValueTypeIntArray,
 }
 
 func (v ValueType) String() string {
@@ -41,34 +41,34 @@ func (v ValueType) String() string {
 	return "ValueType(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-type String struct {
+type Str struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsString(buf []byte, offset flatbuffers.UOffsetT) *String {
+func GetRootAsStr(buf []byte, offset flatbuffers.UOffsetT) *Str {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &String{}
+	x := &Str{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsString(buf []byte, offset flatbuffers.UOffsetT) *String {
+func GetSizePrefixedRootAsStr(buf []byte, offset flatbuffers.UOffsetT) *Str {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &String{}
+	x := &Str{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *String) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *Str) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *String) Table() flatbuffers.Table {
+func (rcv *Str) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *String) Value() []byte {
+func (rcv *Str) Value() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -76,13 +76,13 @@ func (rcv *String) Value() []byte {
 	return nil
 }
 
-func StringStart(builder *flatbuffers.Builder) {
+func StrStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func StringAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
+func StrAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
 }
-func StringEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func StrEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
@@ -135,34 +135,34 @@ func IntEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 
-type StringArray struct {
+type StrArray struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsStringArray(buf []byte, offset flatbuffers.UOffsetT) *StringArray {
+func GetRootAsStrArray(buf []byte, offset flatbuffers.UOffsetT) *StrArray {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &StringArray{}
+	x := &StrArray{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func GetSizePrefixedRootAsStringArray(buf []byte, offset flatbuffers.UOffsetT) *StringArray {
+func GetSizePrefixedRootAsStrArray(buf []byte, offset flatbuffers.UOffsetT) *StrArray {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &StringArray{}
+	x := &StrArray{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func (rcv *StringArray) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *StrArray) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *StringArray) Table() flatbuffers.Table {
+func (rcv *StrArray) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *StringArray) Value(j int) []byte {
+func (rcv *StrArray) Value(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -171,7 +171,7 @@ func (rcv *StringArray) Value(j int) []byte {
 	return nil
 }
 
-func (rcv *StringArray) ValueLength() int {
+func (rcv *StrArray) ValueLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -179,16 +179,16 @@ func (rcv *StringArray) ValueLength() int {
 	return 0
 }
 
-func StringArrayStart(builder *flatbuffers.Builder) {
+func StrArrayStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func StringArrayAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
+func StrArrayAddValue(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
 }
-func StringArrayStartValueVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func StrArrayStartValueVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func StringArrayEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func StrArrayEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 

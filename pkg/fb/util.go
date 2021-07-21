@@ -35,15 +35,15 @@ func Transform(entityValue *v1.EntityValue, fieldsIndices []FieldEntry, builder 
 		case v1.ValueTypeNONE:
 			typedPair = v1.TypedPairNONE
 			pairOffset = 0
-		case v1.ValueTypeString, v1.ValueTypeStringArray:
+		case v1.ValueTypeStr, v1.ValueTypeStrArray:
 			typedPair = v1.TypedPairStrPair
-			stringValue, isStr := value.(*v1.String)
+			stringValue, isStr := value.(*v1.Str)
 			var l int
-			var stringArrayValue *v1.StringArray
+			var stringArrayValue *v1.StrArray
 			if isStr {
 				l = 1
 			} else {
-				stringArrayValue = value.(*v1.StringArray)
+				stringArrayValue = value.(*v1.StrArray)
 				l = stringArrayValue.ValueLength()
 			}
 			strPos := make([]flatbuffers.UOffsetT, 0, l)
@@ -56,7 +56,7 @@ func Transform(entityValue *v1.EntityValue, fieldsIndices []FieldEntry, builder 
 				}
 				strPos = append(strPos, o)
 			}
-			v1.StringArrayStartValueVector(builder, l)
+			v1.StrArrayStartValueVector(builder, l)
 			for j := l - 1; j >= 0; j-- {
 				builder.PrependUOffsetT(strPos[j])
 			}
@@ -119,21 +119,21 @@ func CopyFields(entityValue *v1.EntityValue, builder *flatbuffers.Builder) flatb
 		switch valueType {
 		case v1.ValueTypeNONE:
 			valueOffset = 0
-		case v1.ValueTypeString:
-			stringValue := value.(*v1.String)
+		case v1.ValueTypeStr:
+			stringValue := value.(*v1.Str)
 			pos := builder.CreateByteString(stringValue.Value())
-			v1.StringStart(builder)
-			v1.StringAddValue(builder, pos)
-			valueOffset = v1.StringEnd(builder)
+			v1.StrStart(builder)
+			v1.StrAddValue(builder, pos)
+			valueOffset = v1.StrEnd(builder)
 		case v1.ValueTypeInt:
 			intValue := value.(*v1.Int)
 			v1.IntStart(builder)
 			v1.IntAddValue(builder, intValue.Value())
 			valueOffset = v1.IntEnd(builder)
-		case v1.ValueTypeStringArray:
-			stringArrayValue := value.(*v1.StringArray)
+		case v1.ValueTypeStrArray:
+			stringArrayValue := value.(*v1.StrArray)
 			l := stringArrayValue.ValueLength()
-			v1.StringArrayStartValueVector(builder, l)
+			v1.StrArrayStartValueVector(builder, l)
 			strPos := make([]flatbuffers.UOffsetT, 0, l)
 			for j := 0; j < l; j++ {
 				strPos = append(strPos, builder.CreateByteString(stringArrayValue.Value(j)))
@@ -202,16 +202,16 @@ func VisitFields(entityValue *v1.EntityValue, fieldsIndices []FieldEntry, visit 
 		switch f.ValueType() {
 		case v1.ValueTypeNONE:
 			visit(key, f.ValueType(), nil)
-		case v1.ValueTypeString:
-			stringValue := new(v1.String)
+		case v1.ValueTypeStr:
+			stringValue := new(v1.Str)
 			stringValue.Init(unionTable.Bytes, unionTable.Pos)
 			visit(key, f.ValueType(), stringValue)
 		case v1.ValueTypeInt:
 			intValue := new(v1.Int)
 			intValue.Init(unionTable.Bytes, unionTable.Pos)
 			visit(key, f.ValueType(), intValue)
-		case v1.ValueTypeStringArray:
-			stringArrayValue := new(v1.StringArray)
+		case v1.ValueTypeStrArray:
+			stringArrayValue := new(v1.StrArray)
 			stringArrayValue.Init(unionTable.Bytes, unionTable.Pos)
 			visit(key, f.ValueType(), stringArrayValue)
 		case v1.ValueTypeIntArray:

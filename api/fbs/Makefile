@@ -18,7 +18,16 @@
 
 VERSION ?= v1
 fbs := $(wildcard $(VERSION)/*.fbs)
+GO_FLAGS := --go-namespace $(VERSION) --gen-onefile
+JAVA_FLAGS := --gen-generated
 
 .PHONY: generate
-generate: $(fbs)
-	flatc --go --gen-onefile --grpc --go-namespace $(VERSION) -o $(VERSION) $^
+generate: generate-go
+
+.PHONY: generate-go
+generate-go: $(fbs)
+	flatc --go --grpc $(GO_FLAGS) -o $(VERSION) $^
+
+.PHONY: generate-java
+generate-java: $(fbs)
+	flatc --java --grpc $(JAVA_FLAGS) -o $(VERSION) $^
