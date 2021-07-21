@@ -5,6 +5,7 @@ import com.google.flatbuffers.FlatBufferBuilder;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.profile.GCProfiler;
+import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
@@ -25,7 +26,7 @@ import java.util.concurrent.TimeUnit;
  * # Threads: 1 thread, will synchronize iterations
  * # Benchmark mode: Average time, time/op
  * # Benchmark: org.apache.skywalking.banyandb.benchmark.FlatBuffersWriteTest.writeEntity
- *
+ * <p>
  * Benchmark                                                          Mode  Cnt     Score     Error   Units
  * FlatBuffersWriteTest.writeEntity                                   avgt   25  4008,724 ± 451,721   ns/op
  * FlatBuffersWriteTest.writeEntity:·gc.alloc.rate                    avgt   25   703,532 ±  60,040  MB/sec
@@ -109,7 +110,10 @@ public class FlatBuffersWriteTest {
 
     public static void main(String[] args) throws Exception {
         Options opts = new OptionsBuilder()
+                .include(FlatBuffersWriteTest.class.getSimpleName())
                 .addProfiler(GCProfiler.class)
+                .resultFormat(ResultFormatType.JSON)
+                .result("benchmark-result/" + System.currentTimeMillis() + ".json")
                 .build();
         new Runner(opts).run();
     }
