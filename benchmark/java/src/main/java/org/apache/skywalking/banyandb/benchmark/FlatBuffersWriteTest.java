@@ -2,6 +2,9 @@ package org.apache.skywalking.banyandb.benchmark;
 
 import banyandb.v1.*;
 import com.google.flatbuffers.FlatBufferBuilder;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.NullValue;
+import org.apache.skywalking.banyandb.Write;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.profile.GCProfiler;
@@ -25,18 +28,26 @@ import java.util.concurrent.TimeUnit;
  * # Timeout: 10 min per iteration
  * # Threads: 1 thread, will synchronize iterations
  * # Benchmark mode: Average time, time/op
- * # Benchmark: org.apache.skywalking.banyandb.benchmark.FlatBuffersWriteTest.writeEntity
  * <p>
  * Benchmark                                                          Mode  Cnt     Score     Error   Units
- * FlatBuffersWriteTest.writeEntity                                   avgt   25  4008,724 ± 451,721   ns/op
- * FlatBuffersWriteTest.writeEntity:·gc.alloc.rate                    avgt   25   703,532 ±  60,040  MB/sec
- * FlatBuffersWriteTest.writeEntity:·gc.alloc.rate.norm               avgt   25  3056,000 ±   0,001    B/op
- * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Eden_Space           avgt   25   703,281 ±  61,514  MB/sec
- * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Eden_Space.norm      avgt   25  3053,959 ±  23,092    B/op
- * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Survivor_Space       avgt   25     0,124 ±   0,032  MB/sec
- * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Survivor_Space.norm  avgt   25     0,526 ±   0,110    B/op
- * FlatBuffersWriteTest.writeEntity:·gc.count                         avgt   25  2364,000            counts
- * FlatBuffersWriteTest.writeEntity:·gc.time                          avgt   25  2002,000                ms
+ * FlatBuffersWriteTest.flatbuffers                                   avgt   25  3780,360 ± 272,301   ns/op
+ * FlatBuffersWriteTest.flatbuffers:·gc.alloc.rate                    avgt   25   739,601 ±  45,059  MB/sec
+ * FlatBuffersWriteTest.flatbuffers:·gc.alloc.rate.norm               avgt   25  3056,000 ±   0,001    B/op
+ * FlatBuffersWriteTest.flatbuffers:·gc.churn.PS_Eden_Space           avgt   25   740,157 ±  47,014  MB/sec
+ * FlatBuffersWriteTest.flatbuffers:·gc.churn.PS_Eden_Space.norm      avgt   25  3057,320 ±  21,074    B/op
+ * FlatBuffersWriteTest.flatbuffers:·gc.churn.PS_Survivor_Space       avgt   25     0,130 ±   0,035  MB/sec
+ * FlatBuffersWriteTest.flatbuffers:·gc.churn.PS_Survivor_Space.norm  avgt   25     0,527 ±   0,126    B/op
+ * FlatBuffersWriteTest.flatbuffers:·gc.count                         avgt   25  2529,000            counts
+ * FlatBuffersWriteTest.flatbuffers:·gc.time                          avgt   25  1917,000                ms
+ * FlatBuffersWriteTest.protobuf                                      avgt   25   652,362 ±  46,437   ns/op
+ * FlatBuffersWriteTest.protobuf:·gc.alloc.rate                       avgt   25  2922,121 ± 187,469  MB/sec
+ * FlatBuffersWriteTest.protobuf:·gc.alloc.rate.norm                  avgt   25  2089,600 ± 119,878    B/op
+ * FlatBuffersWriteTest.protobuf:·gc.churn.PS_Eden_Space              avgt   25  2920,744 ± 187,923  MB/sec
+ * FlatBuffersWriteTest.protobuf:·gc.churn.PS_Eden_Space.norm         avgt   25  2088,672 ± 120,670    B/op
+ * FlatBuffersWriteTest.protobuf:·gc.churn.PS_Survivor_Space          avgt   25     0,155 ±   0,033  MB/sec
+ * FlatBuffersWriteTest.protobuf:·gc.churn.PS_Survivor_Space.norm     avgt   25     0,109 ±   0,019    B/op
+ * FlatBuffersWriteTest.protobuf:·gc.count                            avgt   25  2671,000            counts
+ * FlatBuffersWriteTest.protobuf:·gc.time                             avgt   25  2069,000                ms
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -53,7 +64,7 @@ public class FlatBuffersWriteTest {
     }
 
     @Benchmark
-    public void writeEntity(Blackhole bh, EntityModel entity) {
+    public void flatbuffers(Blackhole bh, EntityModel entity) {
         FlatBufferBuilder fbb = new FlatBufferBuilder(1);
         int group = fbb.createString(entity.group);
         int name = fbb.createString(entity.name);
@@ -70,6 +81,41 @@ public class FlatBuffersWriteTest {
         int writeEntity = WriteEntity.createWriteEntity(fbb, metadata, entityValue);
         fbb.finish(writeEntity);
         bh.consume(WriteEntity.getRootAsWriteEntity(fbb.dataBuffer()));
+    }
+
+    @Benchmark
+    public void protobuf(Blackhole bh, EntityModel entity) {
+        Write.Metadata metadata = Write.Metadata.newBuilder().setGroup(entity.group).setName(entity.name).build();
+        Write.EntityValue.Builder entityValueBuilder = Write.EntityValue.newBuilder()
+                .setEntityId(entity.entityID)
+                .setDataBinary(ByteString.copyFrom(entity.binary))
+                .setTimestampNanoseconds(entity.ts);
+        for (int i = 0; i < entity.items.length; i++) {
+            entityValueBuilder.addFields(i, buildField(entity.items[i]));
+        }
+        Write.WriteEntity writeEntity = Write.WriteEntity.newBuilder()
+                .setMetaData(metadata)
+                .setEntity(entityValueBuilder)
+                .build();
+        bh.consume(writeEntity);
+    }
+
+    public static Write.Field buildField(Object obj) {
+        if (obj == null) {
+            return Write.Field.newBuilder().setNull(NullValue.NULL_VALUE).build();
+        }
+        if (obj instanceof Integer) {
+            Write.Int writeInt = Write.Int.newBuilder().setValue(((Integer) obj)).build();
+            return Write.Field.newBuilder().setInt(writeInt).build();
+        } else if (obj instanceof Long) {
+            Write.Int writeInt = Write.Int.newBuilder().setValue(((Long) obj)).build();
+            return Write.Field.newBuilder().setInt(writeInt).build();
+        } else if (obj instanceof String) {
+            Write.Str writeStr = Write.Str.newBuilder().setValue((String) obj).build();
+            return Write.Field.newBuilder().setStr(writeStr).build();
+        } else {
+            throw new IllegalArgumentException("type is not supported");
+        }
     }
 
     public static int buildField(FlatBufferBuilder fbb, Object obj) {
@@ -113,7 +159,7 @@ public class FlatBuffersWriteTest {
                 .include(FlatBuffersWriteTest.class.getSimpleName())
                 .addProfiler(GCProfiler.class)
                 .resultFormat(ResultFormatType.JSON)
-                .result("benchmark-result/" + System.currentTimeMillis() + ".json")
+//                .result("benchmark-result/" + System.currentTimeMillis() + ".json")
                 .build();
         new Runner(opts).run();
     }
