@@ -101,10 +101,10 @@ func (b *WriteEntityBuilder) buildField(val interface{}) flatbuffers.UOffsetT {
 		valType = v1.ValueTypeIntArray
 	case string:
 		valueTypeOffset = b.buildStrValueType(v)
-		valType = v1.ValueTypeString
+		valType = v1.ValueTypeStr
 	case []string:
 		valueTypeOffset = b.buildStrValueType(v...)
-		valType = v1.ValueTypeStringArray
+		valType = v1.ValueTypeStrArray
 	default:
 		panic("not supported value")
 	}
@@ -121,18 +121,18 @@ func (b *WriteEntityBuilder) buildStrValueType(values ...string) flatbuffers.UOf
 		strOffsets = append(strOffsets, b.CreateString(values[i]))
 	}
 	if len(values) == 1 {
-		v1.StringStart(b.Builder)
-		v1.StringAddValue(b.Builder, strOffsets[0])
-		return v1.StringEnd(b.Builder)
+		v1.StrStart(b.Builder)
+		v1.StrAddValue(b.Builder, strOffsets[0])
+		return v1.StrEnd(b.Builder)
 	}
-	v1.StringArrayStartValueVector(b.Builder, len(values))
+	v1.StrArrayStartValueVector(b.Builder, len(values))
 	for i := len(strOffsets) - 1; i >= 0; i-- {
 		b.Builder.PrependUOffsetT(strOffsets[i])
 	}
 	int64Arr := b.Builder.EndVector(len(values))
-	v1.StringArrayStart(b.Builder)
-	v1.StringArrayAddValue(b.Builder, int64Arr)
-	return v1.StringArrayEnd(b.Builder)
+	v1.StrArrayStart(b.Builder)
+	v1.StrArrayAddValue(b.Builder, int64Arr)
+	return v1.StrArrayEnd(b.Builder)
 }
 
 func (b *WriteEntityBuilder) buildInt(values ...int64) flatbuffers.UOffsetT {

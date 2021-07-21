@@ -345,12 +345,12 @@ func (t *traceSeries) getTraceID(entityValue *v1.EntityValue) ([]byte, error) {
 	if !entityValue.Fields(f, int(t.traceIDIndex)) {
 		return nil, errors.Wrapf(ErrFieldNotFound, "trace_id index :%d", t.traceIDIndex)
 	}
-	if f.ValueType() != v1.ValueTypeString {
+	if f.ValueType() != v1.ValueTypeStr {
 		return nil, errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: String", f.ValueType().String())
 	}
 	unionTable := new(flatbuffers.Table)
 	f.Value(unionTable)
-	stringValue := new(v1.String)
+	stringValue := new(v1.Str)
 	stringValue.Init(unionTable.Bytes, unionTable.Pos)
 	return stringValue.Value(), nil
 }
@@ -381,14 +381,14 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 				intValue.Value(), t.intStateSuccessVal, t.intStateErrorVal)
 			return
 		}
-	case v1.ValueTypeString:
+	case v1.ValueTypeStr:
 		if t.stateFieldType != v1.FieldTypeString {
 			err = errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: String", f.ValueType().String())
 			return
 		}
 		unionTable := new(flatbuffers.Table)
 		f.Value(unionTable)
-		stringValue := new(v1.String)
+		stringValue := new(v1.Str)
 		stringValue.Init(unionTable.Bytes, unionTable.Pos)
 		switch string(stringValue.Value()) {
 		case t.strStateSuccessVal:
