@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class Metadata extends Table {
@@ -18,10 +16,10 @@ public final class Metadata extends Table {
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
   public Metadata __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public  @Nullable java.lang.String group() { int o = __offset(4); return o != 0 ? __string(o + bb_pos) : null; }
+  public String group() { int o = __offset(4); return o != 0 ? __string(o + bb_pos) : null; }
   public ByteBuffer groupAsByteBuffer() { return __vector_as_bytebuffer(4, 1); }
   public ByteBuffer groupInByteBuffer(ByteBuffer _bb) { return __vector_in_bytebuffer(_bb, 4, 1); }
-  public  @Nullable java.lang.String name() { int o = __offset(6); return o != 0 ? __string(o + bb_pos) : null; }
+  public String name() { int o = __offset(6); return o != 0 ? __string(o + bb_pos) : null; }
   public ByteBuffer nameAsByteBuffer() { return __vector_as_bytebuffer(6, 1); }
   public ByteBuffer nameInByteBuffer(ByteBuffer _bb) { return __vector_in_bytebuffer(_bb, 6, 1); }
 

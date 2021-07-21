@@ -30,4 +30,4 @@ generate-go: $(fbs)
 
 .PHONY: generate-java
 generate-java: $(fbs)
-	flatc --java --grpc $(JAVA_FLAGS) -o $(VERSION) $^
+	flatc --java --grpc $(JAVA_FLAGS) -o ../../benchmark/java/src/main/java $^

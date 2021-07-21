@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class ShardEvent extends Table {
@@ -18,8 +16,8 @@ public final class ShardEvent extends Table {
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
   public ShardEvent __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public  @Nullable banyandb.v1.Shard shard() { return shard(new banyandb.v1.Shard()); }
-  public  @Nullable banyandb.v1.Shard shard(banyandb.v1.Shard obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public banyandb.v1.Shard shard() { return shard(new banyandb.v1.Shard()); }
+  public banyandb.v1.Shard shard(banyandb.v1.Shard obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
   public byte action() { int o = __offset(6); return o != 0 ? bb.get(o + bb_pos) : 0; }
   public long time() { int o = __offset(8); return o != 0 ? bb.getLong(o + bb_pos) : 0L; }
 

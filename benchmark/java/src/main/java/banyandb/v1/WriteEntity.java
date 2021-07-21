@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class WriteEntity extends Table {
@@ -18,10 +16,10 @@ public final class WriteEntity extends Table {
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
   public WriteEntity __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public  @Nullable banyandb.v1.Metadata metaData() { return metaData(new banyandb.v1.Metadata()); }
-  public  @Nullable banyandb.v1.Metadata metaData(banyandb.v1.Metadata obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
-  public  @Nullable banyandb.v1.EntityValue entity() { return entity(new banyandb.v1.EntityValue()); }
-  public  @Nullable banyandb.v1.EntityValue entity(banyandb.v1.EntityValue obj) { int o = __offset(6); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public banyandb.v1.Metadata metaData() { return metaData(new banyandb.v1.Metadata()); }
+  public banyandb.v1.Metadata metaData(banyandb.v1.Metadata obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public banyandb.v1.EntityValue entity() { return entity(new banyandb.v1.EntityValue()); }
+  public banyandb.v1.EntityValue entity(banyandb.v1.EntityValue obj) { int o = __offset(6); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
 
   public static int createWriteEntity(FlatBufferBuilder builder,
       int meta_dataOffset,

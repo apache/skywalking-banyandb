@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class Shard extends Table {
@@ -19,10 +17,10 @@ public final class Shard extends Table {
   public Shard __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
   public long id() { int o = __offset(4); return o != 0 ? bb.getLong(o + bb_pos) : 0L; }
-  public  @Nullable banyandb.v1.Metadata series() { return series(new banyandb.v1.Metadata()); }
-  public  @Nullable banyandb.v1.Metadata series(banyandb.v1.Metadata obj) { int o = __offset(6); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
-  public  @Nullable banyandb.v1.Node node() { return node(new banyandb.v1.Node()); }
-  public  @Nullable banyandb.v1.Node node(banyandb.v1.Node obj) { int o = __offset(8); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public banyandb.v1.Metadata series() { return series(new banyandb.v1.Metadata()); }
+  public banyandb.v1.Metadata series(banyandb.v1.Metadata obj) { int o = __offset(6); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public banyandb.v1.Node node() { return node(new banyandb.v1.Node()); }
+  public banyandb.v1.Node node(banyandb.v1.Node obj) { int o = __offset(8); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
   public int total() { int o = __offset(10); return o != 0 ? bb.get(o + bb_pos) & 0xFF : 0; }
   public long updateTime() { int o = __offset(12); return o != 0 ? bb.getLong(o + bb_pos) : 0L; }
   public long createTime() { int o = __offset(14); return o != 0 ? bb.getLong(o + bb_pos) : 0L; }

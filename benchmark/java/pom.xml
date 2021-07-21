@@ -11,31 +11,57 @@
     <properties>
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
+        <grpc.version>1.39.0</grpc.version>
+        <jmh.version>1.32</jmh.version>
+        <flatbuffers.version>2.0.2</flatbuffers.version>
     </properties>
 
     <dependencies>
-        <!-- https://mvnrepository.com/artifact/com.google.flatbuffers/flatbuffers-java -->
+        <!-- flatbuffers -->
         <dependency>
             <groupId>com.google.flatbuffers</groupId>
             <artifactId>flatbuffers-java</artifactId>
-            <version>2.0.2</version>
+            <version>${flatbuffers.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.flatbuffers</groupId>
+            <artifactId>flatbuffers-java-grpc</artifactId>
+            <version>${flatbuffers.version}</version>
         </dependency>
 
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
-            <version>1.32</version>
+            <version>${jmh.version}</version>
         </dependency>
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-generator-annprocess</artifactId>
-            <version>1.32</version>
+            <version>${jmh.version}</version>
         </dependency>
 
+        <!-- @Nullable annotation -->
         <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>jsr305</artifactId>
             <version>3.0.2</version>
+        </dependency>
+
+        <!-- grpc -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
+            <version>${grpc.version}</version>
         </dependency>
     </dependencies>
 

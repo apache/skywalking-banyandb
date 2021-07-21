@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class Node extends Table {
@@ -18,10 +16,10 @@ public final class Node extends Table {
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
   public Node __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public  @Nullable java.lang.String id() { int o = __offset(4); return o != 0 ? __string(o + bb_pos) : null; }
+  public String id() { int o = __offset(4); return o != 0 ? __string(o + bb_pos) : null; }
   public ByteBuffer idAsByteBuffer() { return __vector_as_bytebuffer(4, 1); }
   public ByteBuffer idInByteBuffer(ByteBuffer _bb) { return __vector_in_bytebuffer(_bb, 4, 1); }
-  public  @Nullable java.lang.String addr() { int o = __offset(6); return o != 0 ? __string(o + bb_pos) : null; }
+  public String addr() { int o = __offset(6); return o != 0 ? __string(o + bb_pos) : null; }
   public ByteBuffer addrAsByteBuffer() { return __vector_as_bytebuffer(6, 1); }
   public ByteBuffer addrInByteBuffer(ByteBuffer _bb) { return __vector_in_bytebuffer(_bb, 6, 1); }
   public long updateTime() { int o = __offset(8); return o != 0 ? bb.getLong(o + bb_pos) : 0L; }

@@ -5,13 +5,13 @@ package banyandb.v1;
 public final class ValueType {
   private ValueType() { }
   public static final byte NONE = 0;
-  public static final byte String = 1;
-  public static final byte StringArray = 2;
+  public static final byte Str = 1;
+  public static final byte StrArray = 2;
   public static final byte Int = 3;
   public static final byte IntArray = 4;
 
-  public static final java.lang.String[] names = { "NONE", "String", "StringArray", "Int", "IntArray", };
+  public static final String[] names = { "NONE", "Str", "StrArray", "Int", "IntArray", };
 
-  public static java.lang.String name(int e) { return names[e]; }
+  public static String name(int e) { return names[e]; }
 }
 

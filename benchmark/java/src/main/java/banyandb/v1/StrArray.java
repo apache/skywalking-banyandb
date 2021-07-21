@@ -7,34 +7,32 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
-public final class StringArray extends Table {
+public final class StrArray extends Table {
   public static void ValidateVersion() { Constants.FLATBUFFERS_2_0_0(); }
-  public static StringArray getRootAsStringArray(ByteBuffer _bb) { return getRootAsStringArray(_bb, new StringArray()); }
-  public static StringArray getRootAsStringArray(ByteBuffer _bb, StringArray obj) { _bb.order(ByteOrder.LITTLE_ENDIAN); return (obj.__assign(_bb.getInt(_bb.position()) + _bb.position(), _bb)); }
+  public static StrArray getRootAsStrArray(ByteBuffer _bb) { return getRootAsStrArray(_bb, new StrArray()); }
+  public static StrArray getRootAsStrArray(ByteBuffer _bb, StrArray obj) { _bb.order(ByteOrder.LITTLE_ENDIAN); return (obj.__assign(_bb.getInt(_bb.position()) + _bb.position(), _bb)); }
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
-  public StringArray __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
+  public StrArray __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public java.lang.String value(int j) { int o = __offset(4); return o != 0 ? __string(__vector(o) + j * 4) : null; }
+  public String value(int j) { int o = __offset(4); return o != 0 ? __string(__vector(o) + j * 4) : null; }
   public int valueLength() { int o = __offset(4); return o != 0 ? __vector_len(o) : 0; }
   public StringVector valueVector() { return valueVector(new StringVector()); }
   public StringVector valueVector(StringVector obj) { int o = __offset(4); return o != 0 ? obj.__assign(__vector(o), 4, bb) : null; }
 
-  public static int createStringArray(FlatBufferBuilder builder,
+  public static int createStrArray(FlatBufferBuilder builder,
       int valueOffset) {
     builder.startTable(1);
-    StringArray.addValue(builder, valueOffset);
-    return StringArray.endStringArray(builder);
+    StrArray.addValue(builder, valueOffset);
+    return StrArray.endStrArray(builder);
   }
 
-  public static void startStringArray(FlatBufferBuilder builder) { builder.startTable(1); }
+  public static void startStrArray(FlatBufferBuilder builder) { builder.startTable(1); }
   public static void addValue(FlatBufferBuilder builder, int valueOffset) { builder.addOffset(0, valueOffset, 0); }
   public static int createValueVector(FlatBufferBuilder builder, int[] data) { builder.startVector(4, data.length, 4); for (int i = data.length - 1; i >= 0; i--) builder.addOffset(data[i]); return builder.endVector(); }
   public static void startValueVector(FlatBufferBuilder builder, int numElems) { builder.startVector(4, numElems, 4); }
-  public static int endStringArray(FlatBufferBuilder builder) {
+  public static int endStrArray(FlatBufferBuilder builder) {
     int o = builder.endTable();
     return o;
   }
@@ -42,8 +40,8 @@ public final class StringArray extends Table {
   public static final class Vector extends BaseVector {
     public Vector __assign(int _vector, int _element_size, ByteBuffer _bb) { __reset(_vector, _element_size, _bb); return this; }
 
-    public StringArray get(int j) { return get(new StringArray(), j); }
-    public StringArray get(StringArray obj, int j) {  return obj.__assign(__indirect(__element(j), bb), bb); }
+    public StrArray get(int j) { return get(new StrArray(), j); }
+    public StrArray get(StrArray obj, int j) {  return obj.__assign(__indirect(__element(j), bb), bb); }
   }
 }
 

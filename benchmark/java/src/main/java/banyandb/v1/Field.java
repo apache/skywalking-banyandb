@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class Field extends Table {
@@ -19,7 +17,7 @@ public final class Field extends Table {
   public Field __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
   public byte valueType() { int o = __offset(4); return o != 0 ? bb.get(o + bb_pos) : 0; }
-  public  @Nullable Table value(Table obj) { int o = __offset(6); return o != 0 ? __union(obj, o + bb_pos) : null; }
+  public Table value(Table obj) { int o = __offset(6); return o != 0 ? __union(obj, o + bb_pos) : null; }
 
   public static int createField(FlatBufferBuilder builder,
       byte value_type,

@@ -7,8 +7,6 @@ import java.lang.*;
 import java.util.*;
 import com.google.flatbuffers.*;
 
-import javax.annotation.Nullable;
-
 @javax.annotation.Generated(value="flatc")
 @SuppressWarnings("unused")
 public final class SeriesEvent extends Table {
@@ -18,9 +16,9 @@ public final class SeriesEvent extends Table {
   public void __init(int _i, ByteBuffer _bb) { __reset(_i, _bb); }
   public SeriesEvent __assign(int _i, ByteBuffer _bb) { __init(_i, _bb); return this; }
 
-  public  @Nullable banyandb.v1.Metadata series() { return series(new banyandb.v1.Metadata()); }
-  public  @Nullable banyandb.v1.Metadata series(banyandb.v1.Metadata obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
-  public java.lang.String fieldNamesCompositeSeriesId(int j) { int o = __offset(6); return o != 0 ? __string(__vector(o) + j * 4) : null; }
+  public banyandb.v1.Metadata series() { return series(new banyandb.v1.Metadata()); }
+  public banyandb.v1.Metadata series(banyandb.v1.Metadata obj) { int o = __offset(4); return o != 0 ? obj.__assign(__indirect(o + bb_pos), bb) : null; }
+  public String fieldNamesCompositeSeriesId(int j) { int o = __offset(6); return o != 0 ? __string(__vector(o) + j * 4) : null; }
   public int fieldNamesCompositeSeriesIdLength() { int o = __offset(6); return o != 0 ? __vector_len(o) : 0; }
   public StringVector fieldNamesCompositeSeriesIdVector() { return fieldNamesCompositeSeriesIdVector(new StringVector()); }
   public StringVector fieldNamesCompositeSeriesIdVector(StringVector obj) { int o = __offset(6); return o != 0 ? obj.__assign(__vector(o), 4, bb) : null; }

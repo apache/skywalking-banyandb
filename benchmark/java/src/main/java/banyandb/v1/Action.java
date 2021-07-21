@@ -7,8 +7,8 @@ public final class Action {
   public static final byte Put = 0;
   public static final byte Delete = 1;
 
-  public static final java.lang.String[] names = { "Put", "Delete", };
+  public static final String[] names = { "Put", "Delete", };
 
-  public static java.lang.String name(int e) { return names[e]; }
+  public static String name(int e) { return names[e]; }
 }
 

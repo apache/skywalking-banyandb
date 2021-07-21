@@ -13,6 +13,30 @@ import java.lang.String;
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * # JMH version: 1.32
+ * # VM version: JDK 1.8.0_292, OpenJDK 64-Bit Server VM, 25.292-b10
+ * # VM invoker: /Library/Java/JavaVirtualMachines/adoptopenjdk-8.jdk/Contents/Home/jre/bin/java
+ * # VM options: -Dvisualvm.id=456817831633044 -javaagent:/Users/megrez/Library/Application Support/JetBrains/Toolbox/apps/IDEA-U/ch-0/211.7628.21/IntelliJ IDEA.app/Contents/lib/idea_rt.jar=64278:/Users/megrez/Library/Application Support/JetBrains/Toolbox/apps/IDEA-U/ch-0/211.7628.21/IntelliJ IDEA.app/Contents/bin -Dfile.encoding=UTF-8
+ * # Blackhole mode: full + dont-inline hint
+ * # Warmup: 5 iterations, 10 s each
+ * # Measurement: 5 iterations, 10 s each
+ * # Timeout: 10 min per iteration
+ * # Threads: 1 thread, will synchronize iterations
+ * # Benchmark mode: Average time, time/op
+ * # Benchmark: org.apache.skywalking.banyandb.benchmark.FlatBuffersWriteTest.writeEntity
+ *
+ * Benchmark                                                          Mode  Cnt     Score     Error   Units
+ * FlatBuffersWriteTest.writeEntity                                   avgt   25  4008,724 ± 451,721   ns/op
+ * FlatBuffersWriteTest.writeEntity:·gc.alloc.rate                    avgt   25   703,532 ±  60,040  MB/sec
+ * FlatBuffersWriteTest.writeEntity:·gc.alloc.rate.norm               avgt   25  3056,000 ±   0,001    B/op
+ * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Eden_Space           avgt   25   703,281 ±  61,514  MB/sec
+ * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Eden_Space.norm      avgt   25  3053,959 ±  23,092    B/op
+ * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Survivor_Space       avgt   25     0,124 ±   0,032  MB/sec
+ * FlatBuffersWriteTest.writeEntity:·gc.churn.PS_Survivor_Space.norm  avgt   25     0,526 ±   0,110    B/op
+ * FlatBuffersWriteTest.writeEntity:·gc.count                         avgt   25  2364,000            counts
+ * FlatBuffersWriteTest.writeEntity:·gc.time                          avgt   25  2002,000                ms
+ */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class FlatBuffersWriteTest {
@@ -44,7 +68,7 @@ public class FlatBuffersWriteTest {
         int entityValue = EntityValue.createEntityValue(fbb, entityID, entity.ts, binaryOffset, fieldsVector);
         int writeEntity = WriteEntity.createWriteEntity(fbb, metadata, entityValue);
         fbb.finish(writeEntity);
-        bh.consume(fbb.sizedByteArray());
+        bh.consume(WriteEntity.getRootAsWriteEntity(fbb.dataBuffer()));
     }
 
     public static int buildField(FlatBufferBuilder fbb, Object obj) {
@@ -58,7 +82,7 @@ public class FlatBuffersWriteTest {
         byte valType;
         if (obj instanceof String) {
             valueTypeOffset = buildString(fbb, (String) obj);
-            valType = ValueType.String;
+            valType = ValueType.Str;
         } else if (obj instanceof Long) {
             valueTypeOffset = buildInt(fbb, (Long) obj);
             valType = ValueType.Int;
@@ -80,12 +104,11 @@ public class FlatBuffersWriteTest {
     }
 
     public static int buildString(FlatBufferBuilder fbb, String str) {
-        return banyandb.v1.String.createString(fbb, fbb.createString(str));
+        return banyandb.v1.Str.createStr(fbb, fbb.createString(str));
     }
 
     public static void main(String[] args) throws Exception {
         Options opts = new OptionsBuilder()
-                .addProfiler()
                 .addProfiler(GCProfiler.class)
                 .build();
         new Runner(opts).run();
