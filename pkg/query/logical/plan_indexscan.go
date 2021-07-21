@@ -29,6 +29,7 @@ import (
 	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
@@ -107,12 +108,13 @@ type indexScan struct {
 }
 
 func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
-	var chunkSet common.ChunkIDs
+	var chunkSet posting.List
 	for _, exprs := range i.conditionMap {
 		// TODO: Discuss which metadata should be used!
 		// 1) traceSeries Metadata: indirect mapping
 		// 2) indexRule Metadata: cannot uniquely determine traceSeries
-		chunks, err := ec.Search(*i.traceMetadata, i.startTime, i.endTime, convertToConditions(exprs))
+		// TODO: should pass correct shardID
+		chunks, err := ec.Search(*i.traceMetadata, 0, i.startTime, i.endTime, convertToConditions(exprs))
 		if err != nil {
 			return nil, err
 		}
@@ -121,11 +123,12 @@ func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error
 			chunkSet = chunks
 		} else {
 			// afterwards, it must not be nil
-			chunkSet = chunkSet.HashIntersect(chunks)
+			_ = chunkSet.Intersect(chunks)
 		}
 	}
 
-	return ec.FetchEntity(*i.traceMetadata, chunkSet, series.ScanOptions{
+	//TODO: pass correct shardID
+	return ec.FetchEntity(*i.traceMetadata, 0, chunkSet, series.ScanOptions{
 		Projection: i.projectionFields,
 		State:      i.traceState,
 	})

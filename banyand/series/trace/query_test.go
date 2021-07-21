@@ -24,15 +24,17 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 func Test_traceSeries_FetchEntity(t *testing.T) {
 	type args struct {
 		chunkIDIndices []int
-		chunkIDs       common.ChunkIDs
+		chunkIDs       []idWithShard
 		opt            series.ScanOptions
 	}
 	tests := []struct {
@@ -92,15 +94,23 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 		{
 			name: "invalid chunk ids",
 			args: args{
-				chunkIDs: common.ChunkIDs{0},
-				opt:      series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
+				chunkIDs: []idWithShard{
+					{
+						id: common.ChunkID(0),
+					},
+				},
+				opt: series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "mix up invalid/valid ids",
 			args: args{
-				chunkIDs:       common.ChunkIDs{0},
+				chunkIDs: []idWithShard{
+					{
+						id: common.ChunkID(0),
+					},
+				},
 				chunkIDIndices: []int{0, 1},
 				opt:            series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
@@ -128,20 +138,29 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 	}
 	ts, stopFunc := setup(t)
 	defer stopFunc()
-	chunkIDs := setUpTestData(t, ts, testData(uint64(time.Now().UnixNano())))
+	dataResult := setUpTestData(t, ts, testData(uint64(time.Now().UnixNano())))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			chunkIDCriteria := make([]common.ChunkID, 0, len(tt.args.chunkIDIndices))
+			chunkIDCriteria := make(map[uint]posting.List, 2)
 			for i := range tt.args.chunkIDIndices {
-				chunkIDCriteria = append(chunkIDCriteria, chunkIDs[i])
+				placeID(chunkIDCriteria, dataResult[i])
 			}
 			for _, id := range tt.args.chunkIDs {
-				chunkIDCriteria = append(chunkIDCriteria, id)
+				placeID(chunkIDCriteria, id)
 			}
-			entities, err := ts.FetchEntity(chunkIDCriteria, tt.args.opt)
+			var entities ByEntityID
+			var err error
+			for s, c := range chunkIDCriteria {
+				ee, errFetch := ts.FetchEntity(c, s, tt.args.opt)
+				if errFetch != nil {
+					err = multierr.Append(err, errFetch)
+				}
+				entities = append(entities, ee...)
+			}
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			sort.Sort(entities)
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			for i, e := range entities {
 				assert.EqualValues(t, tt.wantEntities[i].entityID, e.EntityId())
@@ -266,7 +285,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		{
 			name: "single result",
 			args: args{
-				start: baseTS,
+				start: 0,
 				end:   baseTS,
 			},
 			wantEntities: []wantEntity{

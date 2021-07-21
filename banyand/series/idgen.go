@@ -21,16 +21,10 @@ import (
 	"time"
 )
 
-const (
-	timeStampLen = 41 + 1
-	shardIDLen   = 22
-)
-
 var startTime = uint64(time.Date(2021, 07, 01, 23, 0, 0, 0, time.UTC).UTC().UnixNano() / 1e6)
 
 type IDGen interface {
-	Next(shard uint, ts uint64) uint64
-	ParseShardID(ID uint64) (uint, error)
+	Next(ts uint64) uint64
 	ParseTS(ID uint64) (uint64, error)
 }
 
@@ -43,17 +37,11 @@ var _ IDGen = (*localID)(nil)
 type localID struct {
 }
 
-func (l *localID) Next(shard uint, ts uint64) uint64 {
+func (l *localID) Next(ts uint64) uint64 {
 	df := ts/1e6 - startTime
-	id := (df << shardIDLen) | uint64(shard)
-	return id
-}
-
-func (l *localID) ParseShardID(ID uint64) (uint, error) {
-	shardID := (ID << timeStampLen) >> timeStampLen
-	return uint(shardID), nil
+	return df
 }
 
 func (l *localID) ParseTS(ID uint64) (uint64, error) {
-	return (ID>>shardIDLen + startTime) * 1e6, nil
+	return (ID + startTime) * 1e6, nil
 }

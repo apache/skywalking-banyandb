@@ -615,8 +615,16 @@ func (rcv *IndexObject) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *IndexObject) Fields(j int) []byte {
+func (rcv *IndexObject) Name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *IndexObject) Fields(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
@@ -625,7 +633,7 @@ func (rcv *IndexObject) Fields(j int) []byte {
 }
 
 func (rcv *IndexObject) FieldsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -633,7 +641,7 @@ func (rcv *IndexObject) FieldsLength() int {
 }
 
 func (rcv *IndexObject) Type() IndexType {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return IndexType(rcv._tab.GetInt8(o + rcv._tab.Pos))
 	}
@@ -641,20 +649,23 @@ func (rcv *IndexObject) Type() IndexType {
 }
 
 func (rcv *IndexObject) MutateType(n IndexType) bool {
-	return rcv._tab.MutateInt8Slot(6, int8(n))
+	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
 
 func IndexObjectStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+	builder.StartObject(3)
+}
+func IndexObjectAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(name), 0)
 }
 func IndexObjectAddFields(builder *flatbuffers.Builder, fields flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(fields), 0)
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(fields), 0)
 }
 func IndexObjectStartFieldsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func IndexObjectAddType(builder *flatbuffers.Builder, type_ IndexType) {
-	builder.PrependInt8Slot(1, int8(type_), 0)
+	builder.PrependInt8Slot(2, int8(type_), 0)
 }
 func IndexObjectEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

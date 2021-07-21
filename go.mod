@@ -3,6 +3,7 @@ module github.com/apache/skywalking-banyandb
 go 1.16
 
 require (
+	github.com/RoaringBitmap/roaring v0.9.1
 	github.com/cespare/xxhash v1.1.0
 	github.com/dgraph-io/badger/v3 v3.2011.1
 	github.com/golang/mock v1.3.1

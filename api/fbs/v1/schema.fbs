@@ -81,6 +81,8 @@ enum IndexType:byte { Text = 0, Numerical = 1, ID = 2, MultiText = 3, MultiNumer
 
 // IndexObject defines who should be indexed.
 table IndexObject {
+    // name is the identity of a IndexObject
+    name:string;
     // fields are the combination that refers to an indexed object
     // If the elements in fields are more than 1, the object will generate a multi-field index
     // Caveat: All fields in a multi-field index MUST have an identical IndexType
