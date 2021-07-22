@@ -80,6 +80,7 @@ header: # `header` section is configurations for source codes license header.
     - '**/*.pb.go'
     - 'benchmark/java/src/main/java/banyandb/v1/*.java'
     - 'benchmark/java/src/main/java/org/apache/skywalking/banyandb/Write.java'
+    - "**/*.svg"
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
