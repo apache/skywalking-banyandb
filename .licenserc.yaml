@@ -64,6 +64,7 @@ header: # `header` section is configurations for source codes license header.
     - 'dist'
     - 'licenses'
     - '**/*.md'
+    - '**/*.proto'
     - '**/testdata/**'
     - '**/go.mod'
     - '**/go.sum'
