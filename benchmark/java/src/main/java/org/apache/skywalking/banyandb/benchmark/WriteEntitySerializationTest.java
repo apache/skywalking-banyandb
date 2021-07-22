@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit;
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class FlatBuffersWriteTest {
+public class WriteEntitySerializationTest {
 
     @State(Scope.Benchmark)
     public static class EntityModel {
@@ -73,7 +73,7 @@ public class FlatBuffersWriteTest {
         int binaryOffset = fbb.createByteVector(entity.binary);
         int[] fieldOffsets = new int[entity.items.length];
         for (int i = 0; i < entity.items.length; i++) {
-            int o = FlatBuffersWriteTest.buildField(fbb, entity.items[i]);
+            int o = WriteEntitySerializationTest.buildField(fbb, entity.items[i]);
             fieldOffsets[i] = o;
         }
         int fieldsVector = EntityValue.createFieldsVector(fbb, fieldOffsets);
@@ -156,7 +156,7 @@ public class FlatBuffersWriteTest {
 
     public static void main(String[] args) throws Exception {
         Options opts = new OptionsBuilder()
-                .include(FlatBuffersWriteTest.class.getSimpleName())
+                .include(WriteEntitySerializationTest.class.getSimpleName())
                 .addProfiler(GCProfiler.class)
                 .resultFormat(ResultFormatType.JSON)
 //                .result("benchmark-result/" + System.currentTimeMillis() + ".json")
