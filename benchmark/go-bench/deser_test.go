@@ -118,7 +118,7 @@ func Benchmark_Deser_Protobuf(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		we := &WriteEntity{}
-		_ = proto.Unmarshal(data, we)
+		_ = we.Unmarshal(data)
 	}
 }
 

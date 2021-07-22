@@ -6,6 +6,7 @@ require (
 	github.com/RoaringBitmap/roaring v0.9.1
 	github.com/cespare/xxhash v1.1.0
 	github.com/dgraph-io/badger/v3 v3.2011.1
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.3.1
 	github.com/golang/protobuf v1.5.2
 	github.com/google/flatbuffers v2.0.0+incompatible
