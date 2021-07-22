@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 option java_package = "org.apache.skywalking.banyandb";
+option go_package = "github.com/apache/skywalking-banyandb/benchmark/go-bench;go_bench";
 
 package banyandb.v1;
 
