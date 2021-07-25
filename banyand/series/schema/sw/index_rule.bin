@@ -1,16 +1,16 @@
 
 
 defaultsw-index-rule
-trace_idtrace_id
+trace_idtrace_id
 
 service_id
-service_id*
-service_instance_idservice_instance_id
-endpoint_idendpoint_id
-durationduration
-http.methodhttp.method
-db.typedb.type
-db.instancedb.instance
-mq.queuemq.queue
-mq.topicmq.topic
-	mq.broker	mq.broker2Òýï…
+service_id,
+service_instance_idservice_instance_id
+endpoint_idendpoint_id
+durationduration
+http.methodhttp.method
+db.typedb.type
+db.instancedb.instance
+mq.queuemq.queue
+mq.topicmq.topic
+	mq.broker	mq.broker2Òýï…

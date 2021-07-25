@@ -10,7 +10,7 @@ rule_ref: {
 }
 subjects: [
   {
-    catalog: Trace
+    catalog: CATALOG_TRACE
     series: {
       name: "sw"
       group: "default"

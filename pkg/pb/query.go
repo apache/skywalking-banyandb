@@ -28,14 +28,14 @@ import (
 
 var (
 	binaryOpsMap = map[string]v1.PairQuery_BinaryOp{
-		"=":          v1.PairQuery_EQ,
-		"!=":         v1.PairQuery_NE,
-		">":          v1.PairQuery_GT,
-		">=":         v1.PairQuery_GE,
-		"<":          v1.PairQuery_LT,
-		"<=":         v1.PairQuery_LE,
-		"having":     v1.PairQuery_HAVING,
-		"not having": v1.PairQuery_NOT_HAVING,
+		"=":          v1.PairQuery_BINARY_OP_EQ,
+		"!=":         v1.PairQuery_BINARY_OP_NE,
+		">":          v1.PairQuery_BINARY_OP_GT,
+		">=":         v1.PairQuery_BINARY_OP_GE,
+		"<":          v1.PairQuery_BINARY_OP_LT,
+		"<=":         v1.PairQuery_BINARY_OP_LE,
+		"having":     v1.PairQuery_BINARY_OP_HAVING,
+		"not having": v1.PairQuery_BINARY_OP_NOT_HAVING,
 	}
 )
 

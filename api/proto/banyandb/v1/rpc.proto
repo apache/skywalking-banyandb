@@ -26,7 +26,7 @@ import "google/protobuf/empty.proto";
 import "banyandb/v1/query.proto";
 import "banyandb/v1/write.proto";
 
-service Trace {
+service TraceService {
   rpc Query(banyandb.v1.EntityCriteria) returns (banyandb.v1.QueryResponse);
   rpc Write(stream banyandb.v1.WriteEntity) returns (stream google.protobuf.Empty);
 }

@@ -33,22 +33,24 @@ message ShardInfo {
 // Duration represents the elapsed time between two instants
 message Duration {
   uint32 val = 1;
-  enum DurationUint {
-    Hour = 0;
-    Day = 1;
-    Week = 2;
-    Month = 3;
+  enum Duration {
+    DURATION_UNSPECIFIED = 0;
+    DURATION_HOUR = 1;
+    DURATION_DAY = 2;
+    DURATION_WEEK = 3;
+    DURATION_MONTH = 4;
   }
-  DurationUint unit = 2;
+  Duration unit = 2;
 }
 
 message FieldSpec {
   string name = 1;
   enum FieldType {
-    String = 0;
-    Int = 1;
-    StringArray = 2;
-    IntArray = 3;
+    FIELD_TYPE_UNSPECIFIED = 0;
+    FIELD_TYPE_STRING = 1;
+    FIELD_TYPE_INT = 2;
+    FIELD_TYPE_STRING_ARRAY = 3;
+    FIELD_TYPE_INT_ARRAY = 4;
   }
   FieldType type = 2;
 }
@@ -97,12 +99,13 @@ message IndexObject {
   // IndexType determine the index structure under the hood
   // Fields with SeriesInternal type is reserved by Series module, would not be indexed by Index module.
   enum IndexType {
-    Text = 0;
-    Numerical = 1;
-    ID = 2;
-    MultiText = 3;
-    MultiNumerical = 4;
-    SeriesInternal = 5;
+    INDEX_TYPE_UNSPECIFIED = 0;
+    INDEX_TYPE_TEXT = 1;
+    INDEX_TYPE_NUMERICAL = 2;
+    INDEX_TYPE_ID = 3;
+    INDEX_TYPE_MULTI_TEXT = 4;
+    INDEX_TYPE_MULTI_NUMERICAL = 5;
+    INDEX_TYPE_SERIES_INTERNAL = 6;
   }
   // type is the IndexType of this IndexObject.
   IndexType type = 3;
@@ -153,9 +156,10 @@ message IndexRule {
 message Series {
   // Catalog refers to a placement contains objects belonged to a particular data type
   enum Catalog {
-    Trace = 0;
-    Log = 1;
-    Metric = 2;
+    CATALOG_UNSPECIFIED = 0;
+    CATALOG_TRACE = 1;
+    CATALOG_LOG = 2;
+    CATALOG_METRIC = 3;
   }
   // catalog is where the subject/series belongs to
   Catalog catalog = 1;

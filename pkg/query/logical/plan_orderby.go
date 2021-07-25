@@ -139,7 +139,7 @@ func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryO
 		lField, _ := getFieldRaw(iPair)
 		rField, _ := getFieldRaw(jPair)
 		comp := bytes.Compare(lField, rField)
-		if sortDirection == apiv1.QueryOrder_ASC {
+		if sortDirection == apiv1.QueryOrder_SORT_ASC {
 			return comp == -1
 		} else {
 			return comp == 1

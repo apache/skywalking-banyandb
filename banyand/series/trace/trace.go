@@ -125,7 +125,7 @@ func (s *service) Serve() error {
 			SeriesMetadata(sMeta.group, sMeta.name).
 			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
 			Time(time.Now()).
-			Action(v1.Action_Put).
+			Action(v1.Action_ACTION_PUT).
 			Build()
 		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), e))
 		if err != nil {
@@ -133,7 +133,7 @@ func (s *service) Serve() error {
 		}
 		for i := 0; i < int(sMeta.shardNum); i++ {
 			t := time.Now()
-			e := pb.NewShardEventBuilder().Action(v1.Action_Put).Time(t).
+			e := pb.NewShardEventBuilder().Action(v1.Action_ACTION_PUT).Time(t).
 				Shard(
 					pb.NewShardBuilder().
 						Id(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
@@ -312,10 +312,10 @@ func (t *traceSeries) buildFieldIndex() error {
 		t.fieldIndex[f.GetName()] = idx
 	}
 	switch t.stateFieldType {
-	case v1.FieldSpec_String:
+	case v1.FieldSpec_FIELD_TYPE_STRING:
 		t.strStateSuccessVal = state.GetValSuccess()
 		t.strStateErrorVal = state.GetValError()
-	case v1.FieldSpec_Int:
+	case v1.FieldSpec_FIELD_TYPE_INT:
 		intSVal, err := strconv.ParseInt(state.GetValSuccess(), 10, 64)
 		if err != nil {
 			return err
@@ -378,7 +378,7 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 
 	switch v := f.GetValueType().(type) {
 	case *v1.Field_Int:
-		if t.stateFieldType != v1.FieldSpec_Int {
+		if t.stateFieldType != v1.FieldSpec_FIELD_TYPE_INT {
 			// TODO: add a test case to cover this line
 			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: Int, supported type: %s", t.stateFieldType.String())
 			return
@@ -394,7 +394,7 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 			return
 		}
 	case *v1.Field_Str:
-		if t.stateFieldType != v1.FieldSpec_String {
+		if t.stateFieldType != v1.FieldSpec_FIELD_TYPE_STRING {
 			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: String, supported type: %s", t.stateFieldType.String())
 			return
 		}

@@ -41,8 +41,9 @@ message Shard {
 }
 
 enum Action {
-  Put = 0;
-  Delete = 1;
+  ACTION_UNSPECIFIED = 0;
+  ACTION_PUT = 1;
+  ACTION_DELETE = 2;
 }
 
 message ShardEvent {

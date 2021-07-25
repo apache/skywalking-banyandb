@@ -219,7 +219,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 			name:           "Sort By trace_id ASC",
 			targetField:    "trace_id",
 			targetFieldIdx: 0,
-			sortDirection:  apiv1.QueryOrder_ASC,
+			sortDirection:  apiv1.QueryOrder_SORT_ASC,
 		},
 	}
 
@@ -242,8 +242,8 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 }
 
 func reverseSortDirection(sort apiv1.QueryOrder_Sort) apiv1.QueryOrder_Sort {
-	if sort == apiv1.QueryOrder_DESC {
-		return apiv1.QueryOrder_ASC
+	if sort == apiv1.QueryOrder_SORT_DESC {
+		return apiv1.QueryOrder_SORT_ASC
 	}
-	return apiv1.QueryOrder_DESC
+	return apiv1.QueryOrder_SORT_DESC
 }

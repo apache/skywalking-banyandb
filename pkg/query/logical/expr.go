@@ -26,14 +26,14 @@ import (
 )
 
 var binaryOpFactory = map[apiv1.PairQuery_BinaryOp]func(l, r Expr) Expr{
-	apiv1.PairQuery_EQ:         Eq,
-	apiv1.PairQuery_NE:         Ne,
-	apiv1.PairQuery_LT:         Lt,
-	apiv1.PairQuery_GT:         Gt,
-	apiv1.PairQuery_LE:         Le,
-	apiv1.PairQuery_GE:         Ge,
-	apiv1.PairQuery_HAVING:     Having,
-	apiv1.PairQuery_NOT_HAVING: NotHaving,
+	apiv1.PairQuery_BINARY_OP_EQ:         Eq,
+	apiv1.PairQuery_BINARY_OP_NE:         Ne,
+	apiv1.PairQuery_BINARY_OP_LT:         Lt,
+	apiv1.PairQuery_BINARY_OP_GT:         Gt,
+	apiv1.PairQuery_BINARY_OP_LE:         Le,
+	apiv1.PairQuery_BINARY_OP_GE:         Ge,
+	apiv1.PairQuery_BINARY_OP_HAVING:     Having,
+	apiv1.PairQuery_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
 var _ ResolvableExpr = (*fieldRef)(nil)
@@ -129,7 +129,7 @@ func (b *binaryExpr) String() string {
 
 func Eq(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_EQ,
+		op: apiv1.PairQuery_BINARY_OP_EQ,
 		l:  l,
 		r:  r,
 	}
@@ -137,7 +137,7 @@ func Eq(l, r Expr) Expr {
 
 func Ne(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_NE,
+		op: apiv1.PairQuery_BINARY_OP_NE,
 		l:  l,
 		r:  r,
 	}
@@ -145,7 +145,7 @@ func Ne(l, r Expr) Expr {
 
 func Lt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_LT,
+		op: apiv1.PairQuery_BINARY_OP_LT,
 		l:  l,
 		r:  r,
 	}
@@ -153,7 +153,7 @@ func Lt(l, r Expr) Expr {
 
 func Le(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_LE,
+		op: apiv1.PairQuery_BINARY_OP_LE,
 		l:  l,
 		r:  r,
 	}
@@ -161,7 +161,7 @@ func Le(l, r Expr) Expr {
 
 func Gt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_GT,
+		op: apiv1.PairQuery_BINARY_OP_GT,
 		l:  l,
 		r:  r,
 	}
@@ -169,7 +169,7 @@ func Gt(l, r Expr) Expr {
 
 func Ge(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_GE,
+		op: apiv1.PairQuery_BINARY_OP_GE,
 		l:  l,
 		r:  r,
 	}
@@ -177,7 +177,7 @@ func Ge(l, r Expr) Expr {
 
 func Having(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_HAVING,
+		op: apiv1.PairQuery_BINARY_OP_HAVING,
 		l:  l,
 		r:  r,
 	}
@@ -185,7 +185,7 @@ func Having(l, r Expr) Expr {
 
 func NotHaving(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_NOT_HAVING,
+		op: apiv1.PairQuery_BINARY_OP_NOT_HAVING,
 		l:  l,
 		r:  r,
 	}

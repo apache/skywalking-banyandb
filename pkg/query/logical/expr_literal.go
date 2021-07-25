@@ -50,7 +50,7 @@ func Int(num int64) Expr {
 }
 
 func (i *int64Literal) FieldType() apiv1.FieldSpec_FieldType {
-	return apiv1.FieldSpec_Int
+	return apiv1.FieldSpec_FIELD_TYPE_INT
 }
 
 func (i *int64Literal) String() string {
@@ -86,7 +86,7 @@ func Ints(ints ...int64) Expr {
 }
 
 func (i *int64ArrLiteral) FieldType() apiv1.FieldSpec_FieldType {
-	return apiv1.FieldSpec_IntArray
+	return apiv1.FieldSpec_FIELD_TYPE_INT_ARRAY
 }
 
 func (i *int64ArrLiteral) String() string {
@@ -116,7 +116,7 @@ func Str(str string) Expr {
 }
 
 func (s *strLiteral) FieldType() apiv1.FieldSpec_FieldType {
-	return apiv1.FieldSpec_String
+	return apiv1.FieldSpec_FIELD_TYPE_STRING
 }
 
 func (s *strLiteral) String() string {
@@ -152,7 +152,7 @@ func Strs(strs ...string) Expr {
 }
 
 func (s *strArrLiteral) FieldType() apiv1.FieldSpec_FieldType {
-	return apiv1.FieldSpec_StringArray
+	return apiv1.FieldSpec_FIELD_TYPE_STRING_ARRAY
 }
 
 func (s *strArrLiteral) String() string {
