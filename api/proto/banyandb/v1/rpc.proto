@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option java_package = "org.apache.skywalking.banyandb";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1;v1";
+
+package banyandb.v1;
+
+import "google/protobuf/empty.proto";
+import "banyandb/v1/query.proto";
+import "banyandb/v1/write.proto";
+
+service Trace {
+  rpc Query(banyandb.v1.EntityCriteria) returns (banyandb.v1.QueryResponse);
+  rpc Write(stream banyandb.v1.WriteEntity) returns (stream google.protobuf.Empty);
+}

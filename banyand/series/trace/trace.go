@@ -18,27 +18,25 @@
 package trace
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strconv"
 	"time"
 
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
@@ -123,22 +121,28 @@ func (s *service) PreRun() error {
 func (s *service) Serve() error {
 	now := time.Now().UnixNano()
 	for _, sMeta := range s.schemaMap {
-		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), fb.BuildSeriesEvent(
-			sMeta.name,
-			sMeta.group,
-			sMeta.fieldsNamesCompositeSeriesID,
-		)))
+		e := pb.NewSeriesEventBuilder().
+			SeriesMetadata(sMeta.group, sMeta.name).
+			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
+			Time(time.Now()).
+			Action(v1.Action_Put).
+			Build()
+		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), e))
 		if err != nil {
 			return err
 		}
 		for i := 0; i < int(sMeta.shardNum); i++ {
-			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), fb.BuildShardEvent(
-				s.repo.NodeID(),
-				sMeta.name,
-				sMeta.group,
-				uint(i),
-				sMeta.shardNum,
-			)))
+			t := time.Now()
+			e := pb.NewShardEventBuilder().Action(v1.Action_Put).Time(t).
+				Shard(
+					pb.NewShardBuilder().
+						Id(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
+						Node(pb.NewNodeBuilder().
+							Id(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
+							Build()).
+						Build()).
+				Build()
+			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), e))
 			if errShard != nil {
 				return errShard
 			}
@@ -190,7 +194,7 @@ func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
 }
 
 func getTraceSeriesID(traceSeries common.Metadata) string {
-	return fmt.Sprintf(traceSeriesIDTemp, string(traceSeries.Spec.Name()), string(traceSeries.Spec.Group()))
+	return fmt.Sprintf(traceSeriesIDTemp, traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
 }
 
 type traceSeries struct {
@@ -201,18 +205,18 @@ type traceSeries struct {
 	schema                       apischema.TraceSeries
 	reader                       storage.StoreRepo
 	writePoint                   storage.GetWritePoint
-	shardNum                     uint
-	fieldIndex                   map[string]uint
-	traceIDIndex                 uint
+	shardNum                     uint32
+	fieldIndex                   map[string]int
+	traceIDIndex                 int
 	traceIDFieldName             string
 	stateFieldName               string
-	stateFieldType               v1.FieldType
+	stateFieldType               v1.FieldSpec_FieldType
 	strStateSuccessVal           string
 	strStateErrorVal             string
 	intStateSuccessVal           int64
 	intStateErrorVal             int64
-	stateIndex                   uint
-	fieldsNamesCompositeSeriesID [][]byte
+	stateIndex                   int
+	fieldsNamesCompositeSeriesID []string
 }
 
 func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger) (*traceSeries, error) {
@@ -221,11 +225,10 @@ func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger) (*traceSerie
 		idGen:  series.NewIDGen(),
 		l:      l,
 	}
-	meta := t.schema.Spec.Metadata(nil)
-	shardInfo := t.schema.Spec.Shard(nil)
-	t.shardNum = uint(shardInfo.Number())
-	t.name = string(meta.Name())
-	t.group = string(meta.Group())
+	meta := t.schema.Spec.GetMetadata()
+	shardInfo := t.schema.Spec.GetShard()
+	t.shardNum = shardInfo.GetNumber()
+	t.name, t.group = meta.GetName(), meta.GetGroup()
 	if err := t.buildFieldIndex(); err != nil {
 		return nil, err
 	}
@@ -295,35 +298,30 @@ func (t *traceSeries) Init(repo storage.StoreRepo, point storage.GetWritePoint) 
 
 func (t *traceSeries) buildFieldIndex() error {
 	spec := t.schema.Spec
-	reservedMap := spec.ReservedFieldsMap(nil)
-	t.traceIDFieldName = string(reservedMap.TraceId())
-	state := reservedMap.State(nil)
-	stateFieldName := state.Field()
+	reservedMap := spec.GetReservedFieldsMap()
+	t.traceIDFieldName = reservedMap.GetTraceId()
+	state := reservedMap.GetState()
+	stateFieldName := state.GetField()
 
-	fieldsLen := spec.FieldsLength()
-	index := make(map[string]uint, fieldsLen)
-	t.fieldIndex = index
-	for i := 0; i < fieldsLen; i++ {
-		fieldSpec := new(v1.FieldSpec)
-		if !spec.Fields(fieldSpec, i) {
-			continue
+	fieldsLen := len(spec.GetFields())
+	t.fieldIndex = make(map[string]int, fieldsLen)
+	for idx, f := range spec.GetFields() {
+		if f.GetName() == stateFieldName {
+			t.stateFieldType = f.GetType()
 		}
-		if bytes.Equal(fieldSpec.Name(), stateFieldName) {
-			t.stateFieldType = fieldSpec.Type()
-		}
-		index[string(fieldSpec.Name())] = uint(i)
+		t.fieldIndex[f.GetName()] = idx
 	}
 	switch t.stateFieldType {
-	case v1.FieldTypeString:
-		t.strStateSuccessVal = string(state.ValSuccess())
-		t.strStateErrorVal = string(state.ValError())
-	case v1.FieldTypeInt:
-		intSVal, err := strconv.ParseInt(string(state.ValSuccess()), 10, 64)
+	case v1.FieldSpec_String:
+		t.strStateSuccessVal = state.GetValSuccess()
+		t.strStateErrorVal = state.GetValError()
+	case v1.FieldSpec_Int:
+		intSVal, err := strconv.ParseInt(state.GetValSuccess(), 10, 64)
 		if err != nil {
 			return err
 		}
 		t.intStateSuccessVal = intSVal
-		intEVal, err := strconv.ParseInt(string(state.ValError()), 10, 64)
+		intEVal, err := strconv.ParseInt(state.GetValError(), 10, 64)
 		if err != nil {
 			return err
 		}
@@ -331,78 +329,88 @@ func (t *traceSeries) buildFieldIndex() error {
 	default:
 		return errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: Int and String", t.stateFieldType.String())
 	}
-	t.stateFieldName = string(stateFieldName)
+	t.stateFieldName = stateFieldName
 
-	t.fieldsNamesCompositeSeriesID = make([][]byte, 0, reservedMap.SeriesIdLength())
-	for i := 0; i < reservedMap.SeriesIdLength(); i++ {
-		t.fieldsNamesCompositeSeriesID = append(t.fieldsNamesCompositeSeriesID, reservedMap.SeriesId(i))
+	t.fieldsNamesCompositeSeriesID = make([]string, 0, len(reservedMap.GetSeriesId()))
+	for i := 0; i < len(reservedMap.GetSeriesId()); i++ {
+		t.fieldsNamesCompositeSeriesID = append(t.fieldsNamesCompositeSeriesID, reservedMap.GetSeriesId()[i])
 	}
 
 	return nil
 }
 
+// getTraceID extracts traceID as bytes from v1.EntityValue
 func (t *traceSeries) getTraceID(entityValue *v1.EntityValue) ([]byte, error) {
-	f := new(v1.Field)
-	if !entityValue.Fields(f, int(t.traceIDIndex)) {
-		return nil, errors.Wrapf(ErrFieldNotFound, "trace_id index :%d", t.traceIDIndex)
+	if entityValue.GetFields() == nil {
+		return nil, errors.Wrapf(ErrFieldNotFound, "EntityValue does not contain any fields")
 	}
-	if f.ValueType() != v1.ValueTypeStr {
-		return nil, errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: String", f.ValueType().String())
+	if len(entityValue.GetFields()) < t.traceIDIndex+1 {
+		return nil, errors.Wrapf(ErrFieldNotFound, "EntityValue contains incomplete fields")
 	}
-	unionTable := new(flatbuffers.Table)
-	f.Value(unionTable)
-	stringValue := new(v1.Str)
-	stringValue.Init(unionTable.Bytes, unionTable.Pos)
-	return stringValue.Value(), nil
+	f := entityValue.GetFields()[t.traceIDIndex]
+	if f == nil {
+		return nil, errors.Wrapf(ErrFieldNotFound, "trace_id index %d", t.traceIDIndex)
+	}
+	switch v := f.GetValueType().(type) {
+	case *v1.Field_Str:
+		return []byte(v.Str.GetValue()), nil
+	default:
+		// TODO: add a test to cover the default case
+		return nil, errors.Wrapf(ErrUnsupportedFieldType, "type: %v, supported type: String", v)
+	}
 }
 
 func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldStoreName, dataStoreName string, err error) {
-	f := new(v1.Field)
-	if !entityValue.Fields(f, int(t.stateIndex)) {
-		err = errors.Wrapf(ErrFieldNotFound, "state index :%d", t.traceIDIndex)
+	if entityValue.GetFields() == nil {
+		err = errors.Wrapf(ErrFieldNotFound, "EntityValue does not contain any fields")
 		return
 	}
-	switch f.ValueType() {
-	case v1.ValueTypeInt:
-		if t.stateFieldType != v1.FieldTypeInt {
-			err = errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: Int", f.ValueType().String())
+	if len(entityValue.GetFields()) < t.stateIndex+1 {
+		err = errors.Wrapf(ErrFieldNotFound, "EntityValue contains incomplete fields")
+		return
+	}
+
+	f := entityValue.GetFields()[t.stateIndex]
+	if f == nil {
+		err = errors.Wrapf(ErrFieldNotFound, "state index %d", t.stateIndex)
+		return
+	}
+
+	switch v := f.GetValueType().(type) {
+	case *v1.Field_Int:
+		if t.stateFieldType != v1.FieldSpec_Int {
+			// TODO: add a test case to cover this line
+			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: Int, supported type: %s", t.stateFieldType.String())
 			return
 		}
-		unionTable := new(flatbuffers.Table)
-		f.Value(unionTable)
-		intValue := new(v1.Int)
-		intValue.Init(unionTable.Bytes, unionTable.Pos)
-		switch intValue.Value() {
+		switch v.Int.GetValue() {
 		case t.intStateSuccessVal:
 			state = StateSuccess
 		case t.intStateErrorVal:
 			state = StateError
 		default:
 			err = errors.Wrapf(ErrUnknownFieldValue, "value:%d, supported value: %d, %d",
-				intValue.Value(), t.intStateSuccessVal, t.intStateErrorVal)
+				v.Int.GetValue(), t.intStateSuccessVal, t.intStateErrorVal)
 			return
 		}
-	case v1.ValueTypeStr:
-		if t.stateFieldType != v1.FieldTypeString {
-			err = errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: String", f.ValueType().String())
+	case *v1.Field_Str:
+		if t.stateFieldType != v1.FieldSpec_String {
+			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: String, supported type: %s", t.stateFieldType.String())
 			return
 		}
-		unionTable := new(flatbuffers.Table)
-		f.Value(unionTable)
-		stringValue := new(v1.Str)
-		stringValue.Init(unionTable.Bytes, unionTable.Pos)
-		switch string(stringValue.Value()) {
+		switch v.Str.GetValue() {
 		case t.strStateSuccessVal:
 			state = StateSuccess
 		case t.strStateErrorVal:
 			state = StateError
 		default:
 			err = errors.Wrapf(ErrUnknownFieldValue, "value:%s, supported value: %s, %s",
-				string(stringValue.Value()), t.strStateSuccessVal, t.strStateErrorVal)
+				string(v.Str.GetValue()), t.strStateSuccessVal, t.strStateErrorVal)
 			return
 		}
 	default:
-		err = errors.Wrapf(ErrUnsupportedFieldType, "type:%s, supported type: String and Int", f.ValueType().String())
+		// TODO: cover?
+		err = errors.Wrapf(ErrUnsupportedFieldType, "type: %s, supported type: String and Int", v)
 		return
 	}
 	fieldStoreName, dataStoreName, err = getStoreName(state)

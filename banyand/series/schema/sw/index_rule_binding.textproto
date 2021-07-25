@@ -1,0 +1,31 @@
+# proto-file: banyandb/v1/schema.proto
+# proto-message: IndexRuleBinding
+metadata: {
+  name: "sw-index-rule-binding"
+  group: "default"
+}
+rule_ref: {
+  name: "sw-index-rule"
+  group: "default"
+}
+subjects: [
+  {
+    catalog: Trace
+    series: {
+      name: "sw"
+      group: "default"
+    }
+  }
+]
+begin_at: {
+  seconds: 1622933202
+  nanos: 0
+}
+expire_at: {
+  seconds: 4778577979
+  nanos: 0
+}
+updated_at: {
+  seconds: 1622933202
+  nanos: 0
+}

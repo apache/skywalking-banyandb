@@ -24,11 +24,11 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func TestPlanExecution_Limit(t *testing.T) {
@@ -40,22 +40,22 @@ func TestPlanExecution_Limit(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 	}{
 		{
 			name:           "Limit 1",
-			unresolvedPlan: logical2.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 1),
+			unresolvedPlan: logical.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 1),
 			wantLength:     1,
 		},
 		{
 			name:           "Limit 10",
-			unresolvedPlan: logical2.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 10),
+			unresolvedPlan: logical.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 10),
 			wantLength:     10,
 		},
 		{
 			name:           "Limit 50",
-			unresolvedPlan: logical2.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 50),
+			unresolvedPlan: logical.Limit(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 50),
 			wantLength:     20,
 		},
 	}
@@ -84,22 +84,22 @@ func TestPlanExecution_Offset(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 	}{
 		{
 			name:           "Offset 0",
-			unresolvedPlan: logical2.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 0),
+			unresolvedPlan: logical.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 0),
 			wantLength:     20,
 		},
 		{
 			name:           "Offset 10",
-			unresolvedPlan: logical2.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 10),
+			unresolvedPlan: logical.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 10),
 			wantLength:     10,
 		},
 		{
 			name:           "Limit 50",
-			unresolvedPlan: logical2.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 50),
+			unresolvedPlan: logical.Offset(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), 50),
 			wantLength:     0,
 		},
 	}
@@ -128,7 +128,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 
 	traceID := "asdf1234"
 
-	p := logical2.TraceIDFetch(traceID, m, s)
+	p := logical.TraceIDFetch(traceID, m, s)
 	assert.NotNil(p)
 	f := NewMockDataFactory(ctrl, m, s, 10)
 	entities, err := p.Execute(f.MockTraceIDFetch(traceID))
@@ -147,39 +147,39 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 		indexMatchers  []*indexMatcher
 	}{
 		{
 			name: "Single Index Search",
-			unresolvedPlan: logical2.IndexScan(uint64(st.UnixNano()), uint64(et.UnixNano()), m, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
+			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
 			wantLength:    10,
 		},
 		{
 			name: "Multiple Index Search",
-			unresolvedPlan: logical2.IndexScan(uint64(st.UnixNano()), uint64(et.UnixNano()), m, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
-				logical2.Eq(logical2.NewFieldRef("status_code"), logical2.Str("200")),
+			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
 				NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-				NewIndexMatcher("status_code", roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
+				NewIndexMatcher("service_id", roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
 			},
 			wantLength: 5,
 		},
 		{
 			name: "Multiple Index With One Empty Result(ChunkID)",
-			unresolvedPlan: logical2.IndexScan(uint64(st.UnixNano()), uint64(et.UnixNano()), m, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
-				logical2.Eq(logical2.NewFieldRef("status_code"), logical2.Str("200")),
+			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
 				NewIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-				NewIndexMatcher("status_code", roaring.NewPostingList()),
+				NewIndexMatcher("service_id", roaring.NewPostingList()),
 			},
 			wantLength: 0,
 		},
@@ -213,20 +213,20 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 		targetField string
 		// TODO: avoid hardcoded index?
 		targetFieldIdx int
-		sortDirection  apiv1.Sort
+		sortDirection  apiv1.QueryOrder_Sort
 	}{
 		{
 			name:           "Sort By trace_id ASC",
 			targetField:    "trace_id",
 			targetFieldIdx: 0,
-			sortDirection:  apiv1.SortASC,
+			sortDirection:  apiv1.QueryOrder_ASC,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := require.New(t)
-			p, err := logical2.OrderBy(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), tt.targetField, tt.sortDirection).Analyze(s)
+			p, err := logical.OrderBy(NewMockDataFactory(ctrl, m, s, 20).MockParentPlan(), tt.targetField, tt.sortDirection).Analyze(s)
 			assert.NoError(err)
 			assert.NotNil(p)
 
@@ -235,15 +235,15 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 			assert.NoError(err)
 			assert.NotNil(entities)
 
-			assert.True(logical2.Sorted(entities, tt.targetFieldIdx, tt.sortDirection))
-			assert.False(logical2.Sorted(entities, tt.targetFieldIdx, reverseSortDirection(tt.sortDirection)))
+			assert.True(logical.Sorted(entities, tt.targetFieldIdx, tt.sortDirection))
+			assert.False(logical.Sorted(entities, tt.targetFieldIdx, reverseSortDirection(tt.sortDirection)))
 		})
 	}
 }
 
-func reverseSortDirection(sort apiv1.Sort) apiv1.Sort {
-	if sort == apiv1.SortDESC {
-		return apiv1.SortASC
+func reverseSortDirection(sort apiv1.QueryOrder_Sort) apiv1.QueryOrder_Sort {
+	if sort == apiv1.QueryOrder_DESC {
+		return apiv1.QueryOrder_ASC
 	}
-	return apiv1.SortDESC
+	return apiv1.QueryOrder_DESC
 }

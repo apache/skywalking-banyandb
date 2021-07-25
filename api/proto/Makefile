@@ -15,19 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-
-VERSION ?= v1
-fbs := $(wildcard $(VERSION)/*.fbs)
-GO_FLAGS := --go-namespace $(VERSION) --gen-onefile
-JAVA_FLAGS := --gen-generated
+CC = protoc
 
 .PHONY: generate
 generate: generate-go
 
 .PHONY: generate-go
-generate-go: $(fbs)
-	flatc --go --grpc $(GO_FLAGS) -o $(VERSION) $^
-
-.PHONY: generate-java
-generate-java: $(fbs)
-	flatc --java --grpc $(JAVA_FLAGS) -o $(VERSION) $^
+generate-go:
+	@echo "Install the protocol compiler plugins for Go..."
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
+	$(CC) --go-grpc_out=. --go-grpc_opt=paths=source_relative --go_out=paths=source_relative:. ./banyandb/v1/*.proto

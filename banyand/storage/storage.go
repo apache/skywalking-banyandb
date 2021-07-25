@@ -67,7 +67,7 @@ type Plugin interface {
 type PluginMeta struct {
 	ID          string
 	Group       string
-	ShardNumber uint
+	ShardNumber uint32
 	KVSpecs     []KVSpec
 }
 

@@ -22,23 +22,21 @@ import (
 	"reflect"
 	"testing"
 
-	flatbuffers "github.com/google/flatbuffers/go"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
 	type args struct {
-		series v1.Series
+		series *v1.Series
 		filter series.IndexObjectFilter
 	}
 	tests := []struct {
 		name    string
 		args    args
-		want    []v1.IndexRule
+		want    []*v1.IndexRule
 		wantErr bool
 	}{
 		{
@@ -52,8 +50,8 @@ func Test_service_RulesBySubject(t *testing.T) {
 			name: "filter index object",
 			args: args{
 				series: createSubject("sw", "default"),
-				filter: func(object v1.IndexObject) bool {
-					return string(object.Fields(0)) == "trace_id"
+				filter: func(object *v1.IndexObject) bool {
+					return object.GetFields()[0] == "trace_id"
 				},
 			},
 			want: getIndexRule("sw-index-rule", "default"),
@@ -62,8 +60,8 @@ func Test_service_RulesBySubject(t *testing.T) {
 			name: "got empty idWithShard",
 			args: args{
 				series: createSubject("sw", "default"),
-				filter: func(object v1.IndexObject) bool {
-					return string(object.Fields(0)) == "invalid"
+				filter: func(object *v1.IndexObject) bool {
+					return object.GetFields()[0] == "invalid"
 				},
 			},
 		},
@@ -87,34 +85,23 @@ func Test_service_RulesBySubject(t *testing.T) {
 	}
 }
 
-func getIndexRule(name, group string) []v1.IndexRule {
-	b := flatbuffers.NewBuilder(0)
-	b.Finish(createMetadata(b, name, group))
-	md := v1.GetRootAsMetadata(b.FinishedBytes(), 0)
-	indexRule, _ := sw.NewIndexRule().Get(context.Background(), common.Metadata{KindVersion: common.MetadataKindVersion, Spec: md})
-	return []v1.IndexRule{indexRule.Spec}
+func getIndexRule(name, group string) []*v1.IndexRule {
+	indexRule, _ := sw.NewIndexRule().Get(context.Background(), common.Metadata{
+		KindVersion: common.MetadataKindVersion,
+		Spec: &v1.Metadata{
+			Group: group,
+			Name:  name,
+		}},
+	)
+	return []*v1.IndexRule{indexRule.Spec}
 }
 
-func createMetadata(b *flatbuffers.Builder, name, group string) flatbuffers.UOffsetT {
-	namePos := b.CreateString(name)
-	groupPos := b.CreateString(group)
-	v1.MetadataStart(b)
-	v1.MetadataAddName(b, namePos)
-	v1.MetadataAddGroup(b, groupPos)
-	return v1.MetadataEnd(b)
-}
-
-func createSubject(name, group string) v1.Series {
-	b := flatbuffers.NewBuilder(0)
-	namePos := b.CreateString(name)
-	groupPos := b.CreateString(group)
-	v1.MetadataStart(b)
-	v1.MetadataAddName(b, namePos)
-	v1.MetadataAddGroup(b, groupPos)
-	s := v1.MetadataEnd(b)
-	v1.IndexRuleStart(b)
-	v1.SeriesAddCatalog(b, v1.CatalogTrace)
-	v1.SeriesAddSeries(b, s)
-	b.Finish(v1.IndexRuleEnd(b))
-	return *v1.GetRootAsSeries(b.FinishedBytes(), 0)
+func createSubject(name, group string) *v1.Series {
+	return &v1.Series{
+		Series: &v1.Metadata{
+			Group: group,
+			Name:  name,
+		},
+		Catalog: v1.Series_Trace,
+	}
 }

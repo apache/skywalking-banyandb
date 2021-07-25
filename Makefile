@@ -28,7 +28,7 @@ clean: TARGET=clean test-clean
 clean: default  ## Clean artifacts in all projects
 
 generate: ## Generate API codes
-	$(MAKE) -C api/fbs generate
+	$(MAKE) -C api/proto generate
 	$(MAKE) format
 	go install github.com/golang/mock/mockgen@v1.6.0
 	go generate ./...
