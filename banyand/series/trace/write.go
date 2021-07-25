@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	bydb_bytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -59,7 +60,7 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		return 0, errors.Wrap(err, "fail to write traceSeries data")
 	}
 
-	byteVal, err := proto.Marshal(entityVal)
+	byteVal, err := proto.Marshal(copyEntityValueWithoutDataBinary(entityVal))
 	if err != nil {
 		return 0, errors.Wrap(err, "fail to serialize EntityValue to []byte")
 	}
@@ -92,4 +93,14 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		Uint("shard_id", shardID).
 		Msg("written to Trace series")
 	return common.ChunkID(chunkID), err
+}
+
+// copyEntityValueWithoutDataBinary copies all fields without DataBinary
+func copyEntityValueWithoutDataBinary(ev *v1.EntityValue) *v1.EntityValue {
+	return &v1.EntityValue{
+		EntityId:   ev.GetEntityId(),
+		Timestamp:  ev.GetTimestamp(),
+		DataBinary: nil,
+		Fields:     ev.GetFields(),
+	}
 }
