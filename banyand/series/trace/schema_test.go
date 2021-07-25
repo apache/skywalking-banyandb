@@ -102,6 +102,6 @@ func createSubject(name, group string) *v1.Series {
 			Group: group,
 			Name:  name,
 		},
-		Catalog: v1.Series_Trace,
+		Catalog: v1.Series_CATALOG_TRACE,
 	}
 }
