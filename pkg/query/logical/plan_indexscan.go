@@ -58,7 +58,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 			}
 
 			if bCond, ok := cond.(*binaryExpr); ok {
-				fieldName := bCond.l.(*fieldRef).name
+				fieldName := bCond.l.(*FieldRef).name
 				if defined, indexObj := s.IndexDefined(fieldName); defined {
 					if v, exist := conditionMap[indexObj]; exist {
 						v = append(v, cond)
@@ -67,13 +67,13 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 						conditionMap[indexObj] = []Expr{cond}
 					}
 				} else {
-					return nil, errors.Wrap(IndexNotDefinedErr, fieldName)
+					return nil, errors.Wrap(ErrIndexNotDefined, fieldName)
 				}
 			}
 		}
 	}
 
-	var projFieldsRefs []*fieldRef
+	var projFieldsRefs []*FieldRef
 	if uis.projectionFields != nil && len(uis.projectionFields) > 0 {
 		var err error
 		projFieldsRefs, err = s.CreateRef(uis.projectionFields...)
@@ -103,7 +103,7 @@ type indexScan struct {
 	traceMetadata       *common.Metadata
 	conditionMap        map[*apiv1.IndexObject][]Expr
 	projectionFields    []string
-	projectionFieldRefs []*fieldRef
+	projectionFieldRefs []*FieldRef
 	traceState          series.TraceState
 }
 
@@ -135,7 +135,7 @@ func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error
 }
 
 func (i *indexScan) String() string {
-	var exprStr []string
+	exprStr := make([]string, 0, len(i.conditionMap))
 	for _, conditions := range i.conditionMap {
 		var conditionStr []string
 		for _, cond := range conditions {
@@ -146,11 +146,10 @@ func (i *indexScan) String() string {
 	if len(i.projectionFieldRefs) == 0 {
 		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=None",
 			i.startTime, i.endTime, i.traceMetadata.Spec.GetGroup(), i.traceMetadata.Spec.GetName(), strings.Join(exprStr, " AND "))
-	} else {
-		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
-			i.startTime, i.endTime, i.traceMetadata.Spec.GetGroup(), i.traceMetadata.Spec.GetName(), strings.Join(exprStr, " AND "),
-			formatExpr(", ", i.projectionFieldRefs...))
 	}
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
+		i.startTime, i.endTime, i.traceMetadata.Spec.GetGroup(), i.traceMetadata.Spec.GetName(), strings.Join(exprStr, " AND "),
+		formatExpr(", ", i.projectionFieldRefs...))
 }
 
 func (i *indexScan) Type() PlanType {
@@ -199,7 +198,7 @@ func convertToConditions(exprs []Expr) []index.Condition {
 	for _, expr := range exprs {
 		if bExpr, ok := expr.(*binaryExpr); ok {
 			conditions = append(conditions, index.Condition{
-				Key:    bExpr.l.(*fieldRef).name,
+				Key:    bExpr.l.(*FieldRef).name,
 				Op:     bExpr.op,
 				Values: bExpr.r.(LiteralExpr).Bytes(),
 			})

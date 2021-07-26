@@ -36,32 +36,32 @@ var binaryOpFactory = map[apiv1.PairQuery_BinaryOp]func(l, r Expr) Expr{
 	apiv1.PairQuery_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
-var _ ResolvableExpr = (*fieldRef)(nil)
+var _ ResolvableExpr = (*FieldRef)(nil)
 
-// fieldRef is the reference to the field
+// FieldRef is the reference to the field
 // also it holds the definition/schema of the field
-type fieldRef struct {
+type FieldRef struct {
 	// name defines the key of the field
 	name string
 	// spec contains the index of the key in the schema, as well as the underlying FieldSpec
 	spec *fieldSpec
 }
 
-func (f *fieldRef) Equal(expr Expr) bool {
-	if other, ok := expr.(*fieldRef); ok {
+func (f *FieldRef) Equal(expr Expr) bool {
+	if other, ok := expr.(*FieldRef); ok {
 		return other.name == f.name && other.spec.spec.GetType() == f.spec.spec.GetType()
 	}
 	return false
 }
 
-func (f *fieldRef) FieldType() apiv1.FieldSpec_FieldType {
+func (f *FieldRef) FieldType() apiv1.FieldSpec_FieldType {
 	if f.spec == nil {
 		panic("should be resolved first")
 	}
 	return f.spec.spec.GetType()
 }
 
-func (f *fieldRef) Resolve(s Schema) error {
+func (f *FieldRef) Resolve(s Schema) error {
 	specs, err := s.CreateRef(f.name)
 	if err != nil {
 		return err
@@ -70,12 +70,12 @@ func (f *fieldRef) Resolve(s Schema) error {
 	return nil
 }
 
-func (f *fieldRef) String() string {
+func (f *FieldRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.name, f.spec.spec.GetType().String())
 }
 
-func NewFieldRef(fieldName string) *fieldRef {
-	return &fieldRef{
+func NewFieldRef(fieldName string) *FieldRef {
+	return &FieldRef{
 		name: fieldName,
 	}
 }
@@ -115,7 +115,7 @@ func (b *binaryExpr) Resolve(s Schema) error {
 		}
 	}
 	if b.l.FieldType() != b.r.FieldType() {
-		return errors.Wrapf(IncompatibleQueryConditionErr, "left is %s while right is %s",
+		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %s while right is %s",
 			b.l.FieldType().String(),
 			b.r.FieldType().String(),
 		)

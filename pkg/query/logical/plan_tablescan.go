@@ -56,7 +56,7 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	}
 
 	if schema == nil {
-		return nil, errors.Wrap(InvalidSchemaErr, "nil")
+		return nil, errors.Wrap(ErrInvalidSchema, "nil")
 	}
 
 	fieldRefs, err := schema.CreateRef(u.projectionFields...)
@@ -79,7 +79,7 @@ type tableScan struct {
 	endTime             int64
 	traceState          series.TraceState
 	projectionFields    []string
-	projectionFieldRefs []*fieldRef
+	projectionFieldRefs []*FieldRef
 	schema              Schema
 	traceMetadata       *common.Metadata
 }
@@ -113,10 +113,9 @@ func (s *tableScan) String() string {
 	if len(s.projectionFieldRefs) == 0 {
 		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=None",
 			s.startTime, s.endTime, s.traceMetadata.Spec.GetGroup(), s.traceMetadata.Spec.GetName())
-	} else {
-		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
-			s.startTime, s.endTime, s.traceMetadata.Spec.GetGroup(), s.traceMetadata.Spec.GetName(), formatExpr(", ", s.projectionFieldRefs...))
 	}
+	return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
+		s.startTime, s.endTime, s.traceMetadata.Spec.GetGroup(), s.traceMetadata.Spec.GetName(), formatExpr(", ", s.projectionFieldRefs...))
 }
 
 func (s *tableScan) Children() []Plan {

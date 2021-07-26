@@ -82,6 +82,6 @@ $(addprefix $(BUILD_DIR)/,$(DEBUG_STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-debu
 .PHONY: release
 release: $(STATIC_BINARIES)   ## Build the release binaries
 
-.PHONY: clean
-clean::  ## Clean all artifacts
+.PHONY: clean-build
+clean-build:  ## Clean all artifacts
 	rm -rf $(BUILD_DIR)

@@ -136,9 +136,9 @@ func (s *service) Serve() error {
 			e := pb.NewShardEventBuilder().Action(v1.Action_ACTION_PUT).Time(t).
 				Shard(
 					pb.NewShardBuilder().
-						Id(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
+						ID(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
 						Node(pb.NewNodeBuilder().
-							Id(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
+							ID(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
 							Build()).
 						Build()).
 				Build()
@@ -405,7 +405,7 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 			state = StateError
 		default:
 			err = errors.Wrapf(ErrUnknownFieldValue, "value:%s, supported value: %s, %s",
-				string(v.Str.GetValue()), t.strStateSuccessVal, t.strStateErrorVal)
+				v.Str.GetValue(), t.strStateSuccessVal, t.strStateErrorVal)
 			return
 		}
 	default:

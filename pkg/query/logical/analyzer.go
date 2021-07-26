@@ -30,30 +30,30 @@ import (
 )
 
 var (
-	FieldNotDefinedErr            = errors.New("field is not defined")
-	InvalidConditionTypeErr       = errors.New("invalid pair type")
-	IncompatibleQueryConditionErr = errors.New("incompatible query condition type")
-	InvalidSchemaErr              = errors.New("invalid schema")
-	IndexNotDefinedErr            = errors.New("index is not define for the field")
+	ErrFieldNotDefined            = errors.New("field is not defined")
+	ErrInvalidConditionType       = errors.New("invalid pair type")
+	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
+	ErrInvalidSchema              = errors.New("invalid schema")
+	ErrIndexNotDefined            = errors.New("index is not define for the field")
 )
 
 var (
 	DefaultLimit uint32 = 20
 )
 
-type analyzer struct {
+type Analyzer struct {
 	traceSeries seriesSchema.TraceSeries
 	indexRule   seriesSchema.IndexRule
 }
 
-func DefaultAnalyzer() *analyzer {
-	return &analyzer{
+func DefaultAnalyzer() *Analyzer {
+	return &Analyzer{
 		sw.NewTraceSeries(),
 		sw.NewIndexRule(),
 	}
 }
 
-func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadata) (Schema, error) {
+func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadata) (Schema, error) {
 	traceSeries, err := a.traceSeries.Get(ctx, metadata)
 
 	if err != nil {
@@ -79,7 +79,7 @@ func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	return s, nil
 }
 
-func (a *analyzer) Analyze(_ context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
+func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
 	// parse tableScan
 	timeRange := criteria.GetTimeRange()
 
@@ -108,7 +108,7 @@ func (a *analyzer) Analyze(_ context.Context, criteria *apiv1.EntityCriteria, tr
 				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
 			case *apiv1.TypedPair_IntPair:
 				// check special field `state`
-				if string(v.IntPair.GetKey()) == "state" {
+				if v.IntPair.GetKey() == "state" {
 					traceState = series.TraceState(v.IntPair.GetValues()[0])
 					continue
 				}
@@ -116,7 +116,7 @@ func (a *analyzer) Analyze(_ context.Context, criteria *apiv1.EntityCriteria, tr
 				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.IntPair.GetKey()), lit))
 				useIndexScan = true
 			default:
-				return nil, InvalidConditionTypeErr
+				return nil, ErrInvalidConditionType
 			}
 		}
 

@@ -24,21 +24,16 @@ PROJECTS := banyand
 
 ##@ Build targets
 
-clean: TARGET=clean test-clean
+clean: TARGET=clean
+clean: PROJECTS:=$(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
 
-generate: ## Generate API codes
-	@echo "Install the protocol compiler plugins for Go..."
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
-	buf generate
-	$(MAKE) format
-	go install github.com/golang/mock/mockgen@v1.6.0
-	go generate ./...
-	$(MAKE) format
+generate: TARGET=generate
+generate: PROJECTS:=api $(PROJECTS) pkg
+generate: default  ## Generate API codes
+	@$(MAKE) format
 
 build: TARGET=all
-build: PROJECTS:=$(PROJECTS)
 build: default  ## Build all projects
 
 ##@ Release targets
@@ -49,23 +44,19 @@ release: default  ## Build the release artifacts for all projects, usually the s
 ##@ Test targets
 
 test: TARGET=test
-test: PROJECTS:=$(PROJECTS)
 test: default          ## Run the unit tests in all projects
 
 test-race: TARGET=test-race
-test-race: PROJECTS:=$(PROJECTS)
 test-race: default     ## Run the unit tests in all projects with race detector on
 
 test-coverage: TARGET=test-coverage
-test-coverage: PROJECTS:=$(PROJECTS)
 test-coverage: default ## Run the unit tests in all projects with coverage analysis on
 
 ##@ Code quality targets
 
 lint: TARGET=lint
-lint: PROJECTS:=$(PROJECTS)
+lint: PROJECTS:=api $(PROJECTS) pkg
 lint: default ## Run the linters on all projects
-
 
 ##@ Code style targets
 
@@ -86,7 +77,7 @@ EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
 GO_VERSION := $(shell go version)
 
 ## Check that the status is consistent with CI.
-check: clean generate
+check: clean
 # case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
 	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
 		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \
@@ -123,6 +114,9 @@ default:
 		fi; \
 	done
 
+nuke:
+	git clean -xdf
+
 include scripts/build/help.mk
 
-.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit
+.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke

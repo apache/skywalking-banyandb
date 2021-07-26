@@ -28,8 +28,8 @@ import (
 type Schema interface {
 	IndexDefined(string) (bool, *apiv1.IndexObject)
 	FieldDefined(string) bool
-	CreateRef(names ...string) ([]*fieldRef, error)
-	Map(refs ...*fieldRef) Schema
+	CreateRef(names ...string) ([]*FieldRef, error)
+	Map(refs ...*FieldRef) Schema
 	Equal(Schema) bool
 }
 
@@ -83,20 +83,20 @@ func (s *schema) FieldDefined(name string) bool {
 	return false
 }
 
-func (s *schema) CreateRef(names ...string) ([]*fieldRef, error) {
-	var fieldRefs []*fieldRef
+func (s *schema) CreateRef(names ...string) ([]*FieldRef, error) {
+	var fieldRefs []*FieldRef
 	for _, name := range names {
 		if fs, ok := s.fieldMap[name]; ok {
-			fieldRefs = append(fieldRefs, &fieldRef{name, fs})
+			fieldRefs = append(fieldRefs, &FieldRef{name, fs})
 		} else {
-			return nil, errors.Wrap(FieldNotDefinedErr, name)
+			return nil, errors.Wrap(ErrFieldNotDefined, name)
 		}
 	}
 	return fieldRefs, nil
 }
 
-func (s *schema) Map(refs ...*fieldRef) Schema {
-	if refs == nil || len(refs) == 0 {
+func (s *schema) Map(refs ...*FieldRef) Schema {
+	if len(refs) == 0 {
 		return nil
 	}
 	newS := &schema{

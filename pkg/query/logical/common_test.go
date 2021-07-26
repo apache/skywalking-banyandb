@@ -123,7 +123,7 @@ type mockDataFactory struct {
 	s             logical.Schema
 }
 
-func NewMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical.Schema, num int) *mockDataFactory {
+func newMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical.Schema, num int) *mockDataFactory {
 	return &mockDataFactory{
 		ctrl:          ctrl,
 		num:           num,
@@ -211,7 +211,7 @@ func (i *indexMatcher) String() string {
 	return fmt.Sprintf("is search for key %s", i.key)
 }
 
-func NewIndexMatcher(key string, chunkIDs posting.List) *indexMatcher {
+func newIndexMatcher(key string, chunkIDs posting.List) *indexMatcher {
 	return &indexMatcher{
 		key:      key,
 		chunkIDs: chunkIDs,

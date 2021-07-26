@@ -239,7 +239,7 @@ func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 		seriesID := []byte(se.seriesID)
 		ev := pb.NewEntityValueBuilder().
 			DataBinary(se.entity.binary).
-			EntityId(se.entity.id).
+			EntityID(se.entity.id).
 			Timestamp(se.entity.t).
 			Fields(se.entity.items...).
 			Build()

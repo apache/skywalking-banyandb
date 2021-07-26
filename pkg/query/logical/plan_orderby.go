@@ -64,7 +64,7 @@ func (u *unresolvedOrderBy) Analyze(s Schema) (Plan, error) {
 type orderBy struct {
 	input     Plan
 	sort      apiv1.QueryOrder_Sort
-	targetRef *fieldRef
+	targetRef *FieldRef
 }
 
 func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
@@ -141,8 +141,7 @@ func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryO
 		comp := bytes.Compare(lField, rField)
 		if sortDirection == apiv1.QueryOrder_SORT_ASC {
 			return comp == -1
-		} else {
-			return comp == 1
 		}
+		return comp == 1
 	}
 }

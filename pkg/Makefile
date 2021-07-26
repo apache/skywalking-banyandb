@@ -1,5 +1,3 @@
-#!/usr/bin/env bash
-
 # Licensed to Apache Software Foundation (ASF) under one or more contributor
 # license agreements. See the NOTICE file distributed with
 # this work for additional information regarding copyright
@@ -16,32 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-set -e
+NAME := pkg
 
-FB_VERSION=${FB_VERSION:=v2.0.0}
-
-for CMD in curl cmake g++ make; do
-  command -v $CMD > /dev/null || \
-    { echo "[ERROR]: '$CMD' command not not found. Exiting" 1>&2; exit 1; }
-done
-
-## Create Temp Build Directory
-BUILD_DIR=$(mktemp -d)
-pushd $BUILD_DIR
-
-## Fetch Tarball
-curl -sLO   https://github.com/google/flatbuffers/archive/$FB_VERSION.tar.gz
-tar xf $FB_VERSION.tar.gz
-
-## Build Binaries
-cd flatbuffers-${FB_VERSION#v}
-cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
-make
-./flattests
-sudo cp flatc /usr/local/bin/flatc
-sudo chmod +x /usr/local/bin/flatc
-
-## Cleanup Temp Build Directory
-popd
-rm -rf $BUILD_DIR
+include ../scripts/build/base.mk
+include ../scripts/build/generate_go.mk
+include ../scripts/build/test.mk
+include ../scripts/build/lint.mk
+include ../scripts/build/help.mk
