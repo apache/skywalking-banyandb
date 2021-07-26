@@ -26,15 +26,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-type writeEntityBuilder struct {
+type WriteEntityBuilder struct {
 	we *v1.WriteEntity
 }
 
-func NewWriteEntityBuilder() *writeEntityBuilder {
-	return &writeEntityBuilder{we: &v1.WriteEntity{}}
+func NewWriteEntityBuilder() *WriteEntityBuilder {
+	return &WriteEntityBuilder{we: &v1.WriteEntity{}}
 }
 
-func (web *writeEntityBuilder) Metadata(group, name string) *writeEntityBuilder {
+func (web *WriteEntityBuilder) Metadata(group, name string) *WriteEntityBuilder {
 	web.we.Metadata = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -42,39 +42,39 @@ func (web *writeEntityBuilder) Metadata(group, name string) *writeEntityBuilder 
 	return web
 }
 
-func (web *writeEntityBuilder) EntityValue(ev *v1.EntityValue) *writeEntityBuilder {
+func (web *WriteEntityBuilder) EntityValue(ev *v1.EntityValue) *WriteEntityBuilder {
 	web.we.Entity = ev
 	return web
 }
 
-func (web *writeEntityBuilder) Build() *v1.WriteEntity {
+func (web *WriteEntityBuilder) Build() *v1.WriteEntity {
 	return web.we
 }
 
-type entityValueBuilder struct {
+type EntityValueBuilder struct {
 	ev *v1.EntityValue
 }
 
-func NewEntityValueBuilder() *entityValueBuilder {
-	return &entityValueBuilder{ev: &v1.EntityValue{}}
+func NewEntityValueBuilder() *EntityValueBuilder {
+	return &EntityValueBuilder{ev: &v1.EntityValue{}}
 }
 
-func (evb *entityValueBuilder) EntityId(entityId string) *entityValueBuilder {
-	evb.ev.EntityId = entityId
+func (evb *EntityValueBuilder) EntityID(entityID string) *EntityValueBuilder {
+	evb.ev.EntityId = entityID
 	return evb
 }
 
-func (evb *entityValueBuilder) Timestamp(time time.Time) *entityValueBuilder {
+func (evb *EntityValueBuilder) Timestamp(time time.Time) *EntityValueBuilder {
 	evb.ev.Timestamp = timestamppb.New(time)
 	return evb
 }
 
-func (evb *entityValueBuilder) DataBinary(data []byte) *entityValueBuilder {
+func (evb *EntityValueBuilder) DataBinary(data []byte) *EntityValueBuilder {
 	evb.ev.DataBinary = data
 	return evb
 }
 
-func (evb *entityValueBuilder) Fields(items ...interface{}) *entityValueBuilder {
+func (evb *EntityValueBuilder) Fields(items ...interface{}) *EntityValueBuilder {
 	evb.ev.Fields = make([]*v1.Field, len(items))
 	for idx, item := range items {
 		evb.ev.Fields[idx] = buildField(item)
@@ -140,6 +140,6 @@ func buildField(value interface{}) *v1.Field {
 	}
 }
 
-func (evb *entityValueBuilder) Build() *v1.EntityValue {
+func (evb *EntityValueBuilder) Build() *v1.EntityValue {
 	return evb.ev
 }

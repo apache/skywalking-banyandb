@@ -168,7 +168,7 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.ErrFieldNotDefined)
 }
 
 func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
@@ -194,7 +194,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.ErrFieldNotDefined)
 }
 
 func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
@@ -220,7 +220,7 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.ErrFieldNotDefined)
 }
 
 func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
@@ -246,5 +246,5 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.IndexNotDefinedErr)
+	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }

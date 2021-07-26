@@ -16,14 +16,13 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
+NAME := api
 
 include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
+
+generate: $(PROTOC)
+	@PATH=$(PATH):$(tool_bin) buf generate
+
+lint: $(PROTOC)
+	@PATH=$(PATH):$(tool_bin) buf lint

@@ -39,17 +39,17 @@ var (
 	}
 )
 
-type entityCriteriaBuilder struct {
+type EntityCriteriaBuilder struct {
 	ec *v1.EntityCriteria
 }
 
-func NewEntityCriteriaBuilder() *entityCriteriaBuilder {
-	return &entityCriteriaBuilder{
+func NewEntityCriteriaBuilder() *EntityCriteriaBuilder {
+	return &EntityCriteriaBuilder{
 		ec: &v1.EntityCriteria{},
 	}
 }
 
-func (b *entityCriteriaBuilder) Metadata(group, name string) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) Metadata(group, name string) *EntityCriteriaBuilder {
 	b.ec.Metadata = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -57,17 +57,17 @@ func (b *entityCriteriaBuilder) Metadata(group, name string) *entityCriteriaBuil
 	return b
 }
 
-func (b *entityCriteriaBuilder) Limit(limit uint32) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) Limit(limit uint32) *EntityCriteriaBuilder {
 	b.ec.Limit = limit
 	return b
 }
 
-func (b *entityCriteriaBuilder) Offset(offset uint32) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) Offset(offset uint32) *EntityCriteriaBuilder {
 	b.ec.Offset = offset
 	return b
 }
 
-func (b *entityCriteriaBuilder) Fields(items ...interface{}) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) Fields(items ...interface{}) *EntityCriteriaBuilder {
 	if len(items)%3 != 0 {
 		panic("expect even number of arguments")
 	}
@@ -199,12 +199,12 @@ func buildPair(key string, value interface{}) *v1.TypedPair {
 	}
 }
 
-func (b *entityCriteriaBuilder) Projection(projections ...string) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) Projection(projections ...string) *EntityCriteriaBuilder {
 	b.ec.Projection = &v1.Projection{KeyNames: projections}
 	return b
 }
 
-func (b *entityCriteriaBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sort) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sort) *EntityCriteriaBuilder {
 	b.ec.OrderBy = &v1.QueryOrder{
 		KeyName: fieldName,
 		Sort:    sort,
@@ -212,7 +212,7 @@ func (b *entityCriteriaBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sor
 	return b
 }
 
-func (b *entityCriteriaBuilder) TimeRange(sT, eT time.Time) *entityCriteriaBuilder {
+func (b *EntityCriteriaBuilder) TimeRange(sT, eT time.Time) *EntityCriteriaBuilder {
 	b.ec.TimeRange = &v1.TimeRange{
 		Begin: timestamppb.New(sT),
 		End:   timestamppb.New(eT),
@@ -220,29 +220,29 @@ func (b *entityCriteriaBuilder) TimeRange(sT, eT time.Time) *entityCriteriaBuild
 	return b
 }
 
-func (b *entityCriteriaBuilder) Build() *v1.EntityCriteria {
+func (b *EntityCriteriaBuilder) Build() *v1.EntityCriteria {
 	return b.ec
 }
 
-type queryEntityBuilder struct {
+type QueryEntityBuilder struct {
 	qe *v1.Entity
 }
 
-func NewQueryEntityBuilder() *queryEntityBuilder {
-	return &queryEntityBuilder{qe: &v1.Entity{}}
+func NewQueryEntityBuilder() *QueryEntityBuilder {
+	return &QueryEntityBuilder{qe: &v1.Entity{}}
 }
 
-func (qeb *queryEntityBuilder) EntityID(entityID string) *queryEntityBuilder {
+func (qeb *QueryEntityBuilder) EntityID(entityID string) *QueryEntityBuilder {
 	qeb.qe.EntityId = entityID
 	return qeb
 }
 
-func (qeb *queryEntityBuilder) Timestamp(t time.Time) *queryEntityBuilder {
+func (qeb *QueryEntityBuilder) Timestamp(t time.Time) *QueryEntityBuilder {
 	qeb.qe.Timestamp = timestamppb.New(t)
 	return qeb
 }
 
-func (qeb *queryEntityBuilder) Fields(items ...interface{}) *queryEntityBuilder {
+func (qeb *QueryEntityBuilder) Fields(items ...interface{}) *QueryEntityBuilder {
 	if len(items)%2 != 0 {
 		panic("invalid fields list")
 	}
@@ -258,6 +258,6 @@ func (qeb *queryEntityBuilder) Fields(items ...interface{}) *queryEntityBuilder 
 	return qeb
 }
 
-func (qeb *queryEntityBuilder) Build() *v1.Entity {
+func (qeb *QueryEntityBuilder) Build() *v1.Entity {
 	return qeb.qe
 }

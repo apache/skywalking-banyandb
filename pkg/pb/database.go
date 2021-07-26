@@ -25,47 +25,47 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 )
 
-type shardEventBuilder struct {
+type ShardEventBuilder struct {
 	se *v1.ShardEvent
 }
 
-func NewShardEventBuilder() *shardEventBuilder {
-	return &shardEventBuilder{se: &v1.ShardEvent{}}
+func NewShardEventBuilder() *ShardEventBuilder {
+	return &ShardEventBuilder{se: &v1.ShardEvent{}}
 }
 
-func (seb *shardEventBuilder) Action(action v1.Action) *shardEventBuilder {
+func (seb *ShardEventBuilder) Action(action v1.Action) *ShardEventBuilder {
 	seb.se.Action = action
 	return seb
 }
 
-func (seb *shardEventBuilder) Time(t time.Time) *shardEventBuilder {
+func (seb *ShardEventBuilder) Time(t time.Time) *ShardEventBuilder {
 	seb.se.Time = timestamppb.New(t)
 	return seb
 }
 
-func (seb *shardEventBuilder) Shard(shard *v1.Shard) *shardEventBuilder {
+func (seb *ShardEventBuilder) Shard(shard *v1.Shard) *ShardEventBuilder {
 	seb.se.Shard = shard
 	return seb
 }
 
-func (seb *shardEventBuilder) Build() *v1.ShardEvent {
+func (seb *ShardEventBuilder) Build() *v1.ShardEvent {
 	return seb.se
 }
 
-type shardBuilder struct {
+type ShardBuilder struct {
 	s *v1.Shard
 }
 
-func NewShardBuilder() *shardBuilder {
-	return &shardBuilder{s: &v1.Shard{}}
+func NewShardBuilder() *ShardBuilder {
+	return &ShardBuilder{s: &v1.Shard{}}
 }
 
-func (sb *shardBuilder) Id(shardId uint64) *shardBuilder {
-	sb.s.Id = shardId
+func (sb *ShardBuilder) ID(shardID uint64) *ShardBuilder {
+	sb.s.Id = shardID
 	return sb
 }
 
-func (sb *shardBuilder) SeriesMetadata(group, name string) *shardBuilder {
+func (sb *ShardBuilder) SeriesMetadata(group, name string) *ShardBuilder {
 	sb.s.Series = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -73,71 +73,71 @@ func (sb *shardBuilder) SeriesMetadata(group, name string) *shardBuilder {
 	return sb
 }
 
-func (sb *shardBuilder) Node(node *v1.Node) *shardBuilder {
+func (sb *ShardBuilder) Node(node *v1.Node) *ShardBuilder {
 	sb.s.Node = node
 	return sb
 }
 
-func (sb *shardBuilder) Total(total uint32) *shardBuilder {
+func (sb *ShardBuilder) Total(total uint32) *ShardBuilder {
 	sb.s.Total = total
 	return sb
 }
 
-func (sb *shardBuilder) CreatedAt(t time.Time) *shardBuilder {
+func (sb *ShardBuilder) CreatedAt(t time.Time) *ShardBuilder {
 	sb.s.CreatedAt = timestamppb.New(t)
 	return sb
 }
 
-func (sb *shardBuilder) UpdatedAt(t time.Time) *shardBuilder {
+func (sb *ShardBuilder) UpdatedAt(t time.Time) *ShardBuilder {
 	sb.s.UpdatedAt = timestamppb.New(t)
 	return sb
 }
 
-func (sb *shardBuilder) Build() *v1.Shard {
+func (sb *ShardBuilder) Build() *v1.Shard {
 	return sb.s
 }
 
-type nodeBuilder struct {
+type NodeBuilder struct {
 	n *v1.Node
 }
 
-func NewNodeBuilder() *nodeBuilder {
-	return &nodeBuilder{n: &v1.Node{}}
+func NewNodeBuilder() *NodeBuilder {
+	return &NodeBuilder{n: &v1.Node{}}
 }
 
-func (nb *nodeBuilder) Id(id string) *nodeBuilder {
+func (nb *NodeBuilder) ID(id string) *NodeBuilder {
 	nb.n.Id = id
 	return nb
 }
 
-func (nb *nodeBuilder) Addr(addr string) *nodeBuilder {
+func (nb *NodeBuilder) Addr(addr string) *NodeBuilder {
 	nb.n.Addr = addr
 	return nb
 }
 
-func (nb *nodeBuilder) UpdatedAt(t time.Time) *nodeBuilder {
+func (nb *NodeBuilder) UpdatedAt(t time.Time) *NodeBuilder {
 	nb.n.UpdatedAt = timestamppb.New(t)
 	return nb
 }
 
-func (nb *nodeBuilder) CreatedAt(t time.Time) *nodeBuilder {
+func (nb *NodeBuilder) CreatedAt(t time.Time) *NodeBuilder {
 	nb.n.CreatedAt = timestamppb.New(t)
 	return nb
 }
 
-func (nb *nodeBuilder) Build() *v1.Node {
+func (nb *NodeBuilder) Build() *v1.Node {
 	return nb.n
 }
 
-type seriesEventBuilder struct {
+type SeriesEventBuilder struct {
 	se *v1.SeriesEvent
 }
 
-func NewSeriesEventBuilder() *seriesEventBuilder {
-	return &seriesEventBuilder{se: &v1.SeriesEvent{}}
+func NewSeriesEventBuilder() *SeriesEventBuilder {
+	return &SeriesEventBuilder{se: &v1.SeriesEvent{}}
 }
 
-func (seb *seriesEventBuilder) SeriesMetadata(group, name string) *seriesEventBuilder {
+func (seb *SeriesEventBuilder) SeriesMetadata(group, name string) *SeriesEventBuilder {
 	seb.se.Series = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -145,21 +145,21 @@ func (seb *seriesEventBuilder) SeriesMetadata(group, name string) *seriesEventBu
 	return seb
 }
 
-func (seb *seriesEventBuilder) FieldNames(names ...string) *seriesEventBuilder {
+func (seb *SeriesEventBuilder) FieldNames(names ...string) *SeriesEventBuilder {
 	seb.se.FieldNamesCompositeSeriesId = names
 	return seb
 }
 
-func (seb *seriesEventBuilder) Action(action v1.Action) *seriesEventBuilder {
+func (seb *SeriesEventBuilder) Action(action v1.Action) *SeriesEventBuilder {
 	seb.se.Action = action
 	return seb
 }
 
-func (seb *seriesEventBuilder) Time(t time.Time) *seriesEventBuilder {
+func (seb *SeriesEventBuilder) Time(t time.Time) *SeriesEventBuilder {
 	seb.se.Time = timestamppb.New(t)
 	return seb
 }
 
-func (seb *seriesEventBuilder) Build() *v1.SeriesEvent {
+func (seb *SeriesEventBuilder) Build() *v1.SeriesEvent {
 	return seb.se
 }

@@ -182,7 +182,7 @@ func Test_traceSeries_Write(t *testing.T) {
 			seriesID := []byte(tt.args.seriesID)
 			ev := pb.NewEntityValueBuilder().
 				DataBinary(tt.args.entity.binary).
-				EntityId(tt.args.entity.id).
+				EntityID(tt.args.entity.id).
 				Fields(tt.args.entity.items...).
 				Timestamp(time.Now()).
 				Build()

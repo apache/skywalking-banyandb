@@ -24,27 +24,16 @@ PROJECTS := banyand
 
 ##@ Build targets
 
-clean: TARGET=clean test-clean
+clean: TARGET=clean
+clean: PROJECTS:=$(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
 
-tool_install:
-	@echo "Install the protocol compiler plugins for Go..."
-	@go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1
-	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
-	@go install github.com/bufbuild/buf/cmd/buf@v0.44.0
-	@go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@v0.44.0
-	@go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@v0.44.0
-	@echo "Install mock generate tool..."
-	@go install github.com/golang/mock/mockgen@v1.6.0
-
-generate: tool_install ## Generate API codes
-	buf generate
-	$(MAKE) format
-	go generate ./...
-	$(MAKE) format
+generate: TARGET=generate
+generate: PROJECTS:=api $(PROJECTS) pkg
+generate: default  ## Generate API codes
+	@$(MAKE) format
 
 build: TARGET=all
-build: PROJECTS:=$(PROJECTS)
 build: default  ## Build all projects
 
 ##@ Release targets
@@ -55,26 +44,19 @@ release: default  ## Build the release artifacts for all projects, usually the s
 ##@ Test targets
 
 test: TARGET=test
-test: PROJECTS:=$(PROJECTS)
 test: default          ## Run the unit tests in all projects
 
 test-race: TARGET=test-race
-test-race: PROJECTS:=$(PROJECTS)
 test-race: default     ## Run the unit tests in all projects with race detector on
 
 test-coverage: TARGET=test-coverage
-test-coverage: PROJECTS:=$(PROJECTS)
 test-coverage: default ## Run the unit tests in all projects with coverage analysis on
 
 ##@ Code quality targets
 
-
-lint: tool_install
 lint: TARGET=lint
-lint: PROJECTS:=$(PROJECTS)
+lint: PROJECTS:=api $(PROJECTS) pkg
 lint: default ## Run the linters on all projects
-	buf lint
-	buf breaking --against '.git#branch=main'
 
 ##@ Code style targets
 
@@ -132,6 +114,9 @@ default:
 		fi; \
 	done
 
+nuke:
+	git clean -xdf
+
 include scripts/build/help.mk
 
-.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit
+.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke

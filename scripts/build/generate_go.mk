@@ -15,15 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
-
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/help.mk
+	
+.PHONY: generate
+generate: $(MOCKGEN) $(PROTOC)
+	@PATH=$(PATH):$(tool_bin) go generate ./...
