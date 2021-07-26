@@ -79,7 +79,7 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	return s, nil
 }
 
-func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
+func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
 	// parse tableScan
 	timeRange := criteria.GetTimeRange()
 

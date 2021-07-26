@@ -68,9 +68,11 @@ message EntityValue {
   repeated Field fields = 4;
 }
 
-message WriteEntity {
+message WriteRequest {
   // the metadata is only required in the first write.
   Metadata metadata = 1;
   // the entity is required.
   EntityValue entity = 2;
 }
+
+message WriteResponse {}

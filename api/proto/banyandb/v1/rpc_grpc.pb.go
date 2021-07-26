@@ -8,7 +8,6 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -16,154 +15,154 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// TraceClient is the client API for Trace service.
+// TraceServiceClient is the client API for TraceService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type TraceClient interface {
-	Query(ctx context.Context, in *EntityCriteria, opts ...grpc.CallOption) (*QueryResponse, error)
-	Write(ctx context.Context, opts ...grpc.CallOption) (Trace_WriteClient, error)
+type TraceServiceClient interface {
+	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error)
+	Write(ctx context.Context, opts ...grpc.CallOption) (TraceService_WriteClient, error)
 }
 
-type traceClient struct {
+type traceServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewTraceClient(cc grpc.ClientConnInterface) TraceClient {
-	return &traceClient{cc}
+func NewTraceServiceClient(cc grpc.ClientConnInterface) TraceServiceClient {
+	return &traceServiceClient{cc}
 }
 
-func (c *traceClient) Query(ctx context.Context, in *EntityCriteria, opts ...grpc.CallOption) (*QueryResponse, error) {
+func (c *traceServiceClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
 	out := new(QueryResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.v1.Trace/Query", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/banyandb.v1.TraceService/Query", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *traceClient) Write(ctx context.Context, opts ...grpc.CallOption) (Trace_WriteClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Trace_ServiceDesc.Streams[0], "/banyandb.v1.Trace/Write", opts...)
+func (c *traceServiceClient) Write(ctx context.Context, opts ...grpc.CallOption) (TraceService_WriteClient, error) {
+	stream, err := c.cc.NewStream(ctx, &TraceService_ServiceDesc.Streams[0], "/banyandb.v1.TraceService/Write", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &traceWriteClient{stream}
+	x := &traceServiceWriteClient{stream}
 	return x, nil
 }
 
-type Trace_WriteClient interface {
-	Send(*WriteEntity) error
-	Recv() (*emptypb.Empty, error)
+type TraceService_WriteClient interface {
+	Send(*WriteRequest) error
+	Recv() (*WriteResponse, error)
 	grpc.ClientStream
 }
 
-type traceWriteClient struct {
+type traceServiceWriteClient struct {
 	grpc.ClientStream
 }
 
-func (x *traceWriteClient) Send(m *WriteEntity) error {
+func (x *traceServiceWriteClient) Send(m *WriteRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *traceWriteClient) Recv() (*emptypb.Empty, error) {
-	m := new(emptypb.Empty)
+func (x *traceServiceWriteClient) Recv() (*WriteResponse, error) {
+	m := new(WriteResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-// TraceServer is the server API for Trace service.
-// All implementations must embed UnimplementedTraceServer
+// TraceServiceServer is the server API for TraceService service.
+// All implementations must embed UnimplementedTraceServiceServer
 // for forward compatibility
-type TraceServer interface {
-	Query(context.Context, *EntityCriteria) (*QueryResponse, error)
-	Write(Trace_WriteServer) error
-	mustEmbedUnimplementedTraceServer()
+type TraceServiceServer interface {
+	Query(context.Context, *QueryRequest) (*QueryResponse, error)
+	Write(TraceService_WriteServer) error
+	mustEmbedUnimplementedTraceServiceServer()
 }
 
-// UnimplementedTraceServer must be embedded to have forward compatible implementations.
-type UnimplementedTraceServer struct {
+// UnimplementedTraceServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedTraceServiceServer struct {
 }
 
-func (UnimplementedTraceServer) Query(context.Context, *EntityCriteria) (*QueryResponse, error) {
+func (UnimplementedTraceServiceServer) Query(context.Context, *QueryRequest) (*QueryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Query not implemented")
 }
-func (UnimplementedTraceServer) Write(Trace_WriteServer) error {
+func (UnimplementedTraceServiceServer) Write(TraceService_WriteServer) error {
 	return status.Errorf(codes.Unimplemented, "method Write not implemented")
 }
-func (UnimplementedTraceServer) mustEmbedUnimplementedTraceServer() {}
+func (UnimplementedTraceServiceServer) mustEmbedUnimplementedTraceServiceServer() {}
 
-// UnsafeTraceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to TraceServer will
+// UnsafeTraceServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TraceServiceServer will
 // result in compilation errors.
-type UnsafeTraceServer interface {
-	mustEmbedUnimplementedTraceServer()
+type UnsafeTraceServiceServer interface {
+	mustEmbedUnimplementedTraceServiceServer()
 }
 
-func RegisterTraceServer(s grpc.ServiceRegistrar, srv TraceServer) {
-	s.RegisterService(&Trace_ServiceDesc, srv)
+func RegisterTraceServiceServer(s grpc.ServiceRegistrar, srv TraceServiceServer) {
+	s.RegisterService(&TraceService_ServiceDesc, srv)
 }
 
-func _Trace_Query_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EntityCriteria)
+func _TraceService_Query_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TraceServer).Query(ctx, in)
+		return srv.(TraceServiceServer).Query(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.v1.Trace/Query",
+		FullMethod: "/banyandb.v1.TraceService/Query",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TraceServer).Query(ctx, req.(*EntityCriteria))
+		return srv.(TraceServiceServer).Query(ctx, req.(*QueryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Trace_Write_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(TraceServer).Write(&traceWriteServer{stream})
+func _TraceService_Write_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TraceServiceServer).Write(&traceServiceWriteServer{stream})
 }
 
-type Trace_WriteServer interface {
-	Send(*emptypb.Empty) error
-	Recv() (*WriteEntity, error)
+type TraceService_WriteServer interface {
+	Send(*WriteResponse) error
+	Recv() (*WriteRequest, error)
 	grpc.ServerStream
 }
 
-type traceWriteServer struct {
+type traceServiceWriteServer struct {
 	grpc.ServerStream
 }
 
-func (x *traceWriteServer) Send(m *emptypb.Empty) error {
+func (x *traceServiceWriteServer) Send(m *WriteResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *traceWriteServer) Recv() (*WriteEntity, error) {
-	m := new(WriteEntity)
+func (x *traceServiceWriteServer) Recv() (*WriteRequest, error) {
+	m := new(WriteRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-// Trace_ServiceDesc is the grpc.ServiceDesc for Trace service.
+// TraceService_ServiceDesc is the grpc.ServiceDesc for TraceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Trace_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.v1.Trace",
-	HandlerType: (*TraceServer)(nil),
+var TraceService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.v1.TraceService",
+	HandlerType: (*TraceServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Query",
-			Handler:    _Trace_Query_Handler,
+			Handler:    _TraceService_Query_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Write",
-			Handler:       _Trace_Write_Handler,
+			Handler:       _TraceService_Write_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
