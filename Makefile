@@ -27,13 +27,19 @@ PROJECTS := banyand
 clean: TARGET=clean test-clean
 clean: default  ## Clean artifacts in all projects
 
-generate: ## Generate API codes
+tool_install:
 	@echo "Install the protocol compiler plugins for Go..."
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
+	@go install github.com/bufbuild/buf/cmd/buf@v0.44.0
+	@go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@v0.44.0
+	@go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@v0.44.0
+	@echo "Install mock generate tool..."
+	@go install github.com/golang/mock/mockgen@v1.6.0
+
+generate: tool_install ## Generate API codes
 	buf generate
 	$(MAKE) format
-	go install github.com/golang/mock/mockgen@v1.6.0
 	go generate ./...
 	$(MAKE) format
 
@@ -65,6 +71,9 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 lint: TARGET=lint
 lint: PROJECTS:=$(PROJECTS)
 lint: default ## Run the linters on all projects
+lint: tool_install
+	buf lint
+	buf breaking --against '.git#branch=main'
 
 
 ##@ Code style targets

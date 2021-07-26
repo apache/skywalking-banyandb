@@ -405,7 +405,7 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 			state = StateError
 		default:
 			err = errors.Wrapf(ErrUnknownFieldValue, "value:%s, supported value: %s, %s",
-				string(v.Str.GetValue()), t.strStateSuccessVal, t.strStateErrorVal)
+				v.Str.GetValue(), t.strStateSuccessVal, t.strStateErrorVal)
 			return
 		}
 	default:
