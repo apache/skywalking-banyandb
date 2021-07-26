@@ -19,7 +19,7 @@ package partition
 
 import "github.com/apache/skywalking-banyandb/pkg/convert"
 
-func ShardID(key []byte, shardNum uint) uint {
+func ShardID(key []byte, shardNum uint32) uint {
 	encodeKey := convert.Hash(key)
 	return uint(encodeKey % uint64(shardNum))
 }

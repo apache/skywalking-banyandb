@@ -26,15 +26,15 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*tableScan)(nil)
 var _ UnresolvedPlan = (*unresolvedTableScan)(nil)
 
 type unresolvedTableScan struct {
-	startTime        uint64
-	endTime          uint64
+	startTime        int64
+	endTime          int64
 	projectionFields []string
 	traceMetadata    *common.Metadata
 	traceState       series.TraceState
@@ -75,8 +75,8 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 }
 
 type tableScan struct {
-	startTime           uint64
-	endTime             uint64
+	startTime           int64
+	endTime             int64
 	traceState          series.TraceState
 	projectionFields    []string
 	projectionFieldRefs []*fieldRef
@@ -84,8 +84,8 @@ type tableScan struct {
 	traceMetadata       *common.Metadata
 }
 
-func (s *tableScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
-	return ec.ScanEntity(*s.traceMetadata, s.startTime, s.endTime, series.ScanOptions{
+func (s *tableScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+	return ec.ScanEntity(*s.traceMetadata, uint64(s.startTime), uint64(s.endTime), series.ScanOptions{
 		Projection: s.projectionFields,
 		State:      s.traceState,
 	})
@@ -112,10 +112,10 @@ func (s *tableScan) Schema() Schema {
 func (s *tableScan) String() string {
 	if len(s.projectionFieldRefs) == 0 {
 		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=None",
-			s.startTime, s.endTime, s.traceMetadata.Spec.Group(), s.traceMetadata.Spec.Name())
+			s.startTime, s.endTime, s.traceMetadata.Spec.GetGroup(), s.traceMetadata.Spec.GetName())
 	} else {
 		return fmt.Sprintf("TableScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s",
-			s.startTime, s.endTime, s.traceMetadata.Spec.Group(), s.traceMetadata.Spec.Name(), formatExpr(", ", s.projectionFieldRefs...))
+			s.startTime, s.endTime, s.traceMetadata.Spec.GetGroup(), s.traceMetadata.Spec.GetName(), formatExpr(", ", s.projectionFieldRefs...))
 	}
 }
 
@@ -127,7 +127,7 @@ func (s *tableScan) Type() PlanType {
 	return PlanTableScan
 }
 
-func TableScan(startTime, endTime uint64, traceMetadata *common.Metadata, traceState series.TraceState, projection ...string) UnresolvedPlan {
+func TableScan(startTime, endTime int64, traceMetadata *common.Metadata, traceState series.TraceState, projection ...string) UnresolvedPlan {
 	return &unresolvedTableScan{
 		startTime:        startTime,
 		endTime:          endTime,

@@ -18,12 +18,10 @@
 package logical
 
 import (
-	"bytes"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 )
 
@@ -41,7 +39,7 @@ type fieldSpec struct {
 }
 
 func (fs *fieldSpec) Equal(other *fieldSpec) bool {
-	return fs.idx == other.idx && fs.spec.Type() == other.spec.Type() && bytes.Equal(fs.spec.Name(), other.spec.Name())
+	return fs.idx == other.idx && fs.spec.GetType() == other.spec.GetType() && fs.spec.GetName() == other.spec.GetName()
 }
 
 var _ Schema = (*schema)(nil)
@@ -54,16 +52,11 @@ type schema struct {
 // IndexDefined checks whether the field given is indexed
 func (s *schema) IndexDefined(field string) (bool, *apiv1.IndexObject) {
 	idxRule := s.indexRule.Spec
-	for i := 0; i < idxRule.ObjectsLength(); i++ {
-		var idxObj apiv1.IndexObject
-		if ok := idxRule.Objects(&idxObj, i); ok {
-			for j := 0; j < idxObj.FieldsLength(); j++ {
-				if field == string(idxObj.Fields(j)) {
-					return true, &idxObj
-				}
+	for _, indexObj := range idxRule.GetObjects() {
+		for _, fieldName := range indexObj.GetFields() {
+			if field == fieldName {
+				return true, indexObj
 			}
-		} else {
-			return false, nil
 		}
 	}
 	return false, nil

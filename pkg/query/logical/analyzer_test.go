@@ -26,31 +26,30 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
-	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(0),
-		fb.AddOffset(0),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildTimeStampNanoSeconds(sT, eT),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(0).
+		Offset(0).
+		Metadata("default", "trace").
+		TimeRange(sT, eT).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -59,9 +58,9 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical2.Limit(
-		logical2.Offset(
-			logical2.TableScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata, series.TraceStateDefault),
+	correctPlan, err := logical.Limit(
+		logical.Offset(
+			logical.TableScan(sT.UnixNano(), eT.UnixNano(), metadata, series.TraceStateDefault),
 			0),
 		20).
 		Analyze(schema)
@@ -73,24 +72,23 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildTimeStampNanoSeconds(sT, eT),
-		builder.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
-		builder.BuildOrderBy("service_instance_id", apiv1.SortDESC),
-		builder.BuildProjection("http.method", "service_id", "service_instance_id"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		OrderBy("service_instance_id", apiv1.QueryOrder_SORT_DESC).
+		Metadata("default", "trace").
+		Projection("http.method", "service_id", "service_instance_id").
+		Fields("service_id", "=", "my_app", "http.method", "=", "GET").
+		TimeRange(sT, eT).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -100,15 +98,15 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical2.Limit(
-		logical2.Offset(
-			logical2.OrderBy(logical2.IndexScan(uint64(sT.UnixNano()), uint64(eT.UnixNano()), metadata,
-				[]logical2.Expr{
-					logical2.Eq(logical2.NewFieldRef("service_instance_id"), logical2.Str("my_app")),
-					logical2.Eq(logical2.NewFieldRef("http.method"), logical2.Str("GET")),
+	correctPlan, err := logical.Limit(
+		logical.Offset(
+			logical.OrderBy(logical.IndexScan(sT.UnixNano(), eT.UnixNano(), metadata,
+				[]logical.Expr{
+					logical.Eq(logical.NewFieldRef("service_instance_id"), logical.Str("my_app")),
+					logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 				},
 				series.TraceStateDefault),
-				"service_instance_id", apiv1.SortDESC),
+				"service_instance_id", apiv1.QueryOrder_SORT_DESC),
 			10),
 		5).
 		Analyze(schema)
@@ -120,19 +118,18 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildFields("trace_id", "=", "123"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		Metadata("default", "trace").
+		Fields("trace_id", "=", "123").
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -142,7 +139,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan := logical2.TraceIDFetch("123", metadata, schema)
+	correctPlan := logical.TraceIDFetch("123", metadata, schema)
 	assert.NotNil(correctPlan)
 	cmp.Equal(plan, correctPlan)
 }
@@ -150,107 +147,104 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "sw"),
-		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildFields("duration", ">", 500),
-		builder.BuildOrderBy("service_instance_id", apiv1.SortDESC),
-		builder.BuildProjection("trace_id", "service_id"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		OrderBy("service_instance_id", apiv1.QueryOrder_SORT_DESC).
+		Metadata("default", "sw").
+		Projection("trace_id", "service_id").
+		Fields("duration", ">", 500).
+		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildOrderBy("duration", apiv1.SortDESC),
-		builder.BuildProjection("trace_id", "service_id"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		OrderBy("duration", apiv1.QueryOrder_SORT_DESC).
+		Metadata("default", "trace").
+		Projection("trace_id", "service_id").
+		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "sw"),
-		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildProjection("duration", "service_id", "unknown"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		OrderBy("duration", apiv1.QueryOrder_SORT_DESC).
+		Metadata("default", "sw").
+		Projection("duration", "service_id", "unknown").
+		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.FieldNotDefinedErr)
+	assert.ErrorIs(err, logical.FieldNotDefinedErr)
 }
 
 func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana := logical.DefaultAnalyzer()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildFields("service_name", "=", "app"),
-		builder.BuildTimeStampNanoSeconds(time.Now().Add(-3*time.Hour), time.Now()),
-		builder.BuildProjection("duration", "service_id"),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		Metadata("default", "trace").
+		Projection("duration", "service_id").
+		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
+		Fields("service_name", "=", "app").
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.IndexNotDefinedErr)
+	assert.ErrorIs(err, logical.IndexNotDefinedErr)
 }

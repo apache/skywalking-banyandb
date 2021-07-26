@@ -22,13 +22,12 @@ import (
 	"fmt"
 	"sort"
 
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*orderBy)(nil)
@@ -36,7 +35,7 @@ var _ UnresolvedPlan = (*unresolvedOrderBy)(nil)
 
 type unresolvedOrderBy struct {
 	input         UnresolvedPlan
-	sort          apiv1.Sort
+	sort          apiv1.QueryOrder_Sort
 	targetLiteral string
 }
 
@@ -64,11 +63,11 @@ func (u *unresolvedOrderBy) Analyze(s Schema) (Plan, error) {
 
 type orderBy struct {
 	input     Plan
-	sort      apiv1.Sort
+	sort      apiv1.QueryOrder_Sort
 	targetRef *fieldRef
 }
 
-func (o *orderBy) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
+func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 	entities, err := o.input.Execute(ec)
 	if err != nil {
 		return nil, err
@@ -99,7 +98,7 @@ func (o *orderBy) Schema() Schema {
 }
 
 func (o *orderBy) String() string {
-	return fmt.Sprintf("OrderBy: %s, sort=%s", o.targetRef.String(), apiv1.EnumNamesSort[o.sort])
+	return fmt.Sprintf("OrderBy: %s, sort=%s", o.targetRef.String(), o.sort.String())
 }
 
 func (o *orderBy) Children() []Plan {
@@ -110,7 +109,7 @@ func (o *orderBy) Type() PlanType {
 	return PlanOrderBy
 }
 
-func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.Sort) UnresolvedPlan {
+func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.QueryOrder_Sort) UnresolvedPlan {
 	return &unresolvedOrderBy{
 		input:         input,
 		sort:          sort,
@@ -118,37 +117,29 @@ func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.Sort) Unresolv
 	}
 }
 
-func getFieldRaw(pair *apiv1.Pair) ([]byte, error) {
-	unionPair := new(flatbuffers.Table)
-	if ok := pair.Pair(unionPair); !ok {
-		return nil, errors.New("cannot read from pair")
-	}
-	if pair.PairType() == apiv1.TypedPairStrPair {
-		unionStrPairQuery := new(apiv1.StrPair)
-		unionStrPairQuery.Init(unionPair.Bytes, unionPair.Pos)
-		return unionStrPairQuery.Values(0), nil
-	} else if pair.PairType() == apiv1.TypedPairIntPair {
-		unionIntPairQuery := new(apiv1.IntPair)
-		unionIntPairQuery.Init(unionPair.Bytes, unionPair.Pos)
-		return convert.Int64ToBytes(unionIntPairQuery.Values(0)), nil
-	} else {
+func getFieldRaw(typedPair *apiv1.TypedPair) ([]byte, error) {
+	switch v := typedPair.GetTyped().(type) {
+	case *apiv1.TypedPair_StrPair:
+		return []byte(v.StrPair.GetValues()[0]), nil
+	case *apiv1.TypedPair_IntPair:
+		return convert.Int64ToBytes(v.IntPair.GetValues()[0]), nil
+	default:
 		return nil, errors.New("unsupported data types")
 	}
 }
 
-func Sorted(entities []data.Entity, fieldIdx int, sortDirection apiv1.Sort) bool {
+func Sorted(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryOrder_Sort) bool {
 	return sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, sortDirection))
 }
 
-func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.Sort) func(i, j int) bool {
+func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryOrder_Sort) func(i, j int) bool {
 	return func(i, j int) bool {
-		var iPair, jPair apiv1.Pair
-		entities[i].Fields(&iPair, fieldIdx)
-		entities[j].Fields(&jPair, fieldIdx)
-		lField, _ := getFieldRaw(&iPair)
-		rField, _ := getFieldRaw(&jPair)
+		iPair := entities[i].GetFields()[fieldIdx]
+		jPair := entities[j].GetFields()[fieldIdx]
+		lField, _ := getFieldRaw(iPair)
+		rField, _ := getFieldRaw(jPair)
 		comp := bytes.Compare(lField, rField)
-		if sortDirection == apiv1.SortASC {
+		if sortDirection == apiv1.QueryOrder_SORT_ASC {
 			return comp == -1
 		} else {
 			return comp == 1

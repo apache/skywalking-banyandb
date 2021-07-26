@@ -1,0 +1,89 @@
+# proto-file: banyandb/v1/schema.proto
+# proto-message: IndexRule
+metadata: {
+  name: "sw-index-rule"
+  group: "default"
+}
+objects: [
+  {
+    name: "trace_id",
+    fields: [
+      "trace_id"
+    ],
+    type: INDEX_TYPE_ID
+  },
+  {
+    name: "service_id",
+    fields: [
+      "service_id"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "service_instance_id",
+    fields: [
+      "service_instance_id"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "endpoint_id",
+    fields: [
+      "endpoint_id"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "duration",
+    fields: [
+      "duration"
+    ],
+    type: INDEX_TYPE_NUMERICAL
+  },
+  {
+    name: "http.method",
+    fields: [
+      "http.method"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "db.type",
+    fields: [
+      "db.type"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "db.instance",
+    fields: [
+      "db.instance"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "mq.queue",
+    fields: [
+      "mq.queue"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "mq.topic",
+    fields: [
+      "mq.topic"
+    ],
+    type: INDEX_TYPE_TEXT
+  },
+  {
+    name: "mq.broker",
+    fields: [
+      "mq.broker"
+    ],
+    type: INDEX_TYPE_TEXT
+  }
+]
+updated_at: {
+  seconds: 1622933202
+  nanos: 0
+}

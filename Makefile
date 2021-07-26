@@ -28,7 +28,10 @@ clean: TARGET=clean test-clean
 clean: default  ## Clean artifacts in all projects
 
 generate: ## Generate API codes
-	$(MAKE) -C api/fbs generate
+	@echo "Install the protocol compiler plugins for Go..."
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1
+	buf generate
 	$(MAKE) format
 	go install github.com/golang/mock/mockgen@v1.6.0
 	go generate ./...

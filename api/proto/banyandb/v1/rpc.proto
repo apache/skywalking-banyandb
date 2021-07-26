@@ -15,48 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-namespace banyandb.v1;
+syntax = "proto3";
 
-table Node {
-    id:string;
-    addr:string;
-    update_time:int64;
-    create_time:int64;
+option java_package = "org.apache.skywalking.banyandb";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1;v1";
+
+package banyandb.v1;
+
+import "google/protobuf/empty.proto";
+import "banyandb/v1/query.proto";
+import "banyandb/v1/write.proto";
+
+service TraceService {
+  rpc Query(banyandb.v1.EntityCriteria) returns (banyandb.v1.QueryResponse);
+  rpc Write(stream banyandb.v1.WriteEntity) returns (stream google.protobuf.Empty);
 }
-
-table Shard {
-    id:uint64;
-    series:Metadata;
-    node:Node;
-    total:uint8;
-    update_time:int64;
-    create_time:int64;
-}
-
-enum Action:byte { Put = 0, Delete = 1 }
-
-table ShardEvent {
-    shard:Shard;
-    action:Action;
-    time:int64;
-}
-
-table SeriesEvent {
-    series:Metadata;
-    field_names_composite_series_id:[string];
-    action:Action;
-    time:int64;
-}
-
-// Metadata is for multi-tenant, multi-model use
-table Metadata {
-    // group contains a set of options, like retention policy, max
-    group:string;
-    // name of the entity
-    name:string;
-}
-
-root_type Metadata;
-root_type Shard;
-root_type Node;
-root_type ShardEvent;

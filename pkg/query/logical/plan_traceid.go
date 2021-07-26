@@ -25,7 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ Plan = (*traceIDFetch)(nil)
@@ -36,7 +36,7 @@ type traceIDFetch struct {
 	traceID  string
 }
 
-func (t *traceIDFetch) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
+func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 	traceData, err := ec.FetchTrace(*t.metadata, t.traceID, series.ScanOptions{})
 	if err != nil {
 		return nil, err
@@ -47,8 +47,8 @@ func (t *traceIDFetch) Execute(ec executor2.ExecutionContext) ([]data.Entity, er
 func (t *traceIDFetch) String() string {
 	return fmt.Sprintf("TraceIDFetch: traceID=%s,Metadata{group=%s,name=%s}",
 		t.traceID,
-		t.metadata.Spec.Group(),
-		t.metadata.Spec.Name(),
+		t.metadata.Spec.GetGroup(),
+		t.metadata.Spec.GetName(),
 	)
 }
 
