@@ -68,13 +68,13 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 
 ##@ Code quality targets
 
+
+lint: tool_install
 lint: TARGET=lint
 lint: PROJECTS:=$(PROJECTS)
 lint: default ## Run the linters on all projects
-lint: tool_install
 	buf lint
 	buf breaking --against '.git#branch=main'
-
 
 ##@ Code style targets
 
@@ -95,7 +95,7 @@ EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
 GO_VERSION := $(shell go version)
 
 ## Check that the status is consistent with CI.
-check: clean generate
+check: clean
 # case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
 	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
 		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \

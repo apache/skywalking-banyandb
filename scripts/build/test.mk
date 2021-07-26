@@ -32,8 +32,6 @@ TEST_COVERAGE_EXTRA_OPTS ?=
 
 .PHONY: test
 test: $(MOCKGEN) ## Run all the unit tests
-	go install github.com/golang/mock/mockgen@v1.6.0
-	go generate $(TEST_PKG_LIST) 
 	go test $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
 
 .PHONY: test-race

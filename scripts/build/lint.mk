@@ -32,6 +32,4 @@ $(LINTER):
 
 .PHONY: lint
 lint: $(LINTER) ## Run all the linters
-	go install github.com/golang/mock/mockgen@v1.6.0
-	go generate $(TEST_PKG_LIST) 
 	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/golangci.yml
