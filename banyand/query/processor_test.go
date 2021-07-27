@@ -25,13 +25,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
 func TestQueryProcessor(t *testing.T) {
@@ -76,20 +76,19 @@ func TestQueryProcessor(t *testing.T) {
 		// dataSetup allows to prepare data in advance for testing
 		dataSetup func() error
 		// queryGenerator is used to generate a Query
-		queryGenerator func() *v1.EntityCriteria
+		queryGenerator func() *v1.QueryRequest
 		// wantLen is the length of entities expected to return
 		wantLen int
 	}{
 		{
 			name: "Query Trace ID when no initial data is given",
-			queryGenerator: func() *v1.EntityCriteria {
-				builder := fb.NewCriteriaBuilder()
-				return builder.BuildEntityCriteria(
-					fb.AddLimit(5),
-					fb.AddOffset(10),
-					builder.BuildMetaData("default", "sw"),
-					builder.BuildFields("trace_id", "=", "123"),
-				)
+			queryGenerator: func() *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(5).
+					Offset(10).
+					Metadata("default", "sw").
+					Fields("trace_id", "=", "123").
+					Build()
 			},
 			wantLen: 0,
 		},

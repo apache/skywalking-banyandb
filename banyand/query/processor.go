@@ -23,7 +23,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
@@ -53,17 +53,17 @@ type queryProcessor struct {
 }
 
 func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	queryCriteria, ok := message.Data().(*v1.EntityCriteria)
+	queryCriteria, ok := message.Data().(*v1.QueryRequest)
 	if !ok {
 		q.log.Warn().Msg("invalid event data type")
 		return
 	}
 	q.log.Info().
 		Msg("received a query event")
-	analyzer := logical.NewAnalyzer(q.schemaRepo)
+	analyzer := logical.DefaultAnalyzer()
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        queryCriteria.Metadata(nil),
+		Spec:        queryCriteria.GetMetadata(),
 	}
 	s, err := analyzer.BuildTraceSchema(context.TODO(), *metadata)
 	if err != nil {
