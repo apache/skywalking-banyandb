@@ -119,7 +119,7 @@ func (s *Server) Serve() error {
 
 	s.ser = grpc.NewServer()
 	// TODO: add server implementation here
-	v1.RegisterTraceServer(s.ser, v1.UnimplementedTraceServer{})
+	v1.RegisterTraceServiceServer(s.ser, v1.UnimplementedTraceServiceServer{})
 
 	return s.ser.Serve(lis)
 }

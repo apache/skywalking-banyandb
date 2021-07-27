@@ -430,7 +430,7 @@ func (x *EntityValue) GetFields() []*Field {
 	return nil
 }
 
-type WriteEntity struct {
+type WriteRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -441,8 +441,8 @@ type WriteEntity struct {
 	Entity *EntityValue `protobuf:"bytes,2,opt,name=entity,proto3" json:"entity,omitempty"`
 }
 
-func (x *WriteEntity) Reset() {
-	*x = WriteEntity{}
+func (x *WriteRequest) Reset() {
+	*x = WriteRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_banyandb_v1_write_proto_msgTypes[6]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -450,13 +450,13 @@ func (x *WriteEntity) Reset() {
 	}
 }
 
-func (x *WriteEntity) String() string {
+func (x *WriteRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WriteEntity) ProtoMessage() {}
+func (*WriteRequest) ProtoMessage() {}
 
-func (x *WriteEntity) ProtoReflect() protoreflect.Message {
+func (x *WriteRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_banyandb_v1_write_proto_msgTypes[6]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -468,23 +468,61 @@ func (x *WriteEntity) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WriteEntity.ProtoReflect.Descriptor instead.
-func (*WriteEntity) Descriptor() ([]byte, []int) {
+// Deprecated: Use WriteRequest.ProtoReflect.Descriptor instead.
+func (*WriteRequest) Descriptor() ([]byte, []int) {
 	return file_banyandb_v1_write_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *WriteEntity) GetMetadata() *Metadata {
+func (x *WriteRequest) GetMetadata() *Metadata {
 	if x != nil {
 		return x.Metadata
 	}
 	return nil
 }
 
-func (x *WriteEntity) GetEntity() *EntityValue {
+func (x *WriteRequest) GetEntity() *EntityValue {
 	if x != nil {
 		return x.Entity
 	}
 	return nil
+}
+
+type WriteResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *WriteResponse) Reset() {
+	*x = WriteResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_banyandb_v1_write_proto_msgTypes[7]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *WriteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteResponse) ProtoMessage() {}
+
+func (x *WriteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_banyandb_v1_write_proto_msgTypes[7]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteResponse.ProtoReflect.Descriptor instead.
+func (*WriteResponse) Descriptor() ([]byte, []int) {
+	return file_banyandb_v1_write_proto_rawDescGZIP(), []int{7}
 }
 
 var File_banyandb_v1_write_proto protoreflect.FileDescriptor
@@ -533,21 +571,22 @@ var file_banyandb_v1_write_proto_rawDesc = []byte{
 	0x61, 0x74, 0x61, 0x42, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x12, 0x2a, 0x0a, 0x06, 0x66, 0x69, 0x65,
 	0x6c, 0x64, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x62, 0x61, 0x6e, 0x79,
 	0x61, 0x6e, 0x64, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x52, 0x06, 0x66,
-	0x69, 0x65, 0x6c, 0x64, 0x73, 0x22, 0x72, 0x0a, 0x0b, 0x57, 0x72, 0x69, 0x74, 0x65, 0x45, 0x6e,
-	0x74, 0x69, 0x74, 0x79, 0x12, 0x31, 0x0a, 0x08, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64,
-	0x62, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52, 0x08, 0x6d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x06, 0x65, 0x6e, 0x74, 0x69, 0x74,
-	0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x18, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e,
-	0x64, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x56, 0x61, 0x6c, 0x75,
-	0x65, 0x52, 0x06, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x42, 0x60, 0x0a, 0x1e, 0x6f, 0x72, 0x67,
-	0x2e, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2e, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69,
-	0x6e, 0x67, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x5a, 0x3e, 0x67, 0x69, 0x74,
-	0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2f, 0x73,
-	0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67, 0x2d, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e,
-	0x64, 0x62, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x62, 0x61, 0x6e,
-	0x79, 0x61, 0x6e, 0x64, 0x62, 0x2f, 0x76, 0x31, 0x3b, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x69, 0x65, 0x6c, 0x64, 0x73, 0x22, 0x73, 0x0a, 0x0c, 0x57, 0x72, 0x69, 0x74, 0x65, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x31, 0x0a, 0x08, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
+	0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e,
+	0x64, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52, 0x08,
+	0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x06, 0x65, 0x6e, 0x74, 0x69,
+	0x74, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x18, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61,
+	0x6e, 0x64, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x56, 0x61, 0x6c,
+	0x75, 0x65, 0x52, 0x06, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x22, 0x0f, 0x0a, 0x0d, 0x57, 0x72,
+	0x69, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42, 0x60, 0x0a, 0x1e, 0x6f,
+	0x72, 0x67, 0x2e, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2e, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c,
+	0x6b, 0x69, 0x6e, 0x67, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x5a, 0x3e, 0x67,
+	0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65,
+	0x2f, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67, 0x2d, 0x62, 0x61, 0x6e, 0x79,
+	0x61, 0x6e, 0x64, 0x62, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x62,
+	0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2f, 0x76, 0x31, 0x3b, 0x76, 0x31, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -562,7 +601,7 @@ func file_banyandb_v1_write_proto_rawDescGZIP() []byte {
 	return file_banyandb_v1_write_proto_rawDescData
 }
 
-var file_banyandb_v1_write_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_banyandb_v1_write_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_banyandb_v1_write_proto_goTypes = []interface{}{
 	(*Str)(nil),                   // 0: banyandb.v1.Str
 	(*Int)(nil),                   // 1: banyandb.v1.Int
@@ -570,26 +609,27 @@ var file_banyandb_v1_write_proto_goTypes = []interface{}{
 	(*IntArray)(nil),              // 3: banyandb.v1.IntArray
 	(*Field)(nil),                 // 4: banyandb.v1.Field
 	(*EntityValue)(nil),           // 5: banyandb.v1.EntityValue
-	(*WriteEntity)(nil),           // 6: banyandb.v1.WriteEntity
-	(structpb.NullValue)(0),       // 7: google.protobuf.NullValue
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
-	(*Metadata)(nil),              // 9: banyandb.v1.Metadata
+	(*WriteRequest)(nil),          // 6: banyandb.v1.WriteRequest
+	(*WriteResponse)(nil),         // 7: banyandb.v1.WriteResponse
+	(structpb.NullValue)(0),       // 8: google.protobuf.NullValue
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
+	(*Metadata)(nil),              // 10: banyandb.v1.Metadata
 }
 var file_banyandb_v1_write_proto_depIdxs = []int32{
-	7, // 0: banyandb.v1.Field.null:type_name -> google.protobuf.NullValue
-	0, // 1: banyandb.v1.Field.str:type_name -> banyandb.v1.Str
-	2, // 2: banyandb.v1.Field.str_array:type_name -> banyandb.v1.StrArray
-	1, // 3: banyandb.v1.Field.int:type_name -> banyandb.v1.Int
-	3, // 4: banyandb.v1.Field.int_array:type_name -> banyandb.v1.IntArray
-	8, // 5: banyandb.v1.EntityValue.timestamp:type_name -> google.protobuf.Timestamp
-	4, // 6: banyandb.v1.EntityValue.fields:type_name -> banyandb.v1.Field
-	9, // 7: banyandb.v1.WriteEntity.metadata:type_name -> banyandb.v1.Metadata
-	5, // 8: banyandb.v1.WriteEntity.entity:type_name -> banyandb.v1.EntityValue
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	8,  // 0: banyandb.v1.Field.null:type_name -> google.protobuf.NullValue
+	0,  // 1: banyandb.v1.Field.str:type_name -> banyandb.v1.Str
+	2,  // 2: banyandb.v1.Field.str_array:type_name -> banyandb.v1.StrArray
+	1,  // 3: banyandb.v1.Field.int:type_name -> banyandb.v1.Int
+	3,  // 4: banyandb.v1.Field.int_array:type_name -> banyandb.v1.IntArray
+	9,  // 5: banyandb.v1.EntityValue.timestamp:type_name -> google.protobuf.Timestamp
+	4,  // 6: banyandb.v1.EntityValue.fields:type_name -> banyandb.v1.Field
+	10, // 7: banyandb.v1.WriteRequest.metadata:type_name -> banyandb.v1.Metadata
+	5,  // 8: banyandb.v1.WriteRequest.entity:type_name -> banyandb.v1.EntityValue
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_banyandb_v1_write_proto_init() }
@@ -672,7 +712,19 @@ func file_banyandb_v1_write_proto_init() {
 			}
 		}
 		file_banyandb_v1_write_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*WriteEntity); i {
+			switch v := v.(*WriteRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_banyandb_v1_write_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*WriteResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -697,7 +749,7 @@ func file_banyandb_v1_write_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_banyandb_v1_write_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
