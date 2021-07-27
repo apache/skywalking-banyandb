@@ -19,7 +19,6 @@ package logical
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -31,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
+	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
