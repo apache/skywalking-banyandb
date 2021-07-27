@@ -31,6 +31,7 @@ type Schema interface {
 	CreateRef(names ...string) ([]*FieldRef, error)
 	Map(refs ...*FieldRef) Schema
 	Equal(Schema) bool
+	ShardNumber() uint32
 }
 
 type fieldSpec struct {
@@ -45,8 +46,9 @@ func (fs *fieldSpec) Equal(other *fieldSpec) bool {
 var _ Schema = (*schema)(nil)
 
 type schema struct {
-	indexRule apischema.IndexRule
-	fieldMap  map[string]*fieldSpec
+	traceSeries *apiv1.TraceSeries
+	indexRule   apischema.IndexRule
+	fieldMap    map[string]*fieldSpec
 }
 
 // IndexDefined checks whether the field given is indexed
@@ -100,11 +102,16 @@ func (s *schema) Map(refs ...*FieldRef) Schema {
 		return nil
 	}
 	newS := &schema{
-		indexRule: s.indexRule,
-		fieldMap:  make(map[string]*fieldSpec),
+		traceSeries: s.traceSeries,
+		indexRule:   s.indexRule,
+		fieldMap:    make(map[string]*fieldSpec),
 	}
 	for _, ref := range refs {
 		newS.fieldMap[ref.name] = ref.spec
 	}
 	return newS
+}
+
+func (s *schema) ShardNumber() uint32 {
+	return s.traceSeries.Shard.Number
 }

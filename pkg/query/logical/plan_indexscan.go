@@ -19,6 +19,7 @@ package logical
 
 import (
 	"fmt"
+	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -30,7 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
@@ -107,17 +108,25 @@ type indexScan struct {
 	traceState          series.TraceState
 }
 
-func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
+func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 	var chunkSet posting.List
 	for _, exprs := range i.conditionMap {
 		// TODO: Discuss which metadata should be used!
 		// 1) traceSeries Metadata: indirect mapping
 		// 2) indexRule Metadata: cannot uniquely determine traceSeries
-		// TODO: should pass correct shardID
-		chunks, err := ec.Search(*i.traceMetadata, 0, uint64(i.startTime), uint64(i.endTime), convertToConditions(exprs))
-		if err != nil {
-			return nil, err
+		chunks := roaring.NewPostingList()
+		for shardID := uint32(0); shardID < i.schema.ShardNumber(); shardID++ {
+			chunksFromSingleShard, err := ec.Search(*i.traceMetadata, uint(shardID), uint64(i.startTime), uint64(i.endTime), convertToConditions(exprs))
+			if err != nil {
+				return nil, err
+			}
+			// union all chunks from various shards
+			err = chunks.Union(chunksFromSingleShard)
+			if err != nil {
+				return nil, err
+			}
 		}
+
 		if chunkSet == nil {
 			// chunkSet is nil before the first assignment
 			chunkSet = chunks

@@ -67,8 +67,9 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	}
 
 	s := &schema{
-		indexRule: indexRule,
-		fieldMap:  make(map[string]*fieldSpec),
+		traceSeries: traceSeries.Spec,
+		indexRule:   indexRule,
+		fieldMap:    make(map[string]*fieldSpec),
 	}
 
 	// generate the schema of the fields for the traceSeries
