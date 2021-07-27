@@ -19,15 +19,13 @@ package trace
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
 func Test_traceSeries_Write(t *testing.T) {
@@ -181,19 +179,15 @@ func Test_traceSeries_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-
 			seriesID := []byte(tt.args.seriesID)
-			b := fb.NewWriteEntityBuilder()
-			items := make([]fb.ComponentBuilderFunc, 0, 2)
-			items = append(items, b.BuildMetaData("default", "sw"))
-			items = append(items, b.BuildEntity(tt.args.entity.id, tt.args.entity.binary, tt.args.entity.items...))
-			builder, err := b.BuildWriteEntity(
-				items...,
-			)
-			assert.NoError(t, err)
-			we := v1.GetRootAsWriteEntity(builder.FinishedBytes(), 0)
+			ev := pb.NewEntityValueBuilder().
+				DataBinary(tt.args.entity.binary).
+				EntityID(tt.args.entity.id).
+				Fields(tt.args.entity.items...).
+				Timestamp(time.Now()).
+				Build()
 			got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), partition.ShardID(seriesID, 2), data.EntityValue{
-				EntityValue: we.Entity(nil),
+				EntityValue: ev,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)

@@ -20,8 +20,8 @@ package logical
 import (
 	"fmt"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 type PlanType uint8
@@ -44,7 +44,7 @@ type UnresolvedPlan interface {
 //go:generate mockgen -destination=./plan_mock.go -package=logical . Plan
 type Plan interface {
 	fmt.Stringer
-	executor2.Executable
+	executor.Executable
 	Type() PlanType
 	Children() []Plan
 	Schema() Schema
@@ -53,7 +53,7 @@ type Plan interface {
 
 type Expr interface {
 	fmt.Stringer
-	FieldType() apiv1.FieldType
+	FieldType() apiv1.FieldSpec_FieldType
 	Equal(Expr) bool
 }
 

@@ -20,14 +20,14 @@ package trace
 import (
 	"time"
 
-	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	bydb_bytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
@@ -44,7 +44,8 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		return 0, errGetState
 	}
 	stateBytes := []byte{byte(state)}
-	chunkID := t.idGen.Next(shardID, entity.TimestampNanoseconds())
+	tts := uint64(entity.GetTimestamp().AsTime().UnixNano())
+	chunkID := t.idGen.Next(tts)
 	ts, errParseTS := t.idGen.ParseTS(chunkID)
 	if errParseTS != nil {
 		return 0, errors.Wrap(errParseTS, "failed to parse timestamp from chunk id")
@@ -54,13 +55,16 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 	seriesIDBytes := convert.Uint64ToBytes(intSeriesID)
 	wp := t.writePoint(ts)
 
-	err = wp.TimeSeriesWriter(shardID, dataStoreName).Put(seriesIDBytes, entityVal.DataBinaryBytes(), ts)
+	err = wp.TimeSeriesWriter(shardID, dataStoreName).Put(seriesIDBytes, entityVal.GetDataBinary(), ts)
 	if err != nil {
-		return 0, errors.Wrap(err, "failed to write traceSeries data")
+		return 0, errors.Wrap(err, "fail to write traceSeries data")
 	}
-	builder := flatbuffers.NewBuilder(0)
-	builder.Finish(fb.CopyFields(entityVal, builder))
-	err = wp.TimeSeriesWriter(shardID, fieldsStoreName).Put(seriesIDBytes, builder.FinishedBytes(), ts)
+
+	byteVal, err := proto.Marshal(copyEntityValueWithoutDataBinary(entityVal))
+	if err != nil {
+		return 0, errors.Wrap(err, "fail to serialize EntityValue to []byte")
+	}
+	err = wp.TimeSeriesWriter(shardID, fieldsStoreName).Put(seriesIDBytes, byteVal, ts)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to write traceSeries fields")
 	}
@@ -69,11 +73,9 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 	if err = wp.Writer(shardID, chunkIDMapping).Put(chunkIDBytes, bydb_bytes.Join(stateBytes, seriesIDBytes, tsBytes)); err != nil {
 		return 0, errors.Wrap(err, "failed to write chunkID index")
 	}
-	traceIDShardID, shardIDError := partition.ShardID(traceID, t.shardNum)
-	if shardIDError != nil {
-		return 0, shardIDError
-	}
-	if err = wp.TimeSeriesWriter(traceIDShardID, traceIndex).Put(traceID, chunkIDBytes, entity.TimestampNanoseconds()); err != nil {
+	traceIDShardID := partition.ShardID(traceID, t.shardNum)
+	if err = wp.TimeSeriesWriter(traceIDShardID, traceIndex).
+		Put(traceID, bydb_bytes.Join(convert.Uint16ToBytes(uint16(shardID)), chunkIDBytes), tts); err != nil {
 		return 0, errors.Wrap(err, "failed to Trace index")
 	}
 	err = wp.Writer(shardID, startTimeIndex).Put(bydb_bytes.Join(stateBytes, tsBytes, chunkIDBytes), nil)
@@ -84,11 +86,21 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		Uint64("series_id", intSeriesID).
 		Time("ts", time.Unix(0, int64(ts))).
 		Uint64("ts_int", ts).
-		Int("data_size", entityVal.DataBinaryLength()).
-		Int("fields_num", entityVal.FieldsLength()).
+		Int("data_size", len(entityVal.GetDataBinary())).
+		Int("fields_num", len(entityVal.GetFields())).
 		Hex("trace_id", traceID).
 		Uint("trace_shard_id", traceIDShardID).
 		Uint("shard_id", shardID).
 		Msg("written to Trace series")
 	return common.ChunkID(chunkID), err
+}
+
+// copyEntityValueWithoutDataBinary copies all fields without DataBinary
+func copyEntityValueWithoutDataBinary(ev *v1.EntityValue) *v1.EntityValue {
+	return &v1.EntityValue{
+		EntityId:   ev.GetEntityId(),
+		Timestamp:  ev.GetTimestamp(),
+		DataBinary: nil,
+		Fields:     ev.GetFields(),
+	}
 }

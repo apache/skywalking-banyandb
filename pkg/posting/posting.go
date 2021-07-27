@@ -15,13 +15,55 @@
 // specific language governing permissions and limitations
 // under the License.
 
-include "query.fbs";
-include "write.fbs";
+package posting
 
-namespace banyandb.v1;
+import (
+	"github.com/pkg/errors"
 
-// Trace is the RPC service exposed
-rpc_service Trace {
-    Query(EntityCriteria): QueryResponse;
-    Write(WriteEntity): WriteResponse(streaming: "bidi");
+	"github.com/apache/skywalking-banyandb/api/common"
+)
+
+var ErrListEmpty = errors.New("postings list is empty")
+
+// List is a collection of common.ChunkID.
+type List interface {
+	Contains(id common.ChunkID) bool
+
+	IsEmpty() bool
+
+	Max() (common.ChunkID, error)
+
+	Len() int
+
+	Iterator() Iterator
+
+	Clone() List
+
+	Equal(other List) bool
+
+	Insert(i common.ChunkID)
+
+	Intersect(other List) error
+
+	Difference(other List) error
+
+	Union(other List) error
+
+	UnionMany(others []List) error
+
+	AddIterator(iter Iterator) error
+
+	AddRange(min, max common.ChunkID) error
+
+	RemoveRange(min, max common.ChunkID) error
+
+	Reset()
+}
+
+type Iterator interface {
+	Next() bool
+
+	Current() common.ChunkID
+
+	Close() error
 }

@@ -19,11 +19,12 @@ package grpc
 
 import (
 	"context"
-	"fmt"
-	"github.com/apache/skywalking-banyandb/api/common"
+	"net"
+
+	"google.golang.org/grpc"
+
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
-	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,7 +44,7 @@ import (
 type Server struct {
 	addr       string
 	log        *logger.Logger
-	ser        *grpclib.Server
+	ser        *grpc.Server
 	pipeline   queue.Queue
 	repo       discovery.ServiceRepo
 	shardInfo  *shardInfo
@@ -55,16 +56,14 @@ type shardInfo struct {
 }
 var shardEventData *v1.ShardEvent
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
+	shardEvent, ok := message.Data().(*v1.ShardEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	shardEvent := v1.GetRootAsShardEvent(data, 0)
-	shardEventData = shardEvent
 	s.log.Info().
-		Str("action", shardEvent.Action().String()).
-		Uint64("shardID", shardEvent.Shard(nil).Id()).
+		Str("action", v1.Action_name[int32(shardEvent.Action)]).
+		Uint64("shardID", shardEvent.Shard.Id).
 		Msg("received a shard event")
 	return
 }
@@ -75,17 +74,15 @@ type seriesInfo struct {
 
 var seriesEventData *v1.SeriesEvent
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
+	seriesEvent, ok := message.Data().(*v1.SeriesEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	seriesEvent := v1.GetRootAsSeriesEvent(data, 0)
-	seriesEventData = seriesEvent
 	s.log.Info().
-		Str("action", seriesEvent.Action().String()).
-		Str("name", string(seriesEvent.Series(nil).Name())).
-		Str("group", string(seriesEvent.Series(nil).Group())).
+		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
+		Str("name", seriesEvent.Series.Name).
+		Str("group", seriesEvent.Series.Group).
 		Msg("received a shard event")
 	return
 }
@@ -130,10 +127,9 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 
-	s.ser = grpclib.NewServer(grpclib.CustomCodec(flatbuffers.FlatbuffersCodec{}))
-	//s.ser = grpclib.NewServer()
-
-	v1.RegisterTraceServer(s.ser, &TraceServer{})
+	s.ser = grpc.NewServer()
+	// TODO: add server implementation here
+	v1.RegisterTraceServer(s.ser, v1.UnimplementedTraceServer{})
 
 	return s.ser.Serve(lis)
 }

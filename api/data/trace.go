@@ -19,7 +19,7 @@ package data
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 )
 
 var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}

@@ -22,46 +22,46 @@ import (
 
 	"github.com/pkg/errors"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 )
 
-var binaryOpFactory = map[apiv1.BinaryOp]func(l, r Expr) Expr{
-	apiv1.BinaryOpEQ:         Eq,
-	apiv1.BinaryOpNE:         Ne,
-	apiv1.BinaryOpLT:         Lt,
-	apiv1.BinaryOpGT:         Gt,
-	apiv1.BinaryOpLE:         Le,
-	apiv1.BinaryOpGE:         Ge,
-	apiv1.BinaryOpHAVING:     Having,
-	apiv1.BinaryOpNOT_HAVING: NotHaving,
+var binaryOpFactory = map[apiv1.PairQuery_BinaryOp]func(l, r Expr) Expr{
+	apiv1.PairQuery_BINARY_OP_EQ:         Eq,
+	apiv1.PairQuery_BINARY_OP_NE:         Ne,
+	apiv1.PairQuery_BINARY_OP_LT:         Lt,
+	apiv1.PairQuery_BINARY_OP_GT:         Gt,
+	apiv1.PairQuery_BINARY_OP_LE:         Le,
+	apiv1.PairQuery_BINARY_OP_GE:         Ge,
+	apiv1.PairQuery_BINARY_OP_HAVING:     Having,
+	apiv1.PairQuery_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
-var _ ResolvableExpr = (*fieldRef)(nil)
+var _ ResolvableExpr = (*FieldRef)(nil)
 
-// fieldRef is the reference to the field
+// FieldRef is the reference to the field
 // also it holds the definition/schema of the field
-type fieldRef struct {
+type FieldRef struct {
 	// name defines the key of the field
 	name string
 	// spec contains the index of the key in the schema, as well as the underlying FieldSpec
 	spec *fieldSpec
 }
 
-func (f *fieldRef) Equal(expr Expr) bool {
-	if other, ok := expr.(*fieldRef); ok {
-		return other.name == f.name && other.spec.spec.Type() == f.spec.spec.Type()
+func (f *FieldRef) Equal(expr Expr) bool {
+	if other, ok := expr.(*FieldRef); ok {
+		return other.name == f.name && other.spec.spec.GetType() == f.spec.spec.GetType()
 	}
 	return false
 }
 
-func (f *fieldRef) FieldType() apiv1.FieldType {
+func (f *FieldRef) FieldType() apiv1.FieldSpec_FieldType {
 	if f.spec == nil {
 		panic("should be resolved first")
 	}
-	return f.spec.spec.Type()
+	return f.spec.spec.GetType()
 }
 
-func (f *fieldRef) Resolve(s Schema) error {
+func (f *FieldRef) Resolve(s Schema) error {
 	specs, err := s.CreateRef(f.name)
 	if err != nil {
 		return err
@@ -70,12 +70,12 @@ func (f *fieldRef) Resolve(s Schema) error {
 	return nil
 }
 
-func (f *fieldRef) String() string {
-	return fmt.Sprintf("#%s<%s>", f.name, apiv1.EnumNamesFieldType[f.spec.spec.Type()])
+func (f *FieldRef) String() string {
+	return fmt.Sprintf("#%s<%s>", f.name, f.spec.spec.GetType().String())
 }
 
-func NewFieldRef(fieldName string) *fieldRef {
-	return &fieldRef{
+func NewFieldRef(fieldName string) *FieldRef {
+	return &FieldRef{
 		name: fieldName,
 	}
 }
@@ -85,7 +85,7 @@ var _ ResolvableExpr = (*binaryExpr)(nil)
 // binaryExpr is composed of two operands with one op as the operator
 // l is normally a reference to a field, while r is usually literals
 type binaryExpr struct {
-	op apiv1.BinaryOp
+	op apiv1.PairQuery_BinaryOp
 	l  Expr
 	r  Expr
 }
@@ -97,7 +97,7 @@ func (b *binaryExpr) Equal(expr Expr) bool {
 	return false
 }
 
-func (b *binaryExpr) FieldType() apiv1.FieldType {
+func (b *binaryExpr) FieldType() apiv1.FieldSpec_FieldType {
 	panic("Boolean should be added")
 }
 
@@ -115,21 +115,21 @@ func (b *binaryExpr) Resolve(s Schema) error {
 		}
 	}
 	if b.l.FieldType() != b.r.FieldType() {
-		return errors.Wrapf(IncompatibleQueryConditionErr, "left is %v while right is %v",
-			apiv1.EnumNamesFieldType[b.l.FieldType()],
-			apiv1.EnumNamesFieldType[b.r.FieldType()],
+		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %s while right is %s",
+			b.l.FieldType().String(),
+			b.r.FieldType().String(),
 		)
 	}
 	return nil
 }
 
 func (b *binaryExpr) String() string {
-	return fmt.Sprintf("%s %s %s", b.l.String(), apiv1.EnumNamesBinaryOp[b.op], b.r.String())
+	return fmt.Sprintf("%s %s %s", b.l.String(), b.op.String(), b.r.String())
 }
 
 func Eq(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpEQ,
+		op: apiv1.PairQuery_BINARY_OP_EQ,
 		l:  l,
 		r:  r,
 	}
@@ -137,7 +137,7 @@ func Eq(l, r Expr) Expr {
 
 func Ne(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpNE,
+		op: apiv1.PairQuery_BINARY_OP_NE,
 		l:  l,
 		r:  r,
 	}
@@ -145,7 +145,7 @@ func Ne(l, r Expr) Expr {
 
 func Lt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpLT,
+		op: apiv1.PairQuery_BINARY_OP_LT,
 		l:  l,
 		r:  r,
 	}
@@ -153,7 +153,7 @@ func Lt(l, r Expr) Expr {
 
 func Le(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpLE,
+		op: apiv1.PairQuery_BINARY_OP_LE,
 		l:  l,
 		r:  r,
 	}
@@ -161,7 +161,7 @@ func Le(l, r Expr) Expr {
 
 func Gt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpGT,
+		op: apiv1.PairQuery_BINARY_OP_GT,
 		l:  l,
 		r:  r,
 	}
@@ -169,7 +169,7 @@ func Gt(l, r Expr) Expr {
 
 func Ge(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpGE,
+		op: apiv1.PairQuery_BINARY_OP_GE,
 		l:  l,
 		r:  r,
 	}
@@ -177,7 +177,7 @@ func Ge(l, r Expr) Expr {
 
 func Having(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpHAVING,
+		op: apiv1.PairQuery_BINARY_OP_HAVING,
 		l:  l,
 		r:  r,
 	}
@@ -185,7 +185,7 @@ func Having(l, r Expr) Expr {
 
 func NotHaving(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.BinaryOpNOT_HAVING,
+		op: apiv1.PairQuery_BINARY_OP_NOT_HAVING,
 		l:  l,
 		r:  r,
 	}

@@ -24,15 +24,17 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 func Test_traceSeries_FetchEntity(t *testing.T) {
 	type args struct {
 		chunkIDIndices []int
-		chunkIDs       common.ChunkIDs
+		chunkIDs       []idWithShard
 		opt            series.ScanOptions
 	}
 	tests := []struct {
@@ -92,15 +94,23 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 		{
 			name: "invalid chunk ids",
 			args: args{
-				chunkIDs: common.ChunkIDs{0},
-				opt:      series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
+				chunkIDs: []idWithShard{
+					{
+						id: common.ChunkID(0),
+					},
+				},
+				opt: series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "mix up invalid/valid ids",
 			args: args{
-				chunkIDs:       common.ChunkIDs{0},
+				chunkIDs: []idWithShard{
+					{
+						id: common.ChunkID(0),
+					},
+				},
 				chunkIDIndices: []int{0, 1},
 				opt:            series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
 			},
@@ -128,25 +138,34 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 	}
 	ts, stopFunc := setup(t)
 	defer stopFunc()
-	chunkIDs := setUpTestData(t, ts, testData(uint64(time.Now().UnixNano())))
+	dataResult := setupTestData(t, ts, testData(time.Now()))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			chunkIDCriteria := make([]common.ChunkID, 0, len(tt.args.chunkIDIndices))
+			chunkIDCriteria := make(map[uint]posting.List, 2)
 			for i := range tt.args.chunkIDIndices {
-				chunkIDCriteria = append(chunkIDCriteria, chunkIDs[i])
+				placeID(chunkIDCriteria, dataResult[i])
 			}
 			for _, id := range tt.args.chunkIDs {
-				chunkIDCriteria = append(chunkIDCriteria, id)
+				placeID(chunkIDCriteria, id)
 			}
-			entities, err := ts.FetchEntity(chunkIDCriteria, tt.args.opt)
+			var entities ByEntityID
+			var err error
+			for s, c := range chunkIDCriteria {
+				ee, errFetch := ts.FetchEntity(c, s, tt.args.opt)
+				if errFetch != nil {
+					err = multierr.Append(err, errFetch)
+				}
+				entities = append(entities, ee...)
+			}
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			sort.Sort(entities)
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			for i, e := range entities {
-				assert.EqualValues(t, tt.wantEntities[i].entityID, e.EntityId())
-				assert.Equal(t, tt.wantEntities[i].dataBinary, e.DataBinaryBytes())
-				assert.Equal(t, tt.wantEntities[i].fieldsSize, e.FieldsLength())
+				assert.EqualValues(t, tt.wantEntities[i].entityID, e.GetEntityId())
+				assert.Equal(t, tt.wantEntities[i].dataBinary, e.GetDataBinary())
+				assert.Len(t, e.GetFields(), tt.wantEntities[i].fieldsSize)
 			}
 		})
 	}
@@ -188,7 +207,7 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 	}
 	ts, stopFunc := setup(t)
 	defer stopFunc()
-	setUpTestData(t, ts, testData(uint64(time.Now().UnixNano())))
+	setupTestData(t, ts, testData(time.Now()))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			traceData, err := ts.FetchTrace(tt.args.traceID, series.ScanOptions{Projection: []string{"data_binary", "trace_id"}})
@@ -199,9 +218,9 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			sort.Sort(entities)
 			for i, e := range entities {
-				assert.EqualValues(t, tt.wantEntities[i].entityID, e.EntityId())
-				assert.Equal(t, tt.wantEntities[i].dataBinary, e.DataBinaryBytes())
-				assert.Equal(t, tt.wantEntities[i].fieldsSize, e.FieldsLength())
+				assert.EqualValues(t, tt.wantEntities[i].entityID, e.GetEntityId())
+				assert.Equal(t, tt.wantEntities[i].dataBinary, e.GetDataBinary())
+				assert.Len(t, e.GetFields(), tt.wantEntities[i].fieldsSize)
 			}
 		})
 	}
@@ -209,10 +228,10 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 
 func Test_traceSeries_ScanEntity(t *testing.T) {
 	type args struct {
-		start uint64
-		end   uint64
+		start time.Time
+		end   time.Time
 	}
-	baseTS := uint64((time.Now().UnixNano() / 1e6) * 1e6)
+	baseTS := time.Now()
 	tests := []struct {
 		name         string
 		args         args
@@ -222,8 +241,8 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		{
 			name: "scan all",
 			args: args{
-				start: 0,
-				end:   math.MaxUint64,
+				start: time.Unix(0, 0),
+				end:   time.Unix(math.MaxInt64, math.MaxInt64),
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", dataBinary: []byte{11}, fieldsSize: 1},
@@ -238,8 +257,8 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		{
 			name: "scan range",
 			args: args{
-				start: baseTS,
-				end:   baseTS + 6*gap,
+				start: baseTS.Add(-interval * 1),
+				end:   baseTS.Add(interval * 6),
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", dataBinary: []byte{11}, fieldsSize: 1},
@@ -254,8 +273,8 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		{
 			name: "scan slice",
 			args: args{
-				start: baseTS + gap + 1,
-				end:   baseTS + 5*gap - 2,
+				start: baseTS.Add(interval + time.Millisecond),
+				end:   baseTS.Add(5*interval - 2*time.Millisecond),
 			},
 			wantEntities: []wantEntity{
 				{entityID: "3", dataBinary: []byte{13}, fieldsSize: 1},
@@ -266,7 +285,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		{
 			name: "single result",
 			args: args{
-				start: baseTS,
+				start: time.Unix(0, 0),
 				end:   baseTS,
 			},
 			wantEntities: []wantEntity{
@@ -280,21 +299,23 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 	}
 	ts, stopFunc := setup(t)
 	defer stopFunc()
-	setUpTestData(t, ts, testData(baseTS))
+	setupTestData(t, ts, testData(baseTS))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var entities ByEntityID
 			var err error
-			entities, err = ts.ScanEntity(tt.args.start, tt.args.end, series.ScanOptions{Projection: []string{"data_binary", "trace_id"}})
+			entities, err = ts.ScanEntity(uint64(tt.args.start.UnixNano()), uint64(tt.args.end.UnixNano()), series.ScanOptions{Projection: []string{"data_binary", "trace_id"}})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			sort.Sort(entities)
 			for i, e := range entities {
-				assert.Equal(t, tt.wantEntities[i].entityID, string(e.EntityId()))
-				assert.Equal(t, tt.wantEntities[i].dataBinary, e.DataBinaryBytes())
-				assert.Equal(t, tt.wantEntities[i].fieldsSize, e.FieldsLength())
+				// TODO: we have to check time accuracy
+				// assert.Greater(t, tt.args.end.UnixNano(), e.Timestamp.AsTime().UnixNano())
+				assert.Equal(t, tt.wantEntities[i].entityID, e.GetEntityId())
+				assert.Equal(t, tt.wantEntities[i].dataBinary, e.GetDataBinary())
+				assert.Len(t, e.GetFields(), tt.wantEntities[i].fieldsSize)
 			}
 		})
 	}

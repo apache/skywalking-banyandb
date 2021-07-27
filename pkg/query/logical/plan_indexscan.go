@@ -26,17 +26,18 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
-	startTime        uint64
-	endTime          uint64
+	startTime        int64
+	endTime          int64
 	traceMetadata    *common.Metadata
 	conditions       []Expr
 	projectionFields []string
@@ -57,7 +58,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 			}
 
 			if bCond, ok := cond.(*binaryExpr); ok {
-				fieldName := bCond.l.(*fieldRef).name
+				fieldName := bCond.l.(*FieldRef).name
 				if defined, indexObj := s.IndexDefined(fieldName); defined {
 					if v, exist := conditionMap[indexObj]; exist {
 						v = append(v, cond)
@@ -66,13 +67,13 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 						conditionMap[indexObj] = []Expr{cond}
 					}
 				} else {
-					return nil, errors.Wrap(IndexNotDefinedErr, fieldName)
+					return nil, errors.Wrap(ErrIndexNotDefined, fieldName)
 				}
 			}
 		}
 	}
 
-	var projFieldsRefs []*fieldRef
+	var projFieldsRefs []*FieldRef
 	if uis.projectionFields != nil && len(uis.projectionFields) > 0 {
 		var err error
 		projFieldsRefs, err = s.CreateRef(uis.projectionFields...)
@@ -96,23 +97,24 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 var _ Plan = (*indexScan)(nil)
 
 type indexScan struct {
-	startTime           uint64
-	endTime             uint64
+	startTime           int64
+	endTime             int64
 	schema              Schema
 	traceMetadata       *common.Metadata
 	conditionMap        map[*apiv1.IndexObject][]Expr
 	projectionFields    []string
-	projectionFieldRefs []*fieldRef
+	projectionFieldRefs []*FieldRef
 	traceState          series.TraceState
 }
 
 func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error) {
-	var chunkSet common.ChunkIDs
+	var chunkSet posting.List
 	for _, exprs := range i.conditionMap {
 		// TODO: Discuss which metadata should be used!
 		// 1) traceSeries Metadata: indirect mapping
 		// 2) indexRule Metadata: cannot uniquely determine traceSeries
-		chunks, err := ec.Search(*i.traceMetadata, i.startTime, i.endTime, convertToConditions(exprs))
+		// TODO: should pass correct shardID
+		chunks, err := ec.Search(*i.traceMetadata, 0, uint64(i.startTime), uint64(i.endTime), convertToConditions(exprs))
 		if err != nil {
 			return nil, err
 		}
@@ -121,18 +123,19 @@ func (i *indexScan) Execute(ec executor2.ExecutionContext) ([]data.Entity, error
 			chunkSet = chunks
 		} else {
 			// afterwards, it must not be nil
-			chunkSet = chunkSet.HashIntersect(chunks)
+			_ = chunkSet.Intersect(chunks)
 		}
 	}
 
-	return ec.FetchEntity(*i.traceMetadata, chunkSet, series.ScanOptions{
+	//TODO: pass correct shardID
+	return ec.FetchEntity(*i.traceMetadata, 0, chunkSet, series.ScanOptions{
 		Projection: i.projectionFields,
 		State:      i.traceState,
 	})
 }
 
 func (i *indexScan) String() string {
-	var exprStr []string
+	exprStr := make([]string, 0, len(i.conditionMap))
 	for _, conditions := range i.conditionMap {
 		var conditionStr []string
 		for _, cond := range conditions {
@@ -142,12 +145,11 @@ func (i *indexScan) String() string {
 	}
 	if len(i.projectionFieldRefs) == 0 {
 		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=None",
-			i.startTime, i.endTime, i.traceMetadata.Spec.Group(), i.traceMetadata.Spec.Name(), strings.Join(exprStr, " AND "))
-	} else {
-		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
-			i.startTime, i.endTime, i.traceMetadata.Spec.Group(), i.traceMetadata.Spec.Name(), strings.Join(exprStr, " AND "),
-			formatExpr(", ", i.projectionFieldRefs...))
+			i.startTime, i.endTime, i.traceMetadata.Spec.GetGroup(), i.traceMetadata.Spec.GetName(), strings.Join(exprStr, " AND "))
 	}
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
+		i.startTime, i.endTime, i.traceMetadata.Spec.GetGroup(), i.traceMetadata.Spec.GetName(), strings.Join(exprStr, " AND "),
+		formatExpr(", ", i.projectionFieldRefs...))
 }
 
 func (i *indexScan) Type() PlanType {
@@ -180,7 +182,7 @@ func (i *indexScan) Equal(plan Plan) bool {
 		cmp.Equal(i.conditionMap, other.conditionMap)
 }
 
-func IndexScan(startTime, endTime uint64, traceMetadata *common.Metadata, conditions []Expr, traceState series.TraceState, projection ...string) UnresolvedPlan {
+func IndexScan(startTime, endTime int64, traceMetadata *common.Metadata, conditions []Expr, traceState series.TraceState, projection ...string) UnresolvedPlan {
 	return &unresolvedIndexScan{
 		startTime:        startTime,
 		endTime:          endTime,
@@ -196,7 +198,7 @@ func convertToConditions(exprs []Expr) []index.Condition {
 	for _, expr := range exprs {
 		if bExpr, ok := expr.(*binaryExpr); ok {
 			conditions = append(conditions, index.Condition{
-				Key:    bExpr.l.(*fieldRef).name,
+				Key:    bExpr.l.(*FieldRef).name,
 				Op:     bExpr.op,
 				Values: bExpr.r.(LiteralExpr).Bytes(),
 			})

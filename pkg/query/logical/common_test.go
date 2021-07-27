@@ -34,11 +34,10 @@ import (
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	executor2 "github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 type ChunkIDGenerator interface {
@@ -76,25 +75,24 @@ func GeneratorFromRange(l, r common.ChunkID) ChunkIDGenerator {
 var _ ChunkIDGenerator = (*arrayChunkIDGenerator)(nil)
 
 type arrayChunkIDGenerator struct {
-	chunkIDs []common.ChunkID
-	ptr      int
+	hasNext bool
+	iter    posting.Iterator
 }
 
 func (a *arrayChunkIDGenerator) Next() common.ChunkID {
-	defer func() {
-		a.ptr++
-	}()
-	return a.chunkIDs[a.ptr]
+	a.hasNext = a.iter.Next()
+	return a.iter.Current()
 }
 
 func (a *arrayChunkIDGenerator) HasNext() bool {
-	return a.ptr < len(a.chunkIDs)
+	return a.hasNext
 }
 
-func GeneratorFromArray(chunkIDs []common.ChunkID) ChunkIDGenerator {
+func GeneratorFromArray(chunkIDs posting.List) ChunkIDGenerator {
+	iter := chunkIDs.Iterator()
 	return &arrayChunkIDGenerator{
-		chunkIDs: chunkIDs,
-		ptr:      0,
+		iter:    iter,
+		hasNext: iter.Next(),
 	}
 }
 
@@ -102,12 +100,12 @@ func GenerateEntities(g ChunkIDGenerator) []data.Entity {
 	entities := make([]data.Entity, 0)
 	rand.Seed(time.Now().UnixNano())
 	for g.HasNext() {
-		b := fb.NewQueryEntityBuilder()
-		et := b.BuildEntity(
-			b.BuildEntityID(strconv.FormatUint(uint64(g.Next()), 10)),
-			b.BuildFields("trace_id", generateRndServiceName(rand.Int63()), "http.method", "GET"),
-			b.BuildTimeStamp(time.Now()),
-		)
+		et := pb.NewQueryEntityBuilder().
+			EntityID(strconv.FormatUint(uint64(g.Next()), 10)).
+			Timestamp(time.Now()).
+			Fields("trace_id", generateRndServiceName(rand.Int63()), "http.method", "GET").
+			Build()
+
 		entities = append(entities, data.Entity{Entity: et})
 	}
 	return entities
@@ -122,10 +120,10 @@ type mockDataFactory struct {
 	ctrl          *gomock.Controller
 	num           int
 	traceMetadata *common.Metadata
-	s             logical2.Schema
+	s             logical.Schema
 }
 
-func NewMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical2.Schema, num int) *mockDataFactory {
+func newMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical.Schema, num int) *mockDataFactory {
 	return &mockDataFactory{
 		ctrl:          ctrl,
 		num:           num,
@@ -134,7 +132,7 @@ func NewMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata,
 	}
 }
 
-func (f *mockDataFactory) MockParentPlan() logical2.UnresolvedPlan {
+func (f *mockDataFactory) MockParentPlan() logical.UnresolvedPlan {
 	p := logical.NewMockPlan(f.ctrl)
 	p.EXPECT().Execute(gomock.Any()).Return(GenerateEntities(GeneratorFromRange(0, common.ChunkID(f.num-1))), nil)
 	p.EXPECT().Schema().Return(f.s).AnyTimes()
@@ -143,7 +141,7 @@ func (f *mockDataFactory) MockParentPlan() logical2.UnresolvedPlan {
 	return up
 }
 
-func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor2.ExecutionContext {
+func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
 	ec.EXPECT().FetchTrace(*f.traceMetadata, traceID, series.ScanOptions{}).Return(data.Trace{
 		KindVersion: common.KindVersion{},
@@ -152,39 +150,38 @@ func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor2.ExecutionCo
 	return ec
 }
 
-func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor2.ExecutionContext {
+//TODO: pass correct shardID
+func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
 	for _, im := range indexMatches {
 		ec.
 			EXPECT().
-			Search(*f.traceMetadata, uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), im).
+			Search(*f.traceMetadata, uint(0), uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), im).
 			Return(im.chunkIDs, nil)
 	}
 	ec.
 		EXPECT().
-		FetchEntity(*f.traceMetadata, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ common.Metadata, chunkIDs []common.ChunkID, _ series.ScanOptions) ([]data.Entity, error) {
+		FetchEntity(*f.traceMetadata, uint(0), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ common.Metadata, _ uint, chunkIDs posting.List, _ series.ScanOptions) ([]data.Entity, error) {
 			return GenerateEntities(GeneratorFromArray(chunkIDs)), nil
 		})
 	return ec
 }
 
-func prepareSchema(assert *require.Assertions) (*common.Metadata, logical2.Schema) {
-	ana := logical2.DefaultAnalyzer()
+func prepareSchema(assert *require.Assertions) (*common.Metadata, logical.Schema) {
+	ana := logical.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	builder := fb.NewCriteriaBuilder()
-	criteria := builder.BuildEntityCriteria(
-		fb.AddLimit(0),
-		fb.AddOffset(0),
-		builder.BuildMetaData("default", "trace"),
-		builder.BuildTimeStampNanoSeconds(sT, eT),
-	)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(0).Offset(0).
+		Metadata("default", "trace").
+		TimeRange(sT, eT).
+		Build()
 
 	metadata := &common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        criteria.Metadata(nil),
+		Spec:        criteria.GetMetadata(),
 	}
 
 	schema, err := ana.BuildTraceSchema(context.TODO(), *metadata)
@@ -196,7 +193,7 @@ var _ gomock.Matcher = (*indexMatcher)(nil)
 
 type indexMatcher struct {
 	key      string
-	chunkIDs []common.ChunkID
+	chunkIDs posting.List
 }
 
 func (i *indexMatcher) Matches(x interface{}) bool {
@@ -214,7 +211,7 @@ func (i *indexMatcher) String() string {
 	return fmt.Sprintf("is search for key %s", i.key)
 }
 
-func NewIndexMatcher(key string, chunkIDs []common.ChunkID) *indexMatcher {
+func newIndexMatcher(key string, chunkIDs posting.List) *indexMatcher {
 	return &indexMatcher{
 		key:      key,
 		chunkIDs: chunkIDs,

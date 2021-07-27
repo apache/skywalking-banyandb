@@ -18,23 +18,22 @@
 package trace
 
 import (
-	"bytes"
 	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
 var _ sort.Interface = (ByEntityID)(nil)
@@ -46,7 +45,7 @@ func (b ByEntityID) Len() int {
 }
 
 func (b ByEntityID) Less(i, j int) bool {
-	return bytes.Compare(b[i].EntityId(), b[j].EntityId()) < 0
+	return strings.Compare(b[i].GetEntityId(), b[j].GetEntityId()) < 0
 }
 
 func (b ByEntityID) Swap(i, j int) {
@@ -63,17 +62,11 @@ func setup(t *testing.T) (*traceSeries, func()) {
 	assert.NoError(t, svc.PreRun())
 	assert.NoError(t, db.PreRun())
 	traceSVC := svc.(*service)
-	b := flatbuffers.NewBuilder(0)
-	name := b.CreateString("sw")
-	group := b.CreateString("default")
-	v1.MetadataStart(b)
-	v1.MetadataAddName(b, name)
-	v1.MetadataAddGroup(b, group)
-	b.Finish(v1.MetadataEnd(b))
-	meta := new(v1.Metadata)
-	meta.Init(b.Bytes, b.Offset())
 	ts, err := traceSVC.getSeries(common.Metadata{
-		Spec: v1.GetRootAsMetadata(b.FinishedBytes(), 0),
+		Spec: &v1.Metadata{
+			Name:  "sw",
+			Group: "default",
+		},
 	})
 	assert.NoError(t, err)
 	return ts, db.GracefulStop
@@ -90,14 +83,13 @@ type wantEntity struct {
 	fieldsSize int
 }
 
-var gap = uint64(500 * time.Millisecond)
+var interval = 500 * time.Millisecond
 
-func testData(ts uint64) []seriesEntity {
-
+func testData(t time.Time) []seriesEntity {
 	return []seriesEntity{
 		{
 			seriesID: "webapp_10.0.0.1",
-			entity: getEntityWithTS("1", []byte{11}, ts,
+			entity: getEntityWithTS("1", []byte{11}, t,
 				"trace_id-xxfff.111323",
 				0,
 				"webapp_id",
@@ -112,14 +104,14 @@ func testData(ts uint64) []seriesEntity {
 		},
 		{
 			seriesID: "gateway_10.0.0.2",
-			entity: getEntityWithTS("2", []byte{12}, ts+gap,
+			entity: getEntityWithTS("2", []byte{12}, t.Add(interval),
 				"trace_id-xxfff.111323a",
 				1,
 			),
 		},
 		{
 			seriesID: "httpserver_10.0.0.3",
-			entity: getEntityWithTS("3", []byte{13}, ts+2*gap,
+			entity: getEntityWithTS("3", []byte{13}, t.Add(interval*2),
 				"trace_id-xxfff.111323",
 				1,
 				"httpserver_id",
@@ -136,7 +128,7 @@ func testData(ts uint64) []seriesEntity {
 		},
 		{
 			seriesID: "database_10.0.0.4",
-			entity: getEntityWithTS("4", []byte{14}, ts+3*gap,
+			entity: getEntityWithTS("4", []byte{14}, t.Add(interval*3),
 				"trace_id-xxfff.111323",
 				0,
 				"database_id",
@@ -155,7 +147,7 @@ func testData(ts uint64) []seriesEntity {
 		},
 		{
 			seriesID: "mq_10.0.0.5",
-			entity: getEntityWithTS("5", []byte{15}, ts+4*gap,
+			entity: getEntityWithTS("5", []byte{15}, t.Add(interval*4),
 				"trace_id-zzpp.111323",
 				0,
 				"mq_id",
@@ -176,7 +168,7 @@ func testData(ts uint64) []seriesEntity {
 		},
 		{
 			seriesID: "database_10.0.0.6",
-			entity: getEntityWithTS("6", []byte{16}, ts+5*gap,
+			entity: getEntityWithTS("6", []byte{16}, t.Add(interval*5),
 				"trace_id-zzpp.111323",
 				1,
 				"database_id",
@@ -195,7 +187,7 @@ func testData(ts uint64) []seriesEntity {
 		},
 		{
 			seriesID: "mq_10.0.0.7",
-			entity: getEntityWithTS("7", []byte{17}, ts+6*gap,
+			entity: getEntityWithTS("7", []byte{17}, t.Add(interval*6),
 				"trace_id-zzpp.111323",
 				0,
 				"nq_id",
@@ -220,7 +212,7 @@ func testData(ts uint64) []seriesEntity {
 type entity struct {
 	id     string
 	binary []byte
-	ts     uint64
+	t      time.Time
 	items  []interface{}
 }
 
@@ -232,31 +224,28 @@ func getEntity(id string, binary []byte, items ...interface{}) entity {
 	}
 }
 
-func getEntityWithTS(id string, binary []byte, ts uint64, items ...interface{}) entity {
+func getEntityWithTS(id string, binary []byte, t time.Time, items ...interface{}) entity {
 	return entity{
 		id:     id,
 		binary: binary,
-		ts:     ts,
+		t:      t,
 		items:  items,
 	}
 }
 
-func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity) (chunkIDs []common.ChunkID) {
-	chunkIDs = make([]common.ChunkID, 0, len(seriesEntities))
+func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity) (results []idWithShard) {
+	results = make([]idWithShard, 0, len(seriesEntities))
 	for _, se := range seriesEntities {
 		seriesID := []byte(se.seriesID)
-		b := fb.NewWriteEntityBuilder()
-		items := make([]fb.ComponentBuilderFunc, 0, 2)
-		items = append(items, b.BuildMetaData("default", "sw"))
-		timestamp := se.entity.ts
-		items = append(items, b.BuildEntityWithTS(se.entity.id, se.entity.binary, timestamp, se.entity.items...))
-		builder, err := b.BuildWriteEntity(
-			items...,
-		)
-		assert.NoError(t, err)
-		we := v1.GetRootAsWriteEntity(builder.FinishedBytes(), 0)
-		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), partition.ShardID(seriesID, 2), data.EntityValue{
-			EntityValue: we.Entity(nil),
+		ev := pb.NewEntityValueBuilder().
+			DataBinary(se.entity.binary).
+			EntityID(se.entity.id).
+			Timestamp(se.entity.t).
+			Fields(se.entity.items...).
+			Build()
+		shardID := partition.ShardID(seriesID, 2)
+		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), shardID, data.EntityValue{
+			EntityValue: ev,
 		})
 		if err != nil {
 			t.Error("Write() got error")
@@ -264,7 +253,10 @@ func setUpTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 		if got < 1 {
 			t.Error("Write() got empty chunkID")
 		}
-		chunkIDs = append(chunkIDs, got)
+		results = append(results, idWithShard{
+			id:      got,
+			shardID: shardID,
+		})
 	}
-	return chunkIDs
+	return results
 }

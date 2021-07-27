@@ -19,18 +19,17 @@ package grpc_test
 
 import (
 	"context"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"io"
 	"log"
 	"net"
 	"testing"
 	"time"
 
-	flatbuffers "github.com/google/flatbuffers/go"
 	grpclib "google.golang.org/grpc"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/pkg/fb"
 )
 
 var serverAddr = "localhost:17912"
