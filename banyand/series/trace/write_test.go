@@ -180,13 +180,17 @@ func Test_traceSeries_Write(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			seriesID := []byte(tt.args.seriesID)
+			shardID, shardIdError := partition.ShardID(seriesID, 2)
+			if shardIdError != nil {
+				return
+			}
 			ev := pb.NewEntityValueBuilder().
 				DataBinary(tt.args.entity.binary).
 				EntityID(tt.args.entity.id).
 				Fields(tt.args.entity.items...).
 				Timestamp(time.Now()).
 				Build()
-			got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), partition.ShardID(seriesID, 2), data.EntityValue{
+			got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), shardID, data.EntityValue{
 				EntityValue: ev,
 			})
 			if (err != nil) != tt.wantErr {

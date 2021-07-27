@@ -243,7 +243,7 @@ func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 			Timestamp(se.entity.t).
 			Fields(se.entity.items...).
 			Build()
-		shardID := partition.ShardID(seriesID, 2)
+		shardID, _ := partition.ShardID(seriesID, 2)
 		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), shardID, data.EntityValue{
 			EntityValue: ev,
 		})

@@ -19,20 +19,23 @@ package grpc_test
 
 import (
 	"context"
-	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
+	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
 	"testing"
 	"time"
 
+	grpclib "google.golang.org/grpc"
+
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
-	grpclib "google.golang.org/grpc"
 )
-
-var serverAddr = "localhost:17912"
+var (
+	serverAddr = "localhost:17912"
+)
 
 func Test_server_start(t *testing.T) {
 	go func() {
@@ -40,8 +43,22 @@ func Test_server_start(t *testing.T) {
 		if err != nil {
 			log.Fatalf("failed to listen: %v", err)
 		}
-		ser := grpclib.NewServer(grpclib.CustomCodec(flatbuffers.FlatbuffersCodec{}))
-		v1.RegisterTraceServer(ser, &grpc.TraceServer{})
+		var opts []grpclib.ServerOption
+		if *grpc.Tls {
+			if *grpc.CertFile == "" {
+				*grpc.CertFile = data.Path("x509/server_cert.pem")
+			}
+			if *grpc.KeyFile == "" {
+				*grpc.KeyFile = data.Path("x509/server_key.pem")
+			}
+			creds, err := credentials.NewServerTLSFromFile(*grpc.CertFile, *grpc.KeyFile)
+			if err != nil {
+				log.Fatalf("Failed to generate credentials %v", err)
+			}
+			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+		}
+		ser := grpclib.NewServer(opts...)
+		v1.RegisterTraceServer(ser, v1.UnimplementedTraceServer{})
 		if err := ser.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
@@ -49,7 +66,7 @@ func Test_server_start(t *testing.T) {
 }
 
 func Test_trace_write(t *testing.T) {
-	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions(grpclib.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
+	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -95,7 +112,7 @@ func Test_trace_write(t *testing.T) {
 	<-waitc
 }
 func Test_trace_query(t *testing.T) {
-	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions(grpclib.CustomCodecCallOption{Codec: flatbuffers.FlatbuffersCodec{}}))
+	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions())
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}

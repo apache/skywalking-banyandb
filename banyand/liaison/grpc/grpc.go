@@ -19,13 +19,22 @@ package grpc
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/api/common"
-	apischema "github.com/apache/skywalking-banyandb/api/schema"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
+	"google.golang.org/grpc/credentials"
+	"io"
+	"log"
 	"net"
+	"strings"
 
+	"github.com/pkg/errors"
+	grpclib "google.golang.org/grpc"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -33,13 +42,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/pkg/errors"
-	grpclib "google.golang.org/grpc"
-	"io"
-	"log"
-	"strings"
 )
-
+var (
+	Tls        = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	CertFile   = flag.String("cert_file", "", "The TLS cert file")
+	KeyFile    = flag.String("key_file", "", "The TLS key file")
+	shardEventData *v1.ShardEvent
+    seriesEventData *v1.SeriesEvent
+)
 type Server struct {
 	addr       string
 	log        *logger.Logger
@@ -53,7 +63,7 @@ type Server struct {
 type shardInfo struct {
 	log *logger.Logger
 }
-var shardEventData *v1.ShardEvent
+
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 	shardEvent, ok := message.Data().(*v1.ShardEvent)
 	if !ok {
@@ -71,7 +81,6 @@ type seriesInfo struct {
 	log *logger.Logger
 }
 
-var seriesEventData *v1.SeriesEvent
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 	seriesEvent, ok := message.Data().(*v1.SeriesEvent)
 	if !ok {
@@ -125,10 +134,24 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
-
-	s.ser = grpclib.NewServer()
+	var opts []grpclib.ServerOption
+	if *Tls {
+		if *CertFile == "" {
+			*CertFile = data.Path("x509/server_cert.pem")
+		}
+		if *KeyFile == "" {
+			*KeyFile = data.Path("x509/server_key.pem")
+		}
+		creds, err := credentials.NewServerTLSFromFile(*CertFile, *KeyFile)
+		if err != nil {
+			log.Fatalf("Failed to generate credentials %v", err)
+		}
+		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+	}
+	s.ser = grpclib.NewServer(opts...)
+	//s.ser = grpclib.NewServer(grpclib.CustomCodec())
 	// TODO: add server implementation here
-	v1.RegisterTraceServer(s.ser, v1.UnimplementedTraceServer{})
+	v1.RegisterTraceServer(s.ser, &v1.UnimplementedTraceServer{})
 
 	return s.ser.Serve(lis)
 }
@@ -160,7 +183,7 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		}
 		schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
 		if ruleError != nil {
-			return  ruleError
+			return ruleError
 		}
 		seriesIdLen := len(seriesEventData.FieldNamesCompositeSeriesId)
 		var str string
@@ -170,20 +193,20 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 			if defined, sub := schema.FieldSubscript(id); defined {
 				var field v1.Field
 				switch v := field.GetValueType().(type) {
-					case *v1.Field_StrArray:
-						for j := 0; j < len(v.StrArray.Value); j++ {
-							if sub == j {
-								arr = append(arr, v.StrArray.Value[j])
-							}
+				case *v1.Field_StrArray:
+					for j := 0; j < len(v.StrArray.Value); j++ {
+						if sub == j {
+							arr = append(arr, v.StrArray.Value[j])
 						}
-					case *v1.Field_IntArray:
-						for t := 0; t < len(v.IntArray.Value); t++ {
-							arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
-						}
-					case *v1.Field_Int:
-						arr = append(arr, fmt.Sprint(v.Int.Value))
-					case *v1.Field_Str:
-						arr = append(arr, fmt.Sprint(v.Str.Value))
+					}
+				case *v1.Field_IntArray:
+					for t := 0; t < len(v.IntArray.Value); t++ {
+						arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+					}
+				case *v1.Field_Int:
+					arr = append(arr, fmt.Sprint(v.Int.Value))
+				case *v1.Field_Str:
+					arr = append(arr, fmt.Sprint(v.Str.Value))
 				}
 			}
 		}
