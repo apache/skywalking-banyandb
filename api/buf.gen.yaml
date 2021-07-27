@@ -1,3 +1,4 @@
+#
 # Licensed to Apache Software Foundation (ASF) under one or more contributor
 # license agreements. See the NOTICE file distributed with
 # this work for additional information regarding copyright
@@ -14,20 +15,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-
-VERSION ?= v1
-fbs := $(wildcard $(VERSION)/*.fbs)
-GO_FLAGS := --go-namespace $(VERSION) --gen-onefile
-JAVA_FLAGS := --gen-generated
-
-.PHONY: generate
-generate: generate-go
-
-.PHONY: generate-go
-generate-go: $(fbs)
-	flatc --go --grpc $(GO_FLAGS) -o $(VERSION) $^
-
-.PHONY: generate-java
-generate-java: $(fbs)
-	flatc --java --grpc $(JAVA_FLAGS) -o $(VERSION) $^
+version: v1beta1
+plugins:
+  - name: go
+    out: proto
+    opt: paths=source_relative
+  - name: go-grpc
+    out: proto
+    opt: paths=source_relative

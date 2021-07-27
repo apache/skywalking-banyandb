@@ -20,43 +20,40 @@ package logical
 import (
 	"context"
 
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	seriesSchema "github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
 
 var (
-	FieldNotDefinedErr            = errors.New("field is not defined")
-	PairQueryInspectionErr        = errors.New("pairQuery cannot be inspected")
-	InvalidConditionTypeErr       = errors.New("invalid pair type")
-	TypePairInspectionErr         = errors.New("pair cannot be inspected")
-	IncompatibleQueryConditionErr = errors.New("incompatible query condition type")
-	InvalidSchemaErr              = errors.New("invalid schema")
-	IndexNotDefinedErr            = errors.New("index is not define for the field")
+	ErrFieldNotDefined            = errors.New("field is not defined")
+	ErrInvalidConditionType       = errors.New("invalid pair type")
+	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
+	ErrInvalidSchema              = errors.New("invalid schema")
+	ErrIndexNotDefined            = errors.New("index is not define for the field")
 )
 
 var (
 	DefaultLimit uint32 = 20
 )
 
-type analyzer struct {
+type Analyzer struct {
 	traceSeries seriesSchema.TraceSeries
 	indexRule   seriesSchema.IndexRule
 }
 
-func DefaultAnalyzer() *analyzer {
-	return &analyzer{
+func DefaultAnalyzer() *Analyzer {
+	return &Analyzer{
 		sw.NewTraceSeries(),
 		sw.NewIndexRule(),
 	}
 }
 
-func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadata) (Schema, error) {
+func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadata) (Schema, error) {
 	traceSeries, err := a.traceSeries.Get(ctx, metadata)
 
 	if err != nil {
@@ -75,96 +72,75 @@ func (a *analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	}
 
 	// generate the schema of the fields for the traceSeries
-	for i := 0; i < traceSeries.Spec.FieldsLength(); i++ {
-		var fs apiv1.FieldSpec
-		if ok := traceSeries.Spec.Fields(&fs, i); !ok {
-			return nil, err
-		}
-		s.RegisterField(string(fs.Name()), i, &fs)
+	for i, f := range traceSeries.Spec.GetFields() {
+		s.RegisterField(f.GetName(), i, f)
 	}
 
 	return s, nil
 }
 
-func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, traceMetadata *common.Metadata, s Schema) (Plan, error) {
+func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
 	// parse tableScan
-	timeRange := criteria.TimestampNanoseconds(nil)
+	timeRange := criteria.GetTimeRange()
 
-	var projStr []string
 	// parse projection
-	proj := criteria.Projection(nil)
-	if proj != nil {
-		for i := 0; i < proj.KeyNamesLength(); i++ {
-			projStr = append(projStr, string(proj.KeyNames(i)))
-		}
-	}
+	projStr := criteria.GetProjection().GetKeyNames()
 
 	var plan UnresolvedPlan
 
 	// parse selection
-	if criteria.FieldsLength() > 0 {
+	if criteria.GetFields() != nil && len(criteria.GetFields()) > 0 {
 		// mark if there is indexScan request
 		useIndexScan := false
 		var fieldExprs []Expr
 		traceState := series.TraceStateDefault
-		for i := 0; i < criteria.FieldsLength(); i++ {
-			var pairQuery apiv1.PairQuery
-			if ok := criteria.Fields(&pairQuery, i); !ok {
-				return nil, PairQueryInspectionErr
-			}
-			op := pairQuery.Op()
-			pair := pairQuery.Condition(nil)
-			unionPairTable := new(flatbuffers.Table)
-			if ok := pair.Pair(unionPairTable); !ok {
-				return nil, TypePairInspectionErr
-			}
-			if pair.PairType() == apiv1.TypedPairStrPair {
-				unionStrPair := new(apiv1.StrPair)
-				unionStrPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+		for _, pairQuery := range criteria.GetFields() {
+			op := pairQuery.GetOp()
+			typedPair := pairQuery.GetCondition()
+			switch v := typedPair.GetTyped().(type) {
+			case *apiv1.TypedPair_StrPair:
 				// check special field `trace_id`
-				if string(unionStrPair.Key()) == "trace_id" {
-					return TraceIDFetch(string(unionStrPair.Values(0)), traceMetadata, s), nil
+				if v.StrPair.GetKey() == "trace_id" {
+					return TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, s), nil
 				}
 				useIndexScan = true
-				lit := parseStrLiteral(unionStrPair)
-				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionStrPair.Key())), lit))
-			} else if pair.PairType() == apiv1.TypedPairIntPair {
-				unionIntPair := new(apiv1.IntPair)
-				unionIntPair.Init(unionPairTable.Bytes, unionPairTable.Pos)
+				lit := parseStrLiteral(v.StrPair)
+				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
+			case *apiv1.TypedPair_IntPair:
 				// check special field `state`
-				if string(unionIntPair.Key()) == "state" {
-					traceState = series.TraceState(unionIntPair.Values(0))
+				if v.IntPair.GetKey() == "state" {
+					traceState = series.TraceState(v.IntPair.GetValues()[0])
 					continue
 				}
-				lit := parseIntLiteral(unionIntPair)
-				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(string(unionIntPair.Key())), lit))
+				lit := parseIntLiteral(v.IntPair)
+				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.IntPair.GetKey()), lit))
 				useIndexScan = true
-			} else {
-				return nil, InvalidConditionTypeErr
+			default:
+				return nil, ErrInvalidConditionType
 			}
 		}
 
 		// first check if we can use index-scan
 		if useIndexScan {
-			plan = IndexScan(timeRange.Begin(), timeRange.End(), traceMetadata, fieldExprs, traceState, projStr...)
+			plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
 		} else {
-			plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, traceState, projStr...)
+			plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
 		}
 	} else {
-		plan = TableScan(timeRange.Begin(), timeRange.End(), traceMetadata, series.TraceStateDefault, projStr...)
+		plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, series.TraceStateDefault, projStr...)
 	}
 
 	// parse orderBy
-	queryOrder := criteria.OrderBy(nil)
+	queryOrder := criteria.GetOrderBy()
 	if queryOrder != nil {
-		plan = OrderBy(plan, string(queryOrder.KeyName()), queryOrder.Sort())
+		plan = OrderBy(plan, queryOrder.GetKeyName(), queryOrder.GetSort())
 	}
 
 	// parse offset
-	plan = Offset(plan, criteria.Offset())
+	plan = Offset(plan, criteria.GetOffset())
 
 	// parse limit
-	limitParameter := criteria.Limit()
+	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = DefaultLimit
 	}
@@ -174,27 +150,19 @@ func (a *analyzer) Analyze(ctx context.Context, criteria *apiv1.EntityCriteria, 
 }
 
 func parseStrLiteral(pair *apiv1.StrPair) Expr {
-	if pair.ValuesLength() == 1 {
+	if len(pair.GetValues()) == 1 {
 		return &strLiteral{
-			string(pair.Values(0)),
+			pair.GetValues()[0],
 		}
 	}
-	var arr []string
-	for i := 0; i < pair.ValuesLength(); i++ {
-		arr = append(arr, string(pair.Values(i)))
-	}
-	return &strArrLiteral{arr: arr}
+	return &strArrLiteral{arr: pair.GetValues()}
 }
 
 func parseIntLiteral(pair *apiv1.IntPair) Expr {
-	if pair.ValuesLength() == 1 {
+	if len(pair.GetValues()) == 1 {
 		return &int64Literal{
-			pair.Values(0),
+			pair.GetValues()[0],
 		}
 	}
-	var arr []int64
-	for i := 0; i < pair.ValuesLength(); i++ {
-		arr = append(arr, pair.Values(i))
-	}
-	return &int64ArrLiteral{arr: arr}
+	return &int64ArrLiteral{arr: pair.GetValues()}
 }

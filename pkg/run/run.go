@@ -287,8 +287,8 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 //
 func (g *Group) Run() (err error) {
 	// run config registration and flag parsing stages
-	if interrupted, err := g.RunConfig(); interrupted || err != nil {
-		return err
+	if interrupted, errRun := g.RunConfig(); interrupted || errRun != nil {
+		return errRun
 	}
 	defer func() {
 		if err != nil {

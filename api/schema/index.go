@@ -19,7 +19,7 @@ package schema
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 )
 
 var IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "schema-index-rule"}
@@ -27,10 +27,10 @@ var IndexRuleBindingKindVersion = common.KindVersion{Version: "v1", Kind: "schem
 
 type IndexRule struct {
 	common.KindVersion
-	Spec v1.IndexRule
+	Spec *v1.IndexRule
 }
 
 type IndexRuleBinding struct {
 	common.KindVersion
-	Spec v1.IndexRuleBinding
+	Spec *v1.IndexRuleBinding
 }

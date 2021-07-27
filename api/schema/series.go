@@ -19,12 +19,12 @@ package schema
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 )
 
 var SeriesKindVersion = common.KindVersion{Version: "v1", Kind: "schema-series"}
 
 type TraceSeries struct {
 	common.KindVersion
-	Spec v1.TraceSeries
+	Spec *v1.TraceSeries
 }

@@ -76,6 +76,8 @@ header: # `header` section is configurations for source codes license header.
     - '**/*_mock_test.go'
     - '**/*_generated.go'
     - '**/Trace_grpc.go'
+    - '**/*.pb.go'
+    - '**/*.textproto'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

@@ -39,8 +39,8 @@ jobs:
         uses: apache/skywalking-eyes@5c90c9698806040f50671a172a7cac17974ecebd
       - name: Update dependencies
         run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Install flatc
-        run: bash scripts/ci/install_fb.sh
+      - name: Generate codes
+        run: make generate
       - name: Lint
         run: make lint
       - name: Check
@@ -73,8 +73,6 @@ jobs:
         uses: actions/checkout@v2
       - name: Update dependencies
         run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Install flatc
-        run: bash scripts/ci/install_fb.sh
       - name: Test
         run: make test
   checks:

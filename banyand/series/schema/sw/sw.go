@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate flatc --root-type "banyandb.v1.TraceSeries" --binary  ../../../../api/fbs/v1/schema.fbs trace_series.json
-//go:generate flatc --root-type "banyandb.v1.IndexRule" --binary  ../../../../api/fbs/v1/schema.fbs index_rule.json
-//go:generate flatc --root-type "banyandb.v1.IndexRuleBinding" --binary  ../../../../api/fbs/v1/schema.fbs index_rule_binding.json
+//nolint
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.TraceSeries ../../../../api/proto/banyandb/v1/schema.proto < trace_series.textproto > trace_series.bin"
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.IndexRule ../../../../api/proto/banyandb/v1/schema.proto < index_rule.textproto > index_rule.bin"
+//nolint
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.IndexRuleBinding ../../../../api/proto/banyandb/v1/schema.proto < index_rule_binding.textproto > index_rule_binding.bin"
 package sw
 
 import (
@@ -25,8 +27,10 @@ import (
 	//nolint:golint
 	_ "embed"
 
+	"github.com/golang/protobuf/proto"
+
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/fbs/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 )
@@ -51,11 +55,14 @@ func NewTraceSeries() schema.TraceSeries {
 }
 
 func (l *traceSeriesRepo) Get(_ context.Context, _ common.Metadata) (apischema.TraceSeries, error) {
+	traceSeries := v1.TraceSeries{}
+	if err := proto.Unmarshal(traceSeriesBin, &traceSeries); err != nil {
+		return apischema.TraceSeries{}, err
+	}
 	return apischema.TraceSeries{
 		KindVersion: apischema.SeriesKindVersion,
-		Spec:        *v1.GetRootAsTraceSeries(traceSeriesBin, 0),
+		Spec:        &traceSeries,
 	}, nil
-
 }
 
 func (l *traceSeriesRepo) List(ctx context.Context, _ schema.ListOpt) ([]apischema.TraceSeries, error) {
@@ -74,9 +81,13 @@ func NewIndexRule() schema.IndexRule {
 }
 
 func (i *indexRuleRepo) Get(ctx context.Context, metadata common.Metadata) (apischema.IndexRule, error) {
+	indexRule := v1.IndexRule{}
+	if err := proto.Unmarshal(indexRuleBin, &indexRule); err != nil {
+		return apischema.IndexRule{}, err
+	}
 	return apischema.IndexRule{
 		KindVersion: apischema.IndexRuleKindVersion,
-		Spec:        *v1.GetRootAsIndexRule(indexRuleBin, 0),
+		Spec:        &indexRule,
 	}, nil
 }
 
@@ -96,9 +107,13 @@ func NewIndexRuleBinding() schema.IndexRuleBinding {
 }
 
 func (i *indexRuleBindingRepo) Get(_ context.Context, _ common.Metadata) (apischema.IndexRuleBinding, error) {
+	indexRuleBinding := v1.IndexRuleBinding{}
+	if err := proto.Unmarshal(indexRuleBindingBin, &indexRuleBinding); err != nil {
+		return apischema.IndexRuleBinding{}, err
+	}
 	return apischema.IndexRuleBinding{
 		KindVersion: apischema.IndexRuleBindingKindVersion,
-		Spec:        *v1.GetRootAsIndexRuleBinding(indexRuleBindingBin, 0),
+		Spec:        &indexRuleBinding,
 	}, nil
 }
 
