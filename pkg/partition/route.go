@@ -17,8 +17,10 @@
 
 package partition
 
-import "github.com/apache/skywalking-banyandb/pkg/convert"
-import "github.com/pkg/errors"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/pkg/errors"
+)
 
 func ShardID(key []byte, shardNum uint) (uint, error) {
 	if shardNum < 1 {

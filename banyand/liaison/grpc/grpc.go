@@ -32,6 +32,7 @@ import (
 	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"io"
 	"log"
@@ -202,9 +203,11 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 					arr = append(arr, string(unionStr.Value()))
 				}
 			}
-
 		}
 		str = strings.Join(arr, "")
+		if str == "" {
+			return errors.New("invalid seriesID")
+		}
 		seriesID := []byte(str)
 		shardNum := shardEventData.Shard(nil).Id()
 		if shardNum < 1 {
