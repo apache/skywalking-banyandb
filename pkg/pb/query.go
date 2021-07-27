@@ -39,17 +39,17 @@ var (
 	}
 )
 
-type EntityCriteriaBuilder struct {
-	ec *v1.EntityCriteria
+type QueryRequestBuilder struct {
+	ec *v1.QueryRequest
 }
 
-func NewEntityCriteriaBuilder() *EntityCriteriaBuilder {
-	return &EntityCriteriaBuilder{
-		ec: &v1.EntityCriteria{},
+func NewQueryRequestBuilder() *QueryRequestBuilder {
+	return &QueryRequestBuilder{
+		ec: &v1.QueryRequest{},
 	}
 }
 
-func (b *EntityCriteriaBuilder) Metadata(group, name string) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) Metadata(group, name string) *QueryRequestBuilder {
 	b.ec.Metadata = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -57,17 +57,17 @@ func (b *EntityCriteriaBuilder) Metadata(group, name string) *EntityCriteriaBuil
 	return b
 }
 
-func (b *EntityCriteriaBuilder) Limit(limit uint32) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) Limit(limit uint32) *QueryRequestBuilder {
 	b.ec.Limit = limit
 	return b
 }
 
-func (b *EntityCriteriaBuilder) Offset(offset uint32) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) Offset(offset uint32) *QueryRequestBuilder {
 	b.ec.Offset = offset
 	return b
 }
 
-func (b *EntityCriteriaBuilder) Fields(items ...interface{}) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) Fields(items ...interface{}) *QueryRequestBuilder {
 	if len(items)%3 != 0 {
 		panic("expect even number of arguments")
 	}
@@ -199,12 +199,12 @@ func buildPair(key string, value interface{}) *v1.TypedPair {
 	}
 }
 
-func (b *EntityCriteriaBuilder) Projection(projections ...string) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) Projection(projections ...string) *QueryRequestBuilder {
 	b.ec.Projection = &v1.Projection{KeyNames: projections}
 	return b
 }
 
-func (b *EntityCriteriaBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sort) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sort) *QueryRequestBuilder {
 	b.ec.OrderBy = &v1.QueryOrder{
 		KeyName: fieldName,
 		Sort:    sort,
@@ -212,7 +212,7 @@ func (b *EntityCriteriaBuilder) OrderBy(fieldName string, sort v1.QueryOrder_Sor
 	return b
 }
 
-func (b *EntityCriteriaBuilder) TimeRange(sT, eT time.Time) *EntityCriteriaBuilder {
+func (b *QueryRequestBuilder) TimeRange(sT, eT time.Time) *QueryRequestBuilder {
 	b.ec.TimeRange = &v1.TimeRange{
 		Begin: timestamppb.New(sT),
 		End:   timestamppb.New(eT),
@@ -220,7 +220,7 @@ func (b *EntityCriteriaBuilder) TimeRange(sT, eT time.Time) *EntityCriteriaBuild
 	return b
 }
 
-func (b *EntityCriteriaBuilder) Build() *v1.EntityCriteria {
+func (b *QueryRequestBuilder) Build() *v1.QueryRequest {
 	return b.ec
 }
 

@@ -26,15 +26,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-type WriteEntityBuilder struct {
-	we *v1.WriteEntity
+type WriteRequestBuilder struct {
+	we *v1.WriteRequest
 }
 
-func NewWriteEntityBuilder() *WriteEntityBuilder {
-	return &WriteEntityBuilder{we: &v1.WriteEntity{}}
+func NewWriteEntityBuilder() *WriteRequestBuilder {
+	return &WriteRequestBuilder{we: &v1.WriteRequest{}}
 }
 
-func (web *WriteEntityBuilder) Metadata(group, name string) *WriteEntityBuilder {
+func (web *WriteRequestBuilder) Metadata(group, name string) *WriteRequestBuilder {
 	web.we.Metadata = &v1.Metadata{
 		Group: group,
 		Name:  name,
@@ -42,12 +42,12 @@ func (web *WriteEntityBuilder) Metadata(group, name string) *WriteEntityBuilder 
 	return web
 }
 
-func (web *WriteEntityBuilder) EntityValue(ev *v1.EntityValue) *WriteEntityBuilder {
+func (web *WriteRequestBuilder) EntityValue(ev *v1.EntityValue) *WriteRequestBuilder {
 	web.we.Entity = ev
 	return web
 }
 
-func (web *WriteEntityBuilder) Build() *v1.WriteEntity {
+func (web *WriteRequestBuilder) Build() *v1.WriteRequest {
 	return web.we
 }
 

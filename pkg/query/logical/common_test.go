@@ -173,7 +173,7 @@ func prepareSchema(assert *require.Assertions) (*common.Metadata, logical.Schema
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := pb.NewEntityCriteriaBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(0).Offset(0).
 		Metadata("default", "trace").
 		TimeRange(sT, eT).

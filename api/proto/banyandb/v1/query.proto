@@ -123,8 +123,8 @@ message TimeRange {
   google.protobuf.Timestamp end = 2;
 }
 
-// EntityCriteria is the request contract for query.
-message EntityCriteria {
+// QueryRequest is the request contract for query.
+message QueryRequest {
   // metadata is required
   Metadata metadata = 1;
   // time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.

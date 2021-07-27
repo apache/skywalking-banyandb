@@ -58,7 +58,7 @@ func Test_server_start(t *testing.T) {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 		ser := grpclib.NewServer(opts...)
-		v1.RegisterTraceServer(ser, v1.UnimplementedTraceServer{})
+		v1.RegisterTraceServiceServer(ser, &grpc.TraceServer{})
 		if err := ser.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
@@ -72,7 +72,7 @@ func Test_trace_write(t *testing.T) {
 	}
 	defer conn.Close()
 
-	client := v1.NewTraceClient(conn)
+	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	binary := byte(12)
 	entityValue := pb.NewEntityValueBuilder().
@@ -118,10 +118,10 @@ func Test_trace_query(t *testing.T) {
 	}
 	defer conn.Close()
 
-	client := v1.NewTraceClient(conn)
+	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
-	criteria := pb.NewEntityCriteriaBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("service_instance_id", v1.QueryOrder_SORT_DESC).

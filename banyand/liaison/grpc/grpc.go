@@ -72,6 +72,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
+	shardEventData = shardEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
 		Uint64("shardID", shardEvent.Shard.Id).
@@ -89,6 +90,7 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
+	seriesEventData = seriesEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
 		Str("name", seriesEvent.Series.Name).
@@ -152,8 +154,7 @@ func (s *Server) Serve() error {
 	}
 	s.ser = grpclib.NewServer(opts...)
 	//s.ser = grpclib.NewServer(grpclib.CustomCodec())
-	// TODO: add server implementation here
-	v1.RegisterTraceServer(s.ser, &TraceServer{})
+	v1.RegisterTraceServiceServer(s.ser, &TraceServer{})
 
 	return s.ser.Serve(lis)
 }
@@ -163,11 +164,11 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-type TraceServer struct {
-	v1.UnimplementedTraceServer
+type TraceServiceWriteServer struct { // TraceService_WriteServer
+	v1.UnimplementedTraceServiceServer
 }
 
-func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
+func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 	for {
 		writeEntity, err := TraceWriteServer.Recv()
 		if err == io.EOF {
@@ -186,6 +187,9 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 		schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
 		if ruleError != nil {
 			return ruleError
+		}
+		if seriesEventData == nil {
+			return errors.New("No seriesEvents")
 		}
 		seriesIdLen := len(seriesEventData.FieldNamesCompositeSeriesId)
 		var str string
@@ -233,7 +237,7 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 	}
 }
 
-func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) (*v1.QueryResponse, error) { // *v1.QueryResponse,
+func (t *TraceServiceWriteServer) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) { // *v1.QueryResponse,
 	log.Println("entityCriteria:", entityCriteria)
 
 	return nil, nil
