@@ -26,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	grpclib "google.golang.org/grpc"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
-
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
+	grpclib "google.golang.org/grpc"
 )
 
 var serverAddr = "localhost:17912"
@@ -57,15 +57,16 @@ func Test_trace_write(t *testing.T) {
 
 	client := v1.NewTraceClient(conn)
 	ctx := context.Background()
-	b := fb.NewWriteEntityBuilder()
 	binary := byte(12)
-	criteria, e := b.BuildWriteEntity(
-		b.BuildEntity("entityId", []byte{binary}, "service_instance_id", "service_id_1234", "service_instance_id_43543"),
-		b.BuildMetaData("default", "trace"),
-	)
-	if e != nil {
-		log.Fatalf("Failed to connect: %v", e)
-	}
+	entityValue := pb.NewEntityValueBuilder().
+		EntityID("entityId").
+		DataBinary([]byte{binary}).
+		Fields("service_instance_id", "service_id_1234", "service_instance_id_43543").
+		Build()
+	criteria := pb.NewWriteEntityBuilder().
+		EntityValue(entityValue).
+		Metadata("default", "trace").
+		Build()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
 		log.Fatalf("%v.runWrite(_) = _, %v", client, errorWrite)
@@ -103,21 +104,16 @@ func Test_trace_query(t *testing.T) {
 	client := v1.NewTraceClient(conn)
 	ctx := context.Background()
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
-
-	b := fb.NewCriteriaBuilder()
-	builder, e := b.BuildQueryEntity(
-		fb.AddLimit(5),
-		fb.AddOffset(10),
-		b.BuildMetaData("default", "trace"),
-		b.BuildTimeStampNanoSeconds(sT, eT),
-		b.BuildFields("service_id", "=", "my_app", "http.method", "=", "GET"),
-		b.BuildProjection("http.method", "service_id", "service_instance_id"),
-		b.BuildOrderBy("service_instance_id", v1.SortDESC),
-	)
-	if e != nil {
-		log.Fatalf("Failed to connect: %v", e)
-	}
-	stream, errRev := client.Query(ctx, builder)
+	criteria := pb.NewEntityCriteriaBuilder().
+		Limit(5).
+		Offset(10).
+		OrderBy("service_instance_id", v1.QueryOrder_SORT_DESC).
+		Metadata("default", "trace").
+		Projection("http.method", "service_id", "service_instance_id").
+		Fields("service_id", "=", "my_app", "http.method", "=", "GET").
+		TimeRange(sT, eT).
+		Build()
+	stream, errRev := client.Query(ctx, criteria)
 	if errRev != nil {
 		log.Fatalf("Retrieve client failed: %v", errRev)
 	}

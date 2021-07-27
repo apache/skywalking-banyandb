@@ -27,6 +27,7 @@ import (
 
 type Schema interface {
 	IndexDefined(string) (bool, *apiv1.IndexObject)
+	FieldSubscript(string) (bool, int)
 	FieldDefined(string) bool
 	CreateRef(names ...string) ([]*FieldRef, error)
 	Map(refs ...*FieldRef) Schema
@@ -64,16 +65,11 @@ func (s *schema) IndexDefined(field string) (bool, *apiv1.IndexObject) {
 
 func (s *schema) FieldSubscript(field string) (bool, int) {
 	idxRule := s.indexRule.Spec
-	for i := 0; i < idxRule.ObjectsLength(); i++ {
-		var idxObj apiv1.IndexObject
-		if ok := idxRule.Objects(&idxObj, i); ok {
-			for j := 0; j < idxObj.FieldsLength(); j++ {
-				if field == string(idxObj.Fields(j)) {
-					return true, i
-				}
+	for i, indexObj := range idxRule.GetObjects() {
+		for _, fieldName := range indexObj.GetFields() {
+			if field == fieldName {
+				return true, i
 			}
-		} else {
-			return false, -1
 		}
 	}
 	return false, -1

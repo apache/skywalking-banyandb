@@ -22,7 +22,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-func ShardID(key []byte, shardNum uint32) uint {
+func ShardID(key []byte, shardNum uint32) (uint, error) {
+	if shardNum > 0 {
+		return 0, errors.New("invalid shardNum")
+	}
 	encodeKey := convert.Hash(key)
 	return uint(encodeKey % uint64(shardNum)), nil
 }

@@ -73,7 +73,10 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 	if err = wp.Writer(shardID, chunkIDMapping).Put(chunkIDBytes, bydb_bytes.Join(stateBytes, seriesIDBytes, tsBytes)); err != nil {
 		return 0, errors.Wrap(err, "failed to write chunkID index")
 	}
-	traceIDShardID := partition.ShardID(traceID, t.shardNum)
+	traceIDShardID, shardIdError := partition.ShardID(traceID, t.shardNum)
+	if shardIdError != nil {
+		return 0, shardIdError
+	}
 	if err = wp.TimeSeriesWriter(traceIDShardID, traceIndex).
 		Put(traceID, bydb_bytes.Join(convert.Uint16ToBytes(uint16(shardID)), chunkIDBytes), tts); err != nil {
 		return 0, errors.Wrap(err, "failed to Trace index")

@@ -19,9 +19,10 @@ package grpc
 
 import (
 	"context"
+	"fmt"
+	"github.com/apache/skywalking-banyandb/api/common"
+	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"net"
-
-	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
@@ -30,21 +31,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	logical "github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"io"
 	"log"
-	"net"
 	"strings"
 )
 
 type Server struct {
 	addr       string
 	log        *logger.Logger
-	ser        *grpc.Server
+	ser        *grpclib.Server
 	pipeline   queue.Queue
 	repo       discovery.ServiceRepo
 	shardInfo  *shardInfo
@@ -127,7 +126,7 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 
-	s.ser = grpc.NewServer()
+	s.ser = grpclib.NewServer()
 	// TODO: add server implementation here
 	v1.RegisterTraceServer(s.ser, v1.UnimplementedTraceServer{})
 
@@ -153,50 +152,38 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 			return err
 		}
 
-		//log.Println("writeEntity:", writeEntity)
+		log.Println("writeEntity:", writeEntity)
 		ana := logical.DefaultAnalyzer()
 		metadata := common.Metadata{
 			KindVersion: apischema.SeriesKindVersion,
-			Spec:        writeEntity.MetaData(nil),
+			Spec:        writeEntity.GetMetadata(),
 		}
 		schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
 		if ruleError != nil {
 			return  ruleError
 		}
-		seriesIdLen := seriesEventData.FieldNamesCompositeSeriesIdLength()
+		seriesIdLen := len(seriesEventData.FieldNamesCompositeSeriesId)
 		var str string
 		var arr []string
 		for i := 0; i < seriesIdLen; i++ {
-			id := seriesEventData.FieldNamesCompositeSeriesId(i)
-			if defined, sub := schema.FieldSubscript(string(id)); defined {
+			id := seriesEventData.FieldNamesCompositeSeriesId[i]
+			if defined, sub := schema.FieldSubscript(id); defined {
 				var field v1.Field
-				if ok := writeEntity.Entity(nil).Fields(&field, sub); !ok {
-					return nil
-				}
-				unionValueTable := new(flatbuffers.Table)
-				if ok := field.Value(unionValueTable); !ok {
-					return nil
-				}
-				if field.ValueType() == v1.ValueTypeStringArray {
-					unionStrArr := new(v1.StringArray)
-					unionStrArr.Init(unionValueTable.Bytes, unionValueTable.Pos)
-					for j := 0; j < unionStrArr.ValueLength(); j++ {
-						arr = append(arr, string(unionStrArr.Value(j)))
-					}
-				} else if field.ValueType() == v1.ValueTypeIntArray {
-					unionIntArr := new(v1.IntArray)
-					unionIntArr.Init(unionValueTable.Bytes, unionValueTable.Pos)
-					for t := 0; t < unionIntArr.ValueLength(); t++ {
-						arr = append(arr, fmt.Sprint(unionIntArr.Value(t)))
-					}
-				} else if field.ValueType() == v1.ValueTypeInt {
-					unionInt := new(v1.Int)
-					unionInt.Init(unionValueTable.Bytes, unionValueTable.Pos)
-					arr = append(arr, fmt.Sprint(unionInt.Value()))
-				} else if field.ValueType() == v1.ValueTypeString {
-					unionStr := new(v1.String)
-					unionStr.Init(unionValueTable.Bytes, unionValueTable.Pos)
-					arr = append(arr, string(unionStr.Value()))
+				switch v := field.GetValueType().(type) {
+					case *v1.Field_StrArray:
+						for j := 0; j < len(v.StrArray.Value); j++ {
+							if sub == j {
+								arr = append(arr, v.StrArray.Value[j])
+							}
+						}
+					case *v1.Field_IntArray:
+						for t := 0; t < len(v.IntArray.Value); t++ {
+							arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+						}
+					case *v1.Field_Int:
+						arr = append(arr, fmt.Sprint(v.Int.Value))
+					case *v1.Field_Str:
+						arr = append(arr, fmt.Sprint(v.Str.Value))
 				}
 			}
 		}
@@ -205,32 +192,24 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 			return errors.New("invalid seriesID")
 		}
 		seriesID := []byte(str)
-		shardNum := shardEventData.Shard(nil).Id()
+		shardNum := shardEventData.GetShard().GetId()
 		if shardNum < 1 {
 			shardNum = 1
 		}
-		shardID, shardIdError := partition.ShardID(seriesID, uint(shardNum))
+		shardID, shardIdError := partition.ShardID(seriesID, uint32(shardNum))
 		if shardIdError != nil {
 			return shardIdError
 		}
 		log.Println("shardID:", shardID)
-		builder := flatbuffers.NewBuilder(0)
-		v1.WriteResponseStart(builder)
-		builder.Finish(v1.WriteResponseEnd(builder))
-		if errSend := TraceWriteServer.Send(builder); errSend != nil {
+		if errSend := TraceWriteServer.Send(nil); errSend != nil {
 			return errSend
 		}
 		//queue
 	}
 }
 
-func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) (*flatbuffers.Builder, error) {
+func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) error { // *v1.QueryResponse,
 	log.Println("entityCriteria:", entityCriteria)
 
-	// receive entity, then serialize entity
-	b := flatbuffers.NewBuilder(0)
-	v1.EntityStart(b)
-	b.Finish(v1.EntityEnd(b))
-
-	return b, nil
+	return nil
 }
