@@ -21,12 +21,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
 	"strings"
+
+	"google.golang.org/grpc/credentials"
+
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
@@ -151,7 +153,7 @@ func (s *Server) Serve() error {
 	s.ser = grpclib.NewServer(opts...)
 	//s.ser = grpclib.NewServer(grpclib.CustomCodec())
 	// TODO: add server implementation here
-	v1.RegisterTraceServer(s.ser, &v1.UnimplementedTraceServer{})
+	v1.RegisterTraceServer(s.ser, &TraceServer{})
 
 	return s.ser.Serve(lis)
 }
@@ -231,8 +233,8 @@ func (t *TraceServer) Write(TraceWriteServer v1.Trace_WriteServer) error {
 	}
 }
 
-func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) error { // *v1.QueryResponse,
+func (t *TraceServer) Query(ctx context.Context, entityCriteria *v1.EntityCriteria) (*v1.QueryResponse, error) { // *v1.QueryResponse,
 	log.Println("entityCriteria:", entityCriteria)
 
-	return nil
+	return nil, nil
 }
