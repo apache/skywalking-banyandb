@@ -116,9 +116,8 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error)
 
 		// first collect all chunkIDs via indexes
 		for idxObj, exprs := range i.conditionMap {
-			// TODO: Discuss which metadata should be used!
-			// 1) traceSeries Metadata: indirect mapping
-			// 2) indexRule Metadata: cannot uniquely determine traceSeries
+			// 1) traceSeries Metadata -> IndexObject
+			// 2) IndexObject -> Fields
 			chunks, err := ec.Search(*i.traceMetadata, uint(shardID), uint64(i.startTime), uint64(i.endTime), idxObj.GetName(), convertToConditions(exprs))
 			if err != nil {
 				return nil, err
