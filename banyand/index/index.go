@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:generate mockgen -destination=./index_mock.go -package=index . Repo
 package index
 
 import (
@@ -35,8 +34,9 @@ type Condition struct {
 	Op     apiv1.PairQuery_BinaryOp
 }
 
+//go:generate mockgen -destination=./index_mock.go -package=index . Repo
 type Repo interface {
-	Search(series common.Metadata, shardID uint, startTime, endTime uint64, conditions []Condition) (posting.List, error)
+	Search(seriesMeta common.Metadata, shardID uint, startTime, endTime uint64, indexObjectName string, conditions []Condition) (posting.List, error)
 }
 
 type Builder interface {
