@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
-	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
@@ -109,38 +108,45 @@ type indexScan struct {
 }
 
 func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
-	var chunkSet posting.List
-	for _, exprs := range i.conditionMap {
-		// TODO: Discuss which metadata should be used!
-		// 1) traceSeries Metadata: indirect mapping
-		// 2) indexRule Metadata: cannot uniquely determine traceSeries
-		chunks := roaring.NewPostingList()
-		for shardID := uint32(0); shardID < i.schema.ShardNumber(); shardID++ {
-			chunksFromSingleShard, err := ec.Search(*i.traceMetadata, uint(shardID), uint64(i.startTime), uint64(i.endTime), convertToConditions(exprs))
+	var dataEntities []data.Entity
+
+	// iterate over shards
+	for shardID := uint32(0); shardID < i.schema.ShardNumber(); shardID++ {
+		var chunkSet posting.List
+
+		// first collect all chunkIDs via indexes
+		for _, exprs := range i.conditionMap {
+			// TODO: Discuss which metadata should be used!
+			// 1) traceSeries Metadata: indirect mapping
+			// 2) indexRule Metadata: cannot uniquely determine traceSeries
+			chunks, err := ec.Search(*i.traceMetadata, uint(shardID), uint64(i.startTime), uint64(i.endTime), convertToConditions(exprs))
 			if err != nil {
 				return nil, err
 			}
-			// union all chunks from various shards
-			err = chunks.Union(chunksFromSingleShard)
-			if err != nil {
-				return nil, err
+			if chunkSet == nil {
+				// chunkSet is nil before the first assignment
+				chunkSet = chunks
+			} else {
+				// afterwards, it must not be nil
+				_ = chunkSet.Intersect(chunks)
 			}
 		}
 
-		if chunkSet == nil {
-			// chunkSet is nil before the first assignment
-			chunkSet = chunks
-		} else {
-			// afterwards, it must not be nil
-			_ = chunkSet.Intersect(chunks)
+		// fetch entities with chunkIDs
+		entitiesFromSingleShard, err := ec.FetchEntity(*i.traceMetadata, uint(shardID), chunkSet, series.ScanOptions{
+			Projection: i.projectionFields,
+			State:      i.traceState,
+		})
+
+		if err != nil {
+			return nil, err
 		}
+
+		// merge results
+		dataEntities = append(dataEntities, entitiesFromSingleShard...)
 	}
 
-	//TODO: pass correct shardID
-	return ec.FetchEntity(*i.traceMetadata, 0, chunkSet, series.ScanOptions{
-		Projection: i.projectionFields,
-		State:      i.traceState,
-	})
+	return dataEntities, nil
 }
 
 func (i *indexScan) String() string {
