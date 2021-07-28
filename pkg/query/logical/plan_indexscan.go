@@ -108,7 +108,7 @@ type indexScan struct {
 }
 
 func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
-	var dataEntities []data.Entity
+	dataEntities := make([]data.Entity, 0)
 
 	// iterate over shards
 	for shardID := uint32(0); shardID < i.schema.ShardNumber(); shardID++ {
@@ -129,6 +129,10 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error)
 				// afterwards, it must not be nil
 				_ = chunkSet.Intersect(chunks)
 			}
+		}
+
+		if chunkSet == nil || chunkSet.Len() == 0 {
+			continue
 		}
 
 		// fetch entities with chunkIDs
