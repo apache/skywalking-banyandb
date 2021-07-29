@@ -19,6 +19,8 @@ package query
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/series"
 	"testing"
 	"time"
 
@@ -34,8 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
-func TestQueryProcessor(t *testing.T) {
-	tester := require.New(t)
+func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service) {
 	// Bootstrap logger system
 	err := logger.Bootstrap()
 	tester.NoError(err)
@@ -70,19 +71,33 @@ func TestQueryProcessor(t *testing.T) {
 	err = executor.PreRun()
 	tester.NoError(err)
 
+	return repo, traceSvc
+}
+
+func TestQueryProcessor(t *testing.T) {
+	tester := require.New(t)
+
+	// setup services
+	repo, traceSvc := setupServices(tester)
+	
+	tracesMetadata := common.Metadata{
+		KindVersion: common.KindVersion{},
+		Spec:        ,
+	}
+	now := time.Now()
+	traceSvc.Write()
+
 	tests := []struct {
 		// name of the test case
 		name string
-		// dataSetup allows to prepare data in advance for testing
-		dataSetup func() error
 		// queryGenerator is used to generate a Query
-		queryGenerator func() *v1.QueryRequest
+		queryGenerator func(baseTs time.Time) *v1.QueryRequest
 		// wantLen is the length of entities expected to return
 		wantLen int
 	}{
 		{
 			name: "Query Trace ID when no initial data is given",
-			queryGenerator: func() *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(5).
 					Offset(10).
@@ -96,16 +111,16 @@ func TestQueryProcessor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := require.New(t)
-			now := time.Now().UnixNano()
-			m := bus.NewMessage(bus.MessageID(now), tt.queryGenerator())
+			singleTester := require.New(t)
+			now := time.Now()
+			m := bus.NewMessage(bus.MessageID(now.UnixNano()), tt.queryGenerator(now))
 			f, err := repo.Publish(event.TopicQueryEvent, m)
-			tester.NoError(err)
-			tester.NotNil(f)
+			singleTester.NoError(err)
+			singleTester.NotNil(f)
 			msg, err := f.Get()
-			tester.NoError(err)
-			tester.NotNil(msg)
-			tester.Len(msg.Data(), tt.wantLen)
+			singleTester.NoError(err)
+			singleTester.NotNil(msg)
+			singleTester.Len(msg.Data(), tt.wantLen)
 		})
 	}
 }
