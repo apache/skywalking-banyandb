@@ -20,13 +20,14 @@ package series
 
 import (
 	"context"
+	"time"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"time"
 )
 
 // TraceState represents the State of a traceSeries link
@@ -54,8 +55,8 @@ type TraceRepo interface {
 	FetchEntity(traceSeries common.Metadata, shardID uint, chunkIDs posting2.List, opt ScanOptions) ([]data.Entity, error)
 	//ScanEntity returns data.Entity between a duration by ScanOptions
 	ScanEntity(traceSeries common.Metadata, startTime, endTime uint64, opt ScanOptions) ([]data.Entity, error)
-	// Write writes entity to the given traceSeries
-	Write(traceSeries common.Metadata, ts time.Time, seriesID string, dataBinary []byte, items ...interface{}) (bool, error)
+	// Write entity to the given traceSeries
+	Write(traceSeries common.Metadata, ts time.Time, seriesID, entityID string, dataBinary []byte, items ...interface{}) (bool, error)
 }
 
 //UniModel combines Trace, Metric and Log repositories into a union interface

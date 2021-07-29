@@ -95,14 +95,17 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 		useIndexScan := false
 		var fieldExprs []Expr
 		traceState := series.TraceStateDefault
+
 		for _, pairQuery := range criteria.GetFields() {
 			op := pairQuery.GetOp()
 			typedPair := pairQuery.GetCondition()
 			switch v := typedPair.GetTyped().(type) {
 			case *apiv1.TypedPair_StrPair:
+				// TODO: use metadata from Plugin?
 				// check special field `trace_id`
 				if v.StrPair.GetKey() == "trace_id" {
-					return TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, s), nil
+					plan = TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, projStr...)
+					break
 				}
 				useIndexScan = true
 				lit := parseStrLiteral(v.StrPair)
@@ -121,11 +124,14 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 			}
 		}
 
-		// first check if we can use index-scan
-		if useIndexScan {
-			plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
-		} else {
-			plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
+		// if plan is already assigned, skip
+		if plan == nil {
+			// first check if we can use index-scan
+			if useIndexScan {
+				plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
+			} else {
+				plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
+			}
 		}
 	} else {
 		plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, series.TraceStateDefault, projStr...)

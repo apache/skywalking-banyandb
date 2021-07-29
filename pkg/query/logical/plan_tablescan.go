@@ -47,11 +47,10 @@ func (u *unresolvedTableScan) Type() PlanType {
 func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	if u.projectionFields == nil || len(u.projectionFields) == 0 {
 		return &tableScan{
-			startTime:           u.startTime,
-			endTime:             u.endTime,
-			projectionFieldRefs: nil,
-			schema:              schema,
-			traceMetadata:       u.traceMetadata,
+			startTime:     u.startTime,
+			endTime:       u.endTime,
+			schema:        schema,
+			traceMetadata: u.traceMetadata,
 		}, nil
 	}
 

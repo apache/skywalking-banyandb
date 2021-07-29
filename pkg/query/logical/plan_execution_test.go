@@ -128,7 +128,8 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 
 	traceID := "asdf1234"
 
-	p := logical.TraceIDFetch(traceID, m, s)
+	p, err := logical.TraceIDFetch(traceID, m).Analyze(s)
+	assert.NoError(err)
 	assert.NotNil(p)
 	f := newMockDataFactory(ctrl, m, s, 10)
 	entities, err := p.Execute(f.MockTraceIDFetch(traceID))

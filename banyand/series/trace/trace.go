@@ -34,7 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
@@ -189,6 +191,28 @@ func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
 		return nil, errors.Wrapf(ErrTraceSeriesNotFound, "series id:%s, map:%v", id, s.schemaMap)
 	}
 	return ts, nil
+}
+
+func (s *service) Write(traceSeriesMetadata common.Metadata, ts time.Time, seriesID, entityID string, dataBinary []byte, items ...interface{}) (bool, error) {
+	traceSeries, err := s.getSeries(traceSeriesMetadata)
+	if err != nil {
+		return false, err
+	}
+
+	ev := pb.NewEntityValueBuilder().
+		DataBinary(dataBinary).
+		EntityID(entityID).
+		Fields(items...).
+		Timestamp(ts).
+		Build()
+
+	seriesIDBytes := []byte(seriesID)
+	shardID := partition.ShardID(seriesIDBytes, traceSeries.shardNum)
+
+	_, err = traceSeries.Write(common.SeriesID(convert.Hash(seriesIDBytes)), shardID, data.EntityValue{
+		EntityValue: ev,
+	})
+	return err == nil, err
 }
 
 func formatTraceSeriesID(name, group string) string {
