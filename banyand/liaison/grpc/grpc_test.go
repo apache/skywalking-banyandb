@@ -58,7 +58,7 @@ func Test_server_start(t *testing.T) {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 		ser := grpclib.NewServer(opts...)
-		v1.RegisterTraceServiceServer(ser, &grpc.TraceServer{})
+		v1.RegisterTraceServiceServer(ser, &grpc.TraceServiceWriteServer{})
 		if err := ser.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}

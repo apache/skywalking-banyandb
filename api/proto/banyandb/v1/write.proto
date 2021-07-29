@@ -62,7 +62,7 @@ message EntityValue {
   // binary representation of segments, including tags, spans...
   bytes data_binary = 3;
   // support all of indexed fields in the fields.
-  // Pair only has value, as the value of PairValue match with the key
+  // Field only has value, as the value of value_type match with the key
   // by the index rules and index rule bindings of Metadata group.
   // indexed fields of multiple entities are compression in the fields.
   repeated Field fields = 4;

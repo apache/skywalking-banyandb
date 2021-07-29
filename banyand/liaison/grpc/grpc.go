@@ -153,8 +153,7 @@ func (s *Server) Serve() error {
 		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 	}
 	s.ser = grpclib.NewServer(opts...)
-	//s.ser = grpclib.NewServer(grpclib.CustomCodec())
-	v1.RegisterTraceServiceServer(s.ser, &TraceServer{})
+	v1.RegisterTraceServiceServer(s.ser, &TraceServiceWriteServer{})
 
 	return s.ser.Serve(lis)
 }
@@ -197,22 +196,23 @@ func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteSe
 		for i := 0; i < seriesIdLen; i++ {
 			id := seriesEventData.FieldNamesCompositeSeriesId[i]
 			if defined, sub := schema.FieldSubscript(id); defined {
-				var field v1.Field
-				switch v := field.GetValueType().(type) {
-				case *v1.Field_StrArray:
-					for j := 0; j < len(v.StrArray.Value); j++ {
-						if sub == j {
-							arr = append(arr, v.StrArray.Value[j])
+				for _, field := range writeEntity.GetEntity().GetFields() {
+					switch v := field.GetValueType().(type) {
+					case *v1.Field_StrArray:
+						for j := 0; j < len(v.StrArray.Value); j++ {
+							if sub == j {
+								arr = append(arr, v.StrArray.Value[j])
+							}
 						}
+					case *v1.Field_IntArray:
+						for t := 0; t < len(v.IntArray.Value); t++ {
+							arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+						}
+					case *v1.Field_Int:
+						arr = append(arr, fmt.Sprint(v.Int.Value))
+					case *v1.Field_Str:
+						arr = append(arr, fmt.Sprint(v.Str.Value))
 					}
-				case *v1.Field_IntArray:
-					for t := 0; t < len(v.IntArray.Value); t++ {
-						arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
-					}
-				case *v1.Field_Int:
-					arr = append(arr, fmt.Sprint(v.Int.Value))
-				case *v1.Field_Str:
-					arr = append(arr, fmt.Sprint(v.Str.Value))
 				}
 			}
 		}
@@ -230,7 +230,7 @@ func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteSe
 			return shardIdError
 		}
 		log.Println("shardID:", shardID)
-		if errSend := TraceWriteServer.Send(nil); errSend != nil {
+		if errSend := TraceWriteServer.Send(&v1.WriteResponse{}); errSend != nil {
 			return errSend
 		}
 		//queue
@@ -240,5 +240,5 @@ func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteSe
 func (t *TraceServiceWriteServer) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) { // *v1.QueryResponse,
 	log.Println("entityCriteria:", entityCriteria)
 
-	return nil, nil
+	return &v1.QueryResponse{}, nil
 }
