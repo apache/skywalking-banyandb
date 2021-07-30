@@ -19,7 +19,6 @@ package trace
 
 import (
 	"math"
-	"os"
 	"sort"
 	"testing"
 	"time"
@@ -137,11 +136,8 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 			wantErr: true,
 		},
 	}
-	ts, stopFunc, dbPath := setup(t)
-	defer func() {
-		stopFunc()
-		_ = os.RemoveAll(dbPath)
-	}()
+	ts, stopFunc := setup(t)
+	defer stopFunc()
 	dataResult := setupTestData(t, ts, testData(time.Now()))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -209,11 +205,8 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 			wantErr: true,
 		},
 	}
-	ts, stopFunc, dbPath := setup(t)
-	defer func() {
-		stopFunc()
-		_ = os.RemoveAll(dbPath)
-	}()
+	ts, stopFunc := setup(t)
+	defer stopFunc()
 	setupTestData(t, ts, testData(time.Now()))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -304,11 +297,8 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 			args: args{},
 		},
 	}
-	ts, stopFunc, dbPath := setup(t)
-	defer func() {
-		stopFunc()
-		_ = os.RemoveAll(dbPath)
-	}()
+	ts, stopFunc := setup(t)
+	defer stopFunc()
 	setupTestData(t, ts, testData(baseTS))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

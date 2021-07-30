@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -30,11 +29,8 @@ import (
 )
 
 func Test_traceSeries_Write(t *testing.T) {
-	ts, stopFunc, dbPath := setup(t)
-	defer func() {
-		stopFunc()
-		_ = os.RemoveAll(dbPath)
-	}()
+	ts, stopFunc := setup(t)
+	defer stopFunc()
 
 	tests := []struct {
 		name    string

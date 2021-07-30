@@ -55,7 +55,7 @@ func (b ByEntityID) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
 }
 
-func setup(t *testing.T) (*traceSeries, func(), string) {
+func setup(t *testing.T) (*traceSeries, func()) {
 	_ = logger.Bootstrap()
 	db, err := storage.NewDB(context.TODO(), nil)
 	assert.NoError(t, err)
@@ -75,7 +75,10 @@ func setup(t *testing.T) (*traceSeries, func(), string) {
 		},
 	})
 	assert.NoError(t, err)
-	return ts, db.GracefulStop, rootPath
+	return ts, func() {
+		db.GracefulStop()
+		_ = os.RemoveAll(rootPath)
+	}
 }
 
 type seriesEntity struct {

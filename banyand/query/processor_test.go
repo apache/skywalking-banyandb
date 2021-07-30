@@ -49,7 +49,7 @@ type entityValue struct {
 	items      []interface{}
 }
 
-func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service, func(), string) {
+func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -62,7 +62,7 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	tester.NotNil(repo)
 
 	// Init `Database` module
-	db, err := storage.NewDB(context.TODO(), repo)
+	db, err := storage.gNewDB(context.TODO(), repo)
 	tester.NoError(err)
 	uuid, err := googleUUID.NewUUID()
 	tester.NoError(err)
@@ -89,7 +89,10 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	err = executor.PreRun()
 	tester.NoError(err)
 
-	return repo, traceSvc, db.GracefulStop, rootPath
+	return repo, traceSvc, func() {
+		db.GracefulStop()
+		_ = os.RemoveAll(rootPath)
+	}
 }
 
 func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service) {
@@ -254,13 +257,8 @@ func TestQueryProcessor(t *testing.T) {
 	tester := require.New(t)
 
 	// setup services
-	repo, traceSvc, gracefulStop, dbPath := setupServices(tester)
-	defer func() {
-		// stop database
-		gracefulStop()
-		// delete files
-		_ = os.RemoveAll(dbPath)
-	}()
+	repo, traceSvc, gracefulStop := setupServices(tester)
+	defer gracefulStop()
 
 	baseTs := time.Now()
 	setupData(tester, baseTs, traceSvc)
