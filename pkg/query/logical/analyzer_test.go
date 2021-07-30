@@ -139,7 +139,8 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan := logical.TraceIDFetch("123", metadata, schema)
+	correctPlan, err := logical.TraceIDFetch("123", metadata).Analyze(schema)
+	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	cmp.Equal(plan, correctPlan)
 }

@@ -128,7 +128,8 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 
 	traceID := "asdf1234"
 
-	p := logical.TraceIDFetch(traceID, m, s)
+	p, err := logical.TraceIDFetch(traceID, m).Analyze(s)
+	assert.NoError(err)
 	assert.NotNil(p)
 	f := newMockDataFactory(ctrl, m, s, 10)
 	entities, err := p.Execute(f.MockTraceIDFetch(traceID))
@@ -156,7 +157,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
 				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 			}, series.TraceStateDefault),
-			indexMatchers: []*indexMatcher{newIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
+			indexMatchers: []*indexMatcher{newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
 			wantLength:    10,
 		},
 		{
@@ -166,8 +167,8 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
-				newIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-				newIndexMatcher("service_id", roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
+				newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+				newIndexMatcher("service_id", 0, roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
 			},
 			wantLength: 5,
 		},
@@ -178,8 +179,8 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
 			}, series.TraceStateDefault),
 			indexMatchers: []*indexMatcher{
-				newIndexMatcher("http.method", roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-				newIndexMatcher("service_id", roaring.NewPostingList()),
+				newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+				newIndexMatcher("service_id", 0, roaring.NewPostingList()),
 			},
 			wantLength: 0,
 		},

@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
+	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -150,21 +151,39 @@ func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor.ExecutionCon
 	return ec
 }
 
-//TODO: pass correct shardID
 func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
+	usedShards := make(map[uint]posting.List)
+
 	for _, im := range indexMatches {
 		ec.
 			EXPECT().
-			Search(*f.traceMetadata, uint(0), uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), im).
+			Search(*f.traceMetadata, gomock.Eq(im.shardID), uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), gomock.Any(), im).
 			Return(im.chunkIDs, nil)
+
+		if list, ok := usedShards[im.shardID]; ok {
+			_ = list.Intersect(im.chunkIDs)
+		} else {
+			usedShards[im.shardID] = im.chunkIDs
+		}
+
+		ec.
+			EXPECT().
+			Search(*f.traceMetadata, gomock.Not(gomock.Eq(im.shardID)), uint64(startTime.UnixNano()), uint64(endTime.UnixNano()), gomock.Any(), im).
+			Return(roaring.NewPostingList(), nil)
 	}
-	ec.
-		EXPECT().
-		FetchEntity(*f.traceMetadata, uint(0), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ common.Metadata, _ uint, chunkIDs posting.List, _ series.ScanOptions) ([]data.Entity, error) {
-			return GenerateEntities(GeneratorFromArray(chunkIDs)), nil
-		})
+
+	for shardID := uint(0); shardID < uint(f.s.ShardNumber()); shardID++ {
+		if chunkList, ok := usedShards[shardID]; ok && chunkList.Len() > 0 {
+			ec.
+				EXPECT().
+				FetchEntity(*f.traceMetadata, shardID, gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ common.Metadata, _ uint, chunkIDs posting.List, _ series.ScanOptions) ([]data.Entity, error) {
+					return GenerateEntities(GeneratorFromArray(chunkIDs)), nil
+				})
+		}
+	}
+
 	return ec
 }
 
@@ -193,6 +212,7 @@ var _ gomock.Matcher = (*indexMatcher)(nil)
 
 type indexMatcher struct {
 	key      string
+	shardID  uint
 	chunkIDs posting.List
 }
 
@@ -211,9 +231,10 @@ func (i *indexMatcher) String() string {
 	return fmt.Sprintf("is search for key %s", i.key)
 }
 
-func newIndexMatcher(key string, chunkIDs posting.List) *indexMatcher {
+func newIndexMatcher(key string, shardID uint, chunkIDs posting.List) *indexMatcher {
 	return &indexMatcher{
 		key:      key,
+		shardID:  shardID,
 		chunkIDs: chunkIDs,
 	}
 }

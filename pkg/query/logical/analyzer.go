@@ -67,8 +67,9 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	}
 
 	s := &schema{
-		indexRule: indexRule,
-		fieldMap:  make(map[string]*fieldSpec),
+		traceSeries: traceSeries.Spec,
+		indexRule:   indexRule,
+		fieldMap:    make(map[string]*fieldSpec),
 	}
 
 	// generate the schema of the fields for the traceSeries
@@ -94,21 +95,23 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 		useIndexScan := false
 		var fieldExprs []Expr
 		traceState := series.TraceStateDefault
+
 		for _, pairQuery := range criteria.GetFields() {
 			op := pairQuery.GetOp()
 			typedPair := pairQuery.GetCondition()
 			switch v := typedPair.GetTyped().(type) {
 			case *apiv1.TypedPair_StrPair:
 				// check special field `trace_id`
-				if v.StrPair.GetKey() == "trace_id" {
-					return TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, s), nil
+				if v.StrPair.GetKey() == s.TraceIDFieldName() {
+					plan = TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, projStr...)
+					break
 				}
 				useIndexScan = true
 				lit := parseStrLiteral(v.StrPair)
 				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
 			case *apiv1.TypedPair_IntPair:
 				// check special field `state`
-				if v.IntPair.GetKey() == "state" {
+				if v.IntPair.GetKey() == s.TraceStateFieldName() {
 					traceState = series.TraceState(v.IntPair.GetValues()[0])
 					continue
 				}
@@ -120,11 +123,14 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 			}
 		}
 
-		// first check if we can use index-scan
-		if useIndexScan {
-			plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
-		} else {
-			plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
+		// if plan is already assigned, skip
+		if plan == nil {
+			// first check if we can use index-scan
+			if useIndexScan {
+				plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
+			} else {
+				plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
+			}
 		}
 	} else {
 		plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, series.TraceStateDefault, projStr...)
