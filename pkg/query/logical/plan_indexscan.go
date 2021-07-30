@@ -111,6 +111,7 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error)
 	dataEntities := make([]data.Entity, 0)
 
 	// iterate over shards
+	// TODO: we have to push down Limit and Offset to set a threshold to IndexSearch operations
 	for shardID := uint32(0); shardID < i.schema.ShardNumber(); shardID++ {
 		var chunkSet posting.List
 
