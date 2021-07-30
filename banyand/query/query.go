@@ -20,8 +20,10 @@ package query
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -29,6 +31,12 @@ type Executor interface {
 	run.PreRunner
 }
 
-func NewExecutor(ctx context.Context, idx index.Repo, s series.UniModel) (Executor, error) {
-	return nil, nil
+func NewExecutor(_ context.Context, serviceRepo discovery.ServiceRepo, indexRepo index.Repo, uniModel series.UniModel, schemaRepo series.SchemaRepo) (Executor, error) {
+	return &queryProcessor{
+		Repo:        indexRepo,
+		UniModel:    uniModel,
+		schemaRepo:  schemaRepo,
+		serviceRepo: serviceRepo,
+		logger:      logger.GetLogger("query"),
+	}, nil
 }

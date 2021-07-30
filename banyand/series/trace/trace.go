@@ -19,7 +19,6 @@ package trace
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -35,13 +34,14 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 const (
-	traceSeriesIDTemp = "%s:%s"
 	// KV stores
 	chunkIDMapping = "chunkIDMapping"
 	startTimeIndex = "startTimeIndex"
@@ -111,7 +111,7 @@ func (s *service) PreRun() error {
 			return errTS
 		}
 		s.db.Register(ts)
-		id := fmt.Sprintf(traceSeriesIDTemp, ts.name, ts.group)
+		id := formatTraceSeriesID(ts.name, ts.group)
 		s.schemaMap[id] = ts
 		s.l.Info().Str("id", id).Msg("initialize Trace series")
 	}
@@ -184,7 +184,7 @@ func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uin
 }
 
 func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
-	id := getTraceSeriesID(traceSeries)
+	id := formatTraceSeriesID(traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
 	s.l.Debug().Str("id", id).Msg("got Trace series")
 	ts, ok := s.schemaMap[id]
 	if !ok {
@@ -193,8 +193,30 @@ func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
 	return ts, nil
 }
 
-func getTraceSeriesID(traceSeries common.Metadata) string {
-	return fmt.Sprintf(traceSeriesIDTemp, traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
+func (s *service) Write(traceSeriesMetadata common.Metadata, ts time.Time, seriesID, entityID string, dataBinary []byte, items ...interface{}) (bool, error) {
+	traceSeries, err := s.getSeries(traceSeriesMetadata)
+	if err != nil {
+		return false, err
+	}
+
+	ev := pb.NewEntityValueBuilder().
+		DataBinary(dataBinary).
+		EntityID(entityID).
+		Fields(items...).
+		Timestamp(ts).
+		Build()
+
+	seriesIDBytes := []byte(seriesID)
+	shardID := partition.ShardID(seriesIDBytes, traceSeries.shardNum)
+
+	_, err = traceSeries.Write(common.SeriesID(convert.Hash(seriesIDBytes)), shardID, data.EntityValue{
+		EntityValue: ev,
+	})
+	return err == nil, err
+}
+
+func formatTraceSeriesID(name, group string) string {
+	return name + ":" + group
 }
 
 type traceSeries struct {

@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -28,20 +29,51 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
+var _ UnresolvedPlan = (*unresolvedTraceIDFetch)(nil)
 var _ Plan = (*traceIDFetch)(nil)
 
-type traceIDFetch struct {
-	metadata *common.Metadata
-	schema   Schema
-	traceID  string
+type unresolvedTraceIDFetch struct {
+	metadata         *common.Metadata
+	traceID          string
+	projectionFields []string
 }
 
-func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
-	traceData, err := ec.FetchTrace(*t.metadata, t.traceID, series.ScanOptions{})
+func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
+	if t.projectionFields == nil || len(t.projectionFields) == 0 {
+		return &traceIDFetch{
+			metadata: t.metadata,
+			schema:   s,
+			traceID:  t.traceID,
+		}, nil
+	}
+
+	if s == nil {
+		return nil, errors.Wrap(ErrInvalidSchema, "nil")
+	}
+
+	fieldRefs, err := s.CreateRef(t.projectionFields...)
 	if err != nil {
 		return nil, err
 	}
-	return traceData.Entities, nil
+	return &traceIDFetch{
+		projectionFields:    t.projectionFields,
+		projectionFieldRefs: fieldRefs,
+		schema:              s,
+		traceID:             t.traceID,
+		metadata:            t.metadata,
+	}, nil
+}
+
+func (t *unresolvedTraceIDFetch) Type() PlanType {
+	return PlanTraceIDFetch
+}
+
+type traceIDFetch struct {
+	metadata            *common.Metadata
+	traceID             string
+	projectionFields    []string
+	projectionFieldRefs []*FieldRef
+	schema              Schema
 }
 
 func (t *traceIDFetch) String() string {
@@ -52,12 +84,12 @@ func (t *traceIDFetch) String() string {
 	)
 }
 
-func (t *traceIDFetch) Type() PlanType {
-	return PlanTraceIDFetch
-}
-
 func (t *traceIDFetch) Children() []Plan {
 	return []Plan{}
+}
+
+func (t *traceIDFetch) Type() PlanType {
+	return PlanTraceIDFetch
 }
 
 func (t *traceIDFetch) Schema() Schema {
@@ -74,10 +106,20 @@ func (t *traceIDFetch) Equal(plan Plan) bool {
 		cmp.Equal(t.metadata, other.metadata)
 }
 
-func TraceIDFetch(traceID string, metadata *common.Metadata, schema Schema) Plan {
-	return &traceIDFetch{
-		metadata: metadata,
-		schema:   schema,
-		traceID:  traceID,
+func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
+	traceData, err := ec.FetchTrace(*t.metadata, t.traceID, series.ScanOptions{
+		Projection: t.projectionFields,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return traceData.Entities, nil
+}
+
+func TraceIDFetch(traceID string, metadata *common.Metadata, projection ...string) UnresolvedPlan {
+	return &unresolvedTraceIDFetch{
+		metadata:         metadata,
+		traceID:          traceID,
+		projectionFields: projection,
 	}
 }
