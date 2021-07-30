@@ -47,6 +47,7 @@ var (
 type queryProcessor struct {
 	index.Repo
 	series.UniModel
+	logger      *logger.Logger
 	schemaRepo  series.SchemaRepo
 	log         *logger.Logger
 	serviceRepo discovery.ServiceRepo
@@ -67,16 +68,19 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	s, err := analyzer.BuildTraceSchema(context.TODO(), *metadata)
 	if err != nil {
+		q.logger.Error().Err(err).Msg("fail to build trace schema")
 		return
 	}
 
 	p, err := analyzer.Analyze(context.TODO(), queryCriteria, metadata, s)
 	if err != nil {
+		q.logger.Error().Err(err).Msg("fail to analyze the query request")
 		return
 	}
 
 	entities, err := p.Execute(q)
 	if err != nil {
+		q.logger.Error().Err(err).Msg("fail to execute the query plan")
 		return
 	}
 
