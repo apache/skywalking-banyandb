@@ -101,9 +101,8 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 			typedPair := pairQuery.GetCondition()
 			switch v := typedPair.GetTyped().(type) {
 			case *apiv1.TypedPair_StrPair:
-				// TODO: use metadata from Plugin?
 				// check special field `trace_id`
-				if v.StrPair.GetKey() == "trace_id" {
+				if v.StrPair.GetKey() == s.TraceIDFieldName() {
 					plan = TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, projStr...)
 					break
 				}
@@ -112,7 +111,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
 			case *apiv1.TypedPair_IntPair:
 				// check special field `state`
-				if v.IntPair.GetKey() == "state" {
+				if v.IntPair.GetKey() == s.TraceStateFieldName() {
 					traceState = series.TraceState(v.IntPair.GetValues()[0])
 					continue
 				}

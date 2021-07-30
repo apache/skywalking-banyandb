@@ -32,6 +32,8 @@ type Schema interface {
 	Map(refs ...*FieldRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
+	TraceIDFieldName() string
+	TraceStateFieldName() string
 }
 
 type fieldSpec struct {
@@ -49,6 +51,14 @@ type schema struct {
 	traceSeries *apiv1.TraceSeries
 	indexRule   apischema.IndexRule
 	fieldMap    map[string]*fieldSpec
+}
+
+func (s *schema) TraceIDFieldName() string {
+	return s.traceSeries.GetReservedFieldsMap().GetTraceId()
+}
+
+func (s *schema) TraceStateFieldName() string {
+	return s.traceSeries.GetReservedFieldsMap().GetState().GetField()
 }
 
 // IndexDefined checks whether the field given is indexed
