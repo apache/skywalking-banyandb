@@ -128,6 +128,10 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error)
 			} else {
 				// afterwards, it must not be nil
 				_ = chunkSet.Intersect(chunks)
+				// stop loop if chunkSet is empty
+				if chunkSet.Len() == 0 {
+					continue
+				}
 			}
 		}
 
