@@ -62,7 +62,7 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	tester.NotNil(repo)
 
 	// Init `Database` module
-	db, err := storage.gNewDB(context.TODO(), repo)
+	db, err := storage.NewDB(context.TODO(), repo)
 	tester.NoError(err)
 	uuid, err := googleUUID.NewUUID()
 	tester.NoError(err)
