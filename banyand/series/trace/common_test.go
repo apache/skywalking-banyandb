@@ -19,11 +19,14 @@ package trace
 
 import (
 	"context"
+	"os"
+	"path"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -52,11 +55,14 @@ func (b ByEntityID) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
 }
 
-func setup(t *testing.T) (*traceSeries, func()) {
+func setup(t *testing.T) (*traceSeries, func(), string) {
 	_ = logger.Bootstrap()
 	db, err := storage.NewDB(context.TODO(), nil)
 	assert.NoError(t, err)
-	assert.NoError(t, db.FlagSet().Parse(nil))
+	uuid, err := googleUUID.NewUUID()
+	assert.NoError(t, err)
+	rootPath := path.Join(os.TempDir(), "banyandb-"+uuid.String())
+	assert.NoError(t, db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 	svc, err := NewService(context.TODO(), db, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, svc.PreRun())
@@ -69,7 +75,7 @@ func setup(t *testing.T) (*traceSeries, func()) {
 		},
 	})
 	assert.NoError(t, err)
-	return ts, db.GracefulStop
+	return ts, db.GracefulStop, rootPath
 }
 
 type seriesEntity struct {

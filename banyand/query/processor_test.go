@@ -19,9 +19,12 @@ package query
 
 import (
 	"context"
+	"os"
+	"path"
 	"testing"
 	"time"
 
+	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -46,7 +49,7 @@ type entityValue struct {
 	items      []interface{}
 }
 
-func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
+func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service, func(), string) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -61,7 +64,10 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	// Init `Database` module
 	db, err := storage.NewDB(context.TODO(), repo)
 	tester.NoError(err)
-	tester.NoError(db.FlagSet().Parse(nil))
+	uuid, err := googleUUID.NewUUID()
+	tester.NoError(err)
+	rootPath := path.Join(os.TempDir(), "banyandb-"+uuid.String())
+	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
 	traceSvc, err := trace.NewService(context.TODO(), db, repo)
@@ -83,7 +89,7 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	err = executor.PreRun()
 	tester.NoError(err)
 
-	return repo, traceSvc, db.GracefulStop
+	return repo, traceSvc, db.GracefulStop, rootPath
 }
 
 func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service) {
@@ -248,8 +254,13 @@ func TestQueryProcessor(t *testing.T) {
 	tester := require.New(t)
 
 	// setup services
-	repo, traceSvc, gracefulStop := setupServices(tester)
-	defer gracefulStop()
+	repo, traceSvc, gracefulStop, dbPath := setupServices(tester)
+	defer func() {
+		// stop database
+		gracefulStop()
+		// delete files
+		_ = os.RemoveAll(dbPath)
+	}()
 
 	baseTs := time.Now()
 	setupData(tester, baseTs, traceSvc)
