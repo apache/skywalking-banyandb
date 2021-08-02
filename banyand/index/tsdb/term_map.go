@@ -49,7 +49,7 @@ func (p *postingMap) put(key []byte, id common.ChunkID) error {
 
 func (p *postingMap) getOrCreate(key []byte) posting.List {
 	list := p.get(key)
-	if list != emptyPostingList {
+	if list != roaring.EmptyPostingList {
 		return list
 	}
 	p.mutex.Lock()
@@ -64,10 +64,12 @@ func (p *postingMap) getOrCreate(key []byte) posting.List {
 }
 
 func (p *postingMap) get(key []byte) posting.List {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
 	hashedKey := termHashID(convert.Hash(key))
 	v, ok := p.repo[hashedKey]
 	if !ok {
-		return emptyPostingList
+		return roaring.EmptyPostingList
 	}
 	return v.value
 }
@@ -83,13 +85,12 @@ func (p *postingMap) allValues() posting.List {
 func (p *postingMap) getRange(opts *RangeOpts) posting.List {
 	switch bytes.Compare(opts.Upper, opts.Lower) {
 	case -1:
-		return emptyPostingList
+		return roaring.EmptyPostingList
 	case 0:
 		if opts.IncludesUpper && opts.IncludesLower {
 			return p.get(opts.Upper)
-		} else {
-			return emptyPostingList
 		}
+		return roaring.EmptyPostingList
 	}
 	keys := make(Asc, 0, len(p.repo))
 	for _, v := range p.repo {
@@ -113,7 +114,6 @@ func (p *postingMap) getRange(opts *RangeOpts) posting.List {
 			if opts.IncludesUpper {
 				_ = result.Union(p.repo[termHashID(convert.Hash(k))].value)
 			}
-			break
 		default:
 			_ = result.Union(p.repo[termHashID(convert.Hash(k))].value)
 		}

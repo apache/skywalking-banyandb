@@ -26,12 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -63,7 +65,10 @@ func setup(t *testing.T) (*traceSeries, func()) {
 	assert.NoError(t, err)
 	rootPath := path.Join(os.TempDir(), "banyandb-"+uuid.String())
 	assert.NoError(t, db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
-	svc, err := NewService(context.TODO(), db, nil)
+	ctrl := gomock.NewController(t)
+	mockIndex := index.NewMockService(ctrl)
+	mockIndex.EXPECT().Insert(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	svc, err := NewService(context.TODO(), db, nil, mockIndex)
 	assert.NoError(t, err)
 	assert.NoError(t, svc.PreRun())
 	assert.NoError(t, db.PreRun())

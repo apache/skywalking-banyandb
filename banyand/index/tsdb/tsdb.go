@@ -29,9 +29,37 @@ type RangeOpts struct {
 	IncludesLower bool
 }
 
-type Reader interface {
+type GlobalStore interface {
+	Window(startTime, endTime uint64) (Searcher, bool)
+	Initialize(fields []FieldSpec) error
 	Insert(field *Field, chunkID common.ChunkID) error
+}
+
+type Searcher interface {
 	MatchField(fieldNames []byte) (list posting.List)
 	MatchTerms(field *Field) (list posting.List)
 	Range(fieldName []byte, opts *RangeOpts) (list posting.List)
+}
+
+type store struct {
+	memTable *MemTable
+	//TODO: add data tables
+}
+
+func (s *store) Window(_, _ uint64) (Searcher, bool) {
+	return s.memTable, true
+}
+
+func (s *store) Initialize(fields []FieldSpec) error {
+	return s.memTable.Initialize(fields)
+}
+
+func (s *store) Insert(field *Field, chunkID common.ChunkID) error {
+	return s.memTable.Insert(field, chunkID)
+}
+
+func NewStore(name, group string, shardID uint) GlobalStore {
+	return &store{
+		memTable: NewMemTable(name, group, shardID),
+	}
 }

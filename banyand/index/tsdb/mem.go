@@ -27,24 +27,24 @@ import (
 
 var ErrFieldsAbsent = errors.New("fields are absent")
 
-var emptyPostingList = roaring.NewPostingList()
-
 type MemTable struct {
-	terms *fieldMap
-	name  string
-	group string
+	terms   *fieldMap
+	name    string
+	group   string
+	shardID uint
 }
 
-func NewMemTable(name, group string) *MemTable {
+func NewMemTable(name, group string, shardID uint) *MemTable {
 	return &MemTable{
-		name:  name,
-		group: group,
+		name:    name,
+		group:   group,
+		shardID: shardID,
 	}
 }
 
 type Field struct {
-	name  []byte
-	value []byte
+	Name  []byte
+	Value []byte
 }
 
 type FieldSpec struct {
@@ -69,23 +69,23 @@ func (m *MemTable) Insert(field *Field, chunkID common.ChunkID) error {
 func (m *MemTable) MatchField(fieldName []byte) (list posting.List) {
 	fieldsValues, ok := m.terms.get(fieldName)
 	if !ok {
-		return emptyPostingList
+		return roaring.EmptyPostingList
 	}
 	return fieldsValues.value.allValues()
 }
 
 func (m *MemTable) MatchTerms(field *Field) (list posting.List) {
-	fieldsValues, ok := m.terms.get(field.name)
+	fieldsValues, ok := m.terms.get(field.Name)
 	if !ok {
-		return emptyPostingList
+		return roaring.EmptyPostingList
 	}
-	return fieldsValues.value.get(field.value)
+	return fieldsValues.value.get(field.Value)
 }
 
 func (m *MemTable) Range(fieldName []byte, opts *RangeOpts) (list posting.List) {
 	fieldsValues, ok := m.terms.get(fieldName)
 	if !ok {
-		return emptyPostingList
+		return roaring.EmptyPostingList
 	}
 	return fieldsValues.value.getRange(opts)
 }

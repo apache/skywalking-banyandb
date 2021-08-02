@@ -70,7 +70,7 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	traceSvc, err := trace.NewService(context.TODO(), db, repo)
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, nil)
 	tester.NoError(err)
 
 	// Init `Query` module

@@ -33,3 +33,10 @@ func (md Metadata) Equal(other Metadata) bool {
 		md.Spec.Group == other.Spec.Group &&
 		md.Spec.Name == other.Spec.Name
 }
+
+func NewMetadata(spec *v1.Metadata) *Metadata {
+	return &Metadata{
+		KindVersion: MetadataKindVersion,
+		Spec:        spec,
+	}
+}

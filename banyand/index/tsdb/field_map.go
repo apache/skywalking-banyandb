@@ -51,11 +51,11 @@ func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
 }
 
 func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
-	pm, ok := fm.get(fv.name)
+	pm, ok := fm.get(fv.Name)
 	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed name:%s", fv.name)
+		return errors.Wrapf(ErrFieldAbsent, "filed Name:%s", fv.Name)
 	}
-	return pm.value.put(fv.value, id)
+	return pm.value.put(fv.Value, id)
 }
 
 type fieldValue struct {

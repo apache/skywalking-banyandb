@@ -33,7 +33,9 @@ var (
 		Version: "v1",
 		Kind:    "event-series",
 	}
-	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
+	TopicSeriesEvent     = bus.UniTopic(SeriesEventKindVersion.String())
+	IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "index-rule"}
+	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
 )
 
 type Shard struct {
@@ -44,4 +46,9 @@ type Shard struct {
 type Series struct {
 	common.KindVersion
 	Payload v1.SeriesEvent
+}
+
+type IndexRule struct {
+	common.KindVersion
+	Payload *v1.IndexRuleEvent
 }

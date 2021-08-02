@@ -26,6 +26,8 @@ import (
 )
 
 var (
+	EmptyPostingList = NewPostingList()
+
 	ErrIntersectRoaringOnly  = errors.New("Intersect only supported between roaringDocId sets")
 	ErrUnionRoaringOnly      = errors.New("Union only supported between roaringDocId sets")
 	ErrDifferenceRoaringOnly = errors.New("Difference only supported between roaringDocId sets")

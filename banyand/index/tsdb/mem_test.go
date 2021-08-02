@@ -58,7 +58,7 @@ func TestMemTable_Initialize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := NewMemTable("sw", "group")
+			m := NewMemTable("sw", "group", 0)
 			var err error
 			if err = m.Initialize(tt.args.fields); (err != nil) != tt.wantErr {
 				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
@@ -76,7 +76,7 @@ func TestMemTable_Range(t *testing.T) {
 		fieldName []byte
 		opts      *RangeOpts
 	}
-	m := NewMemTable("sw", "group")
+	m := NewMemTable("sw", "group", 0)
 	setUp(t, m)
 	tests := []struct {
 		name     string
@@ -93,8 +93,8 @@ func TestMemTable_Range(t *testing.T) {
 				},
 			},
 			wantList: m.MatchTerms(&Field{
-				name:  []byte("duration"),
-				value: convert.Uint16ToBytes(200),
+				Name:  []byte("duration"),
+				Value: convert.Uint16ToBytes(200),
 			}),
 		},
 		{
@@ -108,8 +108,8 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(200),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -125,12 +125,12 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(50),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(50),
 				},
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(200),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -146,12 +146,12 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(200),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(200),
 				},
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(1000),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(1000),
 				},
 			),
 		},
@@ -168,16 +168,16 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(50),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(50),
 				},
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(200),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(200),
 				},
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(1000),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(1000),
 				},
 			),
 		},
@@ -194,8 +194,8 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				&Field{
-					name:  []byte("duration"),
-					value: convert.Uint16ToBytes(200),
+					Name:  []byte("duration"),
+					Value: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -229,13 +229,13 @@ func setUp(t *testing.T, mt *MemTable) {
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
 			assert.NoError(t, mt.Insert(&Field{
-				name:  []byte("service_name"),
-				value: []byte("gateway"),
+				Name:  []byte("service_name"),
+				Value: []byte("gateway"),
 			}, common.ChunkID(i)))
 		} else {
 			assert.NoError(t, mt.Insert(&Field{
-				name:  []byte("service_name"),
-				value: []byte("webpage"),
+				Name:  []byte("service_name"),
+				Value: []byte("webpage"),
 			}, common.ChunkID(i)))
 		}
 	}
@@ -243,18 +243,18 @@ func setUp(t *testing.T, mt *MemTable) {
 		switch {
 		case i%3 == 0:
 			assert.NoError(t, mt.Insert(&Field{
-				name:  []byte("duration"),
-				value: convert.Uint16ToBytes(50),
+				Name:  []byte("duration"),
+				Value: convert.Uint16ToBytes(50),
 			}, common.ChunkID(i)))
 		case i%3 == 1:
 			assert.NoError(t, mt.Insert(&Field{
-				name:  []byte("duration"),
-				value: convert.Uint16ToBytes(200),
+				Name:  []byte("duration"),
+				Value: convert.Uint16ToBytes(200),
 			}, common.ChunkID(i)))
 		case i%3 == 2:
 			assert.NoError(t, mt.Insert(&Field{
-				name:  []byte("duration"),
-				value: convert.Uint16ToBytes(1000),
+				Name:  []byte("duration"),
+				Value: convert.Uint16ToBytes(1000),
 			}, common.ChunkID(i)))
 		}
 	}
