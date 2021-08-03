@@ -43,6 +43,10 @@ func Uint32ToBytes(u uint32) []byte {
 	return bs
 }
 
+func BytesToInt64(b []byte) int64 {
+	return int64(binary.BigEndian.Uint64(b))
+}
+
 func BytesToUint64(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }

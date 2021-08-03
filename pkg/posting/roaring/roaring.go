@@ -194,3 +194,13 @@ func (it *roaringIterator) Close() error {
 	it.closed = true
 	return nil
 }
+
+func (p *postingsList) ToSlice() []common.ChunkID {
+	iter := p.Iterator()
+	defer iter.Close()
+	s := make([]common.ChunkID, 0, p.Len())
+	for iter.Next() {
+		s = append(s, iter.Current())
+	}
+	return s
+}

@@ -18,7 +18,12 @@
 package index
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
@@ -52,7 +57,15 @@ func (s *service) Search(series common.Metadata, shardID uint, startTime, endTim
 	if errBuild != nil {
 		return nil, err
 	}
-	return tree.execute()
+	if s.log.Should(zerolog.DebugLevel) {
+		s.log.Debug().Interface("search-tree", tree).Msg("build search tree")
+	}
+
+	result, err := tree.execute()
+	if result == nil {
+		return roaring.EmptyPostingList, err
+	}
+	return result, err
 }
 
 func buildSearchTree(searcher tsdb.Searcher, indexObject string, conditions []Condition) (searchTree, error) {
@@ -99,7 +112,7 @@ func buildSearchTree(searcher tsdb.Searcher, indexObject string, conditions []Co
 					n.addEq(key, [][]byte{v})
 				}
 			case apiv1.PairQuery_BINARY_OP_NOT_HAVING:
-				n := root.addOrNode(len(cond.Values))
+				n := root.newOrNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
 				}
@@ -112,10 +125,10 @@ func buildSearchTree(searcher tsdb.Searcher, indexObject string, conditions []Co
 
 func rangeOP(op apiv1.PairQuery_BinaryOp) bool {
 	switch op {
-	case apiv1.PairQuery_BINARY_OP_GT:
-	case apiv1.PairQuery_BINARY_OP_GE:
-	case apiv1.PairQuery_BINARY_OP_LT:
-	case apiv1.PairQuery_BINARY_OP_LE:
+	case apiv1.PairQuery_BINARY_OP_GT,
+		apiv1.PairQuery_BINARY_OP_GE,
+		apiv1.PairQuery_BINARY_OP_LT,
+		apiv1.PairQuery_BINARY_OP_LE:
 		return true
 	}
 	return false
@@ -137,12 +150,11 @@ func toMap(indexObject string, condition []Condition) map[string][]Condition {
 }
 
 type logicalOP interface {
+	executable
 	merge(posting.List) error
 }
 
 type node struct {
-	logicalOP
-	executable
 	searcher tsdb.Searcher
 	value    posting.List
 	SubNodes []executable `json:"sub_nodes,omitempty"`
@@ -151,8 +163,8 @@ type node struct {
 func (n *node) newEq(key string, values [][]byte) *eq {
 	return &eq{
 		leaf: &leaf{
-			Key:      []byte(key),
-			values:   values,
+			Key:      key,
+			Values:   values,
 			searcher: n.searcher,
 		},
 	}
@@ -164,7 +176,7 @@ func (n *node) addEq(key string, values [][]byte) {
 
 func (n *node) addNot(key string, inner executable) {
 	n.SubNodes = append(n.SubNodes, &not{
-		Key:      []byte(key),
+		Key:      key,
 		searcher: n.searcher,
 		Inner:    inner,
 	})
@@ -173,7 +185,7 @@ func (n *node) addNot(key string, inner executable) {
 func (n *node) addRangeLeaf(key string) *rangeOp {
 	r := &rangeOp{
 		leaf: &leaf{
-			Key:      []byte(key),
+			Key:      key,
 			searcher: n.searcher,
 		},
 		Opts: &tsdb.RangeOpts{},
@@ -182,13 +194,17 @@ func (n *node) addRangeLeaf(key string) *rangeOp {
 	return r
 }
 
-func (n *node) addOrNode(size int) *orNode {
-	on := &orNode{
+func (n *node) newOrNode(size int) *orNode {
+	return &orNode{
 		node: &node{
 			searcher: n.searcher,
 			SubNodes: make([]executable, 0, size),
 		},
 	}
+}
+
+func (n *node) addOrNode(size int) *orNode {
+	on := n.newOrNode(size)
 	n.SubNodes = append(n.SubNodes, on)
 	return on
 }
@@ -202,7 +218,7 @@ func (n *node) pop() (executable, bool) {
 	return sn, true
 }
 
-func (n *node) execute() (posting.List, error) {
+func execute(n *node, lp logicalOP) (posting.List, error) {
 	ex, hasNext := n.pop()
 	if !hasNext {
 		return n.value, nil
@@ -213,16 +229,16 @@ func (n *node) execute() (posting.List, error) {
 	}
 	if n.value == nil {
 		n.value = r
-		return n.execute()
+		return lp.execute()
 	}
-	err = n.merge(r)
+	err = lp.merge(r)
 	if err != nil {
 		return nil, err
 	}
 	if n.value.IsEmpty() {
 		return n.value, nil
 	}
-	return n.execute()
+	return lp.execute()
 }
 
 type andNode struct {
@@ -233,6 +249,16 @@ func (an *andNode) merge(list posting.List) error {
 	return an.value.Intersect(list)
 }
 
+func (an *andNode) execute() (posting.List, error) {
+	return execute(an.node, an)
+}
+
+func (an *andNode) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["and"] = an.node.SubNodes
+	return json.Marshal(data)
+}
+
 type orNode struct {
 	*node
 }
@@ -241,22 +267,32 @@ func (on *orNode) merge(list posting.List) error {
 	return on.value.Union(list)
 }
 
+func (on *orNode) execute() (posting.List, error) {
+	return execute(on.node, on)
+}
+
+func (on *orNode) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["or"] = on.node.SubNodes
+	return json.Marshal(data)
+}
+
 type leaf struct {
 	executable
-	Key      []byte `json:"Key"`
-	values   [][]byte
+	Key      string
+	Values   [][]byte
 	searcher tsdb.Searcher
 }
 
 type not struct {
 	executable
-	Key      []byte `json:"key"`
+	Key      string
 	searcher tsdb.Searcher
-	Inner    executable `json:"inner,omitempty"`
+	Inner    executable
 }
 
 func (n *not) execute() (posting.List, error) {
-	all := n.searcher.MatchField(n.Key)
+	all := n.searcher.MatchField([]byte(n.Key))
 	list, err := n.Inner.execute()
 	if err != nil {
 		return nil, err
@@ -265,22 +301,59 @@ func (n *not) execute() (posting.List, error) {
 	return all, err
 }
 
+func (n *not) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["not"] = n.Inner
+	return json.Marshal(data)
+}
+
 type eq struct {
 	*leaf
 }
 
 func (eq *eq) execute() (posting.List, error) {
 	return eq.searcher.MatchTerms(&tsdb.Field{
-		Name:  eq.Key,
-		Value: bytes.Join(eq.values...),
+		Name:  []byte(eq.Key),
+		Value: bytes.Join(eq.Values...),
 	}), nil
+}
+
+func (eq *eq) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["eq"] = eq.leaf
+	return json.Marshal(data)
 }
 
 type rangeOp struct {
 	*leaf
-	Opts *tsdb.RangeOpts `json:"opts"`
+	Opts *tsdb.RangeOpts
 }
 
 func (r *rangeOp) execute() (posting.List, error) {
-	return r.searcher.Range(r.Key, r.Opts), nil
+	return r.searcher.Range([]byte(r.Key), r.Opts), nil
+}
+
+func (r *rangeOp) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	var builder strings.Builder
+	if r.Opts.Lower != nil {
+		if r.Opts.IncludesLower {
+			builder.WriteString("[")
+		} else {
+			builder.WriteString("(")
+		}
+	}
+	builder.WriteString(base64.StdEncoding.EncodeToString(r.Opts.Lower))
+	builder.WriteString(",")
+	builder.WriteString(base64.StdEncoding.EncodeToString(r.Opts.Upper))
+	if r.Opts.Upper != nil {
+		if r.Opts.IncludesUpper {
+			builder.WriteString("]")
+		} else {
+			builder.WriteString(")")
+		}
+	}
+	data["key"] = r.Key
+	data["range"] = builder.String()
+	return json.Marshal(data)
 }

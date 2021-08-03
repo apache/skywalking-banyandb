@@ -92,6 +92,8 @@ func (p *postingMap) getRange(opts *RangeOpts) posting.List {
 		}
 		return roaring.EmptyPostingList
 	}
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
 	keys := make(Asc, 0, len(p.repo))
 	for _, v := range p.repo {
 		keys = append(keys, v.key)

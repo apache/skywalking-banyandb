@@ -58,6 +58,8 @@ type List interface {
 	RemoveRange(min, max common.ChunkID) error
 
 	Reset()
+
+	ToSlice() []common.ChunkID
 }
 
 type Iterator interface {

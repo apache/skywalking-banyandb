@@ -160,6 +160,16 @@ type indexMeta struct {
 	sync.RWMutex
 }
 
+func (i *indexMeta) get(series *apiv1.Metadata) *series {
+	i.RWMutex.RLock()
+	defer i.RWMutex.RUnlock()
+	s, ok := i.meta[compositeSeriesID(series)]
+	if ok {
+		return s
+	}
+	return nil
+}
+
 type indexRuleListener struct {
 	log       *logger.Logger
 	indexMeta *indexMeta
@@ -174,7 +184,8 @@ func (i *indexRuleListener) Rev(message bus.Message) (resp bus.Message) {
 	}
 	i.log.Info().
 		Str("action", apiv1.Action_name[int32(indexRuleEvent.Action)]).
-		Str("series", indexRuleEvent.Series.String()).
+		Str("series-name", indexRuleEvent.Series.Name).
+		Str("series-group", indexRuleEvent.Series.Group).
 		Msg("received an index rule")
 	i.indexMeta.Lock()
 	defer i.indexMeta.Unlock()

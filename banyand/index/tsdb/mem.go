@@ -79,7 +79,7 @@ func (m *MemTable) MatchTerms(field *Field) (list posting.List) {
 	if !ok {
 		return roaring.EmptyPostingList
 	}
-	return fieldsValues.value.get(field.Value)
+	return fieldsValues.value.get(field.Value).Clone()
 }
 
 func (m *MemTable) Range(fieldName []byte, opts *RangeOpts) (list posting.List) {

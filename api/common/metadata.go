@@ -40,3 +40,13 @@ func NewMetadata(spec *v1.Metadata) *Metadata {
 		Spec:        spec,
 	}
 }
+
+func NewMetadataByNameAndGroup(name, group string) *Metadata {
+	return &Metadata{
+		KindVersion: MetadataKindVersion,
+		Spec: &v1.Metadata{
+			Name:  name,
+			Group: group,
+		},
+	}
+}
