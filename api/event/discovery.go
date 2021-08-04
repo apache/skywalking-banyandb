@@ -29,11 +29,18 @@ var (
 		Kind:    "event-shard",
 	}
 	TopicShardEvent        = bus.UniTopic(ShardEventKindVersion.String())
+
 	SeriesEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "event-series",
 	}
 	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
+
+	WriteEventKindVersion = common.KindVersion{
+		Version: "v1",
+		Kind:    "event-write",
+	}
+	TopicWriteEvent = bus.UniTopic(WriteEventKindVersion.String())
 )
 
 type Shard struct {
@@ -44,4 +51,9 @@ type Shard struct {
 type Series struct {
 	common.KindVersion
 	Payload v1.SeriesEvent
+}
+
+type Write struct {
+	common.KindVersion
+	Payload v1.WriteRequest
 }

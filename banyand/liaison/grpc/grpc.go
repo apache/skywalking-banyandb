@@ -21,14 +21,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
+	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
 	"strings"
-
-	"google.golang.org/grpc/credentials"
-
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
+	"time"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
@@ -60,6 +59,7 @@ type Server struct {
 	repo       discovery.ServiceRepo
 	shardInfo  *shardInfo
 	seriesInfo *seriesInfo
+	v1.UnimplementedTraceServiceServer
 }
 
 type shardInfo struct {
@@ -153,7 +153,7 @@ func (s *Server) Serve() error {
 		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 	}
 	s.ser = grpclib.NewServer(opts...)
-	v1.RegisterTraceServiceServer(s.ser, &TraceServiceWriteServer{})
+	v1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
 }
@@ -163,11 +163,16 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-type TraceServiceWriteServer struct { // TraceService_WriteServer
-	v1.UnimplementedTraceServiceServer
+type traceWriteDate struct {
+	shardID uint
+	writeRequest *v1.WriteRequest
 }
 
-func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteServer) error {
+func mergeWriteData(id uint, writeEntity *v1.WriteRequest) traceWriteDate {
+	return traceWriteDate{shardID: id, writeRequest: writeEntity}
+}
+
+func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 	for {
 		writeEntity, err := TraceWriteServer.Recv()
 		if err == io.EOF {
@@ -177,7 +182,7 @@ func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteSe
 			return err
 		}
 
-		log.Println("writeEntity:", writeEntity)
+		//log.Println("writeEntity:", writeEntity)
 		ana := logical.DefaultAnalyzer()
 		metadata := common.Metadata{
 			KindVersion: apischema.SeriesKindVersion,
@@ -229,15 +234,20 @@ func (t *TraceServiceWriteServer) Write(TraceWriteServer v1.TraceService_WriteSe
 		if shardIdError != nil {
 			return shardIdError
 		}
-		log.Println("shardID:", shardID)
+		mergeData := mergeWriteData(shardID, writeEntity)
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
+		writeEvent := event.TopicWriteEvent
+		_, errWritePub := s.repo.Publish(writeEvent, message)
+		if errWritePub != nil {
+			return errWritePub
+		}
 		if errSend := TraceWriteServer.Send(&v1.WriteResponse{}); errSend != nil {
 			return errSend
 		}
-		//queue
 	}
 }
 
-func (t *TraceServiceWriteServer) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) { // *v1.QueryResponse,
+func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) {
 	log.Println("entityCriteria:", entityCriteria)
 
 	return &v1.QueryResponse{}, nil

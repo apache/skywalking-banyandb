@@ -58,7 +58,7 @@ func Test_server_start(t *testing.T) {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 		ser := grpclib.NewServer(opts...)
-		v1.RegisterTraceServiceServer(ser, &grpc.TraceServiceWriteServer{})
+		v1.RegisterTraceServiceServer(ser, &grpc.Server{})
 		if err := ser.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
@@ -74,11 +74,11 @@ func Test_trace_write(t *testing.T) {
 
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
-	binary := byte(12)
 	entityValue := pb.NewEntityValueBuilder().
 		EntityID("entityId").
-		DataBinary([]byte{binary}).
+		DataBinary([]byte{byte(12)}).
 		Fields("service_instance_id", "service_id_1234", "service_instance_id_43543").
+		Timestamp(time.Now()).
 		Build()
 	criteria := pb.NewWriteEntityBuilder().
 		EntityValue(entityValue).

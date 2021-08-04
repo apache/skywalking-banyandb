@@ -61,7 +61,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate index builder")
 	}
-	traceSeries, err := trace.NewService(ctx, db, repo)
+	traceSeries, err := trace.NewService(ctx, db, repo, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}

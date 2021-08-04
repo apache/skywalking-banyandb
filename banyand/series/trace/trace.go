@@ -20,6 +20,8 @@ package trace
 import (
 	"context"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"log"
 	"strconv"
 	"time"
 
@@ -83,14 +85,17 @@ type service struct {
 	schemaMap map[string]*traceSeries
 	l         *logger.Logger
 	repo      discovery.ServiceRepo
+	pipeline   queue.Queue
 	stopCh    chan struct{}
+	writeCallback *writeCallback
 }
 
 //NewService returns a new service
-func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo) (series.Service, error) {
+func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo, pipeline queue.Queue) (series.Service, error) {
 	return &service{
 		db:   db,
 		repo: repo,
+		pipeline: pipeline,
 	}, nil
 }
 
@@ -142,15 +147,37 @@ func (s *service) Serve() error {
 							Build()).
 						Build()).
 				Build()
-			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), e))
+			_, errShard := s.pipeline.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), e))
 			if errShard != nil {
 				return errShard
 			}
 		}
 	}
+	errWrite := s.repo.Subscribe(event.TopicWriteEvent, s.writeCallback)
+	if errWrite != nil {
+		return errWrite
+	}
 	s.stopCh = make(chan struct{})
 	<-s.stopCh
 	return nil
+}
+
+type writeCallback struct {
+}
+
+type traceWriteDate struct {
+	shardID uint
+	writeRequest *v1.WriteRequest
+}
+
+func (w *writeCallback)Rev(message bus.Message) (resp bus.Message) {
+	writeEvent, ok := message.Data().(*traceWriteDate)
+	log.Println(writeEvent)
+	if !ok {
+		errors.New("invalid write data")
+		return
+	}
+	return
 }
 
 func (s *service) GracefulStop() {
