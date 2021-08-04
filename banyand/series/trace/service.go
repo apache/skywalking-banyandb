@@ -155,15 +155,9 @@ func (s *service) GracefulStop() {
 type writeCallback struct {
 }
 
-type traceWriteDate struct {
-	shardID uint
-	seriesID []byte
-	writeRequest *v1.WriteRequest
-}
-
 func (w *writeCallback)Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*traceWriteDate)
-	log.Println(writeEvent)
+	writeEvent, ok := message.Data().(event.TraceWriteDate)
+	log.Println("writeEvent:", writeEvent)
 	if !ok {
 		errors.New("invalid write data")
 		return

@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -163,14 +164,8 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-type traceWriteDate struct {
-	shardID uint
-	seriesID []byte
-	writeRequest *v1.WriteRequest
-}
-
-func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID []byte) traceWriteDate {
-	return traceWriteDate{shardID: shardID, seriesID: seriesID, writeRequest: writeEntity}
+func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) event.TraceWriteDate {
+	return event.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
 }
 
 func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
@@ -235,7 +230,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if shardIdError != nil {
 			return shardIdError
 		}
-		mergeData := mergeWriteData(shardID, writeEntity, seriesID)
+		mergeData := mergeWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
 		_, errWritePub := s.repo.Publish(event.TopicWriteEvent, message)
 		if errWritePub != nil {

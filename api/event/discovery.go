@@ -46,10 +46,10 @@ var (
 	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
 )
 
-type traceWriteDate struct {
-	shardID uint
-	seriesID []byte
-	writeRequest *v1.WriteRequest
+type TraceWriteDate struct {
+	ShardID uint
+	SeriesID uint64
+	WriteRequest *v1.WriteRequest
 }
 
 type Shard struct {
@@ -64,7 +64,7 @@ type Series struct {
 
 type Write struct {
 	common.KindVersion
-	Payload traceWriteDate
+	Payload *TraceWriteDate
 }
 type IndexRule struct {
 	common.KindVersion
