@@ -26,6 +26,8 @@ import (
 )
 
 var (
+	EmptyPostingList = NewPostingList()
+
 	ErrIntersectRoaringOnly  = errors.New("Intersect only supported between roaringDocId sets")
 	ErrUnionRoaringOnly      = errors.New("Union only supported between roaringDocId sets")
 	ErrDifferenceRoaringOnly = errors.New("Difference only supported between roaringDocId sets")
@@ -191,4 +193,14 @@ func (it *roaringIterator) Next() bool {
 func (it *roaringIterator) Close() error {
 	it.closed = true
 	return nil
+}
+
+func (p *postingsList) ToSlice() []common.ChunkID {
+	iter := p.Iterator()
+	defer iter.Close()
+	s := make([]common.ChunkID, 0, p.Len())
+	for iter.Next() {
+		s = append(s, iter.Current())
+	}
+	return s
 }

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
@@ -49,7 +51,7 @@ type entityValue struct {
 	items      []interface{}
 }
 
-func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
+func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -70,7 +72,10 @@ func setupServices(tester *require.Assertions) (discovery.ServiceRepo, series.Se
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	traceSvc, err := trace.NewService(context.TODO(), db, repo)
+	ctrl := gomock.NewController(t)
+	mockIndex := index.NewMockService(ctrl)
+	mockIndex.EXPECT().Insert(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, mockIndex)
 	tester.NoError(err)
 
 	// Init `Query` module
@@ -257,7 +262,7 @@ func TestQueryProcessor(t *testing.T) {
 	tester := require.New(t)
 
 	// setup services
-	repo, traceSvc, gracefulStop := setupServices(tester)
+	repo, traceSvc, gracefulStop := setupServices(t, tester)
 	defer gracefulStop()
 
 	baseTs := time.Now()

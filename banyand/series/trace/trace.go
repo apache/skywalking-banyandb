@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"context"
 	"strconv"
 	"time"
 
@@ -26,14 +25,11 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -75,89 +71,6 @@ const (
 	StateSuccess = 0
 	StateError   = 1
 )
-
-var _ series.Service = (*service)(nil)
-
-type service struct {
-	db        storage.Database
-	schemaMap map[string]*traceSeries
-	l         *logger.Logger
-	repo      discovery.ServiceRepo
-	stopCh    chan struct{}
-}
-
-//NewService returns a new service
-func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo) (series.Service, error) {
-	return &service{
-		db:   db,
-		repo: repo,
-	}, nil
-}
-
-func (s *service) Name() string {
-	return "trace-series"
-}
-
-func (s *service) PreRun() error {
-	schemas, err := s.TraceSeries().List(context.Background(), schema.ListOpt{})
-	if err != nil {
-		return err
-	}
-	s.schemaMap = make(map[string]*traceSeries, len(schemas))
-	s.l = logger.GetLogger(s.Name())
-	for _, sa := range schemas {
-		ts, errTS := newTraceSeries(sa, s.l)
-		if errTS != nil {
-			return errTS
-		}
-		s.db.Register(ts)
-		id := formatTraceSeriesID(ts.name, ts.group)
-		s.schemaMap[id] = ts
-		s.l.Info().Str("id", id).Msg("initialize Trace series")
-	}
-	return err
-}
-
-func (s *service) Serve() error {
-	now := time.Now().UnixNano()
-	for _, sMeta := range s.schemaMap {
-		e := pb.NewSeriesEventBuilder().
-			SeriesMetadata(sMeta.group, sMeta.name).
-			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
-			Time(time.Now()).
-			Action(v1.Action_ACTION_PUT).
-			Build()
-		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), e))
-		if err != nil {
-			return err
-		}
-		for i := 0; i < int(sMeta.shardNum); i++ {
-			t := time.Now()
-			e := pb.NewShardEventBuilder().Action(v1.Action_ACTION_PUT).Time(t).
-				Shard(
-					pb.NewShardBuilder().
-						ID(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
-						Node(pb.NewNodeBuilder().
-							ID(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
-							Build()).
-						Build()).
-				Build()
-			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), e))
-			if errShard != nil {
-				return errShard
-			}
-		}
-	}
-	s.stopCh = make(chan struct{})
-	<-s.stopCh
-	return nil
-}
-
-func (s *service) GracefulStop() {
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
-}
 
 func (s *service) FetchTrace(traceSeries common.Metadata, traceID string, opt series.ScanOptions) (data.Trace, error) {
 	ts, err := s.getSeries(traceSeries)
@@ -227,6 +140,7 @@ type traceSeries struct {
 	schema                       apischema.TraceSeries
 	reader                       storage.StoreRepo
 	writePoint                   storage.GetWritePoint
+	idx                          index.Service
 	shardNum                     uint32
 	fieldIndex                   map[string]int
 	traceIDIndex                 int
@@ -241,11 +155,12 @@ type traceSeries struct {
 	fieldsNamesCompositeSeriesID []string
 }
 
-func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger) (*traceSeries, error) {
+func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger, idx index.Service) (*traceSeries, error) {
 	t := &traceSeries{
 		schema: schema,
 		idGen:  series.NewIDGen(),
 		l:      l,
+		idx:    idx,
 	}
 	meta := t.schema.Spec.GetMetadata()
 	shardInfo := t.schema.Spec.GetShard()

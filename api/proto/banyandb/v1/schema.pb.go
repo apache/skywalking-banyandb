@@ -978,6 +978,132 @@ func (x *IndexRuleBinding) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type IndexRuleEvent struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Series *Metadata                          `protobuf:"bytes,1,opt,name=series,proto3" json:"series,omitempty"`
+	Rules  []*IndexRuleEvent_ShardedIndexRule `protobuf:"bytes,2,rep,name=rules,proto3" json:"rules,omitempty"`
+	Action Action                             `protobuf:"varint,4,opt,name=action,proto3,enum=banyandb.v1.Action" json:"action,omitempty"`
+	Time   *timestamppb.Timestamp             `protobuf:"bytes,5,opt,name=time,proto3" json:"time,omitempty"`
+}
+
+func (x *IndexRuleEvent) Reset() {
+	*x = IndexRuleEvent{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_banyandb_v1_schema_proto_msgTypes[10]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *IndexRuleEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IndexRuleEvent) ProtoMessage() {}
+
+func (x *IndexRuleEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_banyandb_v1_schema_proto_msgTypes[10]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IndexRuleEvent.ProtoReflect.Descriptor instead.
+func (*IndexRuleEvent) Descriptor() ([]byte, []int) {
+	return file_banyandb_v1_schema_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *IndexRuleEvent) GetSeries() *Metadata {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+func (x *IndexRuleEvent) GetRules() []*IndexRuleEvent_ShardedIndexRule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
+func (x *IndexRuleEvent) GetAction() Action {
+	if x != nil {
+		return x.Action
+	}
+	return Action_ACTION_UNSPECIFIED
+}
+
+func (x *IndexRuleEvent) GetTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Time
+	}
+	return nil
+}
+
+type IndexRuleEvent_ShardedIndexRule struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	ShardId uint64       `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	Rules   []*IndexRule `protobuf:"bytes,2,rep,name=rules,proto3" json:"rules,omitempty"`
+}
+
+func (x *IndexRuleEvent_ShardedIndexRule) Reset() {
+	*x = IndexRuleEvent_ShardedIndexRule{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_banyandb_v1_schema_proto_msgTypes[11]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *IndexRuleEvent_ShardedIndexRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IndexRuleEvent_ShardedIndexRule) ProtoMessage() {}
+
+func (x *IndexRuleEvent_ShardedIndexRule) ProtoReflect() protoreflect.Message {
+	mi := &file_banyandb_v1_schema_proto_msgTypes[11]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IndexRuleEvent_ShardedIndexRule.ProtoReflect.Descriptor instead.
+func (*IndexRuleEvent_ShardedIndexRule) Descriptor() ([]byte, []int) {
+	return file_banyandb_v1_schema_proto_rawDescGZIP(), []int{10, 0}
+}
+
+func (x *IndexRuleEvent_ShardedIndexRule) GetShardId() uint64 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+func (x *IndexRuleEvent_ShardedIndexRule) GetRules() []*IndexRule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
 var File_banyandb_v1_schema_proto protoreflect.FileDescriptor
 
 var file_banyandb_v1_schema_proto_rawDesc = []byte{
@@ -1119,7 +1245,27 @@ var file_banyandb_v1_schema_proto_rawDesc = []byte{
 	0x65, 0x64, 0x5f, 0x61, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f,
 	0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69,
 	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x09, 0x75, 0x70, 0x64, 0x61, 0x74, 0x65, 0x64,
-	0x41, 0x74, 0x42, 0x60, 0x0a, 0x1e, 0x6f, 0x72, 0x67, 0x2e, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65,
+	0x41, 0x74, 0x22, 0xbd, 0x02, 0x0a, 0x0e, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c, 0x65,
+	0x45, 0x76, 0x65, 0x6e, 0x74, 0x12, 0x2d, 0x0a, 0x06, 0x73, 0x65, 0x72, 0x69, 0x65, 0x73, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62,
+	0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52, 0x06, 0x73, 0x65,
+	0x72, 0x69, 0x65, 0x73, 0x12, 0x42, 0x0a, 0x05, 0x72, 0x75, 0x6c, 0x65, 0x73, 0x18, 0x02, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x76,
+	0x31, 0x2e, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c, 0x65, 0x45, 0x76, 0x65, 0x6e, 0x74,
+	0x2e, 0x53, 0x68, 0x61, 0x72, 0x64, 0x65, 0x64, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c,
+	0x65, 0x52, 0x05, 0x72, 0x75, 0x6c, 0x65, 0x73, 0x12, 0x2b, 0x0a, 0x06, 0x61, 0x63, 0x74, 0x69,
+	0x6f, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x13, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61,
+	0x6e, 0x64, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x06, 0x61,
+	0x63, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x2e, 0x0a, 0x04, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x05, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52,
+	0x04, 0x74, 0x69, 0x6d, 0x65, 0x1a, 0x5b, 0x0a, 0x10, 0x53, 0x68, 0x61, 0x72, 0x64, 0x65, 0x64,
+	0x49, 0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x49, 0x64, 0x12, 0x2c, 0x0a, 0x05, 0x72, 0x75, 0x6c, 0x65, 0x73, 0x18, 0x02, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x76,
+	0x31, 0x2e, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c, 0x65, 0x52, 0x05, 0x72, 0x75, 0x6c,
+	0x65, 0x73, 0x42, 0x60, 0x0a, 0x1e, 0x6f, 0x72, 0x67, 0x2e, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65,
 	0x2e, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67, 0x2e, 0x62, 0x61, 0x6e, 0x79,
 	0x61, 0x6e, 0x64, 0x62, 0x5a, 0x3e, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d,
 	0x2f, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2f, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69,
@@ -1141,52 +1287,60 @@ func file_banyandb_v1_schema_proto_rawDescGZIP() []byte {
 }
 
 var file_banyandb_v1_schema_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_banyandb_v1_schema_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_banyandb_v1_schema_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_banyandb_v1_schema_proto_goTypes = []interface{}{
-	(Duration_Duration)(0),        // 0: banyandb.v1.Duration.Duration
-	(FieldSpec_FieldType)(0),      // 1: banyandb.v1.FieldSpec.FieldType
-	(IndexObject_IndexType)(0),    // 2: banyandb.v1.IndexObject.IndexType
-	(Series_Catalog)(0),           // 3: banyandb.v1.Series.Catalog
-	(*ShardInfo)(nil),             // 4: banyandb.v1.ShardInfo
-	(*Duration)(nil),              // 5: banyandb.v1.Duration
-	(*FieldSpec)(nil),             // 6: banyandb.v1.FieldSpec
-	(*TraceStateMap)(nil),         // 7: banyandb.v1.TraceStateMap
-	(*TraceFieldMap)(nil),         // 8: banyandb.v1.TraceFieldMap
-	(*TraceSeries)(nil),           // 9: banyandb.v1.TraceSeries
-	(*IndexObject)(nil),           // 10: banyandb.v1.IndexObject
-	(*IndexRule)(nil),             // 11: banyandb.v1.IndexRule
-	(*Series)(nil),                // 12: banyandb.v1.Series
-	(*IndexRuleBinding)(nil),      // 13: banyandb.v1.IndexRuleBinding
-	(*Metadata)(nil),              // 14: banyandb.v1.Metadata
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
+	(Duration_Duration)(0),                  // 0: banyandb.v1.Duration.Duration
+	(FieldSpec_FieldType)(0),                // 1: banyandb.v1.FieldSpec.FieldType
+	(IndexObject_IndexType)(0),              // 2: banyandb.v1.IndexObject.IndexType
+	(Series_Catalog)(0),                     // 3: banyandb.v1.Series.Catalog
+	(*ShardInfo)(nil),                       // 4: banyandb.v1.ShardInfo
+	(*Duration)(nil),                        // 5: banyandb.v1.Duration
+	(*FieldSpec)(nil),                       // 6: banyandb.v1.FieldSpec
+	(*TraceStateMap)(nil),                   // 7: banyandb.v1.TraceStateMap
+	(*TraceFieldMap)(nil),                   // 8: banyandb.v1.TraceFieldMap
+	(*TraceSeries)(nil),                     // 9: banyandb.v1.TraceSeries
+	(*IndexObject)(nil),                     // 10: banyandb.v1.IndexObject
+	(*IndexRule)(nil),                       // 11: banyandb.v1.IndexRule
+	(*Series)(nil),                          // 12: banyandb.v1.Series
+	(*IndexRuleBinding)(nil),                // 13: banyandb.v1.IndexRuleBinding
+	(*IndexRuleEvent)(nil),                  // 14: banyandb.v1.IndexRuleEvent
+	(*IndexRuleEvent_ShardedIndexRule)(nil), // 15: banyandb.v1.IndexRuleEvent.ShardedIndexRule
+	(*Metadata)(nil),                        // 16: banyandb.v1.Metadata
+	(*timestamppb.Timestamp)(nil),           // 17: google.protobuf.Timestamp
+	(Action)(0),                             // 18: banyandb.v1.Action
 }
 var file_banyandb_v1_schema_proto_depIdxs = []int32{
 	0,  // 0: banyandb.v1.Duration.unit:type_name -> banyandb.v1.Duration.Duration
 	1,  // 1: banyandb.v1.FieldSpec.type:type_name -> banyandb.v1.FieldSpec.FieldType
 	7,  // 2: banyandb.v1.TraceFieldMap.state:type_name -> banyandb.v1.TraceStateMap
-	14, // 3: banyandb.v1.TraceSeries.metadata:type_name -> banyandb.v1.Metadata
+	16, // 3: banyandb.v1.TraceSeries.metadata:type_name -> banyandb.v1.Metadata
 	6,  // 4: banyandb.v1.TraceSeries.fields:type_name -> banyandb.v1.FieldSpec
 	8,  // 5: banyandb.v1.TraceSeries.reserved_fields_map:type_name -> banyandb.v1.TraceFieldMap
 	4,  // 6: banyandb.v1.TraceSeries.shard:type_name -> banyandb.v1.ShardInfo
 	5,  // 7: banyandb.v1.TraceSeries.duration:type_name -> banyandb.v1.Duration
-	15, // 8: banyandb.v1.TraceSeries.updated_at:type_name -> google.protobuf.Timestamp
+	17, // 8: banyandb.v1.TraceSeries.updated_at:type_name -> google.protobuf.Timestamp
 	2,  // 9: banyandb.v1.IndexObject.type:type_name -> banyandb.v1.IndexObject.IndexType
-	14, // 10: banyandb.v1.IndexRule.metadata:type_name -> banyandb.v1.Metadata
+	16, // 10: banyandb.v1.IndexRule.metadata:type_name -> banyandb.v1.Metadata
 	10, // 11: banyandb.v1.IndexRule.objects:type_name -> banyandb.v1.IndexObject
-	15, // 12: banyandb.v1.IndexRule.updated_at:type_name -> google.protobuf.Timestamp
+	17, // 12: banyandb.v1.IndexRule.updated_at:type_name -> google.protobuf.Timestamp
 	3,  // 13: banyandb.v1.Series.catalog:type_name -> banyandb.v1.Series.Catalog
-	14, // 14: banyandb.v1.Series.series:type_name -> banyandb.v1.Metadata
-	14, // 15: banyandb.v1.IndexRuleBinding.metadata:type_name -> banyandb.v1.Metadata
-	14, // 16: banyandb.v1.IndexRuleBinding.rule_ref:type_name -> banyandb.v1.Metadata
+	16, // 14: banyandb.v1.Series.series:type_name -> banyandb.v1.Metadata
+	16, // 15: banyandb.v1.IndexRuleBinding.metadata:type_name -> banyandb.v1.Metadata
+	16, // 16: banyandb.v1.IndexRuleBinding.rule_ref:type_name -> banyandb.v1.Metadata
 	12, // 17: banyandb.v1.IndexRuleBinding.subjects:type_name -> banyandb.v1.Series
-	15, // 18: banyandb.v1.IndexRuleBinding.begin_at:type_name -> google.protobuf.Timestamp
-	15, // 19: banyandb.v1.IndexRuleBinding.expire_at:type_name -> google.protobuf.Timestamp
-	15, // 20: banyandb.v1.IndexRuleBinding.updated_at:type_name -> google.protobuf.Timestamp
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	17, // 18: banyandb.v1.IndexRuleBinding.begin_at:type_name -> google.protobuf.Timestamp
+	17, // 19: banyandb.v1.IndexRuleBinding.expire_at:type_name -> google.protobuf.Timestamp
+	17, // 20: banyandb.v1.IndexRuleBinding.updated_at:type_name -> google.protobuf.Timestamp
+	16, // 21: banyandb.v1.IndexRuleEvent.series:type_name -> banyandb.v1.Metadata
+	15, // 22: banyandb.v1.IndexRuleEvent.rules:type_name -> banyandb.v1.IndexRuleEvent.ShardedIndexRule
+	18, // 23: banyandb.v1.IndexRuleEvent.action:type_name -> banyandb.v1.Action
+	17, // 24: banyandb.v1.IndexRuleEvent.time:type_name -> google.protobuf.Timestamp
+	11, // 25: banyandb.v1.IndexRuleEvent.ShardedIndexRule.rules:type_name -> banyandb.v1.IndexRule
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_banyandb_v1_schema_proto_init() }
@@ -1316,6 +1470,30 @@ func file_banyandb_v1_schema_proto_init() {
 				return nil
 			}
 		}
+		file_banyandb_v1_schema_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*IndexRuleEvent); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_banyandb_v1_schema_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*IndexRuleEvent_ShardedIndexRule); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1323,7 +1501,7 @@ func file_banyandb_v1_schema_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_banyandb_v1_schema_proto_rawDesc,
 			NumEnums:      4,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

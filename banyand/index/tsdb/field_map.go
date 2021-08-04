@@ -15,40 +15,50 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package event
+package tsdb
 
 import (
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var (
-	ShardEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "event-shard",
-	}
-	TopicShardEvent        = bus.UniTopic(ShardEventKindVersion.String())
-	SeriesEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "event-series",
-	}
-	TopicSeriesEvent     = bus.UniTopic(SeriesEventKindVersion.String())
-	IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "index-rule"}
-	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
-)
+var ErrFieldAbsent = errors.New("field doesn't exist")
 
-type Shard struct {
-	common.KindVersion
-	Payload v1.ShardEvent
+type fieldHashID uint64
+
+type fieldMap struct {
+	repo map[fieldHashID]*fieldValue
 }
 
-type Series struct {
-	common.KindVersion
-	Payload v1.SeriesEvent
+func newFieldMap(initialSize int) *fieldMap {
+	return &fieldMap{
+		repo: make(map[fieldHashID]*fieldValue, initialSize),
+	}
 }
 
-type IndexRule struct {
-	common.KindVersion
-	Payload *v1.IndexRuleEvent
+func (fm *fieldMap) createKey(key []byte) {
+	fm.repo[fieldHashID(convert.Hash(key))] = &fieldValue{
+		key:   key,
+		value: newPostingMap(),
+	}
+}
+
+func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
+	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
+	return v, ok
+}
+
+func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
+	pm, ok := fm.get(fv.Name)
+	if !ok {
+		return errors.Wrapf(ErrFieldAbsent, "filed Name:%s", fv.Name)
+	}
+	return pm.value.put(fv.Value, id)
+}
+
+type fieldValue struct {
+	key   []byte
+	value *postingMap
 }
