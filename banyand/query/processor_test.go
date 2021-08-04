@@ -364,13 +364,27 @@ func TestQueryProcessor(t *testing.T) {
 			wantLen: 6,
 		},
 		{
-			name: "Textual Index - query duration < 400",
+			name: "Textual Index - db.type == MySQL",
 			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
 					Fields("db.type", "=", "MySQL").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 2,
+		},
+		{
+			name: "Mixed Index - db.type == MySQL AND duration <= 300",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("db.type", "=", "MySQL", "duration", "<=", 300).
 					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
 					Projection("trace_id").
 					Build()
