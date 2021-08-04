@@ -19,7 +19,6 @@ package query
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"os"
 	"path"
 	"testing"
@@ -33,6 +32,7 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
