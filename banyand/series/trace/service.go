@@ -97,6 +97,7 @@ func (s *service) Serve() error {
 				Name:  sMeta.name,
 				Group: sMeta.group,
 			},
+			Catalog: v1.Series_CATALOG_TRACE,
 		}
 		rules, errGetRules := s.IndexRules(context.Background(), seriesObj, nil)
 		if errGetRules != nil {
