@@ -167,6 +167,7 @@ type writeCallback struct {
 
 type traceWriteDate struct {
 	shardID uint
+	seriesID []byte
 	writeRequest *v1.WriteRequest
 }
 

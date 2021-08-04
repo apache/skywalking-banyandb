@@ -165,11 +165,12 @@ func (s *Server) GracefulStop() {
 
 type traceWriteDate struct {
 	shardID uint
+	seriesID []byte
 	writeRequest *v1.WriteRequest
 }
 
-func mergeWriteData(id uint, writeEntity *v1.WriteRequest) traceWriteDate {
-	return traceWriteDate{shardID: id, writeRequest: writeEntity}
+func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID []byte) traceWriteDate {
+	return traceWriteDate{shardID: shardID, seriesID: seriesID, writeRequest: writeEntity}
 }
 
 func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
@@ -234,10 +235,9 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if shardIdError != nil {
 			return shardIdError
 		}
-		mergeData := mergeWriteData(shardID, writeEntity)
+		mergeData := mergeWriteData(shardID, writeEntity, seriesID)
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
-		writeEvent := event.TopicWriteEvent
-		_, errWritePub := s.repo.Publish(writeEvent, message)
+		_, errWritePub := s.repo.Publish(event.TopicWriteEvent, message)
 		if errWritePub != nil {
 			return errWritePub
 		}
