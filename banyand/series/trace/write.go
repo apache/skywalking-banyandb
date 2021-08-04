@@ -22,10 +22,12 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	bydb_bytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -95,7 +97,50 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		Uint("trace_shard_id", traceIDShardID).
 		Uint("shard_id", shardID).
 		Msg("written to Trace series")
+	id := common.ChunkID(chunkID)
+	for i, field := range entityVal.GetFields() {
+		fieldSpec := t.schema.Spec.GetFields()[i]
+		fieldName := fieldSpec.GetName()
+		switch x := field.ValueType.(type) {
+		case *v1.Field_Str:
+			err = multierr.Append(err, t.writeStrToIndex(shardID, id, fieldName, x.Str.GetValue()))
+		case *v1.Field_Int:
+			err = multierr.Append(err, t.writeIntToIndex(shardID, id, fieldName, x.Int.GetValue()))
+		case *v1.Field_StrArray:
+			for _, s := range x.StrArray.GetValue() {
+				err = multierr.Append(err, t.writeStrToIndex(shardID, id, fieldName, s))
+			}
+		case *v1.Field_IntArray:
+			for _, integer := range x.IntArray.GetValue() {
+				err = multierr.Append(err, t.writeIntToIndex(shardID, id, fieldName, integer))
+			}
+		default:
+			continue
+		}
+	}
 	return common.ChunkID(chunkID), err
+}
+
+func (t *traceSeries) writeIntToIndex(shardID uint, id common.ChunkID, name string, value int64) error {
+	return t.writeIndex(shardID, id, name, convert.Int64ToBytes(value))
+}
+
+func (t *traceSeries) writeStrToIndex(shardID uint, id common.ChunkID, name string, value string) error {
+	return t.writeIndex(shardID, id, name, []byte(value))
+}
+
+func (t *traceSeries) writeIndex(shardID uint, id common.ChunkID, name string, value []byte) error {
+	return t.idx.Insert(*common.NewMetadata(&v1.Metadata{
+		Name:  t.name,
+		Group: t.group,
+	}),
+		shardID,
+		&index.Field{
+			ChunkID: id,
+			Name:    name,
+			Value:   value,
+		},
+	)
 }
 
 // copyEntityValueWithoutDataBinary copies all fields without DataBinary

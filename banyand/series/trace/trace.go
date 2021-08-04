@@ -18,10 +18,6 @@
 package trace
 
 import (
-	"context"
-	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"log"
 	"strconv"
 	"time"
 
@@ -29,21 +25,19 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 const (
-	traceSeriesIDTemp = "%s:%s"
 	// KV stores
 	chunkIDMapping = "chunkIDMapping"
 	startTimeIndex = "startTimeIndex"
@@ -78,115 +72,6 @@ const (
 	StateError   = 1
 )
 
-var _ series.Service = (*service)(nil)
-
-type service struct {
-	db        storage.Database
-	schemaMap map[string]*traceSeries
-	l         *logger.Logger
-	repo      discovery.ServiceRepo
-	pipeline   queue.Queue
-	stopCh    chan struct{}
-	writeCallback *writeCallback
-}
-
-//NewService returns a new service
-func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo, pipeline queue.Queue) (series.Service, error) {
-	return &service{
-		db:   db,
-		repo: repo,
-		pipeline: pipeline,
-	}, nil
-}
-
-func (s *service) Name() string {
-	return "trace-series"
-}
-
-func (s *service) PreRun() error {
-	schemas, err := s.TraceSeries().List(context.Background(), schema.ListOpt{})
-	if err != nil {
-		return err
-	}
-	s.schemaMap = make(map[string]*traceSeries, len(schemas))
-	s.l = logger.GetLogger(s.Name())
-	for _, sa := range schemas {
-		ts, errTS := newTraceSeries(sa, s.l)
-		if errTS != nil {
-			return errTS
-		}
-		s.db.Register(ts)
-		id := fmt.Sprintf(traceSeriesIDTemp, ts.name, ts.group)
-		s.schemaMap[id] = ts
-		s.l.Info().Str("id", id).Msg("initialize Trace series")
-	}
-	return err
-}
-
-func (s *service) Serve() error {
-	now := time.Now().UnixNano()
-	for _, sMeta := range s.schemaMap {
-		e := pb.NewSeriesEventBuilder().
-			SeriesMetadata(sMeta.group, sMeta.name).
-			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
-			Time(time.Now()).
-			Action(v1.Action_ACTION_PUT).
-			Build()
-		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), e))
-		if err != nil {
-			return err
-		}
-		for i := 0; i < int(sMeta.shardNum); i++ {
-			t := time.Now()
-			e := pb.NewShardEventBuilder().Action(v1.Action_ACTION_PUT).Time(t).
-				Shard(
-					pb.NewShardBuilder().
-						ID(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
-						Node(pb.NewNodeBuilder().
-							ID(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
-							Build()).
-						Build()).
-				Build()
-			_, errShard := s.pipeline.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), e))
-			if errShard != nil {
-				return errShard
-			}
-		}
-	}
-	errWrite := s.repo.Subscribe(event.TopicWriteEvent, s.writeCallback)
-	if errWrite != nil {
-		return errWrite
-	}
-	s.stopCh = make(chan struct{})
-	<-s.stopCh
-	return nil
-}
-
-type writeCallback struct {
-}
-
-type traceWriteDate struct {
-	shardID uint
-	seriesID []byte
-	writeRequest *v1.WriteRequest
-}
-
-func (w *writeCallback)Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*traceWriteDate)
-	log.Println(writeEvent)
-	if !ok {
-		errors.New("invalid write data")
-		return
-	}
-	return
-}
-
-func (s *service) GracefulStop() {
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
-}
-
 func (s *service) FetchTrace(traceSeries common.Metadata, traceID string, opt series.ScanOptions) (data.Trace, error) {
 	ts, err := s.getSeries(traceSeries)
 	if err != nil {
@@ -212,7 +97,7 @@ func (s *service) ScanEntity(traceSeries common.Metadata, startTime, endTime uin
 }
 
 func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
-	id := getTraceSeriesID(traceSeries)
+	id := formatTraceSeriesID(traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
 	s.l.Debug().Str("id", id).Msg("got Trace series")
 	ts, ok := s.schemaMap[id]
 	if !ok {
@@ -221,8 +106,32 @@ func (s *service) getSeries(traceSeries common.Metadata) (*traceSeries, error) {
 	return ts, nil
 }
 
-func getTraceSeriesID(traceSeries common.Metadata) string {
-	return fmt.Sprintf(traceSeriesIDTemp, traceSeries.Spec.GetName(), traceSeries.Spec.GetGroup())
+func (s *service) Write(traceSeriesMetadata common.Metadata, ts time.Time, seriesID, entityID string, dataBinary []byte, items ...interface{}) (bool, error) {
+	traceSeries, err := s.getSeries(traceSeriesMetadata)
+	if err != nil {
+		return false, err
+	}
+
+	ev := pb.NewEntityValueBuilder().
+		DataBinary(dataBinary).
+		EntityID(entityID).
+		Fields(items...).
+		Timestamp(ts).
+		Build()
+
+	seriesIDBytes := []byte(seriesID)
+	shardID, shardIdError := partition.ShardID(seriesIDBytes, traceSeries.shardNum)
+	if shardIdError != nil {
+		return err == nil, shardIdError
+	}
+	_, err = traceSeries.Write(common.SeriesID(convert.Hash(seriesIDBytes)), shardID, data.EntityValue{
+		EntityValue: ev,
+	})
+	return err == nil, err
+}
+
+func formatTraceSeriesID(name, group string) string {
+	return name + ":" + group
 }
 
 type traceSeries struct {
@@ -233,6 +142,7 @@ type traceSeries struct {
 	schema                       apischema.TraceSeries
 	reader                       storage.StoreRepo
 	writePoint                   storage.GetWritePoint
+	idx                          index.Service
 	shardNum                     uint32
 	fieldIndex                   map[string]int
 	traceIDIndex                 int
@@ -247,11 +157,12 @@ type traceSeries struct {
 	fieldsNamesCompositeSeriesID []string
 }
 
-func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger) (*traceSeries, error) {
+func newTraceSeries(schema apischema.TraceSeries, l *logger.Logger, idx index.Service) (*traceSeries, error) {
 	t := &traceSeries{
 		schema: schema,
 		idGen:  series.NewIDGen(),
 		l:      l,
+		idx:    idx,
 	}
 	meta := t.schema.Spec.GetMetadata()
 	shardInfo := t.schema.Spec.GetShard()

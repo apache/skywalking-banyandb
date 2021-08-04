@@ -185,3 +185,14 @@ message IndexRuleBinding {
   // updated_at_nanoseconds indicates when the IndexRuleBinding is updated
   google.protobuf.Timestamp updated_at = 6;
 }
+
+message IndexRuleEvent {
+  Metadata series = 1;
+  message ShardedIndexRule {
+    uint64 shard_id = 1;
+    repeated IndexRule rules  = 2;
+  }
+  repeated ShardedIndexRule rules = 2;
+  Action action = 4;
+  google.protobuf.Timestamp time = 5;
+}

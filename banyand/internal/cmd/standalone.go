@@ -57,15 +57,15 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate database")
 	}
-	idx, err := index.NewService(ctx, repo, pipeline)
+	idx, err := index.NewService(ctx, repo)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate index builder")
 	}
-	traceSeries, err := trace.NewService(ctx, db, repo, pipeline)
+	traceSeries, err := trace.NewService(ctx, db, repo, idx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	q, err := query.NewExecutor(ctx, idx, traceSeries)
+	q, err := query.NewExecutor(ctx, repo, idx, traceSeries, traceSeries)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}

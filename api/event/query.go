@@ -15,23 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package queue
+package event
 
 import (
-	"context"
-
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Queue interface {
-	run.Config
-	run.PreRunner
-	bus.Subscriber
-	bus.Publisher
-}
-
-func NewQueue(ctx context.Context, repo discovery.ServiceRepo) (Queue, error) {
-	return &Local{repo: repo}, nil
-}
+var (
+	QueryEventKindVersion = common.KindVersion{
+		Version: "v1",
+		Kind:    "event-query",
+	}
+	// TopicQueryEvent is a bidirectional topic for request/response communication
+	// between Liaison and Query module
+	TopicQueryEvent = bus.BiTopic(QueryEventKindVersion.String())
+)

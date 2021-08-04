@@ -44,6 +44,7 @@ release: default  ## Build the release artifacts for all projects, usually the s
 ##@ Test targets
 
 test: TARGET=test
+test: PROJECTS:=$(PROJECTS) pkg
 test: default          ## Run the unit tests in all projects
 
 test-race: TARGET=test-race
