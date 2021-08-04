@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
@@ -57,9 +56,7 @@ func (s *service) Search(series common.Metadata, shardID uint, startTime, endTim
 	if errBuild != nil {
 		return nil, err
 	}
-	if s.log.Should(zerolog.DebugLevel) {
-		s.log.Debug().Interface("search-tree", tree).Msg("build search tree")
-	}
+	s.log.Debug().Interface("search-tree", tree).Msg("build search tree")
 
 	result, err := tree.execute()
 	if result == nil {

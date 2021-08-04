@@ -40,10 +40,3 @@ func (l *Logger) Named(name string) *Logger {
 	subLogger := root.Logger.With().Str("module", module).Logger()
 	return &Logger{module: module, Logger: &subLogger}
 }
-
-func (l *Logger) Should(lvl zerolog.Level) bool {
-	if lvl < l.GetLevel() || lvl < zerolog.GlobalLevel() {
-		return false
-	}
-	return true
-}

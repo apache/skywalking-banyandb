@@ -120,10 +120,9 @@ func (s *service) Insert(series common.Metadata, shardID uint, field *Field) err
 }
 
 func (s *service) getShard(series common.Metadata, shardID uint) (*shard, error) {
-	id := compositeSeriesID(series.Spec)
-	ss, ok := s.meta.meta[id]
-	if !ok {
-		return nil, errors.Wrapf(ErrTraceSeriesNotFound, "identify:%s", id)
+	ss := s.meta.get(series.Spec)
+	if ss == nil {
+		return nil, errors.Wrapf(ErrTraceSeriesNotFound, "identify:%s", compositeSeriesID(series.Spec))
 	}
 	sd, existSearcher := ss.repo[shardID]
 	if !existSearcher {
