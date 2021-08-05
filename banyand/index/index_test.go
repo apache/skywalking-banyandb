@@ -108,7 +108,7 @@ func Test_service_Insert(t *testing.T) {
 					Value:   convert.Int64ToBytes(500),
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -172,14 +172,9 @@ func setUpModules(tester *assert.Assertions) *service {
 	tester.NoError(err)
 	s, ok := svc.(*service)
 	tester.True(ok)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if s.meta.get(seriesID) != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			tester.Fail("timeout")
-		}
-	}
+
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+	tester.True(svc.Ready(ctx, MetaExists("default", "sw")))
 	return s
 }
