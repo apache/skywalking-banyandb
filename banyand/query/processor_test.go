@@ -111,6 +111,10 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 		tester.NoError(err)
 	}()
 
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
+
 	return repo, traceSvc, func() {
 		db.GracefulStop()
 		_ = os.RemoveAll(rootPath)
@@ -269,10 +273,9 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 	}
 
 	for _, ev := range entityValues {
-		_, _ = svc.Write(metadata, ev.ts, ev.seriesID, ev.entityID, ev.dataBinary, ev.items...)
-		// TODO: every field should be indexed?
-		//tester.True(ok)
-		//tester.NoError(err)
+		ok, err := svc.Write(metadata, ev.ts, ev.seriesID, ev.entityID, ev.dataBinary, ev.items...)
+		tester.True(ok)
+		tester.NoError(err)
 	}
 }
 

@@ -38,7 +38,6 @@ import (
 var (
 	ErrShardNotFound       = errors.New("series doesn't exist")
 	ErrTraceSeriesNotFound = errors.New("trace series not found")
-	ErrUnknownField        = errors.New("the field is unknown")
 )
 
 type Condition struct {
@@ -64,9 +63,25 @@ type Builder interface {
 	run.Service
 }
 
+type ReadyOption func(map[string]*series) bool
+
+func MetaExists(group, name string) ReadyOption {
+	seriesID := &apiv1.Metadata{
+		Name:  "sw",
+		Group: "default",
+	}
+	return func(m map[string]*series) bool {
+		if _, ok := m[compositeSeriesID(seriesID)]; ok {
+			return true
+		}
+		return false
+	}
+}
+
 type Service interface {
 	Repo
 	Builder
+	Ready(context.Context, ...ReadyOption) bool
 }
 
 type series struct {
@@ -108,7 +123,7 @@ func (s *service) Insert(series common.Metadata, shardID uint, field *Field) err
 	}
 	objects, ok := sd.meta[field.Name]
 	if !ok {
-		return ErrUnknownField
+		return nil
 	}
 	for _, object := range objects {
 		err = multierr.Append(err, sd.store.Insert(&tsdb.Field{
@@ -151,6 +166,28 @@ func (s *service) Serve() error {
 func (s *service) GracefulStop() {
 	if s.stopCh != nil {
 		close(s.stopCh)
+	}
+}
+
+func (s *service) Ready(ctx context.Context, options ...ReadyOption) bool {
+	options = append(options, func(m map[string]*series) bool {
+		return len(m) > 0
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err() == nil
+		default:
+			allMatches := true
+			for _, opt := range options {
+				allMatches = allMatches && opt(s.meta.meta)
+			}
+			if !allMatches {
+				continue
+			}
+			return true
+		}
 	}
 }
 
