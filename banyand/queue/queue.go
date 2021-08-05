@@ -32,5 +32,8 @@ type Queue interface {
 }
 
 func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {
-	return &local{repo: repo}, nil
+	return &local{
+		repo:  repo,
+		local: bus.NewBus(),
+	}, nil
 }
