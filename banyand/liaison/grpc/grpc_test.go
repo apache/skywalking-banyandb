@@ -19,54 +19,47 @@ package grpc_test
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"log"
-	"net"
 	"testing"
 	"time"
 
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
+	grpclib "google.golang.org/grpc"
 )
 
 var (
 	serverAddr = "localhost:17912"
 )
-
-func Test_server_start(t *testing.T) {
+func setup(t *testing.T) {
+	_ = logger.Bootstrap()
+	repo, err := discovery.NewServiceRepo(context.TODO())
+	if err != nil {
+		log.Fatalf("failed to initiate service repository")
+	}
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	if err != nil {
+		log.Fatal("failed to initiate data pipeline")
+	}
+	tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
+	if err != nil {
+		log.Fatal("failed to initiate Endpoint transport layer")
+	}
+	tcp.FlagSet()
 	go func() {
-		lis, err := net.Listen("tcp", serverAddr)
-		if err != nil {
-			log.Fatalf("failed to listen: %v", err)
-		}
-		var opts []grpclib.ServerOption
-		if *grpc.Tls {
-			if *grpc.CertFile == "" {
-				*grpc.CertFile = data.Path("x509/server_cert.pem")
-			}
-			if *grpc.KeyFile == "" {
-				*grpc.KeyFile = data.Path("x509/server_key.pem")
-			}
-			creds, err := credentials.NewServerTLSFromFile(*grpc.CertFile, *grpc.KeyFile)
-			if err != nil {
-				log.Fatalf("Failed to generate credentials %v", err)
-			}
-			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
-		}
-		ser := grpclib.NewServer(opts...)
-		v1.RegisterTraceServiceServer(ser, &grpc.Server{})
-		if err := ser.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
-		}
+		assert.NoError(t, err)
+		assert.NoError(t,tcp.PreRun())
+		assert.NoError(t, tcp.Serve())
 	}()
 }
-
 func Test_trace_write(t *testing.T) {
+	setup(t)
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
@@ -122,6 +115,7 @@ func Test_trace_write(t *testing.T) {
 	<-waitc
 }
 func Test_trace_query(t *testing.T) {
+	setup(t)
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions())
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)

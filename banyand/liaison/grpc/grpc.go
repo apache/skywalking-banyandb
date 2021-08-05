@@ -50,8 +50,6 @@ var (
 	Tls             = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
 	CertFile        = flag.String("cert_file", "", "The TLS cert file")
 	KeyFile         = flag.String("key_file", "", "The TLS key file")
-	shardEventData  *v1.ShardEvent
-	seriesEventData *v1.SeriesEvent
 )
 
 type Server struct {
@@ -67,6 +65,7 @@ type Server struct {
 
 type shardInfo struct {
 	log *logger.Logger
+	shardEventData  *v1.ShardEvent
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -75,7 +74,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	shardEventData = shardEvent
+	s.shardEventData = shardEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
 		Uint64("shardID", shardEvent.Shard.Id).
@@ -85,6 +84,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 
 type seriesInfo struct {
 	log *logger.Logger
+	seriesEventData *v1.SeriesEvent
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -93,7 +93,7 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	seriesEventData = seriesEvent
+	s.seriesEventData = seriesEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
 		Str("name", seriesEvent.Series.Name).
@@ -190,14 +190,14 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if ruleError != nil {
 			return ruleError
 		}
-		if seriesEventData == nil {
+		if s.seriesInfo.seriesEventData == nil {
 			return errors.New("No seriesEvents")
 		}
-		seriesIdLen := len(seriesEventData.FieldNamesCompositeSeriesId)
+		seriesIdLen := len(s.seriesInfo.seriesEventData.FieldNamesCompositeSeriesId)
 		var str string
 		var arr []string
 		for i := 0; i < seriesIdLen; i++ {
-			id := seriesEventData.FieldNamesCompositeSeriesId[i]
+			id := s.seriesInfo.seriesEventData.FieldNamesCompositeSeriesId[i]
 			if defined, sub := schema.FieldSubscript(id); defined {
 				for _, field := range writeEntity.GetEntity().GetFields() {
 					switch v := field.GetValueType().(type) {
@@ -224,7 +224,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 			return errors.New("invalid seriesID")
 		}
 		seriesID := []byte(str)
-		shardNum := shardEventData.GetShard().GetId()
+		shardNum := s.shardInfo.shardEventData.GetShard().GetId()
 		if shardNum < 1 {
 			shardNum = 1
 		}
@@ -234,7 +234,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		}
 		mergeData := mergeWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
-		_, errWritePub := s.repo.Publish(event.TopicWriteEvent, message)
+		_, errWritePub := s.pipeline.Publish(event.TopicWriteEvent, message)
 		if errWritePub != nil {
 			return errWritePub
 		}

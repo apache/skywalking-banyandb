@@ -146,7 +146,7 @@ func (s *service) Serve() error {
 			return errPublishRules
 		}
 	}
-	errWrite := s.repo.Subscribe(event.TopicWriteEvent, s.writeListener)
+	errWrite := s.pipeline.Subscribe(event.TopicWriteEvent, s.writeListener)
 	if errWrite != nil {
 		return errWrite
 	}
@@ -162,7 +162,7 @@ func (s *service) GracefulStop() {
 }
 
 type writeCallback struct {
-	schemaMap     map[string]*traceSeries
+	schemaMap map[string]*traceSeries
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
