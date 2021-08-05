@@ -308,6 +308,19 @@ func TestQueryProcessor(t *testing.T) {
 			wantLen: 0,
 		},
 		{
+			name: "query given timeRange which slightly covers the first three segments",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 3,
+		},
+		{
 			name: "query TraceID given timeRange includes the time range of data",
 			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
