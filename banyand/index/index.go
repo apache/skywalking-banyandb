@@ -123,6 +123,7 @@ func (s *service) Insert(series common.Metadata, shardID uint, field *Field) err
 	}
 	objects, ok := sd.meta[field.Name]
 	if !ok {
+		s.log.Debug().Str("field", field.Name).Msg("field is not indexed")
 		return nil
 	}
 	for _, object := range objects {
@@ -182,6 +183,9 @@ func (s *service) Ready(ctx context.Context, options ...ReadyOption) bool {
 			allMatches := true
 			for _, opt := range options {
 				allMatches = allMatches && opt(s.meta.meta)
+				if !allMatches {
+					break
+				}
 			}
 			if !allMatches {
 				continue
