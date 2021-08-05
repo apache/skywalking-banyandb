@@ -182,8 +182,7 @@ func (s *service) Ready(ctx context.Context, options ...ReadyOption) bool {
 		default:
 			allMatches := true
 			for _, opt := range options {
-				allMatches = allMatches && opt(s.meta.meta)
-				if !allMatches {
+				if allMatches = opt(s.meta.meta); !allMatches {
 					break
 				}
 			}
