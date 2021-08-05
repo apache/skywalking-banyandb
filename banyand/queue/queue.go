@@ -26,12 +26,11 @@ import (
 )
 
 type Queue interface {
-	run.Config
-	run.PreRunner
+	run.Unit
 	bus.Subscriber
 	bus.Publisher
 }
 
-func NewQueue(ctx context.Context, repo discovery.ServiceRepo) (Queue, error) {
-	return &Local{repo: repo}, nil
+func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {
+	return &local{repo: repo}, nil
 }
