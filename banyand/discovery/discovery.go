@@ -19,6 +19,7 @@ package discovery
 
 import (
 	"context"
+
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )

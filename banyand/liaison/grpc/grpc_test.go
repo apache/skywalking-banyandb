@@ -19,8 +19,6 @@ package grpc_test
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
@@ -28,11 +26,14 @@ import (
 	"time"
 
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
+
 var (
 	serverAddr = "localhost:17912"
 )
@@ -76,13 +77,22 @@ func Test_trace_write(t *testing.T) {
 	ctx := context.Background()
 	entityValue := pb.NewEntityValueBuilder().
 		EntityID("entityId").
-		DataBinary([]byte{byte(12)}).
-		Fields("service_instance_id", "service_id_1234", "service_instance_id_43543").
+		DataBinary([]byte{12}).
+		Fields("trace_id-xxfff.111323",
+			0,
+			"webapp_id",
+			"10.0.0.1_id",
+			"/home_id",
+			"webapp",
+			"10.0.0.1",
+			"/home",
+			300,
+			1622933202000000000).
 		Timestamp(time.Now()).
 		Build()
 	criteria := pb.NewWriteEntityBuilder().
 		EntityValue(entityValue).
-		Metadata("default", "trace").
+		Metadata("default", "sw").
 		Build()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {

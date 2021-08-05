@@ -28,7 +28,7 @@ var (
 		Version: "v1",
 		Kind:    "event-shard",
 	}
-	TopicShardEvent        = bus.UniTopic(ShardEventKindVersion.String())
+	TopicShardEvent = bus.UniTopic(ShardEventKindVersion.String())
 
 	SeriesEventKindVersion = common.KindVersion{
 		Version: "v1",
@@ -47,8 +47,8 @@ var (
 )
 
 type TraceWriteDate struct {
-	ShardID uint
-	SeriesID uint64
+	ShardID      uint
+	SeriesID     uint64
 	WriteRequest *v1.WriteRequest
 }
 

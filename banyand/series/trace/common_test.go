@@ -68,7 +68,7 @@ func setup(t *testing.T) (*traceSeries, func()) {
 	ctrl := gomock.NewController(t)
 	mockIndex := index.NewMockService(ctrl)
 	mockIndex.EXPECT().Insert(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	svc, err := NewService(context.TODO(), db, nil, mockIndex)
+	svc, err := NewService(context.TODO(), db, nil, mockIndex, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, svc.PreRun())
 	assert.NoError(t, db.PreRun())

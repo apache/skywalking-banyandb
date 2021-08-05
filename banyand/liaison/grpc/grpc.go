@@ -21,8 +21,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
@@ -31,12 +29,14 @@ import (
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -45,13 +45,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
 var (
-	Tls        = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	CertFile   = flag.String("cert_file", "", "The TLS cert file")
-	KeyFile    = flag.String("key_file", "", "The TLS key file")
-	shardEventData *v1.ShardEvent
-    seriesEventData *v1.SeriesEvent
+	Tls             = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	CertFile        = flag.String("cert_file", "", "The TLS cert file")
+	KeyFile         = flag.String("key_file", "", "The TLS key file")
+	shardEventData  *v1.ShardEvent
+	seriesEventData *v1.SeriesEvent
 )
+
 type Server struct {
 	addr       string
 	log        *logger.Logger

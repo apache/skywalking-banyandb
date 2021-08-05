@@ -19,16 +19,18 @@ package trace
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/pkg/errors"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"log"
 	"time"
 
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
@@ -40,23 +42,24 @@ import (
 var _ series.Service = (*service)(nil)
 
 type service struct {
-	db        storage.Database
-	schemaMap map[string]*traceSeries
-	l         *logger.Logger
-	repo      discovery.ServiceRepo
-	stopCh    chan struct{}
-	idx       index.Service
-	writeCallback *writeCallback
-	pipeline queue.Queue
+	db            storage.Database
+	schemaMap     map[string]*traceSeries
+	l             *logger.Logger
+	repo          discovery.ServiceRepo
+	stopCh        chan struct{}
+	idx           index.Service
+	writeListener *writeCallback
+	pipeline      queue.Queue
 }
 
 //NewService returns a new service
 func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo, idx index.Service, pipeline queue.Queue) (series.Service, error) {
 	return &service{
-		db:   db,
-		repo: repo,
-		idx:  idx,
-		pipeline: pipeline,
+		db:            db,
+		repo:          repo,
+		idx:           idx,
+		pipeline:      pipeline,
+		writeListener: &writeCallback{},
 	}, nil
 }
 
@@ -70,6 +73,7 @@ func (s *service) PreRun() error {
 		return err
 	}
 	s.schemaMap = make(map[string]*traceSeries, len(schemas))
+	s.writeListener.schemaMap = make(map[string]*traceSeries, len(schemas))
 	s.l = logger.GetLogger(s.Name())
 	for _, sa := range schemas {
 		ts, errTS := newTraceSeries(sa, s.l, s.idx)
@@ -79,6 +83,7 @@ func (s *service) PreRun() error {
 		s.db.Register(ts)
 		id := formatTraceSeriesID(ts.name, ts.group)
 		s.schemaMap[id] = ts
+		s.writeListener.schemaMap[id] = ts
 		s.l.Info().Str("id", id).Msg("initialize Trace series")
 	}
 	return err
@@ -140,7 +145,7 @@ func (s *service) Serve() error {
 			return errPublishRules
 		}
 	}
-	errWrite := s.repo.Subscribe(event.TopicWriteEvent, s.writeCallback)
+	errWrite := s.repo.Subscribe(event.TopicWriteEvent, s.writeListener)
 	if errWrite != nil {
 		return errWrite
 	}
@@ -156,14 +161,22 @@ func (s *service) GracefulStop() {
 }
 
 type writeCallback struct {
+	schemaMap     map[string]*traceSeries
 }
 
-func (w *writeCallback)Rev(message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	writeEvent, ok := message.Data().(event.TraceWriteDate)
-	log.Println("writeEvent:", writeEvent)
 	if !ok {
 		errors.New("invalid write data")
 		return
 	}
+	entityValue := writeEvent.WriteRequest.GetEntity()
+	ts := writeEvent.WriteRequest.GetMetadata()
+	id := formatTraceSeriesID(ts.GetName(), ts.GetGroup())
+	w.schemaMap[id].Write(common.SeriesID(writeEvent.SeriesID), writeEvent.ShardID, mergeData(entityValue))
 	return
+}
+
+func mergeData(value *v1.EntityValue) data.EntityValue {
+	return data.EntityValue{value}
 }
