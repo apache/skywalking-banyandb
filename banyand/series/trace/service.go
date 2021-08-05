@@ -19,6 +19,7 @@ package trace
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
@@ -46,14 +47,16 @@ type service struct {
 	stopCh    chan struct{}
 	idx       index.Service
 	writeCallback *writeCallback
+	pipeline queue.Queue
 }
 
 //NewService returns a new service
-func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo, idx index.Service) (series.Service, error) {
+func NewService(_ context.Context, db storage.Database, repo discovery.ServiceRepo, idx index.Service, pipeline queue.Queue) (series.Service, error) {
 	return &service{
 		db:   db,
 		repo: repo,
 		idx:  idx,
+		pipeline: pipeline,
 	}, nil
 }
 
