@@ -80,8 +80,8 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		Put(traceID, bydb_bytes.Join(convert.Uint16ToBytes(uint16(shardID)), chunkIDBytes), entityTs); err != nil {
 		return 0, errors.Wrap(err, "failed to Trace index")
 	}
-	//entityTsBytes := convert.Uint64ToBytes(entityTs)
-	err = wp.Writer(shardID, startTimeIndex).Put(bydb_bytes.Join(stateBytes, wallTsBytes, chunkIDBytes), nil)
+	entityTsBytes := convert.Uint64ToBytes(entityTs)
+	err = wp.Writer(shardID, startTimeIndex).Put(bydb_bytes.Join(stateBytes, entityTsBytes, chunkIDBytes), nil)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to write start time index")
 	}
