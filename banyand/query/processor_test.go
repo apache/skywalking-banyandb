@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -33,6 +32,7 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
@@ -63,6 +63,10 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(err)
 	tester.NotNil(repo)
 
+	// Init `Index` module
+	indexSvc, err := index.NewService(context.TODO(), repo)
+	tester.NoError(err)
+
 	// Init `Database` module
 	db, err := storage.NewDB(context.TODO(), repo)
 	tester.NoError(err)
@@ -72,27 +76,44 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	ctrl := gomock.NewController(t)
-	mockIndex := index.NewMockService(ctrl)
-	mockIndex.EXPECT().Insert(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	traceSvc, err := trace.NewService(context.TODO(), db, repo, mockIndex)
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc)
 	tester.NoError(err)
 
 	// Init `Query` module
-	executor, err := NewExecutor(context.TODO(), repo, nil, traceSvc, traceSvc)
+	executor, err := NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
 	tester.NoError(err)
+
+	// Init `Liaison` module
+	liaison := grpc.NewServer(context.TODO(), nil, repo)
 
 	// :PreRun:
 	// 1) TraceSeries,
 	// 2) Database
+	// 3) Index
 	err = traceSvc.PreRun()
 	tester.NoError(err)
 
 	err = db.PreRun()
 	tester.NoError(err)
 
+	err = indexSvc.PreRun()
+	tester.NoError(err)
+
 	err = executor.PreRun()
 	tester.NoError(err)
+
+	err = liaison.PreRun()
+	tester.NoError(err)
+
+	// :Serve:
+	go func() {
+		err = traceSvc.Serve()
+		tester.NoError(err)
+	}()
+
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
 
 	return repo, traceSvc, func() {
 		db.GracefulStop()
@@ -290,6 +311,19 @@ func TestQueryProcessor(t *testing.T) {
 			wantLen: 0,
 		},
 		{
+			name: "query given timeRange which slightly covers the first three segments",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 3,
+		},
+		{
 			name: "query TraceID given timeRange includes the time range of data",
 			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
@@ -316,6 +350,62 @@ func TestQueryProcessor(t *testing.T) {
 					Build()
 			},
 			wantLen: 1,
+		},
+		{
+			name: "Numerical Index - query duration < 200",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(1).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("duration", "<", 200).
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 0,
+		},
+		{
+			name: "Numerical Index - query duration < 400",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("duration", "<", 400).
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 6,
+		},
+		{
+			name: "Textual Index - db.type == MySQL",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("db.type", "=", "MySQL").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 2,
+		},
+		{
+			name: "Mixed Index - db.type == MySQL AND duration <= 300",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("db.type", "=", "MySQL", "duration", "<=", 300).
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			wantLen: 2,
 		},
 	}
 

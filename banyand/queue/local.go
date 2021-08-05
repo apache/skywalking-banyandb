@@ -18,87 +18,26 @@
 package queue
 
 import (
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const name = "storage-engine"
+var _ bus.Publisher = (*local)(nil)
+var _ bus.Subscriber = (*local)(nil)
 
-type Component interface {
-	ComponentName() string
+type local struct {
+	local *bus.Bus
+	repo  discovery.ServiceRepo
 }
 
-type DataSubscriber interface {
-	Component
-	Sub(subscriber bus.Subscriber) error
+func (l *local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
+	return l.local.Subscribe(topic, listener)
 }
 
-type DataPublisher interface {
-	Component
-	Pub(publisher bus.Publisher) error
+func (l *local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
+	return l.local.Publish(topic, message...)
 }
 
-var _ run.PreRunner = (*Local)(nil)
-var _ run.Config = (*Local)(nil)
-var _ bus.Publisher = (*Local)(nil)
-var _ bus.Subscriber = (*Local)(nil)
-
-type Local struct {
-	logger  *logger.Logger
-	test    string
-	dataBus *bus.Bus
-	dps     []DataPublisher
-	dss     []DataSubscriber
-	repo    discovery.ServiceRepo
-}
-
-func (e *Local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
-	return nil
-}
-
-func (e *Local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
-	return nil, nil
-}
-
-func (e *Local) FlagSet() *run.FlagSet {
-	e.logger = logger.GetLogger(name)
-	fs := run.NewFlagSet("storage")
-	fs.StringVarP(&e.test, "storage.test", "", "a", "test config")
-	return fs
-}
-
-func (e *Local) Validate() error {
-	e.logger.Info().Str("val", e.test).Msg("test")
-	return nil
-}
-
-func (e Local) Name() string {
-	return name
-}
-
-func (e *Local) PreRun() error {
-	var err error
-	e.dataBus = bus.NewBus()
-	for _, dp := range e.dps {
-		err = multierr.Append(err, dp.Pub(e.dataBus))
-	}
-	for _, ds := range e.dss {
-		err = multierr.Append(err, ds.Sub(e.dataBus))
-	}
-	return err
-}
-
-func (e *Local) Register(component ...Component) {
-	for _, c := range component {
-		if ds, ok := c.(DataSubscriber); ok {
-			e.dss = append(e.dss, ds)
-		}
-		if ps, ok := c.(DataPublisher); ok {
-			e.dps = append(e.dps, ps)
-		}
-	}
+func (l local) Name() string {
+	return "local-pipeline"
 }
