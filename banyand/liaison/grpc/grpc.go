@@ -37,7 +37,6 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-
 	serverData "github.com/apache/skywalking-banyandb/banyand/liaison/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -49,9 +48,9 @@ import (
 )
 
 var (
-	tls             = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	certFile        = flag.String("cert_file", "", "The TLS cert file")
-	keyFile         = flag.String("key_file", "", "The TLS key file")
+	tls      = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	certFile = flag.String("cert_file", "", "The TLS cert file")
+	keyFile  = flag.String("key_file", "", "The TLS key file")
 )
 
 type Server struct {
@@ -66,8 +65,8 @@ type Server struct {
 }
 
 type shardInfo struct {
-	log *logger.Logger
-	shardEvent  *v1.ShardEvent
+	log        *logger.Logger
+	shardEvent *v1.ShardEvent
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -85,7 +84,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 }
 
 type seriesInfo struct {
-	log *logger.Logger
+	log         *logger.Logger
 	seriesEvent *v1.SeriesEvent
 }
 
@@ -168,7 +167,7 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
+func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
 	return data.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
 }
 
@@ -195,10 +194,10 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if s.seriesInfo.seriesEvent == nil {
 			return errors.New("No seriesEvents")
 		}
-		seriesIdLen := len(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId)
+		seriesIDLen := len(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId)
 		var str string
 		var arr []string
-		for i := 0; i < seriesIdLen; i++ {
+		for i := 0; i < seriesIDLen; i++ {
 			id := s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId[i]
 			if defined, sub := schema.FieldSubscript(id); defined {
 				for _, field := range writeEntity.GetEntity().GetFields() {
@@ -230,11 +229,11 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if shardNum < 1 {
 			shardNum = 1
 		}
-		shardID, shardIdError := partition.ShardID(seriesID, uint32(shardNum))
-		if shardIdError != nil {
-			return shardIdError
+		shardID, shardIDError := partition.ShardID(seriesID, uint32(shardNum))
+		if shardIDError != nil {
+			return shardIDError
 		}
-		mergeData := mergeWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
+		mergeData := assemblyWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
 		_, errWritePub := s.pipeline.Publish(data.TopicWriteEvent, message)
 		if errWritePub != nil {

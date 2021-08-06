@@ -19,18 +19,6 @@ package grpc_test
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/liaison"
-	"github.com/apache/skywalking-banyandb/banyand/query"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/banyand/series/trace"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	googleUUID "github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"log"
 	"os"
@@ -38,16 +26,28 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	googleUUID "github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	grpclib "google.golang.org/grpc"
+
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/query"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/series/trace"
+	"github.com/apache/skywalking-banyandb/banyand/storage"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
 var (
 	serverAddr = "localhost:17912"
 )
-func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
-	//_ = logger.Bootstrap()
+
+func setupService(t *testing.T, tester *require.Assertions) func() {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -56,7 +56,7 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 	repo, err := discovery.NewServiceRepo(context.Background())
 	tester.NoError(err)
 	tester.NotNil(repo)
-	// Init `pipeline` module
+	// Init `Queue` module
 	pipeline, err := queue.NewQueue(context.TODO(), repo)
 	tester.NoError(err)
 	// Init `Database` module
@@ -91,23 +91,26 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 	err = executor.PreRun()
 	tester.NoError(err)
 
-	//tcp.FlagSet()
+	tcp.FlagSet()
 	err = tcp.PreRun()
 	tester.NoError(err)
+
+	go func() {
+		tester.NoError(traceSvc.Serve())
+		tester.NoError(err)
+	}()
 
 	go func() {
 		tester.NoError(tcp.Serve())
 		tester.NoError(err)
 	}()
 
-	err = traceSvc.Serve()
-	tester.NoError(err)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFunc()
 
 	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
 
-	return repo, traceSvc, func() {
+	return func() {
 		db.GracefulStop()
 		_ = os.RemoveAll(rootPath)
 	}
@@ -115,7 +118,7 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 
 func TestTraceWrite(t *testing.T) {
 	tester := require.New(t)
-	_, _, gracefulStop := setupService(t, tester)
+	gracefulStop := setupService(t, tester)
 	defer gracefulStop()
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
 	assert.NoError(t, err)

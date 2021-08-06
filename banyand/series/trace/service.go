@@ -174,10 +174,10 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	entityValue := writeEvent.WriteRequest.GetEntity()
 	ts := writeEvent.WriteRequest.GetMetadata()
 	id := formatTraceSeriesID(ts.GetName(), ts.GetGroup())
-	w.schemaMap[id].Write(common.SeriesID(writeEvent.SeriesID), writeEvent.ShardID, mergeData(entityValue))
+	w.schemaMap[id].Write(common.SeriesID(writeEvent.SeriesID), writeEvent.ShardID, assemblyEntity(entityValue))
 	return
 }
 
-func mergeData(value *v1.EntityValue) data.EntityValue {
+func assemblyEntity(value *v1.EntityValue) data.EntityValue {
 	return data.EntityValue{value}
 }

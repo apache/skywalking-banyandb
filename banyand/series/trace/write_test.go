@@ -180,8 +180,8 @@ func Test_traceSeries_Write(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			seriesID := []byte(tt.args.seriesID)
-			shardID, shardIdError := partition.ShardID(seriesID, 2)
-			if shardIdError != nil {
+			shardID, shardIDError := partition.ShardID(seriesID, 2)
+			if shardIDError != nil {
 				return
 			}
 			ev := pb.NewEntityValueBuilder().

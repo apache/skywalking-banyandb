@@ -26,8 +26,8 @@ import (
 var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
 
 var WriteEventKindVersion = common.KindVersion{
-Version: "v1",
-Kind:    "trace-write",
+	Version: "v1",
+	Kind:    "trace-write",
 }
 var TopicWriteEvent = bus.UniTopic(WriteEventKindVersion.String())
 
@@ -52,6 +52,7 @@ type Write struct {
 	common.KindVersion
 	Payload *TraceWriteDate
 }
+
 func NewTrace() *Trace {
 	return &Trace{KindVersion: TraceKindVersion}
 }
