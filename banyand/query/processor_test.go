@@ -63,6 +63,9 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	repo, err := discovery.NewServiceRepo(context.Background())
 	tester.NoError(err)
 	tester.NotNil(repo)
+	// Init `Queue` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	tester.NoError(err)
 
 	// Init `Index` module
 	indexSvc, err := index.NewService(context.TODO(), repo)
@@ -77,15 +80,11 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, nil)
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
 
 	// Init `Query` module
 	executor, err := NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
-	tester.NoError(err)
-
-	// Init `pipeline` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
 	tester.NoError(err)
 
 	// Init `Liaison` module
