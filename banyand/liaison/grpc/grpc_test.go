@@ -56,9 +56,6 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 	repo, err := discovery.NewServiceRepo(context.Background())
 	tester.NoError(err)
 	tester.NotNil(repo)
-	// Init `Index` module
-	indexSvc, err := index.NewService(context.TODO(), repo)
-	tester.NoError(err)
 	// Init `pipeline` module
 	pipeline, err := queue.NewQueue(context.TODO(), repo)
 	tester.NoError(err)
@@ -69,6 +66,9 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 	tester.NoError(err)
 	rootPath := path.Join(os.TempDir(), "banyandb-"+uuid.String())
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
+	// Init `Index` module
+	indexSvc, err := index.NewService(context.TODO(), repo)
+	tester.NoError(err)
 	// Init `Trace` module
 	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
@@ -79,19 +79,19 @@ func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRe
 	tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
 	tester.NoError(err)
 
-	err = traceSvc.PreRun()
-	tester.NoError(err)
-
 	err = db.PreRun()
 	tester.NoError(err)
 
 	err = indexSvc.PreRun()
 	tester.NoError(err)
 
+	err = traceSvc.PreRun()
+	tester.NoError(err)
+
 	err = executor.PreRun()
 	tester.NoError(err)
 
-	tcp.FlagSet()
+	//tcp.FlagSet()
 	err = tcp.PreRun()
 	tester.NoError(err)
 

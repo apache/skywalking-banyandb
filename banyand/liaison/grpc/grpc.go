@@ -59,7 +59,7 @@ type Server struct {
 	log        *logger.Logger
 	ser        *grpclib.Server
 	pipeline   queue.Queue
-	Repo       discovery.ServiceRepo
+	repo       discovery.ServiceRepo
 	shardInfo  *shardInfo
 	seriesInfo *seriesInfo
 	v1.UnimplementedTraceServiceServer
@@ -108,17 +108,17 @@ func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.shardInfo.log = s.log
 	s.seriesInfo.log = s.log
-	err := s.Repo.Subscribe(event.TopicShardEvent, s.shardInfo)
+	err := s.repo.Subscribe(event.TopicShardEvent, s.shardInfo)
 	if err != nil {
 		return err
 	}
-	return s.Repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
+	return s.repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
 }
 
 func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
 	return &Server{
 		pipeline:   pipeline,
-		Repo:       repo,
+		repo:       repo,
 		shardInfo:  &shardInfo{},
 		seriesInfo: &seriesInfo{},
 	}
