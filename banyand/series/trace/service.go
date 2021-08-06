@@ -146,7 +146,7 @@ func (s *service) Serve() error {
 			return errPublishRules
 		}
 	}
-	errWrite := s.pipeline.Subscribe(event.TopicWriteEvent, s.writeListener)
+	errWrite := s.pipeline.Subscribe(data.TopicWriteEvent, s.writeListener)
 	if errWrite != nil {
 		return errWrite
 	}
@@ -166,7 +166,7 @@ type writeCallback struct {
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(event.TraceWriteDate)
+	writeEvent, ok := message.Data().(data.TraceWriteDate)
 	if !ok {
 		errors.New("invalid write data")
 		return

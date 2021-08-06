@@ -32,11 +32,13 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/data"
+
+	serverData "github.com/apache/skywalking-banyandb/banyand/liaison/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -47,9 +49,9 @@ import (
 )
 
 var (
-	Tls             = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	CertFile        = flag.String("cert_file", "", "The TLS cert file")
-	KeyFile         = flag.String("key_file", "", "The TLS key file")
+	tls             = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	certFile        = flag.String("cert_file", "", "The TLS cert file")
+	keyFile         = flag.String("key_file", "", "The TLS key file")
 )
 
 type Server struct {
@@ -57,7 +59,7 @@ type Server struct {
 	log        *logger.Logger
 	ser        *grpclib.Server
 	pipeline   queue.Queue
-	repo       discovery.ServiceRepo
+	Repo       discovery.ServiceRepo
 	shardInfo  *shardInfo
 	seriesInfo *seriesInfo
 	v1.UnimplementedTraceServiceServer
@@ -65,7 +67,7 @@ type Server struct {
 
 type shardInfo struct {
 	log *logger.Logger
-	shardEventData  *v1.ShardEvent
+	shardEvent  *v1.ShardEvent
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -74,7 +76,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.shardEventData = shardEvent
+	s.shardEvent = shardEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
 		Uint64("shardID", shardEvent.Shard.Id).
@@ -84,7 +86,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 
 type seriesInfo struct {
 	log *logger.Logger
-	seriesEventData *v1.SeriesEvent
+	seriesEvent *v1.SeriesEvent
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -93,7 +95,7 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.seriesEventData = seriesEvent
+	s.seriesEvent = seriesEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
 		Str("name", seriesEvent.Series.Name).
@@ -106,17 +108,17 @@ func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.shardInfo.log = s.log
 	s.seriesInfo.log = s.log
-	err := s.repo.Subscribe(event.TopicShardEvent, s.shardInfo)
+	err := s.Repo.Subscribe(event.TopicShardEvent, s.shardInfo)
 	if err != nil {
 		return err
 	}
-	return s.repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
+	return s.Repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
 }
 
 func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
 	return &Server{
 		pipeline:   pipeline,
-		repo:       repo,
+		Repo:       repo,
 		shardInfo:  &shardInfo{},
 		seriesInfo: &seriesInfo{},
 	}
@@ -142,14 +144,14 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 	var opts []grpclib.ServerOption
-	if *Tls {
-		if *CertFile == "" {
-			*CertFile = data.Path("x509/server_cert.pem")
+	if *tls {
+		if *certFile == "" {
+			*certFile = serverData.Path("x509/server_cert.pem")
 		}
-		if *KeyFile == "" {
-			*KeyFile = data.Path("x509/server_key.pem")
+		if *keyFile == "" {
+			*keyFile = serverData.Path("x509/server_key.pem")
 		}
-		creds, err := credentials.NewServerTLSFromFile(*CertFile, *KeyFile)
+		creds, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
 		if err != nil {
 			log.Fatalf("Failed to generate credentials %v", err)
 		}
@@ -166,8 +168,8 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) event.TraceWriteDate {
-	return event.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
+func mergeWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
+	return data.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
 }
 
 func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
@@ -190,14 +192,14 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if ruleError != nil {
 			return ruleError
 		}
-		if s.seriesInfo.seriesEventData == nil {
+		if s.seriesInfo.seriesEvent == nil {
 			return errors.New("No seriesEvents")
 		}
-		seriesIdLen := len(s.seriesInfo.seriesEventData.FieldNamesCompositeSeriesId)
+		seriesIdLen := len(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId)
 		var str string
 		var arr []string
 		for i := 0; i < seriesIdLen; i++ {
-			id := s.seriesInfo.seriesEventData.FieldNamesCompositeSeriesId[i]
+			id := s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId[i]
 			if defined, sub := schema.FieldSubscript(id); defined {
 				for _, field := range writeEntity.GetEntity().GetFields() {
 					switch v := field.GetValueType().(type) {
@@ -224,7 +226,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 			return errors.New("invalid seriesID")
 		}
 		seriesID := []byte(str)
-		shardNum := s.shardInfo.shardEventData.GetShard().GetId()
+		shardNum := s.shardInfo.shardEvent.GetShard().GetId()
 		if shardNum < 1 {
 			shardNum = 1
 		}
@@ -234,7 +236,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		}
 		mergeData := mergeWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
-		_, errWritePub := s.pipeline.Publish(event.TopicWriteEvent, message)
+		_, errWritePub := s.pipeline.Publish(data.TopicWriteEvent, message)
 		if errWritePub != nil {
 			return errWritePub
 		}

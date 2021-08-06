@@ -36,21 +36,9 @@ var (
 	}
 	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
 
-	WriteEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "event-write",
-	}
-	TopicWriteEvent = bus.UniTopic(WriteEventKindVersion.String())
-
 	IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "index-rule"}
 	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
 )
-
-type TraceWriteDate struct {
-	ShardID      uint
-	SeriesID     uint64
-	WriteRequest *v1.WriteRequest
-}
 
 type Shard struct {
 	common.KindVersion
@@ -62,10 +50,6 @@ type Series struct {
 	Payload v1.SeriesEvent
 }
 
-type Write struct {
-	common.KindVersion
-	Payload *TraceWriteDate
-}
 type IndexRule struct {
 	common.KindVersion
 	Payload *v1.IndexRuleEvent

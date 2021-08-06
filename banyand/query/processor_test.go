@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"os"
 	"path"
 	"testing"
@@ -76,15 +77,19 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc)
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, nil)
 	tester.NoError(err)
 
 	// Init `Query` module
 	executor, err := NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
 	tester.NoError(err)
 
+	// Init `pipeline` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	tester.NoError(err)
+
 	// Init `Liaison` module
-	liaison := grpc.NewServer(context.TODO(), nil, repo)
+	liaison := grpc.NewServer(context.TODO(), pipeline, repo)
 
 	// :PreRun:
 	// 1) TraceSeries,

@@ -20,12 +20,21 @@ package grpc_test
 import (
 	"context"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/series"
+	"github.com/apache/skywalking-banyandb/banyand/series/trace"
+	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"log"
+	"os"
+	"path"
 	"testing"
 	"time"
 
@@ -37,33 +46,79 @@ import (
 var (
 	serverAddr = "localhost:17912"
 )
-func setup(t *testing.T) {
-	_ = logger.Bootstrap()
-	repo, err := discovery.NewServiceRepo(context.TODO())
-	if err != nil {
-		log.Fatalf("failed to initiate service repository")
-	}
+func setupService(t *testing.T, tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
+	//_ = logger.Bootstrap()
+	tester.NoError(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	}))
+	// Init `Discovery` module
+	repo, err := discovery.NewServiceRepo(context.Background())
+	tester.NoError(err)
+	tester.NotNil(repo)
+	// Init `Index` module
+	indexSvc, err := index.NewService(context.TODO(), repo)
+	tester.NoError(err)
+	// Init `pipeline` module
 	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	if err != nil {
-		log.Fatal("failed to initiate data pipeline")
-	}
+	tester.NoError(err)
+	// Init `Database` module
+	db, err := storage.NewDB(context.TODO(), repo)
+	tester.NoError(err)
+	uuid, err := googleUUID.NewUUID()
+	tester.NoError(err)
+	rootPath := path.Join(os.TempDir(), "banyandb-"+uuid.String())
+	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
+	// Init `Trace` module
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
+	tester.NoError(err)
+	// Init `Query` module
+	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
+	tester.NoError(err)
+	// Init `liaison` module
 	tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
-	if err != nil {
-		log.Fatal("failed to initiate Endpoint transport layer")
-	}
+	tester.NoError(err)
+
+	err = traceSvc.PreRun()
+	tester.NoError(err)
+
+	err = db.PreRun()
+	tester.NoError(err)
+
+	err = indexSvc.PreRun()
+	tester.NoError(err)
+
+	err = executor.PreRun()
+	tester.NoError(err)
+
 	tcp.FlagSet()
+	err = tcp.PreRun()
+	tester.NoError(err)
+
 	go func() {
-		assert.NoError(t, err)
-		assert.NoError(t,tcp.PreRun())
-		assert.NoError(t, tcp.Serve())
+		tester.NoError(tcp.Serve())
+		tester.NoError(err)
 	}()
-}
-func Test_trace_write(t *testing.T) {
-	setup(t)
-	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
-	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+
+	err = traceSvc.Serve()
+	tester.NoError(err)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+
+	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
+
+	return repo, traceSvc, func() {
+		db.GracefulStop()
+		_ = os.RemoveAll(rootPath)
 	}
+}
+
+func TestTraceWrite(t *testing.T) {
+	tester := require.New(t)
+	_, _, gracefulStop := setupService(t, tester)
+	defer gracefulStop()
+	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
+	assert.NoError(t, err)
 	defer conn.Close()
 
 	client := v1.NewTraceServiceClient(conn)
@@ -114,12 +169,9 @@ func Test_trace_write(t *testing.T) {
 	}
 	<-waitc
 }
-func Test_trace_query(t *testing.T) {
-	setup(t)
+func TestTraceQuery(t *testing.T) {
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions())
-	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
-	}
+	assert.NoError(t, err)
 	defer conn.Close()
 
 	client := v1.NewTraceServiceClient(conn)
