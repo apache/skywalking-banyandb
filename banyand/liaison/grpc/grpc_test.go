@@ -79,13 +79,13 @@ func setupService(t *testing.T, tester *require.Assertions) func() {
 	tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
 	tester.NoError(err)
 
-	err = db.PreRun()
-	tester.NoError(err)
-
 	err = indexSvc.PreRun()
 	tester.NoError(err)
 
 	err = traceSvc.PreRun()
+	tester.NoError(err)
+
+	err = db.PreRun()
 	tester.NoError(err)
 
 	err = executor.PreRun()
@@ -120,6 +120,7 @@ func TestTraceWrite(t *testing.T) {
 	tester := require.New(t)
 	gracefulStop := setupService(t, tester)
 	defer gracefulStop()
+
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
 	assert.NoError(t, err)
 	defer conn.Close()
@@ -173,6 +174,10 @@ func TestTraceWrite(t *testing.T) {
 	<-waitc
 }
 func TestTraceQuery(t *testing.T) {
+	//tester := require.New(t)
+	//gracefulStop := setupService(t, tester)
+	//defer gracefulStop()
+
 	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions())
 	assert.NoError(t, err)
 	defer conn.Close()
