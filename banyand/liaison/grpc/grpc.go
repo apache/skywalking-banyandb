@@ -129,9 +129,6 @@ func (s *Server) Name() string {
 
 func (s *Server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	fs.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	fs.String("cert_file", "", "The TLS cert file")
-	fs.String("key_file", "", "The TLS key file")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
 
 	return fs
@@ -225,7 +222,6 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 			}
 		}
 		str = strings.Join(arr, "")
-		log.Println(str)
 		if str == "" {
 			return errors.New("invalid seriesID")
 		}
