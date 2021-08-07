@@ -21,7 +21,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -75,6 +74,7 @@ func (s *service) PreRun() error {
 	s.schemaMap = make(map[string]*traceSeries, len(schemas))
 	s.writeListener.schemaMap = make(map[string]*traceSeries, len(schemas))
 	s.l = logger.GetLogger(s.Name())
+	s.writeListener.l = logger.GetLogger(s.Name())
 	for _, sa := range schemas {
 		ts, errTS := newTraceSeries(sa, s.l, s.idx)
 		if errTS != nil {
@@ -162,22 +162,24 @@ func (s *service) GracefulStop() {
 }
 
 type writeCallback struct {
+	l         *logger.Logger
 	schemaMap map[string]*traceSeries
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	writeEvent, ok := message.Data().(data.TraceWriteDate)
 	if !ok {
-		errors.New("invalid write data")
+		w.l.Warn().Msg("invalid event data type")
 		return
 	}
 	entityValue := writeEvent.WriteRequest.GetEntity()
 	ts := writeEvent.WriteRequest.GetMetadata()
 	id := formatTraceSeriesID(ts.GetName(), ts.GetGroup())
-	w.schemaMap[id].Write(common.SeriesID(writeEvent.SeriesID), writeEvent.ShardID, assemblyEntity(entityValue))
+	_, err := w.schemaMap[id].Write(common.SeriesID(writeEvent.SeriesID), writeEvent.ShardID, data.EntityValue{
+		EntityValue: entityValue,
+	})
+	if err != nil {
+		w.l.Warn().Err(err)
+	}
 	return
-}
-
-func assemblyEntity(value *v1.EntityValue) data.EntityValue {
-	return data.EntityValue{value}
 }
