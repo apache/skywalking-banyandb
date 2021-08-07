@@ -19,17 +19,17 @@ package grpc
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
+	"github.com/pkg/errors"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
 	"strings"
 	"time"
-
-	"github.com/pkg/errors"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -37,7 +37,6 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	serverData "github.com/apache/skywalking-banyandb/banyand/liaison/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -143,18 +142,21 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
 	var opts []grpclib.ServerOption
+	var f embed.FS
 	if *tls {
 		if *certFile == "" {
-			*certFile = serverData.Path("x509/server_cert.pem")
+			serverCert, _ := f.ReadFile("data/x509/server_cert.pem")
+			*certFile = string(serverCert)
 		}
 		if *keyFile == "" {
-			*keyFile = serverData.Path("x509/server_key.pem")
+			serverKey, _ := f.ReadFile("data/x509/server_key.pem")
+			*keyFile = string(serverKey)
 		}
-		creds, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
+		cred, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
 		if err != nil {
 			log.Fatalf("Failed to generate credentials %v", err)
 		}
-		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+		opts = []grpclib.ServerOption{grpclib.Creds(cred)}
 	}
 	s.ser = grpclib.NewServer(opts...)
 	v1.RegisterTraceServiceServer(s.ser, s)
