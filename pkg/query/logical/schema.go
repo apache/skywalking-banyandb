@@ -38,12 +38,12 @@ type Schema interface {
 }
 
 type fieldSpec struct {
-	idx  int
+	Idx  int
 	spec *apiv1.FieldSpec
 }
 
 func (fs *fieldSpec) Equal(other *fieldSpec) bool {
-	return fs.idx == other.idx && fs.spec.GetType() == other.spec.GetType() && fs.spec.GetName() == other.spec.GetName()
+	return fs.Idx == other.Idx && fs.spec.GetType() == other.spec.GetType() && fs.spec.GetName() == other.spec.GetName()
 }
 
 var _ Schema = (*schema)(nil)
@@ -96,7 +96,7 @@ func (s *schema) Equal(s2 Schema) bool {
 
 func (s *schema) RegisterField(name string, i int, spec *apiv1.FieldSpec) {
 	s.fieldMap[name] = &fieldSpec{
-		idx:  i,
+		Idx:  i,
 		spec: spec,
 	}
 }
@@ -130,7 +130,7 @@ func (s *schema) Map(refs ...*FieldRef) Schema {
 		fieldMap:    make(map[string]*fieldSpec),
 	}
 	for _, ref := range refs {
-		newS.fieldMap[ref.name] = ref.spec
+		newS.fieldMap[ref.name] = ref.Spec
 	}
 	return newS
 }

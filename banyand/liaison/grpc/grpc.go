@@ -129,7 +129,11 @@ func (s *Server) Name() string {
 
 func (s *Server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
+	fs.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	fs.String("cert_file", "", "The TLS cert file")
+	fs.String("key_file", "", "The TLS key file")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
+
 	return fs
 }
 
@@ -197,33 +201,31 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if s.seriesInfo.seriesEvent == nil {
 			return errors.New("No seriesEvents")
 		}
-		seriesIDLen := len(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId)
 		var str string
 		var arr []string
-		for i := 0; i < seriesIDLen; i++ {
-			id := s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId[i]
-			if defined, sub := schema.FieldSubscript(id); defined {
-				for _, field := range writeEntity.GetEntity().GetFields() {
-					switch v := field.GetValueType().(type) {
-					case *v1.Field_StrArray:
-						for j := 0; j < len(v.StrArray.Value); j++ {
-							if sub == j {
-								arr = append(arr, v.StrArray.Value[j])
-							}
-						}
-					case *v1.Field_IntArray:
-						for t := 0; t < len(v.IntArray.Value); t++ {
-							arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
-						}
-					case *v1.Field_Int:
-						arr = append(arr, fmt.Sprint(v.Int.Value))
-					case *v1.Field_Str:
-						arr = append(arr, fmt.Sprint(v.Str.Value))
-					}
+		fieldRefs, errField := schema.CreateRef(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId...)
+		if errField != nil {
+			return errField
+		}
+		for _, ref := range fieldRefs {
+			field := writeEntity.GetEntity().GetFields()[ref.Spec.Idx]
+			switch v := field.GetValueType().(type) {
+			case *v1.Field_StrArray:
+				for j := 0; j < len(v.StrArray.Value); j++ {
+					arr = append(arr, v.StrArray.Value[j])
 				}
+			case *v1.Field_IntArray:
+				for t := 0; t < len(v.IntArray.Value); t++ {
+					arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+				}
+			case *v1.Field_Int:
+				arr = append(arr, fmt.Sprint(v.Int.Value))
+			case *v1.Field_Str:
+				arr = append(arr, fmt.Sprint(v.Str.Value))
 			}
 		}
 		str = strings.Join(arr, "")
+		log.Println(str)
 		if str == "" {
 			return errors.New("invalid seriesID")
 		}
