@@ -22,14 +22,15 @@ import (
 	"embed"
 	"flag"
 	"fmt"
-	"github.com/pkg/errors"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
