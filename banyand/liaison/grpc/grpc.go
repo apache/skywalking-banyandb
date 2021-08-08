@@ -184,7 +184,6 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 			return err
 		}
 
-		//log.Println("writeEntity:", writeEntity)
 		ana := logical.DefaultAnalyzer()
 		metadata := common.Metadata{
 			KindVersion: apischema.SeriesKindVersion,

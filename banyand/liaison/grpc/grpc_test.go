@@ -20,7 +20,6 @@ package grpc_test
 import (
 	"context"
 	"io"
-	"log"
 	"os"
 	"path"
 	"testing"
@@ -146,8 +145,7 @@ func TestTraceWrite(t *testing.T) {
 		Build()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
-		assert.NoError(t, errorWrite)
-		//log.Fatalf("%v.runWrite(_) = _, %v", client, errorWrite)
+		t.Errorf("%v.Write(_) = _, %v", client, errorWrite)
 	}
 	waitc := make(chan struct{})
 	go func() {
@@ -158,17 +156,15 @@ func TestTraceWrite(t *testing.T) {
 				close(waitc)
 				return
 			}
-			if errRecv != nil {
-				log.Fatalf("Failed to receive data : %v", errRecv)
-			}
-			log.Println("writeResponse: ", writeResponse)
+			assert.NoError(t, errRecv)
+			assert.NotNil(t, writeResponse)
 		}
 	}()
 	if errSend := stream.Send(criteria); errSend != nil {
-		log.Fatalf("Failed to send a note: %v", errSend)
+		t.Errorf("Failed to send a note: %v", errSend)
 	}
 	if errorSend := stream.CloseSend(); errorSend != nil {
-		log.Fatalf("Failed to send a note: %v", errorSend)
+		t.Errorf("Failed to send a note: %v", errorSend)
 	}
 	<-waitc
 }
@@ -195,8 +191,7 @@ func TestTraceQuery(t *testing.T) {
 		Build()
 	stream, errRev := client.Query(ctx, criteria)
 	if errRev != nil {
-		log.Fatalf("Retrieve client failed: %v", errRev)
+		t.Errorf("Retrieve client failed: %v", errRev)
 	}
-
-	log.Println("QueryResponse: ", stream)
+	assert.NotNil(t, stream)
 }
