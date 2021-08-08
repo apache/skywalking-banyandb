@@ -27,11 +27,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var ErrStopScan = errors.New("stop scanning")
-var DefaultScanOpts = ScanOpts{
-	PrefetchSize:   100,
-	PrefetchValues: true,
-}
+var (
+	ErrStopScan     = errors.New("stop scanning")
+	DefaultScanOpts = ScanOpts{
+		PrefetchSize:   100,
+		PrefetchValues: true,
+	}
+)
 
 type Writer interface {
 	// Put a value

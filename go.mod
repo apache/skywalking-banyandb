@@ -27,4 +27,4 @@ require (
 	google.golang.org/protobuf v1.27.1
 )
 
-replace github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20210624023741-bd2dcfcaaa74
+replace github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20210808063906-49c6d778ad7d

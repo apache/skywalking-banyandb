@@ -19,8 +19,10 @@ package kv
 
 import (
 	"log"
+	"math"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3/y"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -52,36 +54,26 @@ type badgerDB struct {
 }
 
 func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = opt.PrefetchSize
-		opts.PrefetchValues = opt.PrefetchValues
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(key); it.Valid(); it.Next() {
-			item := it.Item()
-			k := item.Key()
-			err := f(b.shardID, k, func() ([]byte, error) {
-				var val []byte
-				err := item.Value(func(v []byte) error {
-					val = v
-					return nil
-				})
-				if err != nil {
-					return nil, err
-				}
-				return val, nil
-			})
-			if err == ErrStopScan {
-				break
-			}
-			if err != nil {
-				return err
-			}
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchSize = opt.PrefetchSize
+	opts.PrefetchValues = opt.PrefetchValues
+	it := b.db.NewIterator(opts)
+	defer func() {
+		_ = it.Close()
+	}()
+	for it.Seek(y.KeyWithTs(key, math.MaxInt64)); it.Valid(); it.Next() {
+		k := y.ParseKey(it.Key())
+		err := f(b.shardID, k, func() ([]byte, error) {
+			return y.Copy(it.Value().Value), nil
+		})
+		if err == ErrStopScan {
+			break
 		}
-		return nil
-	})
-	return err
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *badgerDB) Close() error {
@@ -92,24 +84,15 @@ func (b *badgerDB) Close() error {
 }
 
 func (b *badgerDB) Put(key, val []byte) error {
-	return b.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(key, val)
-	})
+	return b.db.Put(y.KeyWithTs(key, math.MaxInt64), val)
 }
 
 func (b *badgerDB) Get(key []byte) ([]byte, error) {
-	var bb []byte
-	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			bb = val
-			return nil
-		})
-	})
-	return bb, err
+	v, err := b.db.Get(y.KeyWithTs(key, math.MaxInt64))
+	if err != nil {
+		return nil, err
+	}
+	return v.Value, nil
 }
 
 // badgerLog delegates the zap log to the badger logger
