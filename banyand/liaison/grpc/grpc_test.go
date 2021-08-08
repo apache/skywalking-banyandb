@@ -97,12 +97,10 @@ func setupService(t *testing.T, tester *require.Assertions) func() {
 
 	go func() {
 		tester.NoError(traceSvc.Serve())
-		tester.NoError(err)
 	}()
 
 	go func() {
 		tester.NoError(tcp.Serve())
-		tester.NoError(err)
 	}()
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
@@ -148,7 +146,8 @@ func TestTraceWrite(t *testing.T) {
 		Build()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
-		log.Fatalf("%v.runWrite(_) = _, %v", client, errorWrite)
+		assert.NoError(t, errorWrite)
+		//log.Fatalf("%v.runWrite(_) = _, %v", client, errorWrite)
 	}
 	waitc := make(chan struct{})
 	go func() {

@@ -130,7 +130,6 @@ func (s *Server) Name() string {
 func (s *Server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
-
 	return fs
 }
 

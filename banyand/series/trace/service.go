@@ -72,9 +72,9 @@ func (s *service) PreRun() error {
 		return err
 	}
 	s.schemaMap = make(map[string]*traceSeries, len(schemas))
-	s.writeListener.schemaMap = make(map[string]*traceSeries, len(schemas))
+	s.writeListener.schemaMap = s.schemaMap
 	s.l = logger.GetLogger(s.Name())
-	s.writeListener.l = logger.GetLogger(s.Name())
+	s.writeListener.l = s.l
 	for _, sa := range schemas {
 		ts, errTS := newTraceSeries(sa, s.l, s.idx)
 		if errTS != nil {
