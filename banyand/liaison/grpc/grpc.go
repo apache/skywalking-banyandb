@@ -26,6 +26,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -53,6 +54,12 @@ var (
 	keyFile  = flag.String("key_file", "", "The TLS key file")
 )
 
+var (
+	ErrSeriesEvents            = errors.New("No seriesEvent")
+	ErrShardEvents           = errors.New("No shardEvent")
+	ErrInvalidSeriesID             = errors.New("invalid seriesID")
+)
+
 type Server struct {
 	addr       string
 	log        *logger.Logger
@@ -67,6 +74,7 @@ type Server struct {
 type shardInfo struct {
 	log        *logger.Logger
 	shardEvent *v1.ShardEvent
+	sync.RWMutex
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -75,6 +83,8 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
 	s.shardEvent = shardEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
@@ -86,6 +96,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 type seriesInfo struct {
 	log         *logger.Logger
 	seriesEvent *v1.SeriesEvent
+	sync.RWMutex
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -94,6 +105,8 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
 	s.seriesEvent = seriesEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
@@ -193,12 +206,14 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if ruleError != nil {
 			return ruleError
 		}
+		s.seriesInfo.RWMutex.RLock()
 		if s.seriesInfo.seriesEvent == nil {
-			return errors.New("No seriesEvents")
+			return ErrSeriesEvents
 		}
 		var str string
 		var arr []string
 		fieldRefs, errField := schema.CreateRef(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId...)
+		s.seriesInfo.RWMutex.RUnlock()
 		if errField != nil {
 			return errField
 		}
@@ -221,10 +236,15 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		}
 		str = strings.Join(arr, "")
 		if str == "" {
-			return errors.New("invalid seriesID")
+			return ErrInvalidSeriesID
 		}
 		seriesID := []byte(str)
+		s.shardInfo.RWMutex.RLock()
+		if s.shardInfo.shardEvent == nil {
+			return ErrShardEvents
+		}
 		shardNum := s.shardInfo.shardEvent.GetShard().GetId()
+		s.shardInfo.RWMutex.RUnlock()
 		if shardNum < 1 {
 			shardNum = 1
 		}
