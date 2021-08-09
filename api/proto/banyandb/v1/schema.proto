@@ -33,14 +33,14 @@ message ShardInfo {
 // Duration represents the elapsed time between two instants
 message Duration {
   uint32 val = 1;
-  enum Duration {
+  enum DurationUnit {
     DURATION_UNSPECIFIED = 0;
     DURATION_HOUR = 1;
     DURATION_DAY = 2;
     DURATION_WEEK = 3;
     DURATION_MONTH = 4;
   }
-  Duration unit = 2;
+  DurationUnit unit = 2;
 }
 
 message FieldSpec {
