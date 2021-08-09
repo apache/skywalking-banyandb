@@ -19,7 +19,9 @@ package grpc
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
@@ -132,14 +134,45 @@ func (s *Server) Name() string {
 }
 
 func (s *Server) FlagSet() *run.FlagSet {
+	var f embed.FS
+
 	size := 1024 * 1024 * 8
+	serverCert, _ := f.ReadFile("testdata/server_cert.pem")
+	serverKey, _ := f.ReadFile("testdata/server_key.pem")
+
 	fs := run.NewFlagSet("grpc")
-	fs.Int("maxRecMsgSize", size, "the size of max receiving message")
-	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
+	fs.Int("maxRecvMsgSize", size, "The size of max receiving message")
+	fs.Bool("tls", true, "Connection uses TLS if true, else plain TCP")
+	fs.String("certFile", string(serverCert), "The TLS cert file")
+	fs.String("keyFile", string(serverKey), "The TLS key file")
+	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
+
 	return fs
 }
 
 func (s *Server) Validate() error {
+	_, err := s.FlagSet().GetInt("maxRecvMsgSize")
+	if err != nil {
+		return err
+	}
+	tlsVal, err := s.FlagSet().GetBool("tls")
+	if err != nil {
+		return err
+	}
+	if tlsVal {
+		certFile, errCertFile := s.FlagSet().GetString("certFile")
+		if errCertFile != nil {
+			return errCertFile
+		}
+		keyFile, errKeyFile := s.FlagSet().GetString("keyFile")
+		if errKeyFile != nil {
+			return errKeyFile
+		}
+		_, errTls := credentials.NewServerTLSFromFile(certFile, keyFile)
+		if err != nil {
+			return errTls
+		}
+	}
 	return nil
 }
 
@@ -148,11 +181,20 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
-	size, err := s.FlagSet().GetInt("maxRecMsgSize")
-	if err != nil {
-		s.log.Fatal().Err(err).Msg("Failed to get MaxRecvMsgSize")
+	if errValidate := s.Validate(); errValidate != nil {
+		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
 	}
-	s.ser = grpclib.NewServer(grpclib.MaxRecvMsgSize(size))
+	size, _ := s.FlagSet().GetInt("maxRecvMsgSize")
+	tlsVal, _ := s.FlagSet().GetBool("tls")
+	var opts []grpclib.ServerOption
+	if tlsVal {
+		certFile, _ := s.FlagSet().GetString("certFile")
+		keyFile, _ := s.FlagSet().GetString("keyFile")
+		creds, _ := credentials.NewServerTLSFromFile(certFile, keyFile)
+		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+	}
+	opts = append(opts, grpclib.MaxRecvMsgSize(size))
+	s.ser = grpclib.NewServer(opts...)
 	v1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
