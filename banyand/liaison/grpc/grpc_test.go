@@ -19,6 +19,7 @@ package grpc_test
 
 import (
 	"context"
+	"flag"
 	"io"
 	"os"
 	"path"
@@ -29,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
@@ -46,7 +48,7 @@ var (
 	serverAddr = "localhost:17912"
 )
 
-func setupService(t *testing.T, tester *require.Assertions) func() {
+func setupService(t *testing.T, tester *require.Assertions) (liaison.Endpoint, func()) {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -107,7 +109,7 @@ func setupService(t *testing.T, tester *require.Assertions) func() {
 
 	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
 
-	return func() {
+	return tcp, func() {
 		db.GracefulStop()
 		_ = os.RemoveAll(rootPath)
 	}
@@ -115,10 +117,24 @@ func setupService(t *testing.T, tester *require.Assertions) func() {
 
 func TestTraceWrite(t *testing.T) {
 	tester := require.New(t)
-	gracefulStop := setupService(t, tester)
+	tcp, gracefulStop := setupService(t, tester)
 	defer gracefulStop()
 
-	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure())
+	flag.Parse()
+	var opts []grpclib.DialOption
+	errValidate := tcp.Validate()
+	assert.NoError(t, errValidate)
+	tlsVal, _ := tcp.FlagSet().GetBool("tls")
+	if tlsVal {
+		certFile, _ := tcp.FlagSet().GetString("certFile")
+		serverHostOverride, _ := tcp.FlagSet().GetString("serverHostOverride")
+		creds, err := credentials.NewClientTLSFromFile(certFile, serverHostOverride)
+		assert.NoError(t, err)
+		opts = append(opts, grpclib.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpclib.WithInsecure())
+	}
+	conn, err := grpclib.Dial(serverAddr, opts...)
 	assert.NoError(t, err)
 	defer conn.Close()
 
@@ -168,6 +184,7 @@ func TestTraceWrite(t *testing.T) {
 	}
 	<-waitc
 }
+
 func TestTraceQuery(t *testing.T) {
 	//tester := require.New(t)
 	//gracefulStop := setupService(t, tester)

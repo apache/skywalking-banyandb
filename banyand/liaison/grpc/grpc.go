@@ -19,18 +19,19 @@ package grpc
 
 import (
 	"context"
-	"embed"
 	"fmt"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"log"
 	"net"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -134,17 +135,18 @@ func (s *Server) Name() string {
 }
 
 func (s *Server) FlagSet() *run.FlagSet {
-	var f embed.FS
-
 	size := 1024 * 1024 * 8
-	serverCert, _ := f.ReadFile("testdata/server_cert.pem")
-	serverKey, _ := f.ReadFile("testdata/server_key.pem")
+	_, currentFile, _, _ := runtime.Caller(0)
+	basePath := filepath.Dir(currentFile)
+	serverCert := filepath.Join(basePath, "testdata/server_cert.pem")
+	serverKey := filepath.Join(basePath, "testdata/server_key.pem")
 
 	fs := run.NewFlagSet("grpc")
 	fs.Int("maxRecvMsgSize", size, "The size of max receiving message")
 	fs.Bool("tls", true, "Connection uses TLS if true, else plain TCP")
-	fs.String("certFile", string(serverCert), "The TLS cert file")
-	fs.String("keyFile", string(serverKey), "The TLS key file")
+	fs.String("certFile", serverCert, "The TLS cert file")
+	fs.String("keyFile", serverKey, "The TLS key file")
+	fs.String("serverHostOverride", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
@@ -169,8 +171,12 @@ func (s *Server) Validate() error {
 			return errKeyFile
 		}
 		_, errTls := credentials.NewServerTLSFromFile(certFile, keyFile)
-		if err != nil {
+		if errTls != nil {
 			return errTls
+		}
+		_, errServerHostOverride := s.FlagSet().GetString("serverHostOverride")
+		if errServerHostOverride != nil {
+			return errServerHostOverride
 		}
 	}
 	return nil
