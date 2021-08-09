@@ -148,7 +148,11 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
-	s.ser = grpclib.NewServer()
+	size, err := s.FlagSet().GetInt("maxRecMsgSize")
+	if err != nil {
+		s.log.Fatal().Err(err).Msg("Failed to get MaxRecvMsgSize")
+	}
+	s.ser = grpclib.NewServer(grpclib.MaxRecvMsgSize(size))
 	v1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
@@ -184,6 +188,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		}
 		s.seriesInfo.RWMutex.RLock()
 		if s.seriesInfo.seriesEvent == nil {
+			s.seriesInfo.RWMutex.RUnlock()
 			return ErrSeriesEvents
 		}
 		var str string
@@ -217,6 +222,7 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		seriesID := []byte(str)
 		s.shardInfo.RWMutex.RLock()
 		if s.shardInfo.shardEvent == nil {
+			s.shardInfo.RWMutex.RUnlock()
 			return ErrShardEvents
 		}
 		shardNum := s.shardInfo.shardEvent.GetShard().GetId()
