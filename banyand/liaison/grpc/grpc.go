@@ -170,9 +170,9 @@ func (s *Server) Validate() error {
 		if errKeyFile != nil {
 			return errKeyFile
 		}
-		_, errTls := credentials.NewServerTLSFromFile(certFile, keyFile)
-		if errTls != nil {
-			return errTls
+		_, errTLS := credentials.NewServerTLSFromFile(certFile, keyFile)
+		if errTLS != nil {
+			return errTLS
 		}
 		_, errServerHostOverride := s.FlagSet().GetString("serverHostOverride")
 		if errServerHostOverride != nil {
