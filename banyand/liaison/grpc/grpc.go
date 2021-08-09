@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"io"
@@ -31,7 +30,6 @@ import (
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -55,9 +53,9 @@ var (
 )
 
 var (
-	ErrSeriesEvents            = errors.New("No seriesEvent")
-	ErrShardEvents           = errors.New("No shardEvent")
-	ErrInvalidSeriesID             = errors.New("invalid seriesID")
+	ErrSeriesEvents    = errors.New("no seriesEvent")
+	ErrShardEvents     = errors.New("no shardEvent")
+	ErrInvalidSeriesID = errors.New("invalid seriesID")
 )
 
 type Server struct {
@@ -83,8 +81,8 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
 	s.shardEvent = shardEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
@@ -105,8 +103,8 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
 	s.seriesEvent = seriesEvent
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
@@ -155,24 +153,8 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
-	var opts []grpclib.ServerOption
-	var f embed.FS
-	if *tls {
-		if *certFile == "" {
-			serverCert, _ := f.ReadFile("data/x509/server_cert.pem")
-			*certFile = string(serverCert)
-		}
-		if *keyFile == "" {
-			serverKey, _ := f.ReadFile("data/x509/server_key.pem")
-			*keyFile = string(serverKey)
-		}
-		cred, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
-		if err != nil {
-			log.Fatalf("Failed to generate credentials %v", err)
-		}
-		opts = []grpclib.ServerOption{grpclib.Creds(cred)}
-	}
-	s.ser = grpclib.NewServer(opts...)
+	size := 1024 * 1024 * 50
+	s.ser = grpclib.NewServer(grpclib.MaxRecvMsgSize(size))
 	v1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
