@@ -134,7 +134,7 @@ func (s *Server) Name() string {
 func (s *Server) FlagSet() *run.FlagSet {
 	size := 1024 * 1024 * 8
 	fs := run.NewFlagSet("grpc")
-	fs.Int("maxRecMsgSize", size, "the size of max receving message")
+	fs.Int("maxRecMsgSize", size, "the size of max receiving message")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
 	return fs
 }
