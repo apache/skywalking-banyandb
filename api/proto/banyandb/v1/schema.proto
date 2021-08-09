@@ -34,11 +34,11 @@ message ShardInfo {
 message Duration {
   uint32 val = 1;
   enum DurationUnit {
-    DURATION_UNSPECIFIED = 0;
-    DURATION_HOUR = 1;
-    DURATION_DAY = 2;
-    DURATION_WEEK = 3;
-    DURATION_MONTH = 4;
+    DURATION_UNIT_UNSPECIFIED = 0;
+    DURATION_UNIT_HOUR = 1;
+    DURATION_UNIT_DAY = 2;
+    DURATION_UNIT_WEEK = 3;
+    DURATION_UNIT_MONTH = 4;
   }
   DurationUnit unit = 2;
 }
