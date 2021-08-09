@@ -48,7 +48,7 @@ var (
 	serverAddr = "localhost:17912"
 )
 
-func setupService(t *testing.T, tester *require.Assertions) (liaison.Endpoint, func()) {
+func setup(t *testing.T, tester *require.Assertions) (liaison.Endpoint, func()) {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -115,9 +115,9 @@ func setupService(t *testing.T, tester *require.Assertions) (liaison.Endpoint, f
 	}
 }
 
-func TestTraceWrite(t *testing.T) {
+func TestTraceService(t *testing.T) {
 	tester := require.New(t)
-	tcp, gracefulStop := setupService(t, tester)
+	tcp, gracefulStop := setup(t, tester)
 	defer gracefulStop()
 
 	flag.Parse()
@@ -134,10 +134,16 @@ func TestTraceWrite(t *testing.T) {
 	} else {
 		opts = append(opts, grpclib.WithInsecure())
 	}
+
 	conn, err := grpclib.Dial(serverAddr, opts...)
 	assert.NoError(t, err)
 	defer conn.Close()
 
+	traceWrite(t, conn)
+	traceQuery(t, conn)
+}
+
+func traceWrite(t *testing.T, conn *grpclib.ClientConn) {
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	entityValue := pb.NewEntityValueBuilder().
@@ -185,15 +191,7 @@ func TestTraceWrite(t *testing.T) {
 	<-waitc
 }
 
-func TestTraceQuery(t *testing.T) {
-	//tester := require.New(t)
-	//gracefulStop := setupService(t, tester)
-	//defer gracefulStop()
-
-	conn, err := grpclib.Dial(serverAddr, grpclib.WithInsecure(), grpclib.WithDefaultCallOptions())
-	assert.NoError(t, err)
-	defer conn.Close()
-
+func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
