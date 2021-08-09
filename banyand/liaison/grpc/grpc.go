@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -44,12 +43,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-)
-
-var (
-	tls      = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	certFile = flag.String("cert_file", "", "The TLS cert file")
-	keyFile  = flag.String("key_file", "", "The TLS key file")
 )
 
 var (
