@@ -132,7 +132,9 @@ func (s *Server) Name() string {
 }
 
 func (s *Server) FlagSet() *run.FlagSet {
+	size := 1024 * 1024 * 8
 	fs := run.NewFlagSet("grpc")
+	fs.Int("maxRecMsgSize", size, "the size of max receving message")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
 	return fs
 }
@@ -146,8 +148,7 @@ func (s *Server) Serve() error {
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
 	}
-	size := 1024 * 1024 * 50
-	s.ser = grpclib.NewServer(grpclib.MaxRecvMsgSize(size))
+	s.ser = grpclib.NewServer()
 	v1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
