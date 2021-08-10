@@ -77,8 +77,6 @@ func setup(t *testing.T, tester *require.Assertions) (*grpc.Server, func()) {
 	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
 	tester.NoError(err)
 	// Init `liaison` module
-	//tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
-	//tester.NoError(err)
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
 
 	err = indexSvc.PreRun()

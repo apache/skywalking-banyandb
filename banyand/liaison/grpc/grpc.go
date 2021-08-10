@@ -49,35 +49,35 @@ import (
 )
 
 var (
-	ErrSeriesEvents    = errors.New("no seriesEvent")
-	ErrShardEvents     = errors.New("no shardEvent")
-	ErrInvalidSeriesID = errors.New("invalid seriesID")
-	ErrServerCert = errors.New("invalid server cert file")
-	ErrServerKey = errors.New("invalid server key file")
+	ErrSeriesEvents       = errors.New("no seriesEvent")
+	ErrShardEvents        = errors.New("no shardEvent")
+	ErrInvalidSeriesID    = errors.New("invalid seriesID")
+	ErrServerCert         = errors.New("invalid server cert file")
+	ErrServerKey          = errors.New("invalid server key file")
 	ErrServerHostOverride = errors.New("invalid serverHostOverride")
-	ErrNoAddr = errors.New("no address")
+	ErrNoAddr             = errors.New("no address")
 )
 
 type Server struct {
-	addr       string
-	maxRecvMsgSize int
-	TlsVal bool
+	addr               string
+	maxRecvMsgSize     int
+	TlsVal             bool
 	ServerHostOverride string
-	CertFile string
-	keyFile string
-	log        *logger.Logger
-	ser        *grpclib.Server
-	pipeline   queue.Queue
-	repo       discovery.ServiceRepo
-	shardInfo  *shardInfo
-	seriesInfo *seriesInfo
+	CertFile           string
+	keyFile            string
+	log                *logger.Logger
+	ser                *grpclib.Server
+	pipeline           queue.Queue
+	repo               discovery.ServiceRepo
+	shardInfo          *shardInfo
+	seriesInfo         *seriesInfo
+	sync.RWMutex
 	v1.UnimplementedTraceServiceServer
 }
 
 type shardInfo struct {
 	log        *logger.Logger
-	shardEvent *v1.ShardEvent
-	sync.RWMutex
+	shardEvent shardEvent
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -86,9 +86,7 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.RWMutex.Lock()
-	defer s.RWMutex.Unlock()
-	s.shardEvent = shardEvent
+	s.shardEvent.setShardEventVal(shardEvent)
 	s.log.Info().
 		Str("action", v1.Action_name[int32(shardEvent.Action)]).
 		Uint64("shardID", shardEvent.Shard.Id).
@@ -96,10 +94,20 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
+type shardEvent struct {
+	shardEventVal *v1.ShardEvent
+	sync.RWMutex
+}
+
+func (s *shardEvent) setShardEventVal(eventVal *v1.ShardEvent) {
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	s.shardEventVal = eventVal
+}
+
 type seriesInfo struct {
 	log         *logger.Logger
-	seriesEvent *v1.SeriesEvent
-	sync.RWMutex
+	seriesEvent seriesEvent
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -108,15 +116,24 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.RWMutex.Lock()
-	defer s.RWMutex.Unlock()
-	s.seriesEvent = seriesEvent
+	s.seriesEvent.setSeriesEventVal(seriesEvent)
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
 		Str("name", seriesEvent.Series.Name).
 		Str("group", seriesEvent.Series.Group).
 		Msg("received a shard event")
 	return
+}
+
+type seriesEvent struct {
+	seriesEventVal *v1.SeriesEvent
+	sync.RWMutex
+}
+
+func (s *seriesEvent) setSeriesEventVal(eventVal *v1.SeriesEvent) {
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	s.seriesEventVal = eventVal
 }
 
 func (s *Server) PreRun() error {
@@ -152,10 +169,10 @@ func (s *Server) FlagSet() *run.FlagSet {
 
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
-	fs.BoolVarP(&s.TlsVal,"tls", "",true, "Connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.CertFile, "certFile","", serverCert, "The TLS cert file")
+	fs.BoolVarP(&s.TlsVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
+	fs.StringVarP(&s.CertFile, "certFile", "", serverCert, "The TLS cert file")
 	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
-	fs.StringVarP(&s.ServerHostOverride,"serverHostOverride", "", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
+	fs.StringVarP(&s.ServerHostOverride, "serverHostOverride", "", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
@@ -208,8 +225,16 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
-	return data.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
+func (s *Server) getSeriesInfo() *seriesInfo {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.seriesInfo
+}
+
+func (s *Server) getShardInfo() *shardInfo {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.shardInfo
 }
 
 func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
@@ -231,15 +256,13 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if ruleError != nil {
 			return ruleError
 		}
-		s.seriesInfo.RWMutex.RLock()
-		if s.seriesInfo.seriesEvent == nil {
-			s.seriesInfo.RWMutex.RUnlock()
+		seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventVal
+		if seriesEventVal == nil {
 			return ErrSeriesEvents
 		}
 		var str string
 		var arr []string
-		fieldRefs, errField := schema.CreateRef(s.seriesInfo.seriesEvent.FieldNamesCompositeSeriesId...)
-		s.seriesInfo.RWMutex.RUnlock()
+		fieldRefs, errField := schema.CreateRef(seriesEventVal.FieldNamesCompositeSeriesId...)
 		if errField != nil {
 			return errField
 		}
@@ -265,13 +288,11 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 			return ErrInvalidSeriesID
 		}
 		seriesID := []byte(str)
-		s.shardInfo.RWMutex.RLock()
-		if s.shardInfo.shardEvent == nil {
-			s.shardInfo.RWMutex.RUnlock()
+		shardEventVal := s.getShardInfo().shardEvent.shardEventVal
+		if shardEventVal == nil {
 			return ErrShardEvents
 		}
-		shardNum := s.shardInfo.shardEvent.GetShard().GetId()
-		s.shardInfo.RWMutex.RUnlock()
+		shardNum := shardEventVal.GetShard().GetId()
 		if shardNum < 1 {
 			shardNum = 1
 		}
@@ -295,4 +316,8 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 	log.Println("entityCriteria:", entityCriteria)
 
 	return &v1.QueryResponse{}, nil
+}
+
+func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
+	return data.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
 }
