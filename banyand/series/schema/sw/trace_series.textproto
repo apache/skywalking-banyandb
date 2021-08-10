@@ -93,7 +93,7 @@ shard: {
 }
 duration: {
   val: 7
-  unit: DURATION_DAY
+  unit: DURATION_UNIT_DAY
 }
 updated_at: {
   seconds: 1622933202
