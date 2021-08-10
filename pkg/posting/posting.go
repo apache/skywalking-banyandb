@@ -60,6 +60,10 @@ type List interface {
 	Reset()
 
 	ToSlice() []common.ChunkID
+
+	Marshall() ([]byte, error)
+
+	Unmarshall(data []byte) error
 }
 
 type Iterator interface {

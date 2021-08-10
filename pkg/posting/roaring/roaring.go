@@ -40,6 +40,14 @@ type postingsList struct {
 	bitmap *roaring64.Bitmap
 }
 
+func (p *postingsList) Marshall() ([]byte, error) {
+	return p.bitmap.MarshalBinary()
+}
+
+func (p *postingsList) Unmarshall(data []byte) error {
+	return p.bitmap.UnmarshalBinary(data)
+}
+
 func NewPostingList() posting.List {
 	return &postingsList{
 		bitmap: roaring64.New(),
