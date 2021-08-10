@@ -77,64 +77,77 @@ type Server struct {
 
 type shardInfo struct {
 	log        *logger.Logger
-	shardEvent shardEvent
+	shardEvent *shardEvent
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
-	shardEvent, ok := message.Data().(*v1.ShardEvent)
+	event, ok := message.Data().(*v1.ShardEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	s.shardEvent.setShardEventVal(shardEvent)
+	s.shardEvent.setShardEvents(event)
 	s.log.Info().
-		Str("action", v1.Action_name[int32(shardEvent.Action)]).
-		Uint64("shardID", shardEvent.Shard.Id).
+		Str("action", v1.Action_name[int32(event.Action)]).
+		Uint64("shardID", event.Shard.Id).
 		Msg("received a shard event")
 	return
 }
 
 type shardEvent struct {
-	shardEventVal *v1.ShardEvent
+	shardEventsMap map[string]*v1.ShardEvent
 	sync.RWMutex
 }
 
-func (s *shardEvent) setShardEventVal(eventVal *v1.ShardEvent) {
+func (s *shardEvent) setShardEvents(eventVal *v1.ShardEvent) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	s.shardEventVal = eventVal
+	idx := eventVal.Shard.Series.GetName() + "-" + eventVal.Shard.Series.GetGroup()
+	if eventVal.Action == v1.Action_ACTION_PUT {
+		s.shardEventsMap[idx] = eventVal
+	} else if eventVal.Action == v1.Action_ACTION_DELETE {
+		delete(s.shardEventsMap, idx)
+	} else if eventVal.Action == v1.Action_ACTION_UNSPECIFIED {
+
+	}
 }
 
 type seriesInfo struct {
 	log         *logger.Logger
-	seriesEvent seriesEvent
+	seriesEvent *seriesEvent
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
-	seriesEvent, ok := message.Data().(*v1.SeriesEvent)
+	event, ok := message.Data().(*v1.SeriesEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
-	//action := seriesEvent.Action
-	s.seriesEvent.setSeriesEventVal(seriesEvent)
+	s.seriesEvent.setSeriesEvents(event)
 	s.log.Info().
-		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
-		Str("name", seriesEvent.Series.Name).
-		Str("group", seriesEvent.Series.Group).
+		Str("action", v1.Action_name[int32(event.Action)]).
+		Str("name", event.Series.Name).
+		Str("group", event.Series.Group).
 		Msg("received a shard event")
 	return
 }
 
 type seriesEvent struct {
-	seriesEventVal *v1.SeriesEvent
+	seriesEventsMap map[string]*v1.SeriesEvent
 	sync.RWMutex
 }
 
-func (s *seriesEvent) setSeriesEventVal(eventVal *v1.SeriesEvent) {
+func (s *seriesEvent) setSeriesEvents(seriesEventVal *v1.SeriesEvent) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	s.seriesEventVal = eventVal
+	str := seriesEventVal.Series.GetName() + "-" + seriesEventVal.Series.GetGroup()
+	if seriesEventVal.Action == v1.Action_ACTION_PUT {
+		s.seriesEventsMap[str] = seriesEventVal
+	} else if seriesEventVal.Action == v1.Action_ACTION_DELETE {
+		delete(s.seriesEventsMap, str)
+	} else if seriesEventVal.Action == v1.Action_ACTION_UNSPECIFIED {
+
+	}
 }
 
 func (s *Server) PreRun() error {
@@ -152,8 +165,8 @@ func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.Service
 	return &Server{
 		pipeline:   pipeline,
 		repo:       repo,
-		shardInfo:  &shardInfo{},
-		seriesInfo: &seriesInfo{},
+		shardInfo:  &shardInfo{shardEvent: &shardEvent{shardEventsMap: map[string]*v1.ShardEvent{}}},
+		seriesInfo: &seriesInfo{seriesEvent: &seriesEvent{seriesEventsMap: map[string]*v1.SeriesEvent{}}},
 	}
 }
 
@@ -238,7 +251,7 @@ func (s *Server) getShardInfo() *shardInfo {
 	return s.shardInfo
 }
 
-func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest) (SeriesID []byte, err error) {
+func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName string) (SeriesID []byte, err error) {
 	ana := logical.DefaultAnalyzer()
 	metadata := common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
@@ -248,7 +261,7 @@ func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest) (SeriesID []byte
 	if ruleError != nil {
 		return nil, ruleError
 	}
-	seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventVal
+	seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventsMap[mapIndexName]
 	if seriesEventVal == nil {
 		return nil, ErrSeriesEvents
 	}
@@ -284,8 +297,8 @@ func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest) (SeriesID []byte
 	return seriesID, nil
 }
 
-func  (s *Server) computeShardID(seriesID []byte) (shardID uint, err error) {
-	shardEventVal := s.getShardInfo().shardEvent.shardEventVal
+func  (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
+	shardEventVal := s.getShardInfo().shardEvent.shardEventsMap[mapIndexName]
 	if shardEventVal == nil {
 		return 0, ErrShardEvents
 	}
@@ -310,11 +323,12 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if err != nil {
 			return err
 		}
-		seriesID, err := s.computeSeriesID(writeEntity)
+		mapIndexName := writeEntity.GetMetadata().GetName() + "-" + writeEntity.GetMetadata().GetGroup()
+		seriesID, err := s.computeSeriesID(writeEntity, mapIndexName)
 		if err != nil {
 			return err
 		}
-		shardID, err := s.computeShardID(seriesID)
+		shardID, err := s.computeShardID(seriesID, mapIndexName)
 		if err != nil {
 			return err
 		}
