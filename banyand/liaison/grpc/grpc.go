@@ -61,7 +61,7 @@ var (
 type Server struct {
 	addr               string
 	maxRecvMsgSize     int
-	TlsVal             bool
+	TLSVal             bool
 	ServerHostOverride string
 	CertFile           string
 	keyFile            string
@@ -169,7 +169,7 @@ func (s *Server) FlagSet() *run.FlagSet {
 
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
-	fs.BoolVarP(&s.TlsVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
+	fs.BoolVarP(&s.TLSVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
 	fs.StringVarP(&s.CertFile, "certFile", "", serverCert, "The TLS cert file")
 	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
 	fs.StringVarP(&s.ServerHostOverride, "serverHostOverride", "", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
@@ -182,7 +182,7 @@ func (s *Server) Validate() error {
 	if s.addr == "" {
 		return ErrNoAddr
 	}
-	if s.TlsVal {
+	if s.TLSVal {
 		if s.CertFile == "" {
 			return ErrServerCert
 		}
@@ -209,7 +209,7 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
 	}
 	var opts []grpclib.ServerOption
-	if s.TlsVal {
+	if s.TLSVal {
 		creds, _ := credentials.NewServerTLSFromFile(s.CertFile, s.keyFile)
 		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 	}

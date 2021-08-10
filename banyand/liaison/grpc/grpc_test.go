@@ -123,7 +123,7 @@ func TestTraceService(t *testing.T) {
 	var opts []grpclib.DialOption
 	errValidate := tcp.Validate()
 	assert.NoError(t, errValidate)
-	if tcp.TlsVal {
+	if tcp.TLSVal {
 		creds, err := credentials.NewClientTLSFromFile(tcp.CertFile, tcp.ServerHostOverride)
 		assert.NoError(t, err)
 		opts = append(opts, grpclib.WithTransportCredentials(creds))
