@@ -35,7 +35,7 @@ import (
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
@@ -48,7 +48,7 @@ var (
 	serverAddr = "localhost:17912"
 )
 
-func setup(t *testing.T, tester *require.Assertions) (liaison.Endpoint, func()) {
+func setup(t *testing.T, tester *require.Assertions) (*grpc.Server, func()) {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -77,8 +77,9 @@ func setup(t *testing.T, tester *require.Assertions) (liaison.Endpoint, func()) 
 	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
 	tester.NoError(err)
 	// Init `liaison` module
-	tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
-	tester.NoError(err)
+	//tcp, err := liaison.NewEndpoint(context.TODO(), pipeline, repo)
+	//tester.NoError(err)
+	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
 
 	err = indexSvc.PreRun()
 	tester.NoError(err)
@@ -124,11 +125,8 @@ func TestTraceService(t *testing.T) {
 	var opts []grpclib.DialOption
 	errValidate := tcp.Validate()
 	assert.NoError(t, errValidate)
-	tlsVal, _ := tcp.FlagSet().GetBool("tls")
-	if tlsVal {
-		certFile, _ := tcp.FlagSet().GetString("certFile")
-		serverHostOverride, _ := tcp.FlagSet().GetString("serverHostOverride")
-		creds, err := credentials.NewClientTLSFromFile(certFile, serverHostOverride)
+	if tcp.TlsVal {
+		creds, err := credentials.NewClientTLSFromFile(tcp.CertFile, tcp.ServerHostOverride)
 		assert.NoError(t, err)
 		opts = append(opts, grpclib.WithTransportCredentials(creds))
 	} else {

@@ -52,10 +52,19 @@ var (
 	ErrSeriesEvents    = errors.New("no seriesEvent")
 	ErrShardEvents     = errors.New("no shardEvent")
 	ErrInvalidSeriesID = errors.New("invalid seriesID")
+	ErrServerCert = errors.New("invalid server cert file")
+	ErrServerKey = errors.New("invalid server key file")
+	ErrServerHostOverride = errors.New("invalid serverHostOverride")
+	ErrNoAddr = errors.New("no address")
 )
 
 type Server struct {
 	addr       string
+	maxRecvMsgSize int
+	TlsVal bool
+	ServerHostOverride string
+	CertFile string
+	keyFile string
 	log        *logger.Logger
 	ser        *grpclib.Server
 	pipeline   queue.Queue
@@ -138,45 +147,37 @@ func (s *Server) FlagSet() *run.FlagSet {
 	size := 1024 * 1024 * 8
 	_, currentFile, _, _ := runtime.Caller(0)
 	basePath := filepath.Dir(currentFile)
-	serverCert := filepath.Join(basePath, "testdata/server_cert.pem")
-	serverKey := filepath.Join(basePath, "testdata/server_key.pem")
+	serverCert := filepath.Join(basePath, "data/server_cert.pem")
+	serverKey := filepath.Join(basePath, "data/server_key.pem")
 
 	fs := run.NewFlagSet("grpc")
-	fs.Int("maxRecvMsgSize", size, "The size of max receiving message")
-	fs.Bool("tls", true, "Connection uses TLS if true, else plain TCP")
-	fs.String("certFile", serverCert, "The TLS cert file")
-	fs.String("keyFile", serverKey, "The TLS key file")
-	fs.String("serverHostOverride", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
+	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
+	fs.BoolVarP(&s.TlsVal,"tls", "",true, "Connection uses TLS if true, else plain TCP")
+	fs.StringVarP(&s.CertFile, "certFile","", serverCert, "The TLS cert file")
+	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
+	fs.StringVarP(&s.ServerHostOverride,"serverHostOverride", "", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
 }
 
 func (s *Server) Validate() error {
-	_, err := s.FlagSet().GetInt("maxRecvMsgSize")
-	if err != nil {
-		return err
+	if s.addr == "" {
+		return ErrNoAddr
 	}
-	tlsVal, err := s.FlagSet().GetBool("tls")
-	if err != nil {
-		return err
-	}
-	if tlsVal {
-		certFile, errCertFile := s.FlagSet().GetString("certFile")
-		if errCertFile != nil {
-			return errCertFile
+	if s.TlsVal {
+		if s.CertFile == "" {
+			return ErrServerCert
 		}
-		keyFile, errKeyFile := s.FlagSet().GetString("keyFile")
-		if errKeyFile != nil {
-			return errKeyFile
+		if s.keyFile == "" {
+			return ErrServerKey
 		}
-		_, errTLS := credentials.NewServerTLSFromFile(certFile, keyFile)
+		if s.ServerHostOverride == "" {
+			return ErrServerHostOverride
+		}
+		_, errTLS := credentials.NewServerTLSFromFile(s.CertFile, s.keyFile)
 		if errTLS != nil {
 			return errTLS
-		}
-		_, errServerHostOverride := s.FlagSet().GetString("serverHostOverride")
-		if errServerHostOverride != nil {
-			return errServerHostOverride
 		}
 	}
 	return nil
@@ -190,16 +191,12 @@ func (s *Server) Serve() error {
 	if errValidate := s.Validate(); errValidate != nil {
 		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
 	}
-	size, _ := s.FlagSet().GetInt("maxRecvMsgSize")
-	tlsVal, _ := s.FlagSet().GetBool("tls")
 	var opts []grpclib.ServerOption
-	if tlsVal {
-		certFile, _ := s.FlagSet().GetString("certFile")
-		keyFile, _ := s.FlagSet().GetString("keyFile")
-		creds, _ := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if s.TlsVal {
+		creds, _ := credentials.NewServerTLSFromFile(s.CertFile, s.keyFile)
 		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 	}
-	opts = append(opts, grpclib.MaxRecvMsgSize(size))
+	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
 	v1.RegisterTraceServiceServer(s.ser, s)
 
