@@ -116,6 +116,7 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 		s.log.Warn().Msg("invalid event data type")
 		return
 	}
+	//action := seriesEvent.Action
 	s.seriesEvent.setSeriesEventVal(seriesEvent)
 	s.log.Info().
 		Str("action", v1.Action_name[int32(seriesEvent.Action)]).
@@ -237,6 +238,69 @@ func (s *Server) getShardInfo() *shardInfo {
 	return s.shardInfo
 }
 
+func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest) (SeriesID []byte, err error) {
+	ana := logical.DefaultAnalyzer()
+	metadata := common.Metadata{
+		KindVersion: apischema.SeriesKindVersion,
+		Spec:        writeEntity.GetMetadata(),
+	}
+	schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
+	if ruleError != nil {
+		return nil, ruleError
+	}
+	seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventVal
+	if seriesEventVal == nil {
+		return nil, ErrSeriesEvents
+	}
+	var str string
+	var arr []string
+	fieldRefs, errField := schema.CreateRef(seriesEventVal.FieldNamesCompositeSeriesId...)
+	if errField != nil {
+		return nil, errField
+	}
+	for _, ref := range fieldRefs {
+		field := writeEntity.GetEntity().GetFields()[ref.Spec.Idx]
+		switch v := field.GetValueType().(type) {
+		case *v1.Field_StrArray:
+			for j := 0; j < len(v.StrArray.Value); j++ {
+				arr = append(arr, v.StrArray.Value[j])
+			}
+		case *v1.Field_IntArray:
+			for t := 0; t < len(v.IntArray.Value); t++ {
+				arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+			}
+		case *v1.Field_Int:
+			arr = append(arr, fmt.Sprint(v.Int.Value))
+		case *v1.Field_Str:
+			arr = append(arr, fmt.Sprint(v.Str.Value))
+		}
+	}
+	str = strings.Join(arr, "")
+	if str == "" {
+		return nil, ErrInvalidSeriesID
+	}
+	seriesID := []byte(str)
+
+	return seriesID, nil
+}
+
+func  (s *Server) computeShardID(seriesID []byte) (shardID uint, err error) {
+	shardEventVal := s.getShardInfo().shardEvent.shardEventVal
+	if shardEventVal == nil {
+		return 0, ErrShardEvents
+	}
+	shardNum := shardEventVal.GetShard().GetId()
+	if shardNum < 1 {
+		shardNum = 1
+	}
+	shardID, shardIDError := partition.ShardID(seriesID, uint32(shardNum))
+	if shardIDError != nil {
+		return 0, shardIDError
+	}
+
+	return shardID, nil
+}
+
 func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 	for {
 		writeEntity, err := TraceWriteServer.Recv()
@@ -246,59 +310,13 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if err != nil {
 			return err
 		}
-
-		ana := logical.DefaultAnalyzer()
-		metadata := common.Metadata{
-			KindVersion: apischema.SeriesKindVersion,
-			Spec:        writeEntity.GetMetadata(),
+		seriesID, err := s.computeSeriesID(writeEntity)
+		if err != nil {
+			return err
 		}
-		schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
-		if ruleError != nil {
-			return ruleError
-		}
-		seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventVal
-		if seriesEventVal == nil {
-			return ErrSeriesEvents
-		}
-		var str string
-		var arr []string
-		fieldRefs, errField := schema.CreateRef(seriesEventVal.FieldNamesCompositeSeriesId...)
-		if errField != nil {
-			return errField
-		}
-		for _, ref := range fieldRefs {
-			field := writeEntity.GetEntity().GetFields()[ref.Spec.Idx]
-			switch v := field.GetValueType().(type) {
-			case *v1.Field_StrArray:
-				for j := 0; j < len(v.StrArray.Value); j++ {
-					arr = append(arr, v.StrArray.Value[j])
-				}
-			case *v1.Field_IntArray:
-				for t := 0; t < len(v.IntArray.Value); t++ {
-					arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
-				}
-			case *v1.Field_Int:
-				arr = append(arr, fmt.Sprint(v.Int.Value))
-			case *v1.Field_Str:
-				arr = append(arr, fmt.Sprint(v.Str.Value))
-			}
-		}
-		str = strings.Join(arr, "")
-		if str == "" {
-			return ErrInvalidSeriesID
-		}
-		seriesID := []byte(str)
-		shardEventVal := s.getShardInfo().shardEvent.shardEventVal
-		if shardEventVal == nil {
-			return ErrShardEvents
-		}
-		shardNum := shardEventVal.GetShard().GetId()
-		if shardNum < 1 {
-			shardNum = 1
-		}
-		shardID, shardIDError := partition.ShardID(seriesID, uint32(shardNum))
-		if shardIDError != nil {
-			return shardIDError
+		shardID, err := s.computeShardID(seriesID)
+		if err != nil {
+			return err
 		}
 		mergeData := assemblyWriteData(shardID, writeEntity, convert.BytesToUint64(seriesID))
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), mergeData)
