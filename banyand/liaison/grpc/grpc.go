@@ -61,9 +61,9 @@ var (
 type Server struct {
 	addr               string
 	maxRecvMsgSize     int
-	TLSVal             bool
-	ServerHostOverride string
-	CertFile           string
+	tlsVal             bool
+	serverHostOverride string
+	certFile           string
 	keyFile            string
 	log                *logger.Logger
 	ser                *grpclib.Server
@@ -192,10 +192,10 @@ func (s *Server) FlagSet() *run.FlagSet {
 
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
-	fs.BoolVarP(&s.TLSVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.CertFile, "certFile", "", serverCert, "The TLS cert file")
+	fs.BoolVarP(&s.tlsVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
+	fs.StringVarP(&s.certFile, "certFile", "", serverCert, "The TLS cert file")
 	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
-	fs.StringVarP(&s.ServerHostOverride, "serverHostOverride", "", "localhost", "The server name used to verify the hostname returned by the TLS handshake")
+	fs.StringVarP(&s.serverHostOverride, "serverHostOverride", "", "localhost", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
@@ -205,17 +205,17 @@ func (s *Server) Validate() error {
 	if s.addr == "" {
 		return ErrNoAddr
 	}
-	if s.TLSVal {
-		if s.CertFile == "" {
+	if s.tlsVal {
+		if s.certFile == "" {
 			return ErrServerCert
 		}
 		if s.keyFile == "" {
 			return ErrServerKey
 		}
-		if s.ServerHostOverride == "" {
+		if s.serverHostOverride == "" {
 			return ErrServerHostOverride
 		}
-		_, errTLS := credentials.NewServerTLSFromFile(s.CertFile, s.keyFile)
+		_, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 		if errTLS != nil {
 			return errTLS
 		}
@@ -232,8 +232,8 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
 	}
 	var opts []grpclib.ServerOption
-	if s.TLSVal {
-		creds, _ := credentials.NewServerTLSFromFile(s.CertFile, s.keyFile)
+	if s.tlsVal {
+		creds, _ := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
