@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/api/data"
 	"os"
 	"path"
 	"testing"
@@ -28,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
@@ -52,7 +52,7 @@ type entityValue struct {
 	items      []interface{}
 }
 
-func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceRepo, series.Service, func()) {
+func setupServices(t *testing.T, tester *require.Assertions) (series.Service, queue.Queue,func()) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -84,7 +84,7 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(err)
 
 	// Init `Query` module
-	executor, err := NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
+	executor, err := NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc, pipeline)
 	tester.NoError(err)
 
 	// Init `Liaison` module
@@ -119,7 +119,7 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	defer cancelFunc()
 	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
 
-	return repo, traceSvc, func() {
+	return traceSvc, pipeline, func() {
 		db.GracefulStop()
 		_ = os.RemoveAll(rootPath)
 	}
@@ -287,7 +287,7 @@ func TestQueryProcessor(t *testing.T) {
 	tester := require.New(t)
 
 	// setup services
-	repo, traceSvc, gracefulStop := setupServices(t, tester)
+	traceSvc, pipeline, gracefulStop := setupServices(t, tester)
 	defer gracefulStop()
 
 	baseTs := time.Now()
@@ -418,7 +418,7 @@ func TestQueryProcessor(t *testing.T) {
 			singleTester := require.New(t)
 			now := time.Now()
 			m := bus.NewMessage(bus.MessageID(now.UnixNano()), tt.queryGenerator(baseTs))
-			f, err := repo.Publish(event.TopicQueryEvent, m)
+			f, err := pipeline.Publish(data.TopicQueryEvent, m)
 			singleTester.NoError(err)
 			singleTester.NotNil(f)
 			msg, err := f.Get()

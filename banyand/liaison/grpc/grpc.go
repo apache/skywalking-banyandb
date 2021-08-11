@@ -334,8 +334,16 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 }
 
 func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) {
-	log.Println("entityCriteria:", entityCriteria)
-
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	feat, errQuery := s.pipeline.Publish(data.TopicQueryEvent, message)
+	if errQuery != nil {
+		return nil, errQuery
+	}
+	msg, errFeat := feat.Get()
+	if errFeat != nil {
+		return nil, errFeat
+	}
+	log.Println(msg.Data())
 	return &v1.QueryResponse{}, nil
 }
 

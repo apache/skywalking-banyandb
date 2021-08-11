@@ -78,7 +78,7 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
 	// Init `Query` module
-	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
+	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc, pipeline)
 	tester.NoError(err)
 	// Init `liaison` module
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
@@ -162,7 +162,7 @@ func TestTraceService(t *testing.T) {
 			creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
 			assert.NoError(t, err)
 			opts = append(opts, grpclib.WithTransportCredentials(creds))
-			linkService(t, tc.args.addr, opts)
+			//linkService(t, tc.args.addr, opts)
 		} else {
 			errValidate := tcp.Validate()
 			assert.NoError(t, errValidate)
@@ -234,13 +234,12 @@ func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
 	ctx := context.Background()
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 	criteria := pb.NewQueryRequestBuilder().
-		Limit(5).
-		Offset(10).
-		OrderBy("service_instance_id", v1.QueryOrder_SORT_DESC).
-		Metadata("default", "trace").
-		Projection("http.method", "service_id", "service_instance_id").
-		Fields("service_id", "=", "my_app", "http.method", "=", "GET").
+		Limit(10).
+		Offset(0).
+		Metadata("default", "sw").
+		Fields("db.type", "=", "MySQL").
 		TimeRange(sT, eT).
+		Projection("trace_id").
 		Build()
 	stream, errRev := client.Query(ctx, criteria)
 	if errRev != nil {

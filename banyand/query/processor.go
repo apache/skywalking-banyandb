@@ -19,10 +19,11 @@ package query
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/event"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
@@ -51,6 +52,7 @@ type queryProcessor struct {
 	schemaRepo  series.SchemaRepo
 	log         *logger.Logger
 	serviceRepo discovery.ServiceRepo
+	pipeline queue.Queue
 }
 
 func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
@@ -96,5 +98,5 @@ func (q *queryProcessor) Name() string {
 
 func (q *queryProcessor) PreRun() error {
 	q.log = logger.GetLogger(moduleName)
-	return q.serviceRepo.Subscribe(event.TopicQueryEvent, q)
+	return q.pipeline.Subscribe(data.TopicQueryEvent, q)
 }
