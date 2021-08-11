@@ -135,7 +135,6 @@ func TestTraceService(t *testing.T) {
 	testCases := []struct {
 		name    string
 		args    testData
-		wantErr bool
 	}{
 		{
 			name: "isTLS",
@@ -237,7 +236,6 @@ func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").
-		Fields("db.type", "=", "MySQL").
 		TimeRange(sT, eT).
 		Projection("trace_id").
 		Build()

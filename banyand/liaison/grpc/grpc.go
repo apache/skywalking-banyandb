@@ -343,8 +343,9 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	log.Println(msg.Data())
-	return &v1.QueryResponse{}, nil
+	queryMsg := msg.Data()
+	log.Println(queryMsg)
+	return &v1.QueryResponse{}, nil // Entities
 }
 
 func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {

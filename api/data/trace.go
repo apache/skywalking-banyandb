@@ -37,12 +37,6 @@ var QueryEventKindVersion = common.KindVersion{
 }
 var TopicQueryEvent = bus.BiTopic(QueryEventKindVersion.String())
 
-//var QueryEventKindVersion = common.KindVersion{
-//	Version: "v1",
-//	Kind:    "trace-query",
-//}
-//var TopicQueryEvent = bus.BiTopic(QueryEventKindVersion.String())
-
 type Trace struct {
 	common.KindVersion
 	Entities []Entity
