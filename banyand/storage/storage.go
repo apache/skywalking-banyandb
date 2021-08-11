@@ -35,6 +35,8 @@ const (
 	KVTypeNormal KVType = 0
 	// KVTypeTimeSeries is a time-series KV storage
 	KVTypeTimeSeries KVType = 1
+	// KVTypeIndex is an index KV storage
+	KVTypeIndex KVType = 2
 )
 
 // Database is the storage manager which implements the physical data model
@@ -82,13 +84,16 @@ type CompressSpec struct {
 type KVSpec struct {
 	Name          string
 	Type          KVType
+	BufferSize    int64
 	CompressLevel int
 	ValueSize     int
+	FlushCallback kv.FlushCallback
 }
 
 type StoreRepo interface {
 	Reader(shard uint, name string, start, end uint64) kv.Reader
 	TimeSeriesReader(shard uint, name string, start, end uint64) kv.TimeSeriesReader
+	Index(shard uint, name string) kv.IndexStore
 }
 
 // WritePoint is a reference to a underlying area.

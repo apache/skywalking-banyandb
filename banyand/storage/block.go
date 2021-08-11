@@ -30,8 +30,9 @@ type block struct {
 
 	l *logger.Logger
 
-	stores   map[string]kv.Store
-	tsStores map[string]kv.TimeSeriesStore
+	stores      map[string]kv.Store
+	tsStores    map[string]kv.TimeSeriesStore
+	indexStores map[string]kv.IndexStore
 
 	shardID int
 }
@@ -39,12 +40,13 @@ type block struct {
 func newBlock(shardID int, path string, plugin Plugin) (*block, error) {
 	l := logger.GetLogger("block")
 	return &block{
-		shardID:  shardID,
-		path:     path,
-		plugin:   plugin,
-		l:        l,
-		stores:   make(map[string]kv.Store),
-		tsStores: make(map[string]kv.TimeSeriesStore),
+		shardID:     shardID,
+		path:        path,
+		plugin:      plugin,
+		l:           l,
+		stores:      make(map[string]kv.Store),
+		tsStores:    make(map[string]kv.TimeSeriesStore),
+		indexStores: make(map[string]kv.IndexStore),
 	}, nil
 }
 
@@ -69,6 +71,12 @@ func (b *block) createKV(defines []KVSpec) (err error) {
 		case KVTypeNormal:
 			var s kv.Store
 			opts := make([]kv.StoreOptions, 0)
+			if define.BufferSize > 0 {
+				opts = append(opts, kv.StoreWithBufferSize(define.BufferSize))
+			}
+			if define.FlushCallback != nil {
+				opts = append(opts, kv.StoreWithFlushCallback(define.FlushCallback))
+			}
 			opts = append(opts, kv.StoreWithLogger(b.l))
 			if s, err = kv.OpenStore(b.shardID, path, opts...); err != nil {
 				return fmt.Errorf("failed to open normal store: %w", err)
@@ -76,10 +84,17 @@ func (b *block) createKV(defines []KVSpec) (err error) {
 			b.stores[storeID] = s
 		case KVTypeTimeSeries:
 			var s kv.TimeSeriesStore
-			if s, err = kv.OpenTimeSeriesStore(b.shardID, path, define.CompressLevel, define.ValueSize, kv.TSSWithLogger(b.l)); err != nil {
+			if s, err = kv.OpenTimeSeriesStore(b.shardID, path, define.CompressLevel, define.ValueSize,
+				kv.TSSWithLogger(b.l)); err != nil {
 				return fmt.Errorf("failed to open time series store: %w", err)
 			}
 			b.tsStores[storeID] = s
+		case KVTypeIndex:
+			var s kv.IndexStore
+			if s, err = kv.OpenIndexStore(b.shardID, path, kv.IndexWithLogger(b.l)); err != nil {
+				return fmt.Errorf("failed to open time series store: %w", err)
+			}
+			b.indexStores[storeID] = s
 		}
 	}
 	return nil
@@ -90,6 +105,9 @@ func (b *block) close() {
 		_ = store.Close()
 	}
 	for _, store := range b.tsStores {
+		_ = store.Close()
+	}
+	for _, store := range b.indexStores {
 		_ = store.Close()
 	}
 }

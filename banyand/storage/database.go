@@ -127,6 +127,15 @@ func (s *series) TimeSeriesReader(shard uint, name string, start, end uint64) kv
 	return b.tsStores[name]
 }
 
+func (s *series) Index(shard uint, name string) kv.IndexStore {
+	//TODO: find targets in all blocks
+	b, ok := s.sLst[shard].activeBlock.Load().(*block)
+	if !ok {
+		return nil
+	}
+	return b.indexStores[name]
+}
+
 func (s *series) load(meta PluginMeta) error {
 	//TODO: to implement load instead of removing old contents
 	return os.RemoveAll(s.location)

@@ -25,13 +25,16 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
-var ErrStopScan = errors.New("stop scanning")
-var DefaultScanOpts = ScanOpts{
-	PrefetchSize:   100,
-	PrefetchValues: true,
-}
+var (
+	ErrStopScan     = errors.New("stop scanning")
+	DefaultScanOpts = ScanOpts{
+		PrefetchSize:   100,
+		PrefetchValues: true,
+	}
+)
 
 type Writer interface {
 	// Put a value
@@ -93,6 +96,24 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 	}
 }
 
+type Iterator interface {
+	Next()
+	Rewind()
+	Seek(key []byte)
+	Key() []byte
+	Val() posting.List
+	Valid() bool
+	Close() error
+}
+
+type HandoverCallback func()
+
+type IndexStore interface {
+	Handover(iterator Iterator) error
+	Seek(key []byte, limit int) (posting.List, error)
+	Close() error
+}
+
 // OpenTimeSeriesStore creates a new TimeSeriesStore
 func OpenTimeSeriesStore(shardID int, path string, compressLevel int, valueSize int, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
 	btss := new(badgerTSS)
@@ -102,6 +123,8 @@ func OpenTimeSeriesStore(shardID int, path string, compressLevel int, valueSize 
 		opt(btss)
 	}
 	btss.dbOpts = btss.dbOpts.WithMaxLevels(1)
+	// Put all values into LSM
+	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
 	if err != nil {
@@ -124,6 +147,26 @@ func StoreWithLogger(l *logger.Logger) StoreOptions {
 	}
 }
 
+// StoreWithBufferSize sets a external logger into underlying Store
+func StoreWithBufferSize(size int64) StoreOptions {
+	return func(store Store) {
+		if bdb, ok := store.(*badgerDB); ok {
+			bdb.dbOpts = bdb.dbOpts.WithMemTableSize(size)
+		}
+	}
+}
+
+type FlushCallback func()
+
+// StoreWithFlushCallback sets a callback function
+func StoreWithFlushCallback(callback FlushCallback) StoreOptions {
+	return func(store Store) {
+		if bdb, ok := store.(*badgerDB); ok {
+			bdb.dbOpts.FlushCallBack = callback
+		}
+	}
+}
+
 // OpenStore creates a new Store
 func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error) {
 	bdb := new(badgerDB)
@@ -137,13 +180,40 @@ func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error)
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open time series store: %v", err)
+		return nil, fmt.Errorf("failed to open normal store: %v", err)
 	}
-	if bdb.seqKey != "" {
-		bdb.seq, err = bdb.db.GetSequence([]byte(bdb.seqKey), 100)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get sequence: %v", err)
+	return bdb, nil
+}
+
+type IndexOptions func(store IndexStore)
+
+// IndexWithLogger sets a external logger into underlying IndexStore
+func IndexWithLogger(l *logger.Logger) IndexOptions {
+	return func(store IndexStore) {
+		if bdb, ok := store.(*badgerDB); ok {
+			bdb.dbOpts = bdb.dbOpts.WithLogger(&badgerLog{
+				delegated: l.Named("index-kv"),
+			})
 		}
+	}
+}
+
+// OpenIndexStore creates a new IndexStore
+func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexStore, error) {
+	bdb := new(badgerDB)
+	bdb.shardID = shardID
+	bdb.dbOpts = badger.DefaultOptions(path)
+	for _, opt := range options {
+		opt(bdb)
+	}
+	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(1)
+	// Put all values into LSM
+	bdb.dbOpts = bdb.dbOpts.WithVLogPercentile(1.0)
+
+	var err error
+	bdb.db, err = badger.Open(bdb.dbOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to index store: %v", err)
 	}
 	return bdb, nil
 }
