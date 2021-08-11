@@ -71,13 +71,13 @@ type Server struct {
 	repo               discovery.ServiceRepo
 	shardInfo          *shardInfo
 	seriesInfo         *seriesInfo
-	sync.RWMutex
 	v1.UnimplementedTraceServiceServer
 }
 
 type shardInfo struct {
 	log        *logger.Logger
 	shardEvent *shardEvent
+	sync.RWMutex
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -94,6 +94,12 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
+func (s *shardInfo) getShardEvent(idx string) *v1.ShardEvent {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.shardEvent.shardEventsMap[idx]
+}
+
 type shardEvent struct {
 	shardEventsMap map[string]*v1.ShardEvent
 	sync.RWMutex
@@ -107,14 +113,13 @@ func (s *shardEvent) setShardEvents(eventVal *v1.ShardEvent) {
 		s.shardEventsMap[idx] = eventVal
 	} else if eventVal.Action == v1.Action_ACTION_DELETE {
 		delete(s.shardEventsMap, idx)
-	} else if eventVal.Action == v1.Action_ACTION_UNSPECIFIED {
-
 	}
 }
 
 type seriesInfo struct {
 	log         *logger.Logger
 	seriesEvent *seriesEvent
+	sync.RWMutex
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -132,6 +137,12 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
+func (s *seriesInfo) getSeriesEvent(idx string) *v1.SeriesEvent {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.seriesEvent.seriesEventsMap[idx]
+}
+
 type seriesEvent struct {
 	seriesEventsMap map[string]*v1.SeriesEvent
 	sync.RWMutex
@@ -145,8 +156,6 @@ func (s *seriesEvent) setSeriesEvents(seriesEventVal *v1.SeriesEvent) {
 		s.seriesEventsMap[str] = seriesEventVal
 	} else if seriesEventVal.Action == v1.Action_ACTION_DELETE {
 		delete(s.seriesEventsMap, str)
-	} else if seriesEventVal.Action == v1.Action_ACTION_UNSPECIFIED {
-
 	}
 }
 
@@ -239,18 +248,6 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func (s *Server) getSeriesInfo() *seriesInfo {
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
-	return s.seriesInfo
-}
-
-func (s *Server) getShardInfo() *shardInfo {
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
-	return s.shardInfo
-}
-
 func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName string) (SeriesID []byte, err error) {
 	ana := logical.DefaultAnalyzer()
 	metadata := common.Metadata{
@@ -261,7 +258,7 @@ func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName str
 	if ruleError != nil {
 		return nil, ruleError
 	}
-	seriesEventVal := s.getSeriesInfo().seriesEvent.seriesEventsMap[mapIndexName]
+	seriesEventVal := s.seriesInfo.getSeriesEvent(mapIndexName)
 	if seriesEventVal == nil {
 		return nil, ErrSeriesEvents
 	}
@@ -298,7 +295,7 @@ func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName str
 }
 
 func  (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
-	shardEventVal := s.getShardInfo().shardEvent.shardEventsMap[mapIndexName]
+	shardEventVal := s.shardInfo.getShardEvent(mapIndexName)
 	if shardEventVal == nil {
 		return 0, ErrShardEvents
 	}
