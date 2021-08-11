@@ -48,7 +48,7 @@ var (
 	serverAddr = "localhost:17912"
 )
 
-func setup(t *testing.T, tester *require.Assertions) (*grpc.Server, func()) {
+func setup(tester *require.Assertions) (*grpc.Server, func()) {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -116,7 +116,7 @@ func setup(t *testing.T, tester *require.Assertions) (*grpc.Server, func()) {
 
 func TestTraceService(t *testing.T) {
 	tester := require.New(t)
-	tcp, gracefulStop := setup(t, tester)
+	tcp, gracefulStop := setup(tester)
 	defer gracefulStop()
 
 	flag.Parse()

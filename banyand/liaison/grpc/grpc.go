@@ -195,7 +195,7 @@ func (s *Server) FlagSet() *run.FlagSet {
 	fs.BoolVarP(&s.TLSVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
 	fs.StringVarP(&s.CertFile, "certFile", "", serverCert, "The TLS cert file")
 	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
-	fs.StringVarP(&s.ServerHostOverride, "serverHostOverride", "", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
+	fs.StringVarP(&s.ServerHostOverride, "serverHostOverride", "", "localhost", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
