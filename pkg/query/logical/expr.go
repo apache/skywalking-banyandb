@@ -44,21 +44,21 @@ type FieldRef struct {
 	// name defines the key of the field
 	name string
 	// spec contains the index of the key in the schema, as well as the underlying FieldSpec
-	spec *fieldSpec
+	Spec *fieldSpec
 }
 
 func (f *FieldRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*FieldRef); ok {
-		return other.name == f.name && other.spec.spec.GetType() == f.spec.spec.GetType()
+		return other.name == f.name && other.Spec.spec.GetType() == f.Spec.spec.GetType()
 	}
 	return false
 }
 
 func (f *FieldRef) FieldType() apiv1.FieldSpec_FieldType {
-	if f.spec == nil {
+	if f.Spec == nil {
 		panic("should be resolved first")
 	}
-	return f.spec.spec.GetType()
+	return f.Spec.spec.GetType()
 }
 
 func (f *FieldRef) Resolve(s Schema) error {
@@ -66,12 +66,12 @@ func (f *FieldRef) Resolve(s Schema) error {
 	if err != nil {
 		return err
 	}
-	f.spec = specs[0].spec
+	f.Spec = specs[0].Spec
 	return nil
 }
 
 func (f *FieldRef) String() string {
-	return fmt.Sprintf("#%s<%s>", f.name, f.spec.spec.GetType().String())
+	return fmt.Sprintf("#%s<%s>", f.name, f.Spec.spec.GetType().String())
 }
 
 func NewFieldRef(fieldName string) *FieldRef {

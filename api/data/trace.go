@@ -20,9 +20,16 @@ package data
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
 var TraceKindVersion = common.KindVersion{Version: "v1", Kind: "data-trace"}
+
+var WriteEventKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "trace-write",
+}
+var TopicWriteEvent = bus.UniTopic(WriteEventKindVersion.String())
 
 type Trace struct {
 	common.KindVersion
@@ -35,6 +42,15 @@ type Entity struct {
 
 type EntityValue struct {
 	*v1.EntityValue
+}
+type TraceWriteDate struct {
+	ShardID      uint
+	SeriesID     uint64
+	WriteRequest *v1.WriteRequest
+}
+type Write struct {
+	common.KindVersion
+	Payload *TraceWriteDate
 }
 
 func NewTrace() *Trace {

@@ -364,7 +364,7 @@ type EntityValue struct {
 	// binary representation of segments, including tags, spans...
 	DataBinary []byte `protobuf:"bytes,3,opt,name=data_binary,json=dataBinary,proto3" json:"data_binary,omitempty"`
 	// support all of indexed fields in the fields.
-	// Pair only has value, as the value of PairValue match with the key
+	// Field only has value, as the value of value_type match with the key
 	// by the index rules and index rule bindings of Metadata group.
 	// indexed fields of multiple entities are compression in the fields.
 	Fields []*Field `protobuf:"bytes,4,rep,name=fields,proto3" json:"fields,omitempty"`

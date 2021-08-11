@@ -42,7 +42,10 @@ func (t *traceSeries) FetchTrace(traceID string, opt series.ScanOptions) (trace 
 		return trace, ErrInvalidTraceID
 	}
 	traceIDBytes := []byte(traceID)
-	traceIDShardID := partition.ShardID(traceIDBytes, t.shardNum)
+	traceIDShardID, shardIDError := partition.ShardID(traceIDBytes, t.shardNum)
+	if shardIDError != nil {
+		return trace, shardIDError
+	}
 	bb, errTraceID := t.reader.TimeSeriesReader(traceIDShardID, traceIndex, 0, 0).GetAll(traceIDBytes)
 	if errTraceID != nil {
 		return trace, errTraceID

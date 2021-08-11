@@ -120,8 +120,10 @@ func (s *service) Write(traceSeriesMetadata common.Metadata, ts time.Time, serie
 		Build()
 
 	seriesIDBytes := []byte(seriesID)
-	shardID := partition.ShardID(seriesIDBytes, traceSeries.shardNum)
-
+	shardID, shardIDError := partition.ShardID(seriesIDBytes, traceSeries.shardNum)
+	if shardIDError != nil {
+		return err == nil, shardIDError
+	}
 	_, err = traceSeries.Write(common.SeriesID(convert.Hash(seriesIDBytes)), shardID, data.EntityValue{
 		EntityValue: ev,
 	})

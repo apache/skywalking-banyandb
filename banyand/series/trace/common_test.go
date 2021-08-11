@@ -68,7 +68,7 @@ func setup(t *testing.T) (*traceSeries, func()) {
 	ctrl := gomock.NewController(t)
 	mockIndex := index.NewMockService(ctrl)
 	mockIndex.EXPECT().Insert(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	svc, err := NewService(context.TODO(), db, nil, mockIndex)
+	svc, err := NewService(context.TODO(), db, nil, mockIndex, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, svc.PreRun())
 	assert.NoError(t, db.PreRun())
@@ -257,7 +257,7 @@ func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 			Timestamp(se.entity.t).
 			Fields(se.entity.items...).
 			Build()
-		shardID := partition.ShardID(seriesID, 2)
+		shardID, _ := partition.ShardID(seriesID, 2)
 		got, err := ts.Write(common.SeriesID(convert.Hash(seriesID)), shardID, data.EntityValue{
 			EntityValue: ev,
 		})

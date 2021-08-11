@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
@@ -62,6 +63,9 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	repo, err := discovery.NewServiceRepo(context.Background())
 	tester.NoError(err)
 	tester.NotNil(repo)
+	// Init `Queue` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	tester.NoError(err)
 
 	// Init `Index` module
 	indexSvc, err := index.NewService(context.TODO(), repo)
@@ -76,7 +80,7 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(db.FlagSet().Parse([]string{"--root-path=" + rootPath}))
 
 	// Init `Trace` module
-	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc)
+	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
 
 	// Init `Query` module
@@ -84,7 +88,7 @@ func setupServices(t *testing.T, tester *require.Assertions) (discovery.ServiceR
 	tester.NoError(err)
 
 	// Init `Liaison` module
-	liaison := grpc.NewServer(context.TODO(), nil, repo)
+	liaison := grpc.NewServer(context.TODO(), pipeline, repo)
 
 	// :PreRun:
 	// 1) TraceSeries,

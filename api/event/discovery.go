@@ -28,12 +28,14 @@ var (
 		Version: "v1",
 		Kind:    "event-shard",
 	}
-	TopicShardEvent        = bus.UniTopic(ShardEventKindVersion.String())
+	TopicShardEvent = bus.UniTopic(ShardEventKindVersion.String())
+
 	SeriesEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "event-series",
 	}
-	TopicSeriesEvent     = bus.UniTopic(SeriesEventKindVersion.String())
+	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
+
 	IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "index-rule"}
 	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
 )

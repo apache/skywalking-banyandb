@@ -77,7 +77,7 @@ func (o *orderBy) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 		return entities, nil
 	}
 
-	sort.Slice(entities, sortMethod(entities, o.targetRef.spec.idx, o.sort))
+	sort.Slice(entities, sortMethod(entities, o.targetRef.Spec.Idx, o.sort))
 
 	return entities, nil
 }
