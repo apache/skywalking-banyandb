@@ -19,10 +19,11 @@ package grpc_test
 
 import (
 	"context"
-	"flag"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -44,11 +45,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pb"
 )
 
-var (
-	serverAddr = "localhost:17912"
-)
+type testData struct {
+	certFile           string
+	serverHostOverride string
+	TLS                bool
+	addr               string
+}
 
-func setup(tester *require.Assertions) (*grpc.Server, func()) {
+func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -78,6 +82,9 @@ func setup(tester *require.Assertions) (*grpc.Server, func()) {
 	tester.NoError(err)
 	// Init `liaison` module
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
+	tester.NoError(tcp.FlagSet().Parse([]string{"--tlsVal=false", "--addr=:17912"}))
+	tcpTLS := grpc.NewServer(context.TODO(), pipeline, repo)
+	tester.NoError(tcpTLS.FlagSet().Parse([]string{"--tlsVal=true", "--addr=:17913"}))
 
 	err = indexSvc.PreRun()
 	tester.NoError(err)
@@ -91,12 +98,16 @@ func setup(tester *require.Assertions) (*grpc.Server, func()) {
 	err = executor.PreRun()
 	tester.NoError(err)
 
-	tcp.FlagSet()
 	err = tcp.PreRun()
 	tester.NoError(err)
+	tester.NoError(tcpTLS.PreRun())
 
 	go func() {
 		tester.NoError(traceSvc.Serve())
+	}()
+
+	go func() {
+		tester.NoError(tcpTLS.Serve())
 	}()
 
 	go func() {
@@ -108,7 +119,7 @@ func setup(tester *require.Assertions) (*grpc.Server, func()) {
 
 	tester.True(indexSvc.Ready(ctx, index.MetaExists("default", "sw")))
 
-	return tcp, func() {
+	return tcp, tcpTLS, func() {
 		db.GracefulStop()
 		_ = os.RemoveAll(rootPath)
 	}
@@ -116,31 +127,56 @@ func setup(tester *require.Assertions) (*grpc.Server, func()) {
 
 func TestTraceService(t *testing.T) {
 	tester := require.New(t)
-	tcp, gracefulStop := setup(tester)
+	tcp, tcpTLS, gracefulStop := setup(tester)
 	defer gracefulStop()
-
-	flag.Parse()
-	var opts []grpclib.DialOption
-	errValidate := tcp.Validate()
-	assert.NoError(t, errValidate)
-	tlsVal,err := tcp.FlagSet().GetBool("tls")
-	assert.NoError(t, err)
-	if tlsVal {
-		certFile, err := tcp.FlagSet().GetString("certFile")
-		assert.NoError(t, err)
-		serverHostOverride, err := tcp.FlagSet().GetString("serverHostOverride")
-		assert.NoError(t, err)
-		creds, err := credentials.NewClientTLSFromFile(certFile, serverHostOverride)
-		assert.NoError(t, err)
-		opts = append(opts, grpclib.WithTransportCredentials(creds))
-	} else {
-		opts = append(opts, grpclib.WithInsecure())
+	_, currentFile, _, _ := runtime.Caller(0)
+	basePath := filepath.Dir(currentFile)
+	certFile := filepath.Join(basePath, "data/server_cert.pem")
+	testCases := []struct {
+		name    string
+		args    testData
+		wantErr bool
+	}{
+		{
+			name: "isTLS",
+			args: testData{
+				TLS:                true,
+				certFile:           certFile,
+				serverHostOverride: "localhost",
+				addr:               "localhost:17913",
+			},
+		},
+		{
+			name: "noTLS",
+			args: testData{
+				TLS:  false,
+				addr: "localhost:17912",
+			},
+		},
 	}
+	for _, tc := range testCases {
+		if tc.args.TLS {
+			errValidate := tcpTLS.Validate()
+			assert.NoError(t, errValidate)
+			var opts []grpclib.DialOption
+			creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
+			assert.NoError(t, err)
+			opts = append(opts, grpclib.WithTransportCredentials(creds))
+			linkService(t, tc.args.addr, opts)
+		} else {
+			errValidate := tcp.Validate()
+			assert.NoError(t, errValidate)
+			var opts []grpclib.DialOption
+			opts = append(opts, grpclib.WithInsecure())
+			linkService(t, tc.args.addr, opts)
+		}
+	}
+}
 
-	conn, err := grpclib.Dial(serverAddr, opts...)
+func linkService(t *testing.T, addr string, opts []grpclib.DialOption) {
+	conn, err := grpclib.Dial(addr, opts...)
 	assert.NoError(t, err)
 	defer conn.Close()
-
 	traceWrite(t, conn)
 	traceQuery(t, conn)
 }

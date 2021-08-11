@@ -49,35 +49,32 @@ import (
 )
 
 var (
-	ErrSeriesEvents       = errors.New("no seriesEvent")
-	ErrShardEvents        = errors.New("no shardEvent")
-	ErrInvalidSeriesID    = errors.New("invalid seriesID")
-	ErrServerCert         = errors.New("invalid server cert file")
-	ErrServerKey          = errors.New("invalid server key file")
-	ErrServerHostOverride = errors.New("invalid serverHostOverride")
-	ErrNoAddr             = errors.New("no address")
+	ErrSeriesEvents    = errors.New("no seriesEvent")
+	ErrShardEvents     = errors.New("no shardEvent")
+	ErrInvalidSeriesID = errors.New("invalid seriesID")
+	ErrServerCert      = errors.New("invalid server cert file")
+	ErrServerKey       = errors.New("invalid server key file")
+	ErrNoAddr          = errors.New("no address")
 )
 
 type Server struct {
-	addr               string
-	maxRecvMsgSize     int
-	tlsVal             bool
-	serverHostOverride string
-	certFile           string
-	keyFile            string
-	log                *logger.Logger
-	ser                *grpclib.Server
-	pipeline           queue.Queue
-	repo               discovery.ServiceRepo
-	shardInfo          *shardInfo
-	seriesInfo         *seriesInfo
+	addr           string
+	maxRecvMsgSize int
+	tlsVal         bool
+	certFile       string
+	keyFile        string
+	log            *logger.Logger
+	ser            *grpclib.Server
+	pipeline       queue.Queue
+	repo           discovery.ServiceRepo
+	shardInfo      *shardInfo
+	seriesInfo     *seriesInfo
 	v1.UnimplementedTraceServiceServer
 }
 
 type shardInfo struct {
 	log        *logger.Logger
 	shardEvent *shardEvent
-	sync.RWMutex
 }
 
 func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -92,12 +89,6 @@ func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
 		Uint64("shardID", event.Shard.Id).
 		Msg("received a shard event")
 	return
-}
-
-func (s *shardInfo) getShardEvent(idx string) *v1.ShardEvent {
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
-	return s.shardEvent.shardEventsMap[idx]
 }
 
 type shardEvent struct {
@@ -116,10 +107,15 @@ func (s *shardEvent) setShardEvents(eventVal *v1.ShardEvent) {
 	}
 }
 
+func (s *shardEvent) getShardEvent(idx string) *v1.ShardEvent {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.shardEventsMap[idx]
+}
+
 type seriesInfo struct {
 	log         *logger.Logger
 	seriesEvent *seriesEvent
-	sync.RWMutex
 }
 
 func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
@@ -137,12 +133,6 @@ func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func (s *seriesInfo) getSeriesEvent(idx string) *v1.SeriesEvent {
-	s.RWMutex.RLock()
-	defer s.RWMutex.RUnlock()
-	return s.seriesEvent.seriesEventsMap[idx]
-}
-
 type seriesEvent struct {
 	seriesEventsMap map[string]*v1.SeriesEvent
 	sync.RWMutex
@@ -157,6 +147,12 @@ func (s *seriesEvent) setSeriesEvents(seriesEventVal *v1.SeriesEvent) {
 	} else if seriesEventVal.Action == v1.Action_ACTION_DELETE {
 		delete(s.seriesEventsMap, str)
 	}
+}
+
+func (s *seriesEvent) getSeriesEvent(idx string) *v1.SeriesEvent {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	return s.seriesEventsMap[idx]
 }
 
 func (s *Server) PreRun() error {
@@ -184,7 +180,7 @@ func (s *Server) Name() string {
 }
 
 func (s *Server) FlagSet() *run.FlagSet {
-	size := 1024 * 1024 * 8
+	size := 1024 * 1024 * 10
 	_, currentFile, _, _ := runtime.Caller(0)
 	basePath := filepath.Dir(currentFile)
 	serverCert := filepath.Join(basePath, "data/server_cert.pem")
@@ -192,10 +188,9 @@ func (s *Server) FlagSet() *run.FlagSet {
 
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
-	fs.BoolVarP(&s.tlsVal, "tls", "", true, "Connection uses TLS if true, else plain TCP")
+	fs.BoolVarP(&s.tlsVal, "tlsVal", "", true, "Connection uses TLS if true, else plain TCP")
 	fs.StringVarP(&s.certFile, "certFile", "", serverCert, "The TLS cert file")
 	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
-	fs.StringVarP(&s.serverHostOverride, "serverHostOverride", "", "localhost", "The server name used to verify the hostname returned by the TLS handshake")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
 
 	return fs
@@ -211,9 +206,6 @@ func (s *Server) Validate() error {
 		}
 		if s.keyFile == "" {
 			return ErrServerKey
-		}
-		if s.serverHostOverride == "" {
-			return ErrServerHostOverride
 		}
 		_, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 		if errTLS != nil {
@@ -258,7 +250,7 @@ func (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName stri
 	if ruleError != nil {
 		return nil, ruleError
 	}
-	seriesEventVal := s.seriesInfo.getSeriesEvent(mapIndexName)
+	seriesEventVal := s.seriesInfo.seriesEvent.getSeriesEvent(mapIndexName)
 	if seriesEventVal == nil {
 		return nil, ErrSeriesEvents
 	}
@@ -295,7 +287,7 @@ func (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName stri
 }
 
 func (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
-	shardEventVal := s.shardInfo.getShardEvent(mapIndexName)
+	shardEventVal := s.shardInfo.shardEvent.getShardEvent(mapIndexName)
 	if shardEventVal == nil {
 		return 0, ErrShardEvents
 	}
