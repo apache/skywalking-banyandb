@@ -248,7 +248,7 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName string) (SeriesID []byte, err error) {
+func (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName string) (SeriesID []byte, err error) {
 	ana := logical.DefaultAnalyzer()
 	metadata := common.Metadata{
 		KindVersion: apischema.SeriesKindVersion,
@@ -294,7 +294,7 @@ func  (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName str
 	return seriesID, nil
 }
 
-func  (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
+func (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
 	shardEventVal := s.shardInfo.getShardEvent(mapIndexName)
 	if shardEventVal == nil {
 		return 0, ErrShardEvents
