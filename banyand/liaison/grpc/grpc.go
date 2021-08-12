@@ -23,7 +23,6 @@ import (
 	"io"
 	"net"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -344,20 +343,15 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	queryMsg := msg.Data()
-
-	var arr []*v1.Entity
-	switch reflect.TypeOf(queryMsg).Kind() {
-	case reflect.Slice:
-		m := reflect.ValueOf(queryMsg)
-		for i := 0; i < m.Len(); i++ {
-			val := m.Index(i).Interface()
-			v := val.(data.Entity)
-			arr = append(arr, v.Entity)
-		}
-	default:
+	queryMsg, ok := msg.Data().([]data.Entity)
+	if !ok {
 		return nil, ErrQueryMsg
 	}
+	var arr []*v1.Entity
+	for i := 0; i < len(queryMsg); i++ {
+		arr = append(arr, queryMsg[i].Entity)
+	}
+
 	return &v1.QueryResponse{Entities: arr}, nil
 }
 
