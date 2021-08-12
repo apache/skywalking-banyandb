@@ -161,7 +161,7 @@ func TestTraceService(t *testing.T) {
 			creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
 			assert.NoError(t, err)
 			opts = append(opts, grpclib.WithTransportCredentials(creds))
-			//linkService(t, tc.args.addr, opts)
+			linkService(t, tc.args.addr, opts)
 		} else {
 			errValidate := tcp.Validate()
 			assert.NoError(t, errValidate)
