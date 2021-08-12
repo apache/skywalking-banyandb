@@ -352,8 +352,8 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 		m := reflect.ValueOf(queryMsg)
 		for i := 0; i < m.Len(); i++ {
 			val := m.Index(i).Interface()
-			v := val.(*v1.Entity)
-			arr = append(arr, v)
+			v := val.(data.Entity)
+			arr = append(arr, v.Entity)
 		}
 	default:
 		return nil, ErrQueryMsg
