@@ -133,8 +133,8 @@ func TestTraceService(t *testing.T) {
 	basePath := filepath.Dir(currentFile)
 	certFile := filepath.Join(basePath, "data/server_cert.pem")
 	testCases := []struct {
-		name    string
-		args    testData
+		name string
+		args testData
 	}{
 		{
 			name: "isTLS",

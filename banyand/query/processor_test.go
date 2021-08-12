@@ -19,7 +19,6 @@ package query
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/api/data"
 	"os"
 	"path"
 	"testing"
@@ -29,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
@@ -52,7 +52,7 @@ type entityValue struct {
 	items      []interface{}
 }
 
-func setupServices(t *testing.T, tester *require.Assertions) (series.Service, queue.Queue,func()) {
+func setupServices(t *testing.T, tester *require.Assertions) (series.Service, queue.Queue, func()) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",

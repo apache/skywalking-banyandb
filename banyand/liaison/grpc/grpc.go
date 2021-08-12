@@ -21,9 +21,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -55,6 +55,7 @@ var (
 	ErrServerCert      = errors.New("invalid server cert file")
 	ErrServerKey       = errors.New("invalid server key file")
 	ErrNoAddr          = errors.New("no address")
+	ErrQueryMsg        = errors.New("invalid query message")
 )
 
 type Server struct {
@@ -344,8 +345,20 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 		return nil, errFeat
 	}
 	queryMsg := msg.Data()
-	log.Println(queryMsg)
-	return &v1.QueryResponse{}, nil // Entities
+
+	var arr []*v1.Entity
+	switch reflect.TypeOf(queryMsg).Kind() {
+	case reflect.Slice:
+		m := reflect.ValueOf(queryMsg)
+		for i := 0; i < m.Len(); i++ {
+			val := m.Index(i).Interface()
+			v := val.(*v1.Entity)
+			arr = append(arr, v)
+		}
+	default:
+		return nil, ErrQueryMsg
+	}
+	return &v1.QueryResponse{Entities: arr}, nil
 }
 
 func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {

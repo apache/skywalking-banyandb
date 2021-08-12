@@ -19,10 +19,10 @@ package query
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -39,6 +39,6 @@ func NewExecutor(_ context.Context, serviceRepo discovery.ServiceRepo, indexRepo
 		schemaRepo:  schemaRepo,
 		serviceRepo: serviceRepo,
 		logger:      logger.GetLogger("query"),
-		pipeline: pipeline,
+		pipeline:    pipeline,
 	}, nil
 }
