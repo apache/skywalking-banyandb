@@ -225,21 +225,23 @@ func TestTraceService(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		if tc.args.TLS {
-			errValidate := tcpTLS.Validate()
-			assert.NoError(t, errValidate)
-			var opts []grpclib.DialOption
-			creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
-			assert.NoError(t, err)
-			opts = append(opts, grpclib.WithTransportCredentials(creds))
-			dialService(t, tc, opts)
-		} else {
-			errValidate := tcp.Validate()
-			assert.NoError(t, errValidate)
-			var opts []grpclib.DialOption
-			opts = append(opts, grpclib.WithInsecure())
-			dialService(t, tc, opts)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.args.TLS {
+				errValidate := tcpTLS.Validate()
+				assert.NoError(t, errValidate)
+				var opts []grpclib.DialOption
+				creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
+				assert.NoError(t, err)
+				opts = append(opts, grpclib.WithTransportCredentials(creds))
+				dialService(t, tc, opts)
+			} else {
+				errValidate := tcp.Validate()
+				assert.NoError(t, errValidate)
+				var opts []grpclib.DialOption
+				opts = append(opts, grpclib.WithInsecure())
+				dialService(t, tc, opts)
+			}
+		})
 	}
 }
 
