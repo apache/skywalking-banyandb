@@ -184,7 +184,7 @@ func traceWrite(t *testing.T, conn *grpclib.ClientConn) {
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	entityValue := pb.NewEntityValueBuilder().
-		EntityID("entityId").
+		EntityID("entityId123").
 		DataBinary([]byte{12}).
 		Fields("trace_id-xxfff.111323",
 			0,
@@ -236,6 +236,7 @@ func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").
+		Fields("trace_id", "=", "trace_id-xxfff.111323").
 		TimeRange(sT, eT).
 		Projection("trace_id").
 		Build()
@@ -244,4 +245,5 @@ func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
 		t.Errorf("Retrieve client failed: %v", errRev)
 	}
 	assert.NotNil(t, stream)
+	assert.Len(t, stream.Entities, 1)
 }
