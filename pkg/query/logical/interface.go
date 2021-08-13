@@ -20,7 +20,7 @@ package logical
 import (
 	"fmt"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 

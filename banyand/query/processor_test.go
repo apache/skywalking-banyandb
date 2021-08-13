@@ -29,7 +29,8 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
@@ -127,7 +128,7 @@ func setupServices(t *testing.T, tester *require.Assertions) (series.Service, qu
 
 func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service) {
 	metadata := common.Metadata{
-		Spec: &v1.Metadata{
+		Spec: &commonv1.Metadata{
 			Name:  "sw",
 			Group: "default",
 		},
@@ -297,13 +298,13 @@ func TestQueryProcessor(t *testing.T) {
 		// name of the test case
 		name string
 		// queryGenerator is used to generate a Query
-		queryGenerator func(baseTs time.Time) *v1.QueryRequest
+		queryGenerator func(baseTs time.Time) *tracev1.QueryRequest
 		// wantLen is the length of entities expected to return
 		wantLen int
 	}{
 		{
 			name: "query given timeRange is out of the time range of data",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -316,7 +317,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "query given timeRange which slightly covers the first three segments",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -329,7 +330,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "query TraceID given timeRange includes the time range of data",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -343,7 +344,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "query TraceID given timeRange includes the time range of data but limit to 1",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(1).
 					Offset(0).
@@ -357,7 +358,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "Numerical Index - query duration < 200",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(1).
 					Offset(0).
@@ -371,7 +372,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "Numerical Index - query duration < 400",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -385,7 +386,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "Textual Index - db.type == MySQL",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -399,7 +400,7 @@ func TestQueryProcessor(t *testing.T) {
 		},
 		{
 			name: "Mixed Index - db.type == MySQL AND duration <= 300",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).

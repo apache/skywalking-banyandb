@@ -26,7 +26,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,7 +45,7 @@ var (
 type Condition struct {
 	Key    string
 	Values [][]byte
-	Op     apiv1.PairQuery_BinaryOp
+	Op     modelv1.PairQuery_BinaryOp
 }
 
 type Field struct {
@@ -66,7 +68,7 @@ type Builder interface {
 type ReadyOption func(map[string]*series) bool
 
 func MetaExists(group, name string) ReadyOption {
-	seriesID := &apiv1.Metadata{
+	seriesID := &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",
 	}
@@ -89,7 +91,7 @@ type series struct {
 }
 
 type shard struct {
-	meta  map[string][]*apiv1.IndexObject
+	meta  map[string][]*databasev1.IndexObject
 	store tsdb.GlobalStore
 }
 
@@ -199,7 +201,7 @@ type indexMeta struct {
 	sync.RWMutex
 }
 
-func (i *indexMeta) get(series *apiv1.Metadata) *series {
+func (i *indexMeta) get(series *commonv1.Metadata) *series {
 	i.RWMutex.RLock()
 	defer i.RWMutex.RUnlock()
 	s, ok := i.meta[compositeSeriesID(series)]
@@ -216,20 +218,20 @@ type indexRuleListener struct {
 }
 
 func (i *indexRuleListener) Rev(message bus.Message) (resp bus.Message) {
-	indexRuleEvent, ok := message.Data().(*apiv1.IndexRuleEvent)
+	indexRuleEvent, ok := message.Data().(*databasev1.IndexRuleEvent)
 	if !ok {
 		i.log.Warn().Msg("invalid event data type")
 		return
 	}
 	i.log.Info().
-		Str("action", apiv1.Action_name[int32(indexRuleEvent.Action)]).
+		Str("action", databasev1.Action_name[int32(indexRuleEvent.Action)]).
 		Str("series-name", indexRuleEvent.Series.Name).
 		Str("series-group", indexRuleEvent.Series.Group).
 		Msg("received an index rule")
 	i.indexMeta.Lock()
 	defer i.indexMeta.Unlock()
 	switch indexRuleEvent.Action {
-	case apiv1.Action_ACTION_PUT:
+	case databasev1.Action_ACTION_PUT:
 		seriesID := compositeSeriesID(indexRuleEvent.Series)
 		newSeries := &series{
 			repo: make(map[uint]*shard),
@@ -237,7 +239,7 @@ func (i *indexRuleListener) Rev(message bus.Message) (resp bus.Message) {
 		for _, rule := range indexRuleEvent.Rules {
 			store := tsdb.NewStore(indexRuleEvent.Series.Name, indexRuleEvent.Series.Group, uint(rule.ShardId))
 			fields := make([]tsdb.FieldSpec, 0, len(rule.Rules))
-			meta := make(map[string][]*apiv1.IndexObject)
+			meta := make(map[string][]*databasev1.IndexObject)
 			for _, indexRule := range rule.GetRules() {
 				for _, object := range indexRule.Objects {
 					fieldsSize := len(object.Fields)
@@ -256,7 +258,7 @@ func (i *indexRuleListener) Rev(message bus.Message) (resp bus.Message) {
 					fields = append(fields, fieldSpec)
 					objects, existed := meta[field]
 					if !existed {
-						objects = make([]*apiv1.IndexObject, 0, 1)
+						objects = make([]*databasev1.IndexObject, 0, 1)
 					}
 					objects = append(objects, object)
 					meta[field] = objects
@@ -282,6 +284,6 @@ func compositeFieldID(indexObjectName, field string) string {
 	return indexObjectName + ":" + field
 }
 
-func compositeSeriesID(series *apiv1.Metadata) string {
+func compositeSeriesID(series *commonv1.Metadata) string {
 	return series.Name + "-" + series.Group
 }

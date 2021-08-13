@@ -22,18 +22,19 @@ import (
 
 	"github.com/pkg/errors"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-var binaryOpFactory = map[apiv1.PairQuery_BinaryOp]func(l, r Expr) Expr{
-	apiv1.PairQuery_BINARY_OP_EQ:         Eq,
-	apiv1.PairQuery_BINARY_OP_NE:         Ne,
-	apiv1.PairQuery_BINARY_OP_LT:         Lt,
-	apiv1.PairQuery_BINARY_OP_GT:         Gt,
-	apiv1.PairQuery_BINARY_OP_LE:         Le,
-	apiv1.PairQuery_BINARY_OP_GE:         Ge,
-	apiv1.PairQuery_BINARY_OP_HAVING:     Having,
-	apiv1.PairQuery_BINARY_OP_NOT_HAVING: NotHaving,
+var binaryOpFactory = map[modelv1.PairQuery_BinaryOp]func(l, r Expr) Expr{
+	modelv1.PairQuery_BINARY_OP_EQ:         Eq,
+	modelv1.PairQuery_BINARY_OP_NE:         Ne,
+	modelv1.PairQuery_BINARY_OP_LT:         Lt,
+	modelv1.PairQuery_BINARY_OP_GT:         Gt,
+	modelv1.PairQuery_BINARY_OP_LE:         Le,
+	modelv1.PairQuery_BINARY_OP_GE:         Ge,
+	modelv1.PairQuery_BINARY_OP_HAVING:     Having,
+	modelv1.PairQuery_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
 var _ ResolvableExpr = (*FieldRef)(nil)
@@ -54,7 +55,7 @@ func (f *FieldRef) Equal(expr Expr) bool {
 	return false
 }
 
-func (f *FieldRef) FieldType() apiv1.FieldSpec_FieldType {
+func (f *FieldRef) FieldType() databasev1.FieldSpec_FieldType {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
@@ -85,7 +86,7 @@ var _ ResolvableExpr = (*binaryExpr)(nil)
 // binaryExpr is composed of two operands with one op as the operator
 // l is normally a reference to a field, while r is usually literals
 type binaryExpr struct {
-	op apiv1.PairQuery_BinaryOp
+	op modelv1.PairQuery_BinaryOp
 	l  Expr
 	r  Expr
 }
@@ -97,7 +98,7 @@ func (b *binaryExpr) Equal(expr Expr) bool {
 	return false
 }
 
-func (b *binaryExpr) FieldType() apiv1.FieldSpec_FieldType {
+func (b *binaryExpr) FieldType() databasev1.FieldSpec_FieldType {
 	panic("Boolean should be added")
 }
 
@@ -129,7 +130,7 @@ func (b *binaryExpr) String() string {
 
 func Eq(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_EQ,
+		op: modelv1.PairQuery_BINARY_OP_EQ,
 		l:  l,
 		r:  r,
 	}
@@ -137,7 +138,7 @@ func Eq(l, r Expr) Expr {
 
 func Ne(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_NE,
+		op: modelv1.PairQuery_BINARY_OP_NE,
 		l:  l,
 		r:  r,
 	}
@@ -145,7 +146,7 @@ func Ne(l, r Expr) Expr {
 
 func Lt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_LT,
+		op: modelv1.PairQuery_BINARY_OP_LT,
 		l:  l,
 		r:  r,
 	}
@@ -153,7 +154,7 @@ func Lt(l, r Expr) Expr {
 
 func Le(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_LE,
+		op: modelv1.PairQuery_BINARY_OP_LE,
 		l:  l,
 		r:  r,
 	}
@@ -161,7 +162,7 @@ func Le(l, r Expr) Expr {
 
 func Gt(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_GT,
+		op: modelv1.PairQuery_BINARY_OP_GT,
 		l:  l,
 		r:  r,
 	}
@@ -169,7 +170,7 @@ func Gt(l, r Expr) Expr {
 
 func Ge(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_GE,
+		op: modelv1.PairQuery_BINARY_OP_GE,
 		l:  l,
 		r:  r,
 	}
@@ -177,7 +178,7 @@ func Ge(l, r Expr) Expr {
 
 func Having(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_HAVING,
+		op: modelv1.PairQuery_BINARY_OP_HAVING,
 		l:  l,
 		r:  r,
 	}
@@ -185,7 +186,7 @@ func Having(l, r Expr) Expr {
 
 func NotHaving(l, r Expr) Expr {
 	return &binaryExpr{
-		op: apiv1.PairQuery_BINARY_OP_NOT_HAVING,
+		op: modelv1.PairQuery_BINARY_OP_NOT_HAVING,
 		l:  l,
 		r:  r,
 	}

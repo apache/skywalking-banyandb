@@ -22,18 +22,19 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 type ShardEventBuilder struct {
-	se *v1.ShardEvent
+	se *databasev1.ShardEvent
 }
 
 func NewShardEventBuilder() *ShardEventBuilder {
-	return &ShardEventBuilder{se: &v1.ShardEvent{}}
+	return &ShardEventBuilder{se: &databasev1.ShardEvent{}}
 }
 
-func (seb *ShardEventBuilder) Action(action v1.Action) *ShardEventBuilder {
+func (seb *ShardEventBuilder) Action(action databasev1.Action) *ShardEventBuilder {
 	seb.se.Action = action
 	return seb
 }
@@ -43,21 +44,21 @@ func (seb *ShardEventBuilder) Time(t time.Time) *ShardEventBuilder {
 	return seb
 }
 
-func (seb *ShardEventBuilder) Shard(shard *v1.Shard) *ShardEventBuilder {
+func (seb *ShardEventBuilder) Shard(shard *databasev1.Shard) *ShardEventBuilder {
 	seb.se.Shard = shard
 	return seb
 }
 
-func (seb *ShardEventBuilder) Build() *v1.ShardEvent {
+func (seb *ShardEventBuilder) Build() *databasev1.ShardEvent {
 	return seb.se
 }
 
 type ShardBuilder struct {
-	s *v1.Shard
+	s *databasev1.Shard
 }
 
 func NewShardBuilder() *ShardBuilder {
-	return &ShardBuilder{s: &v1.Shard{}}
+	return &ShardBuilder{s: &databasev1.Shard{}}
 }
 
 func (sb *ShardBuilder) ID(shardID uint64) *ShardBuilder {
@@ -66,14 +67,14 @@ func (sb *ShardBuilder) ID(shardID uint64) *ShardBuilder {
 }
 
 func (sb *ShardBuilder) SeriesMetadata(group, name string) *ShardBuilder {
-	sb.s.Series = &v1.Metadata{
+	sb.s.Series = &commonv1.Metadata{
 		Group: group,
 		Name:  name,
 	}
 	return sb
 }
 
-func (sb *ShardBuilder) Node(node *v1.Node) *ShardBuilder {
+func (sb *ShardBuilder) Node(node *databasev1.Node) *ShardBuilder {
 	sb.s.Node = node
 	return sb
 }
@@ -93,16 +94,16 @@ func (sb *ShardBuilder) UpdatedAt(t time.Time) *ShardBuilder {
 	return sb
 }
 
-func (sb *ShardBuilder) Build() *v1.Shard {
+func (sb *ShardBuilder) Build() *databasev1.Shard {
 	return sb.s
 }
 
 type NodeBuilder struct {
-	n *v1.Node
+	n *databasev1.Node
 }
 
 func NewNodeBuilder() *NodeBuilder {
-	return &NodeBuilder{n: &v1.Node{}}
+	return &NodeBuilder{n: &databasev1.Node{}}
 }
 
 func (nb *NodeBuilder) ID(id string) *NodeBuilder {
@@ -125,20 +126,20 @@ func (nb *NodeBuilder) CreatedAt(t time.Time) *NodeBuilder {
 	return nb
 }
 
-func (nb *NodeBuilder) Build() *v1.Node {
+func (nb *NodeBuilder) Build() *databasev1.Node {
 	return nb.n
 }
 
 type SeriesEventBuilder struct {
-	se *v1.SeriesEvent
+	se *databasev1.SeriesEvent
 }
 
 func NewSeriesEventBuilder() *SeriesEventBuilder {
-	return &SeriesEventBuilder{se: &v1.SeriesEvent{}}
+	return &SeriesEventBuilder{se: &databasev1.SeriesEvent{}}
 }
 
 func (seb *SeriesEventBuilder) SeriesMetadata(group, name string) *SeriesEventBuilder {
-	seb.se.Series = &v1.Metadata{
+	seb.se.Series = &commonv1.Metadata{
 		Group: group,
 		Name:  name,
 	}
@@ -150,7 +151,7 @@ func (seb *SeriesEventBuilder) FieldNames(names ...string) *SeriesEventBuilder {
 	return seb
 }
 
-func (seb *SeriesEventBuilder) Action(action v1.Action) *SeriesEventBuilder {
+func (seb *SeriesEventBuilder) Action(action databasev1.Action) *SeriesEventBuilder {
 	seb.se.Action = action
 	return seb
 }
@@ -160,6 +161,6 @@ func (seb *SeriesEventBuilder) Time(t time.Time) *SeriesEventBuilder {
 	return seb
 }
 
-func (seb *SeriesEventBuilder) Build() *v1.SeriesEvent {
+func (seb *SeriesEventBuilder) Build() *databasev1.SeriesEvent {
 	return seb.se
 }

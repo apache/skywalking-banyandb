@@ -17,40 +17,14 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1;v1";
+option java_package = "org.apache.skywalking.banyandb.trace.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1";
 
-package banyandb.v1;
+package banyandb.trace.v1;
 
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/struct.proto";
-import "banyandb/v1/database.proto";
-
-message Str {
-  string value = 1;
-}
-
-message Int {
-  int64 value = 1;
-}
-
-message StrArray {
-  repeated string value = 1;
-}
-
-message IntArray {
-  repeated int64 value = 1;
-}
-
-message Field {
-  oneof value_type {
-    google.protobuf.NullValue null = 1;
-    Str str = 2;
-    StrArray str_array = 3;
-    Int int = 4;
-    IntArray int_array = 5;
-  }
-}
+import "banyandb/common/v1/common.proto";
+import "banyandb/model/v1/write.proto";
 
 message EntityValue {
   // entity_id could be span_id of a Span or segment_id of a Segment in the context of Trace
@@ -65,12 +39,12 @@ message EntityValue {
   // Field only has value, as the value of value_type match with the key
   // by the index rules and index rule bindings of Metadata group.
   // indexed fields of multiple entities are compression in the fields.
-  repeated Field fields = 4;
+  repeated model.v1.Field fields = 4;
 }
 
 message WriteRequest {
   // the metadata is only required in the first write.
-  Metadata metadata = 1;
+  common.v1.Metadata metadata = 1;
   // the entity is required.
   EntityValue entity = 2;
 }

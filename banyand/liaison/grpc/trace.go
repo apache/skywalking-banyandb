@@ -19,12 +19,9 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
-	"path/filepath"
-	"runtime"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,7 +32,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -55,12 +54,14 @@ var (
 	ErrServerKey       = errors.New("invalid server key file")
 	ErrNoAddr          = errors.New("no address")
 	ErrQueryMsg        = errors.New("invalid query message")
+
+	defaultRecvSize = 1024 * 1024 * 10
 )
 
 type Server struct {
 	addr           string
 	maxRecvMsgSize int
-	tlsVal         bool
+	tls            bool
 	certFile       string
 	keyFile        string
 	log            *logger.Logger
@@ -69,90 +70,102 @@ type Server struct {
 	repo           discovery.ServiceRepo
 	shardInfo      *shardInfo
 	seriesInfo     *seriesInfo
-	v1.UnimplementedTraceServiceServer
+	tracev1.UnimplementedTraceServiceServer
+	creds credentials.TransportCredentials
 }
 
 type shardInfo struct {
-	log        *logger.Logger
-	shardEvent *shardEvent
-}
-
-func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
-	event, ok := message.Data().(*v1.ShardEvent)
-	if !ok {
-		s.log.Warn().Msg("invalid event data type")
-		return
-	}
-	s.shardEvent.setShardEvents(event)
-	s.log.Info().
-		Str("action", v1.Action_name[int32(event.Action)]).
-		Uint64("shardID", event.Shard.Id).
-		Msg("received a shard event")
-	return
-}
-
-type shardEvent struct {
-	shardEventsMap map[string]*v1.ShardEvent
+	log            *logger.Logger
+	shardEventsMap map[string]uint32
 	sync.RWMutex
 }
 
-func (s *shardEvent) setShardEvents(eventVal *v1.ShardEvent) {
+func (s *shardInfo) Rev(message bus.Message) (resp bus.Message) {
+	e, ok := message.Data().(*databasev1.ShardEvent)
+	if !ok {
+		s.log.Warn().Msg("invalid e data type")
+		return
+	}
+	s.setShardNum(e)
+	s.log.Info().
+		Str("action", databasev1.Action_name[int32(e.Action)]).
+		Uint64("shardID", e.Shard.Id).
+		Msg("received a shard e")
+	return
+}
+
+func (s *shardInfo) setShardNum(eventVal *databasev1.ShardEvent) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	idx := eventVal.Shard.Series.GetName() + "-" + eventVal.Shard.Series.GetGroup()
-	if eventVal.Action == v1.Action_ACTION_PUT {
-		s.shardEventsMap[idx] = eventVal
-	} else if eventVal.Action == v1.Action_ACTION_DELETE {
+	if eventVal.Action == databasev1.Action_ACTION_PUT {
+		s.shardEventsMap[idx] = eventVal.Shard.Total
+	} else if eventVal.Action == databasev1.Action_ACTION_DELETE {
 		delete(s.shardEventsMap, idx)
 	}
 }
 
-func (s *shardEvent) getShardEvent(idx string) *v1.ShardEvent {
+func (s *shardInfo) shardNum(idx string) uint32 {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
 	return s.shardEventsMap[idx]
 }
 
 type seriesInfo struct {
-	log         *logger.Logger
-	seriesEvent *seriesEvent
-}
-
-func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
-	event, ok := message.Data().(*v1.SeriesEvent)
-	if !ok {
-		s.log.Warn().Msg("invalid event data type")
-		return
-	}
-	s.seriesEvent.setSeriesEvents(event)
-	s.log.Info().
-		Str("action", v1.Action_name[int32(event.Action)]).
-		Str("name", event.Series.Name).
-		Str("group", event.Series.Group).
-		Msg("received a shard event")
-	return
-}
-
-type seriesEvent struct {
-	seriesEventsMap map[string]*v1.SeriesEvent
+	log             *logger.Logger
+	seriesEventsMap map[string][]int
 	sync.RWMutex
 }
 
-func (s *seriesEvent) setSeriesEvents(seriesEventVal *v1.SeriesEvent) {
+func (s *seriesInfo) Rev(message bus.Message) (resp bus.Message) {
+	e, ok := message.Data().(*databasev1.SeriesEvent)
+	if !ok {
+		s.log.Warn().Msg("invalid e data type")
+		return
+	}
+	s.updateFieldIndexCompositeSeriesID(e)
+	s.log.Info().
+		Str("action", databasev1.Action_name[int32(e.Action)]).
+		Str("name", e.Series.Name).
+		Str("group", e.Series.Group).
+		Msg("received a shard e")
+	return
+}
+
+func (s *seriesInfo) updateFieldIndexCompositeSeriesID(seriesEventVal *databasev1.SeriesEvent) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	str := seriesEventVal.Series.GetName() + "-" + seriesEventVal.Series.GetGroup()
-	if seriesEventVal.Action == v1.Action_ACTION_PUT {
-		s.seriesEventsMap[str] = seriesEventVal
-	} else if seriesEventVal.Action == v1.Action_ACTION_DELETE {
+	if seriesEventVal.Action == databasev1.Action_ACTION_PUT {
+		ana := logical.DefaultAnalyzer()
+		metadata := common.Metadata{
+			KindVersion: apischema.SeriesKindVersion,
+			Spec:        seriesEventVal.Series,
+		}
+		schema, err := ana.BuildTraceSchema(context.TODO(), metadata)
+		if err != nil {
+			s.log.Err(err).Msg("build trace schema")
+			return
+		}
+		fieldRefs, errField := schema.CreateRef(seriesEventVal.FieldNamesCompositeSeriesId...)
+		if errField != nil {
+			s.log.Err(errField).Msg("create series ref")
+			return
+		}
+		refIdx := make([]int, len(fieldRefs))
+		for i, ref := range fieldRefs {
+			refIdx[i] = ref.Spec.Idx
+		}
+		s.seriesEventsMap[str] = refIdx
+	} else if seriesEventVal.Action == databasev1.Action_ACTION_DELETE {
 		delete(s.seriesEventsMap, str)
 	}
 }
 
-func (s *seriesEvent) getSeriesEvent(idx string) *v1.SeriesEvent {
+func (s *seriesInfo) FieldIndexCompositeSeriesID(seriesMeta string) []int {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
-	return s.seriesEventsMap[idx]
+	return s.seriesEventsMap[seriesMeta]
 }
 
 func (s *Server) PreRun() error {
@@ -166,12 +179,12 @@ func (s *Server) PreRun() error {
 	return s.repo.Subscribe(event.TopicSeriesEvent, s.seriesInfo)
 }
 
-func NewServer(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
+func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
 	return &Server{
 		pipeline:   pipeline,
 		repo:       repo,
-		shardInfo:  &shardInfo{shardEvent: &shardEvent{shardEventsMap: map[string]*v1.ShardEvent{}}},
-		seriesInfo: &seriesInfo{seriesEvent: &seriesEvent{seriesEventsMap: map[string]*v1.SeriesEvent{}}},
+		shardInfo:  &shardInfo{shardEventsMap: make(map[string]uint32)},
+		seriesInfo: &seriesInfo{seriesEventsMap: make(map[string][]int)},
 	}
 }
 
@@ -180,19 +193,12 @@ func (s *Server) Name() string {
 }
 
 func (s *Server) FlagSet() *run.FlagSet {
-	size := 1024 * 1024 * 10
-	_, currentFile, _, _ := runtime.Caller(0)
-	basePath := filepath.Dir(currentFile)
-	serverCert := filepath.Join(basePath, "data/server_cert.pem")
-	serverKey := filepath.Join(basePath, "data/server_key.pem")
-
 	fs := run.NewFlagSet("grpc")
-	fs.IntVarP(&s.maxRecvMsgSize, "maxRecvMsgSize", "", size, "The size of max receiving message")
-	fs.BoolVarP(&s.tlsVal, "tlsVal", "", true, "Connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.certFile, "certFile", "", serverCert, "The TLS cert file")
-	fs.StringVarP(&s.keyFile, "keyFile", "", serverKey, "The TLS key file")
+	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "The size of max receiving message")
+	fs.BoolVarP(&s.tls, "tls", "", true, "Connection uses TLS if true, else plain TCP")
+	fs.StringVarP(&s.certFile, "cert-file", "", "server_cert.pem", "The TLS cert file")
+	fs.StringVarP(&s.keyFile, "key-file", "", "server_key.pem", "The TLS key file")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
-
 	return fs
 }
 
@@ -200,18 +206,20 @@ func (s *Server) Validate() error {
 	if s.addr == "" {
 		return ErrNoAddr
 	}
-	if s.tlsVal {
-		if s.certFile == "" {
-			return ErrServerCert
-		}
-		if s.keyFile == "" {
-			return ErrServerKey
-		}
-		_, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
-		if errTLS != nil {
-			return errTLS
-		}
+	if !s.tls {
+		return nil
 	}
+	if s.certFile == "" {
+		return ErrServerCert
+	}
+	if s.keyFile == "" {
+		return ErrServerKey
+	}
+	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
+	if errTLS != nil {
+		return errTLS
+	}
+	s.creds = creds
 	return nil
 }
 
@@ -224,13 +232,12 @@ func (s *Server) Serve() error {
 		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
 	}
 	var opts []grpclib.ServerOption
-	if s.tlsVal {
-		creds, _ := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
-		opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+	if s.tls {
+		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
-	v1.RegisterTraceServiceServer(s.ser, s)
+	tracev1.RegisterTraceServiceServer(s.ser, s)
 
 	return s.ser.Serve(lis)
 }
@@ -240,72 +247,52 @@ func (s *Server) GracefulStop() {
 	s.ser.GracefulStop()
 }
 
-func (s *Server) computeSeriesID(writeEntity *v1.WriteRequest, mapIndexName string) (SeriesID []byte, err error) {
-	ana := logical.DefaultAnalyzer()
-	metadata := common.Metadata{
-		KindVersion: apischema.SeriesKindVersion,
-		Spec:        writeEntity.GetMetadata(),
-	}
-	schema, ruleError := ana.BuildTraceSchema(context.TODO(), metadata)
-	if ruleError != nil {
-		return nil, ruleError
-	}
-	seriesEventVal := s.seriesInfo.seriesEvent.getSeriesEvent(mapIndexName)
-	if seriesEventVal == nil {
+func (s *Server) computeSeriesID(writeEntity *tracev1.WriteRequest, mapIndexName string) ([]byte, error) {
+	fieldNames := s.seriesInfo.FieldIndexCompositeSeriesID(mapIndexName)
+	if fieldNames == nil {
 		return nil, ErrSeriesEvents
 	}
 	var str string
-	var arr []string
-	fieldRefs, errField := schema.CreateRef(seriesEventVal.FieldNamesCompositeSeriesId...)
-	if errField != nil {
-		return nil, errField
-	}
-	for _, ref := range fieldRefs {
-		field := writeEntity.GetEntity().GetFields()[ref.Spec.Idx]
+	for _, ref := range fieldNames {
+		field := writeEntity.GetEntity().GetFields()[ref]
 		switch v := field.GetValueType().(type) {
-		case *v1.Field_StrArray:
+		case *modelv1.Field_StrArray:
 			for j := 0; j < len(v.StrArray.Value); j++ {
-				arr = append(arr, v.StrArray.Value[j])
+				str = str + v.StrArray.Value[j]
 			}
-		case *v1.Field_IntArray:
+		case *modelv1.Field_IntArray:
 			for t := 0; t < len(v.IntArray.Value); t++ {
-				arr = append(arr, fmt.Sprint(v.IntArray.Value[t]))
+				str = str + strconv.FormatInt(v.IntArray.Value[t], 10)
 			}
-		case *v1.Field_Int:
-			arr = append(arr, fmt.Sprint(v.Int.Value))
-		case *v1.Field_Str:
-			arr = append(arr, fmt.Sprint(v.Str.Value))
+		case *modelv1.Field_Int:
+			str = str + strconv.FormatInt(v.Int.Value, 10)
+		case *modelv1.Field_Str:
+			str = str + v.Str.Value
 		}
+		str = str + ":"
 	}
-	str = strings.Join(arr, "")
 	if str == "" {
 		return nil, ErrInvalidSeriesID
 	}
-	seriesID := []byte(str)
 
-	return seriesID, nil
+	return []byte(str), nil
 }
 
-func (s *Server) computeShardID(seriesID []byte, mapIndexName string) (shardID uint, err error) {
-	shardEventVal := s.shardInfo.shardEvent.getShardEvent(mapIndexName)
-	if shardEventVal == nil {
+func (s *Server) computeShardID(seriesID []byte, mapIndexName string) (uint, error) {
+	shardNum := s.shardInfo.shardNum(mapIndexName)
+	if shardNum < 1 {
 		return 0, ErrShardEvents
 	}
-	shardNum := shardEventVal.GetShard().GetId()
-	if shardNum < 1 {
-		shardNum = 1
-	}
-	shardID, shardIDError := partition.ShardID(seriesID, uint32(shardNum))
+	shardID, shardIDError := partition.ShardID(seriesID, shardNum)
 	if shardIDError != nil {
 		return 0, shardIDError
 	}
-
 	return shardID, nil
 }
 
-func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
+func (s *Server) Write(stream tracev1.TraceService_WriteServer) error {
 	for {
-		writeEntity, err := TraceWriteServer.Recv()
+		writeEntity, err := stream.Recv()
 		if err == io.EOF {
 			return nil
 		}
@@ -327,13 +314,13 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 		if errWritePub != nil {
 			return errWritePub
 		}
-		if errSend := TraceWriteServer.Send(&v1.WriteResponse{}); errSend != nil {
+		if errSend := stream.Send(&tracev1.WriteResponse{}); errSend != nil {
 			return errSend
 		}
 	}
 }
 
-func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) {
+func (s *Server) Query(_ context.Context, entityCriteria *tracev1.QueryRequest) (*tracev1.QueryResponse, error) {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicQueryEvent, message)
 	if errQuery != nil {
@@ -347,14 +334,14 @@ func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v
 	if !ok {
 		return nil, ErrQueryMsg
 	}
-	var arr []*v1.Entity
+	var arr []*tracev1.Entity
 	for i := 0; i < len(queryMsg); i++ {
 		arr = append(arr, queryMsg[i].Entity)
 	}
 
-	return &v1.QueryResponse{Entities: arr}, nil
+	return &tracev1.QueryResponse{Entities: arr}, nil
 }
 
-func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
+func assemblyWriteData(shardID uint, writeEntity *tracev1.WriteRequest, seriesID uint64) data.TraceWriteDate {
 	return data.TraceWriteDate{ShardID: shardID, SeriesID: seriesID, WriteRequest: writeEntity}
 }

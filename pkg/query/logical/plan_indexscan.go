@@ -26,7 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
@@ -49,7 +49,7 @@ func (uis *unresolvedIndexScan) Type() PlanType {
 }
 
 func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
-	conditionMap := make(map[*apiv1.IndexObject][]Expr)
+	conditionMap := make(map[*databasev1.IndexObject][]Expr)
 	for _, cond := range uis.conditions {
 		if resolvable, ok := cond.(ResolvableExpr); ok {
 			err := resolvable.Resolve(s)
@@ -101,7 +101,7 @@ type indexScan struct {
 	endTime             int64
 	schema              Schema
 	traceMetadata       *common.Metadata
-	conditionMap        map[*apiv1.IndexObject][]Expr
+	conditionMap        map[*databasev1.IndexObject][]Expr
 	projectionFields    []string
 	projectionFieldRefs []*FieldRef
 	traceState          series.TraceState

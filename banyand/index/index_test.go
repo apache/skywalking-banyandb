@@ -28,7 +28,8 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -136,9 +137,9 @@ func setUpModules(tester *assert.Assertions) *service {
 	tester.NoError(err)
 	tester.NoError(svc.PreRun())
 
-	rules := []*apiv1.IndexRule{
+	rules := []*databasev1.IndexRule{
 		{
-			Objects: []*apiv1.IndexObject{
+			Objects: []*databasev1.IndexObject{
 				{
 					Name:   "endpoint",
 					Fields: []string{"endpoint"},
@@ -150,13 +151,13 @@ func setUpModules(tester *assert.Assertions) *service {
 			},
 		},
 	}
-	seriesID := &apiv1.Metadata{
+	seriesID := &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",
 	}
-	_, err = repo.Publish(event.TopicIndexRule, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &apiv1.IndexRuleEvent{
+	_, err = repo.Publish(event.TopicIndexRule, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.IndexRuleEvent{
 		Series: seriesID,
-		Rules: []*apiv1.IndexRuleEvent_ShardedIndexRule{
+		Rules: []*databasev1.IndexRuleEvent_ShardedIndexRule{
 			{
 				ShardId: 0,
 				Rules:   rules,
@@ -166,7 +167,7 @@ func setUpModules(tester *assert.Assertions) *service {
 				Rules:   rules,
 			},
 		},
-		Action: apiv1.Action_ACTION_PUT,
+		Action: databasev1.Action_ACTION_PUT,
 		Time:   timestamppb.Now(),
 	}))
 	tester.NoError(err)

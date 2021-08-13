@@ -24,7 +24,8 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
@@ -44,7 +45,7 @@ func (s *service) IndexRuleBinding() schema.IndexRuleBinding {
 	return sw.NewIndexRuleBinding()
 }
 
-func (s *service) IndexRules(ctx context.Context, subject *v1.Series, filter series.IndexObjectFilter) ([]*v1.IndexRule, error) {
+func (s *service) IndexRules(ctx context.Context, subject *databasev1.Series, filter series.IndexObjectFilter) ([]*databasev1.IndexRule, error) {
 	group := subject.Series.GetGroup()
 	bindings, err := s.IndexRuleBinding().List(ctx, schema.ListOpt{Group: group})
 	if err != nil {
@@ -55,7 +56,7 @@ func (s *service) IndexRules(ctx context.Context, subject *v1.Series, filter ser
 		return nil, nil
 	}
 	now := time.Now()
-	foundRules := make([]*v1.Metadata, 0)
+	foundRules := make([]*commonv1.Metadata, 0)
 	for _, binding := range bindings {
 		spec := binding.Spec
 		if spec.GetBeginAt().AsTime().After(now) ||
@@ -77,7 +78,7 @@ func (s *service) IndexRules(ctx context.Context, subject *v1.Series, filter ser
 			}
 		}
 	}
-	result := make([]*v1.IndexRule, 0)
+	result := make([]*databasev1.IndexRule, 0)
 	var indexRuleErr error
 	for _, rule := range foundRules {
 		object, getErr := s.IndexRule().Get(ctx, common.Metadata{KindVersion: common.MetadataKindVersion, Spec: rule})

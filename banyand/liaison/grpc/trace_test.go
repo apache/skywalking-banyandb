@@ -33,7 +33,7 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
@@ -82,9 +82,9 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	tester.NoError(err)
 	// Init `liaison` module
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
-	tester.NoError(tcp.FlagSet().Parse([]string{"--tlsVal=false", "--addr=:17912"}))
+	tester.NoError(tcp.FlagSet().Parse([]string{"--tls=false", "--addr=:17912"}))
 	tcpTLS := grpc.NewServer(context.TODO(), pipeline, repo)
-	tester.NoError(tcpTLS.FlagSet().Parse([]string{"--tlsVal=true", "--addr=:17913"}))
+	tester.NoError(tcpTLS.FlagSet().Parse([]string{"--tls=true", "--addr=:17913", "--cert-file=testdata/server_cert.pem", "--key-file=testdata/server_key.pem"}))
 
 	err = indexSvc.PreRun()
 	tester.NoError(err)
@@ -127,8 +127,8 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 
 type caseData struct {
 	name           string
-	queryGenerator func(baseTs time.Time) *v1.QueryRequest
-	writeGenerator func() *v1.WriteRequest
+	queryGenerator func(baseTs time.Time) *tracev1.QueryRequest
+	writeGenerator func() *tracev1.WriteRequest
 	args           testData
 	wantLen        int
 }
@@ -139,11 +139,11 @@ func TestTraceService(t *testing.T) {
 	defer gracefulStop()
 	_, currentFile, _, _ := runtime.Caller(0)
 	basePath := filepath.Dir(currentFile)
-	certFile := filepath.Join(basePath, "data/server_cert.pem")
+	certFile := filepath.Join(basePath, "testdata/server_cert.pem")
 	testCases := []caseData{
 		{
 			name: "isTLS",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -153,7 +153,7 @@ func TestTraceService(t *testing.T) {
 					Projection("trace_id").
 					Build()
 			},
-			writeGenerator: func() *v1.WriteRequest {
+			writeGenerator: func() *tracev1.WriteRequest {
 				entityValue := pb.NewEntityValueBuilder().
 					EntityID("entityId123").
 					DataBinary([]byte{12}).
@@ -185,7 +185,7 @@ func TestTraceService(t *testing.T) {
 		},
 		{
 			name: "noTLS",
-			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
@@ -195,7 +195,7 @@ func TestTraceService(t *testing.T) {
 					Projection("trace_id").
 					Build()
 			},
-			writeGenerator: func() *v1.WriteRequest {
+			writeGenerator: func() *tracev1.WriteRequest {
 				entityValue := pb.NewEntityValueBuilder().
 					EntityID("entityId123").
 					DataBinary([]byte{12}).
@@ -254,7 +254,7 @@ func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
 }
 
 func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
-	client := v1.NewTraceServiceClient(conn)
+	client := tracev1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
@@ -283,7 +283,7 @@ func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 }
 
 func traceQuery(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
-	client := v1.NewTraceServiceClient(conn)
+	client := tracev1.NewTraceServiceClient(conn)
 	ctx := context.Background()
 	baseTs := time.Now()
 	stream, errRev := client.Query(ctx, tc.queryGenerator(baseTs))

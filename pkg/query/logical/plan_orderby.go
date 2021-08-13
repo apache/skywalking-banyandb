@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
@@ -35,7 +35,7 @@ var _ UnresolvedPlan = (*unresolvedOrderBy)(nil)
 
 type unresolvedOrderBy struct {
 	input         UnresolvedPlan
-	sort          apiv1.QueryOrder_Sort
+	sort          modelv1.QueryOrder_Sort
 	targetLiteral string
 }
 
@@ -63,7 +63,7 @@ func (u *unresolvedOrderBy) Analyze(s Schema) (Plan, error) {
 
 type orderBy struct {
 	input     Plan
-	sort      apiv1.QueryOrder_Sort
+	sort      modelv1.QueryOrder_Sort
 	targetRef *FieldRef
 }
 
@@ -109,7 +109,7 @@ func (o *orderBy) Type() PlanType {
 	return PlanOrderBy
 }
 
-func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.QueryOrder_Sort) UnresolvedPlan {
+func OrderBy(input UnresolvedPlan, targetField string, sort modelv1.QueryOrder_Sort) UnresolvedPlan {
 	return &unresolvedOrderBy{
 		input:         input,
 		sort:          sort,
@@ -117,29 +117,29 @@ func OrderBy(input UnresolvedPlan, targetField string, sort apiv1.QueryOrder_Sor
 	}
 }
 
-func getFieldRaw(typedPair *apiv1.TypedPair) ([]byte, error) {
+func getFieldRaw(typedPair *modelv1.TypedPair) ([]byte, error) {
 	switch v := typedPair.GetTyped().(type) {
-	case *apiv1.TypedPair_StrPair:
+	case *modelv1.TypedPair_StrPair:
 		return []byte(v.StrPair.GetValues()[0]), nil
-	case *apiv1.TypedPair_IntPair:
+	case *modelv1.TypedPair_IntPair:
 		return convert.Int64ToBytes(v.IntPair.GetValues()[0]), nil
 	default:
 		return nil, errors.New("unsupported data types")
 	}
 }
 
-func Sorted(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryOrder_Sort) bool {
+func Sorted(entities []data.Entity, fieldIdx int, sortDirection modelv1.QueryOrder_Sort) bool {
 	return sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, sortDirection))
 }
 
-func sortMethod(entities []data.Entity, fieldIdx int, sortDirection apiv1.QueryOrder_Sort) func(i, j int) bool {
+func sortMethod(entities []data.Entity, fieldIdx int, sortDirection modelv1.QueryOrder_Sort) func(i, j int) bool {
 	return func(i, j int) bool {
 		iPair := entities[i].GetFields()[fieldIdx]
 		jPair := entities[j].GetFields()[fieldIdx]
 		lField, _ := getFieldRaw(iPair)
 		rField, _ := getFieldRaw(jPair)
 		comp := bytes.Compare(lField, rField)
-		if sortDirection == apiv1.QueryOrder_SORT_ASC {
+		if sortDirection == modelv1.QueryOrder_SORT_ASC {
 			return comp == -1
 		}
 		return comp == 1

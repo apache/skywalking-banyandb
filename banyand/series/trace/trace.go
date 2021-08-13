@@ -25,7 +25,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
@@ -148,7 +150,7 @@ type traceSeries struct {
 	traceIDIndex                 int
 	traceIDFieldName             string
 	stateFieldName               string
-	stateFieldType               v1.FieldSpec_FieldType
+	stateFieldType               databasev1.FieldSpec_FieldType
 	strStateSuccessVal           string
 	strStateErrorVal             string
 	intStateSuccessVal           int64
@@ -251,10 +253,10 @@ func (t *traceSeries) buildFieldIndex() error {
 		t.fieldIndex[f.GetName()] = idx
 	}
 	switch t.stateFieldType {
-	case v1.FieldSpec_FIELD_TYPE_STRING:
+	case databasev1.FieldSpec_FIELD_TYPE_STRING:
 		t.strStateSuccessVal = state.GetValSuccess()
 		t.strStateErrorVal = state.GetValError()
-	case v1.FieldSpec_FIELD_TYPE_INT:
+	case databasev1.FieldSpec_FIELD_TYPE_INT:
 		intSVal, err := strconv.ParseInt(state.GetValSuccess(), 10, 64)
 		if err != nil {
 			return err
@@ -279,7 +281,7 @@ func (t *traceSeries) buildFieldIndex() error {
 }
 
 // getTraceID extracts traceID as bytes from v1.EntityValue
-func (t *traceSeries) getTraceID(entityValue *v1.EntityValue) ([]byte, error) {
+func (t *traceSeries) getTraceID(entityValue *tracev1.EntityValue) ([]byte, error) {
 	if entityValue.GetFields() == nil {
 		return nil, errors.Wrapf(ErrFieldNotFound, "EntityValue does not contain any fields")
 	}
@@ -291,7 +293,7 @@ func (t *traceSeries) getTraceID(entityValue *v1.EntityValue) ([]byte, error) {
 		return nil, errors.Wrapf(ErrFieldNotFound, "trace_id index %d", t.traceIDIndex)
 	}
 	switch v := f.GetValueType().(type) {
-	case *v1.Field_Str:
+	case *modelv1.Field_Str:
 		return []byte(v.Str.GetValue()), nil
 	default:
 		// TODO: add a test to cover the default case
@@ -299,7 +301,7 @@ func (t *traceSeries) getTraceID(entityValue *v1.EntityValue) ([]byte, error) {
 	}
 }
 
-func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldStoreName, dataStoreName string, err error) {
+func (t *traceSeries) getState(entityValue *tracev1.EntityValue) (state State, fieldStoreName, dataStoreName string, err error) {
 	if entityValue.GetFields() == nil {
 		err = errors.Wrapf(ErrFieldNotFound, "EntityValue does not contain any fields")
 		return
@@ -316,8 +318,8 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 	}
 
 	switch v := f.GetValueType().(type) {
-	case *v1.Field_Int:
-		if t.stateFieldType != v1.FieldSpec_FIELD_TYPE_INT {
+	case *modelv1.Field_Int:
+		if t.stateFieldType != databasev1.FieldSpec_FIELD_TYPE_INT {
 			// TODO: add a test case to cover this line
 			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: Int, supported type: %s", t.stateFieldType.String())
 			return
@@ -332,8 +334,8 @@ func (t *traceSeries) getState(entityValue *v1.EntityValue) (state State, fieldS
 				v.Int.GetValue(), t.intStateSuccessVal, t.intStateErrorVal)
 			return
 		}
-	case *v1.Field_Str:
-		if t.stateFieldType != v1.FieldSpec_FIELD_TYPE_STRING {
+	case *modelv1.Field_Str:
+		if t.stateFieldType != databasev1.FieldSpec_FIELD_TYPE_STRING {
 			err = errors.Wrapf(ErrUnsupportedFieldType, "given type: String, supported type: %s", t.stateFieldType.String())
 			return
 		}

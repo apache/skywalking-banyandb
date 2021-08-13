@@ -24,7 +24,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -214,13 +214,13 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 		targetField string
 		// TODO: avoid hardcoded index?
 		targetFieldIdx int
-		sortDirection  apiv1.QueryOrder_Sort
+		sortDirection  modelv1.QueryOrder_Sort
 	}{
 		{
 			name:           "Sort By trace_id ASC",
 			targetField:    "trace_id",
 			targetFieldIdx: 0,
-			sortDirection:  apiv1.QueryOrder_SORT_ASC,
+			sortDirection:  modelv1.QueryOrder_SORT_ASC,
 		},
 	}
 
@@ -242,9 +242,9 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 	}
 }
 
-func reverseSortDirection(sort apiv1.QueryOrder_Sort) apiv1.QueryOrder_Sort {
-	if sort == apiv1.QueryOrder_SORT_DESC {
-		return apiv1.QueryOrder_SORT_ASC
+func reverseSortDirection(sort modelv1.QueryOrder_Sort) modelv1.QueryOrder_Sort {
+	if sort == modelv1.QueryOrder_SORT_DESC {
+		return modelv1.QueryOrder_SORT_ASC
 	}
-	return apiv1.QueryOrder_SORT_DESC
+	return modelv1.QueryOrder_SORT_DESC
 }

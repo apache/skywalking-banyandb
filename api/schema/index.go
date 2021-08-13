@@ -19,7 +19,7 @@ package schema
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 var IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "schema-index-rule"}

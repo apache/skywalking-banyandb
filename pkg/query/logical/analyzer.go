@@ -23,7 +23,8 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	seriesSchema "github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
@@ -80,7 +81,7 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	return s, nil
 }
 
-func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
+func (a *Analyzer) Analyze(_ context.Context, criteria *tracev1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
 	// parse tableScan
 	timeRange := criteria.GetTimeRange()
 
@@ -100,7 +101,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 			op := pairQuery.GetOp()
 			typedPair := pairQuery.GetCondition()
 			switch v := typedPair.GetTyped().(type) {
-			case *apiv1.TypedPair_StrPair:
+			case *modelv1.TypedPair_StrPair:
 				// check special field `trace_id`
 				if v.StrPair.GetKey() == s.TraceIDFieldName() {
 					plan = TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, projStr...)
@@ -109,7 +110,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 				useIndexScan = true
 				lit := parseStrLiteral(v.StrPair)
 				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
-			case *apiv1.TypedPair_IntPair:
+			case *modelv1.TypedPair_IntPair:
 				// check special field `state`
 				if v.IntPair.GetKey() == s.TraceStateFieldName() {
 					traceState = series.TraceState(v.IntPair.GetValues()[0])
@@ -155,7 +156,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 	return plan.Analyze(s)
 }
 
-func parseStrLiteral(pair *apiv1.StrPair) Expr {
+func parseStrLiteral(pair *modelv1.StrPair) Expr {
 	if len(pair.GetValues()) == 1 {
 		return &strLiteral{
 			pair.GetValues()[0],
@@ -164,7 +165,7 @@ func parseStrLiteral(pair *apiv1.StrPair) Expr {
 	return &strArrLiteral{arr: pair.GetValues()}
 }
 
-func parseIntLiteral(pair *apiv1.IntPair) Expr {
+func parseIntLiteral(pair *modelv1.IntPair) Expr {
 	if len(pair.GetValues()) == 1 {
 		return &int64Literal{
 			pair.GetValues()[0],
