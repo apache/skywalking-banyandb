@@ -78,7 +78,7 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
 	// Init `Query` module
-	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc)
+	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc, pipeline)
 	tester.NoError(err)
 	// Init `liaison` module
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
@@ -125,6 +125,14 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	}
 }
 
+type caseData struct {
+	name           string
+	queryGenerator func(baseTs time.Time) *v1.QueryRequest
+	writeGenerator func() *v1.WriteRequest
+	args           testData
+	wantLen        int
+}
+
 func TestTraceService(t *testing.T) {
 	tester := require.New(t)
 	tcp, tcpTLS, gracefulStop := setup(tester)
@@ -132,77 +140,122 @@ func TestTraceService(t *testing.T) {
 	_, currentFile, _, _ := runtime.Caller(0)
 	basePath := filepath.Dir(currentFile)
 	certFile := filepath.Join(basePath, "data/server_cert.pem")
-	testCases := []struct {
-		name    string
-		args    testData
-		wantErr bool
-	}{
+	testCases := []caseData{
 		{
 			name: "isTLS",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("trace_id", "=", "trace_id-xxfff.111").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			writeGenerator: func() *v1.WriteRequest {
+				entityValue := pb.NewEntityValueBuilder().
+					EntityID("entityId123").
+					DataBinary([]byte{12}).
+					Fields("trace_id-xxfff.111",
+						0,
+						"webapp_id",
+						"10.0.0.1_id",
+						"/home_id",
+						"webapp",
+						"10.0.0.1",
+						"/home",
+						300,
+						1622933202000000000).
+					Timestamp(time.Now()).
+					Build()
+				criteria := pb.NewWriteEntityBuilder().
+					EntityValue(entityValue).
+					Metadata("default", "sw").
+					Build()
+				return criteria
+			},
 			args: testData{
 				TLS:                true,
 				certFile:           certFile,
 				serverHostOverride: "localhost",
 				addr:               "localhost:17913",
 			},
+			wantLen: 1,
 		},
 		{
 			name: "noTLS",
+			queryGenerator: func(baseTs time.Time) *v1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("trace_id", "=", "trace_id-xxfff.111323").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					Projection("trace_id").
+					Build()
+			},
+			writeGenerator: func() *v1.WriteRequest {
+				entityValue := pb.NewEntityValueBuilder().
+					EntityID("entityId123").
+					DataBinary([]byte{12}).
+					Fields("trace_id-xxfff.111323",
+						0,
+						"webapp_id",
+						"10.0.0.1_id",
+						"/home_id",
+						"webapp",
+						"10.0.0.1",
+						"/home",
+						300,
+						1622933202000000000).
+					Timestamp(time.Now()).
+					Build()
+				criteria := pb.NewWriteEntityBuilder().
+					EntityValue(entityValue).
+					Metadata("default", "sw").
+					Build()
+				return criteria
+			},
 			args: testData{
 				TLS:  false,
 				addr: "localhost:17912",
 			},
+			wantLen: 1,
 		},
 	}
 	for _, tc := range testCases {
-		if tc.args.TLS {
-			errValidate := tcpTLS.Validate()
-			assert.NoError(t, errValidate)
-			var opts []grpclib.DialOption
-			creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
-			assert.NoError(t, err)
-			opts = append(opts, grpclib.WithTransportCredentials(creds))
-			linkService(t, tc.args.addr, opts)
-		} else {
-			errValidate := tcp.Validate()
-			assert.NoError(t, errValidate)
-			var opts []grpclib.DialOption
-			opts = append(opts, grpclib.WithInsecure())
-			linkService(t, tc.args.addr, opts)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.args.TLS {
+				errValidate := tcpTLS.Validate()
+				assert.NoError(t, errValidate)
+				var opts []grpclib.DialOption
+				creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
+				assert.NoError(t, err)
+				opts = append(opts, grpclib.WithTransportCredentials(creds))
+				dialService(t, tc, opts)
+			} else {
+				errValidate := tcp.Validate()
+				assert.NoError(t, errValidate)
+				var opts []grpclib.DialOption
+				opts = append(opts, grpclib.WithInsecure())
+				dialService(t, tc, opts)
+			}
+		})
 	}
 }
 
-func linkService(t *testing.T, addr string, opts []grpclib.DialOption) {
-	conn, err := grpclib.Dial(addr, opts...)
+func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
+	conn, err := grpclib.Dial(tc.args.addr, opts...)
 	assert.NoError(t, err)
 	defer conn.Close()
-	traceWrite(t, conn)
-	traceQuery(t, conn)
+	traceWrite(t, tc, conn)
+	traceQuery(t, tc, conn)
 }
 
-func traceWrite(t *testing.T, conn *grpclib.ClientConn) {
+func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
-	entityValue := pb.NewEntityValueBuilder().
-		EntityID("entityId").
-		DataBinary([]byte{12}).
-		Fields("trace_id-xxfff.111323",
-			0,
-			"webapp_id",
-			"10.0.0.1_id",
-			"/home_id",
-			"webapp",
-			"10.0.0.1",
-			"/home",
-			300,
-			1622933202000000000).
-		Timestamp(time.Now()).
-		Build()
-	criteria := pb.NewWriteEntityBuilder().
-		EntityValue(entityValue).
-		Metadata("default", "sw").
-		Build()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
 		t.Errorf("%v.Write(_) = _, %v", client, errorWrite)
@@ -220,7 +273,7 @@ func traceWrite(t *testing.T, conn *grpclib.ClientConn) {
 			assert.NotNil(t, writeResponse)
 		}
 	}()
-	if errSend := stream.Send(criteria); errSend != nil {
+	if errSend := stream.Send(tc.writeGenerator()); errSend != nil {
 		t.Errorf("Failed to send a note: %v", errSend)
 	}
 	if errorSend := stream.CloseSend(); errorSend != nil {
@@ -229,22 +282,14 @@ func traceWrite(t *testing.T, conn *grpclib.ClientConn) {
 	<-waitc
 }
 
-func traceQuery(t *testing.T, conn *grpclib.ClientConn) {
+func traceQuery(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 	client := v1.NewTraceServiceClient(conn)
 	ctx := context.Background()
-	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
-	criteria := pb.NewQueryRequestBuilder().
-		Limit(5).
-		Offset(10).
-		OrderBy("service_instance_id", v1.QueryOrder_SORT_DESC).
-		Metadata("default", "trace").
-		Projection("http.method", "service_id", "service_instance_id").
-		Fields("service_id", "=", "my_app", "http.method", "=", "GET").
-		TimeRange(sT, eT).
-		Build()
-	stream, errRev := client.Query(ctx, criteria)
+	baseTs := time.Now()
+	stream, errRev := client.Query(ctx, tc.queryGenerator(baseTs))
 	if errRev != nil {
 		t.Errorf("Retrieve client failed: %v", errRev)
 	}
 	assert.NotNil(t, stream)
+	assert.Len(t, stream.Entities, tc.wantLen)
 }

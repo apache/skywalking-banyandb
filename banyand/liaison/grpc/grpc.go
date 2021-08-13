@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"path/filepath"
 	"runtime"
@@ -55,6 +54,7 @@ var (
 	ErrServerCert      = errors.New("invalid server cert file")
 	ErrServerKey       = errors.New("invalid server key file")
 	ErrNoAddr          = errors.New("no address")
+	ErrQueryMsg        = errors.New("invalid query message")
 )
 
 type Server struct {
@@ -334,9 +334,25 @@ func (s *Server) Write(TraceWriteServer v1.TraceService_WriteServer) error {
 }
 
 func (s *Server) Query(ctx context.Context, entityCriteria *v1.QueryRequest) (*v1.QueryResponse, error) {
-	log.Println("entityCriteria:", entityCriteria)
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	feat, errQuery := s.pipeline.Publish(data.TopicQueryEvent, message)
+	if errQuery != nil {
+		return nil, errQuery
+	}
+	msg, errFeat := feat.Get()
+	if errFeat != nil {
+		return nil, errFeat
+	}
+	queryMsg, ok := msg.Data().([]data.Entity)
+	if !ok {
+		return nil, ErrQueryMsg
+	}
+	var arr []*v1.Entity
+	for i := 0; i < len(queryMsg); i++ {
+		arr = append(arr, queryMsg[i].Entity)
+	}
 
-	return &v1.QueryResponse{}, nil
+	return &v1.QueryResponse{Entities: arr}, nil
 }
 
 func assemblyWriteData(shardID uint, writeEntity *v1.WriteRequest, seriesID uint64) data.TraceWriteDate {
