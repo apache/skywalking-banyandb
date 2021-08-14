@@ -120,9 +120,9 @@ func OrderBy(input UnresolvedPlan, targetField string, sort modelv1.QueryOrder_S
 func getFieldRaw(typedPair *modelv1.TypedPair) ([]byte, error) {
 	switch v := typedPair.GetTyped().(type) {
 	case *modelv1.TypedPair_StrPair:
-		return []byte(v.StrPair.GetValues()[0]), nil
+		return []byte(v.StrPair.GetValue()), nil
 	case *modelv1.TypedPair_IntPair:
-		return convert.Int64ToBytes(v.IntPair.GetValues()[0]), nil
+		return convert.Int64ToBytes(v.IntPair.GetValue()), nil
 	default:
 		return nil, errors.New("unsupported data types")
 	}

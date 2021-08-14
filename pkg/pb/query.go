@@ -87,118 +87,88 @@ func (b *QueryRequestBuilder) Fields(items ...interface{}) *QueryRequestBuilder 
 }
 
 func buildPair(key string, value interface{}) *modelv1.TypedPair {
+	result := &modelv1.TypedPair{
+		Key: key,
+	}
+	if value == nil {
+		result.IsNull = true
+		return result
+	}
 	switch v := value.(type) {
 	case int:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: []int64{int64(v)},
-				},
+		result.Typed = &modelv1.TypedPair_IntPair{
+			IntPair: &modelv1.Int{
+				Value: int64(v),
 			},
 		}
 	case []int:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: convert.IntToInt64(v...),
-				},
+		result.Typed = &modelv1.TypedPair_IntArrayPair{
+			IntArrayPair: &modelv1.IntArray{
+				Value: convert.IntToInt64(v...),
 			},
 		}
 	case int8:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: []int64{int64(v)},
-				},
+		result.Typed = &modelv1.TypedPair_IntPair{
+			IntPair: &modelv1.Int{
+				Value: int64(v),
 			},
 		}
 	case []int8:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: convert.Int8ToInt64(v...),
-				},
+		result.Typed = &modelv1.TypedPair_IntArrayPair{
+			IntArrayPair: &modelv1.IntArray{
+				Value: convert.Int8ToInt64(v...),
 			},
 		}
 	case int16:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: []int64{int64(v)},
-				},
+		result.Typed = &modelv1.TypedPair_IntPair{
+			IntPair: &modelv1.Int{
+				Value: int64(v),
 			},
 		}
 	case []int16:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: convert.Int16ToInt64(v...),
-				},
+		result.Typed = &modelv1.TypedPair_IntArrayPair{
+			IntArrayPair: &modelv1.IntArray{
+				Value: convert.Int16ToInt64(v...),
 			},
 		}
 	case int32:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: []int64{int64(v)},
-				},
+		result.Typed = &modelv1.TypedPair_IntPair{
+			IntPair: &modelv1.Int{
+				Value: int64(v),
 			},
 		}
 	case []int32:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: convert.Int32ToInt64(v...),
-				},
+		result.Typed = &modelv1.TypedPair_IntArrayPair{
+			IntArrayPair: &modelv1.IntArray{
+				Value: convert.Int32ToInt64(v...),
 			},
 		}
 	case int64:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: []int64{v},
-				},
+		result.Typed = &modelv1.TypedPair_IntPair{
+			IntPair: &modelv1.Int{
+				Value: v,
 			},
 		}
 	case []int64:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_IntPair{
-				IntPair: &modelv1.IntPair{
-					Key:    key,
-					Values: v,
-				},
+		result.Typed = &modelv1.TypedPair_IntArrayPair{
+			IntArrayPair: &modelv1.IntArray{
+				Value: v,
 			},
 		}
 	case string:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_StrPair{
-				StrPair: &modelv1.StrPair{
-					Key:    key,
-					Values: []string{v},
-				},
+		result.Typed = &modelv1.TypedPair_StrPair{
+			StrPair: &modelv1.Str{
+				Value: v,
 			},
 		}
 	case []string:
-		return &modelv1.TypedPair{
-			Typed: &modelv1.TypedPair_StrPair{
-				StrPair: &modelv1.StrPair{
-					Key:    key,
-					Values: v,
-				},
+		result.Typed = &modelv1.TypedPair_StrArrayPair{
+			StrArrayPair: &modelv1.StrArray{
+				Value: v,
 			},
 		}
-	default:
-		panic("not supported value type")
 	}
+	return result
 }
 
 func (b *QueryRequestBuilder) Projection(projections ...string) *QueryRequestBuilder {

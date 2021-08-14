@@ -17,20 +17,23 @@
 
 syntax = "proto3";
 
+package banyandb.model.v1;
+
 option java_package = "org.apache.skywalking.banyandb.model.v1";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 
-package banyandb.model.v1;
+message Str {
+    string value = 1;
+}
 
-import "google/protobuf/struct.proto";
-import "banyandb/model/v1/common.proto";
+message Int {
+    int64 value = 1;
+}
 
-message Field {
-    oneof value_type {
-        google.protobuf.NullValue null = 1;
-        Str str = 2;
-        StrArray str_array = 3;
-        Int int = 4;
-        IntArray int_array = 5;
-    }
+message StrArray {
+    repeated string value = 1;
+}
+
+message IntArray {
+    repeated int64 value = 1;
 }

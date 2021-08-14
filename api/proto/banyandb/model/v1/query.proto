@@ -23,27 +23,20 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/mo
 package banyandb.model.v1;
 
 import "google/protobuf/timestamp.proto";
-
-// IntPair in a typed pair with an array of int64 as values
-message IntPair {
-    string key = 1;
-    repeated int64 values = 2;
-}
-
-// StrPair in a typed pair with an array of string as values
-message StrPair {
-    string key = 1;
-    repeated string values = 2;
-}
+import "banyandb/model/v1/common.proto";
 
 // Pair is the building block of a record which is equivalent to a key-value pair.
 // In the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.
 // Besides, other fields/tags are organized in key-value pair in the underlying storage layer.
 // One should notice that the values can be a multi-value.
 message TypedPair {
+    string key = 1;
+    bool is_null = 2;
     oneof typed {
-        IntPair int_pair = 1;
-        StrPair str_pair = 2;
+        Int int_pair = 3;
+        Str str_pair = 4;
+        IntArray int_array_pair = 5;
+        StrArray str_array_pair = 6;
     }
 }
 

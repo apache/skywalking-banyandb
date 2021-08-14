@@ -43,6 +43,7 @@ func Transform(entityValue *tracev1.EntityValue, fieldIndexes []FieldEntry) []*m
 			case *modelv1.Field_IntArray:
 				typedPairs = append(typedPairs, buildPair(key, v.IntArray.GetValue()))
 			case *modelv1.Field_Null:
+				typedPairs = append(typedPairs, buildPair(key, nil))
 			}
 		}
 	} else {
