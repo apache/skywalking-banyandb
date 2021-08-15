@@ -44,10 +44,11 @@ message Duration {
 }
 
 enum FieldType {
-    FIELD_TYPE_STRING = 0;
-    FIELD_TYPE_INT = 1;
-    FIELD_TYPE_STRING_ARRAY = 2;
-    FIELD_TYPE_INT_ARRAY = 3;
+    FIELD_TYPE_UNSPECIFIED=0;
+    FIELD_TYPE_STRING = 1;
+    FIELD_TYPE_INT = 2;
+    FIELD_TYPE_STRING_ARRAY = 3;
+    FIELD_TYPE_INT_ARRAY = 4;
 }
 
 message FieldSpec {
