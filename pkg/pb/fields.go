@@ -18,36 +18,46 @@
 package pb
 
 import (
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 )
 
 func Transform(entityValue *tracev1.EntityValue, fieldIndexes []FieldEntry) []*modelv1.TypedPair {
 	typedPairs := make([]*modelv1.TypedPair, 0)
-	if fieldIndexes != nil {
-		// copy selected fields
-		for _, fieldIndex := range fieldIndexes {
-			key, idx := fieldIndex.Key, fieldIndex.Index
-			if idx >= len(entityValue.GetFields()) {
-				// skip
-				continue
-			}
-			f := entityValue.GetFields()[idx]
-			switch v := f.GetValueType().(type) {
-			case *modelv1.Field_Str:
-				typedPairs = append(typedPairs, buildPair(key, v.Str.GetValue()))
-			case *modelv1.Field_StrArray:
-				typedPairs = append(typedPairs, buildPair(key, v.StrArray.GetValue()))
-			case *modelv1.Field_Int:
-				typedPairs = append(typedPairs, buildPair(key, v.Int.GetValue()))
-			case *modelv1.Field_IntArray:
-				typedPairs = append(typedPairs, buildPair(key, v.IntArray.GetValue()))
-			case *modelv1.Field_Null:
-				typedPairs = append(typedPairs, buildPair(key, nil))
-			}
+	if fieldIndexes == nil {
+		return typedPairs
+	}
+	// copy selected fields
+	for _, fieldIndex := range fieldIndexes {
+		key, idx, t := fieldIndex.Key, fieldIndex.Index, fieldIndex.Type
+		if idx >= len(entityValue.GetFields()) {
+			typedPairs = append(typedPairs, &modelv1.TypedPair{
+				Key: key,
+				Typed: &modelv1.TypedPair_NullPair{
+					NullPair: &modelv1.TypedPair_NullWithType{Type: t},
+				},
+			})
+			continue
 		}
-	} else {
-		panic("what is the key?")
+		f := entityValue.GetFields()[idx]
+		switch v := f.GetValueType().(type) {
+		case *modelv1.Field_Str:
+			typedPairs = append(typedPairs, buildPair(key, v.Str.GetValue()))
+		case *modelv1.Field_StrArray:
+			typedPairs = append(typedPairs, buildPair(key, v.StrArray.GetValue()))
+		case *modelv1.Field_Int:
+			typedPairs = append(typedPairs, buildPair(key, v.Int.GetValue()))
+		case *modelv1.Field_IntArray:
+			typedPairs = append(typedPairs, buildPair(key, v.IntArray.GetValue()))
+		case *modelv1.Field_Null:
+			typedPairs = append(typedPairs, &modelv1.TypedPair{
+				Key: key,
+				Typed: &modelv1.TypedPair_NullPair{
+					NullPair: &modelv1.TypedPair_NullWithType{Type: t},
+				},
+			})
+		}
 	}
 	return typedPairs
 }
@@ -55,4 +65,5 @@ func Transform(entityValue *tracev1.EntityValue, fieldIndexes []FieldEntry) []*m
 type FieldEntry struct {
 	Key   string
 	Index int
+	Type  databasev1.FieldType
 }

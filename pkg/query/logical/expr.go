@@ -55,7 +55,7 @@ func (f *FieldRef) Equal(expr Expr) bool {
 	return false
 }
 
-func (f *FieldRef) FieldType() databasev1.FieldSpec_FieldType {
+func (f *FieldRef) FieldType() databasev1.FieldType {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
@@ -98,7 +98,7 @@ func (b *binaryExpr) Equal(expr Expr) bool {
 	return false
 }
 
-func (b *binaryExpr) FieldType() databasev1.FieldSpec_FieldType {
+func (b *binaryExpr) FieldType() databasev1.FieldType {
 	panic("Boolean should be added")
 }
 

@@ -90,10 +90,6 @@ func buildPair(key string, value interface{}) *modelv1.TypedPair {
 	result := &modelv1.TypedPair{
 		Key: key,
 	}
-	if value == nil {
-		result.IsNull = true
-		return result
-	}
 	switch v := value.(type) {
 	case int:
 		result.Typed = &modelv1.TypedPair_IntPair{

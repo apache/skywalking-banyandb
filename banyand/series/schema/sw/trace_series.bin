@@ -1,25 +1,28 @@
 
 
-defaultsw
-trace_id	
-state
+defaultsw
 
-service_id
-service_instance_id
-endpoint_id
-service_name
-service_instance_name
-endpoint_name
-duration
+trace_id	
+state
 
-start_time
-http.method
-status_code
-db.type
-db.instance
-mq.queue
-mq.topic
-	mq.broker:
+service_id
+service_instance_id
+endpoint_id
+service_name
+service_instance_name
+endpoint_name
+duration
+
+start_time
+http.method
+status_code	
+db.type
+db.instance
+
+mq.queue
+
+mq.topic
+	mq.broker:
 trace_id
 service_idservice_instance_id
 state01"0

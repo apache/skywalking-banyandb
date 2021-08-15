@@ -53,7 +53,7 @@ type Plan interface {
 
 type Expr interface {
 	fmt.Stringer
-	FieldType() apiv1.FieldSpec_FieldType
+	FieldType() apiv1.FieldType
 	Equal(Expr) bool
 }
 
