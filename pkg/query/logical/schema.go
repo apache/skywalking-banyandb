@@ -21,12 +21,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 )
 
 type Schema interface {
-	IndexDefined(string) (bool, *apiv1.IndexObject)
+	IndexDefined(string) (bool, *databasev1.IndexObject)
 	FieldSubscript(string) (bool, int)
 	FieldDefined(string) bool
 	CreateRef(names ...string) ([]*FieldRef, error)
@@ -39,7 +39,7 @@ type Schema interface {
 
 type fieldSpec struct {
 	Idx  int
-	spec *apiv1.FieldSpec
+	spec *databasev1.FieldSpec
 }
 
 func (fs *fieldSpec) Equal(other *fieldSpec) bool {
@@ -49,7 +49,7 @@ func (fs *fieldSpec) Equal(other *fieldSpec) bool {
 var _ Schema = (*schema)(nil)
 
 type schema struct {
-	traceSeries *apiv1.TraceSeries
+	traceSeries *databasev1.TraceSeries
 	indexRule   apischema.IndexRule
 	fieldMap    map[string]*fieldSpec
 }
@@ -63,7 +63,7 @@ func (s *schema) TraceStateFieldName() string {
 }
 
 // IndexDefined checks whether the field given is indexed
-func (s *schema) IndexDefined(field string) (bool, *apiv1.IndexObject) {
+func (s *schema) IndexDefined(field string) (bool, *databasev1.IndexObject) {
 	idxRule := s.indexRule.Spec
 	for _, indexObj := range idxRule.GetObjects() {
 		for _, fieldName := range indexObj.GetFields() {
@@ -94,7 +94,7 @@ func (s *schema) Equal(s2 Schema) bool {
 	return false
 }
 
-func (s *schema) RegisterField(name string, i int, spec *apiv1.FieldSpec) {
+func (s *schema) RegisterField(name string, i int, spec *databasev1.FieldSpec) {
 	s.fieldMap[name] = &fieldSpec{
 		Idx:  i,
 		spec: spec,

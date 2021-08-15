@@ -27,7 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -213,15 +213,16 @@ func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchDataBinary bo
 			t.l.Debug().Msg("to fetch data binary")
 			continue
 		}
-		index, ok := t.fieldIndex[p]
+		f, ok := t.fieldIndex[p]
 		if !ok {
 			return false, nil, errors.Wrapf(ErrFieldNotFound, "field name:%s", p)
 		}
 		fetchFieldsIndices = append(fetchFieldsIndices, pb.FieldEntry{
 			Key:   p,
-			Index: index,
+			Index: f.idx,
+			Type:  f.spec.GetType(),
 		})
-		t.l.Debug().Str("name", p).Int("index", index).Msg("to fetch the field")
+		t.l.Debug().Str("name", p).Interface("index", f).Msg("to fetch the field")
 	}
 	return fetchDataBinary, fetchFieldsIndices, nil
 }

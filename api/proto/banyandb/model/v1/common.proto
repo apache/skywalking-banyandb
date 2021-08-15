@@ -15,38 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package common
+syntax = "proto3";
 
-import (
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-)
+package banyandb.model.v1;
 
-var MetadataKindVersion = KindVersion{Version: "commonv1", Kind: "metadata"}
+option java_package = "org.apache.skywalking.banyandb.model.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 
-type Metadata struct {
-	KindVersion
-	Spec *commonv1.Metadata
+message Str {
+    string value = 1;
 }
 
-func (md Metadata) Equal(other Metadata) bool {
-	return md.KindVersion.Kind == other.KindVersion.Kind && md.KindVersion.Version == other.KindVersion.Version &&
-		md.Spec.Group == other.Spec.Group &&
-		md.Spec.Name == other.Spec.Name
+message Int {
+    int64 value = 1;
 }
 
-func NewMetadata(spec *commonv1.Metadata) *Metadata {
-	return &Metadata{
-		KindVersion: MetadataKindVersion,
-		Spec:        spec,
-	}
+message StrArray {
+    repeated string value = 1;
 }
 
-func NewMetadataByNameAndGroup(name, group string) *Metadata {
-	return &Metadata{
-		KindVersion: MetadataKindVersion,
-		Spec: &commonv1.Metadata{
-			Name:  name,
-			Group: group,
-		},
-	}
+message IntArray {
+    repeated int64 value = 1;
 }

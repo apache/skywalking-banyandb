@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
@@ -49,7 +49,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "endpoint",
-						Op:     apiv1.PairQuery_BINARY_OP_EQ,
+						Op:     modelv1.PairQuery_BINARY_OP_EQ,
 						Values: [][]byte{[]byte("/product")},
 					},
 				},
@@ -63,7 +63,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "endpoint",
-						Op:     apiv1.PairQuery_BINARY_OP_NE,
+						Op:     modelv1.PairQuery_BINARY_OP_NE,
 						Values: [][]byte{[]byte("/product")},
 					},
 				},
@@ -77,7 +77,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "endpoint",
-						Op:     apiv1.PairQuery_BINARY_OP_HAVING,
+						Op:     modelv1.PairQuery_BINARY_OP_HAVING,
 						Values: [][]byte{[]byte("/product"), []byte("/sales")},
 					},
 				},
@@ -91,7 +91,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "endpoint",
-						Op:     apiv1.PairQuery_BINARY_OP_NOT_HAVING,
+						Op:     modelv1.PairQuery_BINARY_OP_NOT_HAVING,
 						Values: [][]byte{[]byte("/product"), []byte("/sales")},
 					},
 				},
@@ -105,7 +105,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_EQ,
+						Op:     modelv1.PairQuery_BINARY_OP_EQ,
 						Values: [][]byte{convert.Int64ToBytes(500)},
 					},
 				},
@@ -119,7 +119,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_NE,
+						Op:     modelv1.PairQuery_BINARY_OP_NE,
 						Values: [][]byte{convert.Int64ToBytes(500)},
 					},
 				},
@@ -133,7 +133,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_HAVING,
+						Op:     modelv1.PairQuery_BINARY_OP_HAVING,
 						Values: [][]byte{convert.Int64ToBytes(500), convert.Int64ToBytes(50)},
 					},
 				},
@@ -147,7 +147,7 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_NOT_HAVING,
+						Op:     modelv1.PairQuery_BINARY_OP_NOT_HAVING,
 						Values: [][]byte{convert.Int64ToBytes(500), convert.Int64ToBytes(50)},
 					},
 				},
@@ -161,12 +161,12 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_GT,
+						Op:     modelv1.PairQuery_BINARY_OP_GT,
 						Values: [][]byte{convert.Int64ToBytes(50)},
 					},
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_LT,
+						Op:     modelv1.PairQuery_BINARY_OP_LT,
 						Values: [][]byte{convert.Int64ToBytes(5000)},
 					},
 				},
@@ -180,12 +180,12 @@ func Test_service_Search(t *testing.T) {
 				conditions: []Condition{
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_GE,
+						Op:     modelv1.PairQuery_BINARY_OP_GE,
 						Values: [][]byte{convert.Int64ToBytes(50)},
 					},
 					{
 						Key:    "duration",
-						Op:     apiv1.PairQuery_BINARY_OP_LE,
+						Op:     modelv1.PairQuery_BINARY_OP_LE,
 						Values: [][]byte{convert.Int64ToBytes(5000)},
 					},
 				},

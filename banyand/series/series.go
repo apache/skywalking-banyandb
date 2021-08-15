@@ -24,7 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/run"

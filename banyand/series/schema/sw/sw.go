@@ -16,10 +16,10 @@
 // under the License.
 
 //nolint
-//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.TraceSeries ../../../../api/proto/banyandb/v1/schema.proto < trace_series.textproto > trace_series.bin"
-//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.IndexRule ../../../../api/proto/banyandb/v1/schema.proto < index_rule.textproto > index_rule.bin"
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.database.v1.TraceSeries ../../../../api/proto/banyandb/database/v1/schema.proto < trace_series.textproto > trace_series.bin"
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.database.v1.IndexRule ../../../../api/proto/banyandb/database/v1/schema.proto < index_rule.textproto > index_rule.bin"
 //nolint
-//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.v1.IndexRuleBinding ../../../../api/proto/banyandb/v1/schema.proto < index_rule_binding.textproto > index_rule_binding.bin"
+//go:generate sh -c "protoc -I../../../../api/proto --encode=banyandb.database.v1.IndexRuleBinding ../../../../api/proto/banyandb/database/v1/schema.proto < index_rule_binding.textproto > index_rule_binding.bin"
 package sw
 
 import (
@@ -30,7 +30,7 @@ import (
 	"github.com/golang/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema"
 )

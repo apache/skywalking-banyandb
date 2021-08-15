@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
@@ -79,7 +79,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("service_instance_id", apiv1.QueryOrder_SORT_DESC).
+		OrderBy("service_instance_id", modelv1.QueryOrder_SORT_DESC).
 		Metadata("default", "trace").
 		Projection("http.method", "service_id", "service_instance_id").
 		Fields("service_id", "=", "my_app", "http.method", "=", "GET").
@@ -106,7 +106,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 					logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 				},
 				series.TraceStateDefault),
-				"service_instance_id", apiv1.QueryOrder_SORT_DESC),
+				"service_instance_id", modelv1.QueryOrder_SORT_DESC),
 			10),
 		5).
 		Analyze(schema)
@@ -153,7 +153,7 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("service_instance_id", apiv1.QueryOrder_SORT_DESC).
+		OrderBy("service_instance_id", modelv1.QueryOrder_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("trace_id", "service_id").
 		Fields("duration", ">", 500).
@@ -180,7 +180,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("duration", apiv1.QueryOrder_SORT_DESC).
+		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
 		Metadata("default", "trace").
 		Projection("trace_id", "service_id").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
@@ -206,7 +206,7 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("duration", apiv1.QueryOrder_SORT_DESC).
+		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("duration", "service_id", "unknown").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).

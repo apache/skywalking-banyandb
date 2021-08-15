@@ -17,15 +17,20 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1;v1";
+option java_package = "org.apache.skywalking.banyandb.model.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 
-package banyandb.v1;
+package banyandb.model.v1;
 
-import "banyandb/v1/query.proto";
-import "banyandb/v1/write.proto";
+import "google/protobuf/struct.proto";
+import "banyandb/model/v1/common.proto";
 
-service TraceService {
-  rpc Query(banyandb.v1.QueryRequest) returns (banyandb.v1.QueryResponse);
-  rpc Write(stream banyandb.v1.WriteRequest) returns (stream banyandb.v1.WriteResponse);
+message Field {
+    oneof value_type {
+        google.protobuf.NullValue null = 1;
+        Str str = 2;
+        StrArray str_array = 3;
+        Int int = 4;
+        IntArray int_array = 5;
+    }
 }

@@ -33,7 +33,7 @@ func NewTraceServiceClient(cc grpc.ClientConnInterface) TraceServiceClient {
 
 func (c *traceServiceClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
 	out := new(QueryResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.v1.TraceService/Query", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/banyandb.trace.v1.TraceService/Query", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (c *traceServiceClient) Query(ctx context.Context, in *QueryRequest, opts .
 }
 
 func (c *traceServiceClient) Write(ctx context.Context, opts ...grpc.CallOption) (TraceService_WriteClient, error) {
-	stream, err := c.cc.NewStream(ctx, &TraceService_ServiceDesc.Streams[0], "/banyandb.v1.TraceService/Write", opts...)
+	stream, err := c.cc.NewStream(ctx, &TraceService_ServiceDesc.Streams[0], "/banyandb.trace.v1.TraceService/Write", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func _TraceService_Query_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.v1.TraceService/Query",
+		FullMethod: "/banyandb.trace.v1.TraceService/Query",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TraceServiceServer).Query(ctx, req.(*QueryRequest))
@@ -151,7 +151,7 @@ func (x *traceServiceWriteServer) Recv() (*WriteRequest, error) {
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var TraceService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.v1.TraceService",
+	ServiceName: "banyandb.trace.v1.TraceService",
 	HandlerType: (*TraceServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -167,5 +167,5 @@ var TraceService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "banyandb/v1/rpc.proto",
+	Metadata: "banyandb/trace/v1/rpc.proto",
 }

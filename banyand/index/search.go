@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
@@ -85,30 +85,30 @@ func buildSearchTree(searcher tsdb.Searcher, indexObject string, conditions []Co
 				}
 				opts := rangeLeaf.Opts
 				switch cond.Op {
-				case apiv1.PairQuery_BINARY_OP_GT:
+				case modelv1.PairQuery_BINARY_OP_GT:
 					opts.Lower = bytes.Join(cond.Values...)
-				case apiv1.PairQuery_BINARY_OP_GE:
+				case modelv1.PairQuery_BINARY_OP_GE:
 					opts.Lower = bytes.Join(cond.Values...)
 					opts.IncludesLower = true
-				case apiv1.PairQuery_BINARY_OP_LT:
+				case modelv1.PairQuery_BINARY_OP_LT:
 					opts.Upper = bytes.Join(cond.Values...)
-				case apiv1.PairQuery_BINARY_OP_LE:
+				case modelv1.PairQuery_BINARY_OP_LE:
 					opts.Upper = bytes.Join(cond.Values...)
 					opts.IncludesUpper = true
 				}
 				continue
 			}
 			switch cond.Op {
-			case apiv1.PairQuery_BINARY_OP_EQ:
+			case modelv1.PairQuery_BINARY_OP_EQ:
 				root.addEq(key, cond.Values)
-			case apiv1.PairQuery_BINARY_OP_NE:
+			case modelv1.PairQuery_BINARY_OP_NE:
 				root.addNot(key, root.newEq(key, cond.Values))
-			case apiv1.PairQuery_BINARY_OP_HAVING:
+			case modelv1.PairQuery_BINARY_OP_HAVING:
 				n := root.addOrNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
 				}
-			case apiv1.PairQuery_BINARY_OP_NOT_HAVING:
+			case modelv1.PairQuery_BINARY_OP_NOT_HAVING:
 				n := root.newOrNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
@@ -120,12 +120,12 @@ func buildSearchTree(searcher tsdb.Searcher, indexObject string, conditions []Co
 	return root, nil
 }
 
-func rangeOP(op apiv1.PairQuery_BinaryOp) bool {
+func rangeOP(op modelv1.PairQuery_BinaryOp) bool {
 	switch op {
-	case apiv1.PairQuery_BINARY_OP_GT,
-		apiv1.PairQuery_BINARY_OP_GE,
-		apiv1.PairQuery_BINARY_OP_LT,
-		apiv1.PairQuery_BINARY_OP_LE:
+	case modelv1.PairQuery_BINARY_OP_GT,
+		modelv1.PairQuery_BINARY_OP_GE,
+		modelv1.PairQuery_BINARY_OP_LT,
+		modelv1.PairQuery_BINARY_OP_LE:
 		return true
 	}
 	return false

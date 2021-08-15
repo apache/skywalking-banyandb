@@ -19,7 +19,7 @@ package data
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
@@ -43,16 +43,16 @@ type Trace struct {
 }
 
 type Entity struct {
-	*v1.Entity
+	*tracev1.Entity
 }
 
 type EntityValue struct {
-	*v1.EntityValue
+	*tracev1.EntityValue
 }
 type TraceWriteDate struct {
 	ShardID      uint
 	SeriesID     uint64
-	WriteRequest *v1.WriteRequest
+	WriteRequest *tracev1.WriteRequest
 }
 type Write struct {
 	common.KindVersion

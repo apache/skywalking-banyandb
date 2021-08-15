@@ -26,7 +26,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	bydb_bytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -103,15 +105,15 @@ func (t *traceSeries) Write(seriesID common.SeriesID, shardID uint, entity data.
 		fieldSpec := t.schema.Spec.GetFields()[i]
 		fieldName := fieldSpec.GetName()
 		switch x := field.ValueType.(type) {
-		case *v1.Field_Str:
+		case *modelv1.Field_Str:
 			err = multierr.Append(err, t.writeStrToIndex(shardID, id, fieldName, x.Str.GetValue()))
-		case *v1.Field_Int:
+		case *modelv1.Field_Int:
 			err = multierr.Append(err, t.writeIntToIndex(shardID, id, fieldName, x.Int.GetValue()))
-		case *v1.Field_StrArray:
+		case *modelv1.Field_StrArray:
 			for _, s := range x.StrArray.GetValue() {
 				err = multierr.Append(err, t.writeStrToIndex(shardID, id, fieldName, s))
 			}
-		case *v1.Field_IntArray:
+		case *modelv1.Field_IntArray:
 			for _, integer := range x.IntArray.GetValue() {
 				err = multierr.Append(err, t.writeIntToIndex(shardID, id, fieldName, integer))
 			}
@@ -131,7 +133,7 @@ func (t *traceSeries) writeStrToIndex(shardID uint, id common.ChunkID, name stri
 }
 
 func (t *traceSeries) writeIndex(shardID uint, id common.ChunkID, name string, value []byte) error {
-	return t.idx.Insert(*common.NewMetadata(&v1.Metadata{
+	return t.idx.Insert(*common.NewMetadata(&commonv1.Metadata{
 		Name:  t.name,
 		Group: t.group,
 	}),
@@ -145,8 +147,8 @@ func (t *traceSeries) writeIndex(shardID uint, id common.ChunkID, name string, v
 }
 
 // copyEntityValueWithoutDataBinary copies all fields without DataBinary
-func copyEntityValueWithoutDataBinary(ev *v1.EntityValue) *v1.EntityValue {
-	return &v1.EntityValue{
+func copyEntityValueWithoutDataBinary(ev *tracev1.EntityValue) *tracev1.EntityValue {
+	return &tracev1.EntityValue{
 		EntityId:   ev.GetEntityId(),
 		Timestamp:  ev.GetTimestamp(),
 		DataBinary: nil,

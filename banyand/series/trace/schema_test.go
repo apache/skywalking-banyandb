@@ -23,20 +23,21 @@ import (
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
 	type args struct {
-		series *v1.Series
+		series *databasev1.Series
 		filter series.IndexObjectFilter
 	}
 	tests := []struct {
 		name    string
 		args    args
-		want    []*v1.IndexRule
+		want    []*databasev1.IndexRule
 		wantErr bool
 	}{
 		{
@@ -50,7 +51,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 			name: "filter index object",
 			args: args{
 				series: createSubject("sw", "default"),
-				filter: func(object *v1.IndexObject) bool {
+				filter: func(object *databasev1.IndexObject) bool {
 					return object.GetFields()[0] == "trace_id"
 				},
 			},
@@ -60,7 +61,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 			name: "got empty idWithShard",
 			args: args{
 				series: createSubject("sw", "default"),
-				filter: func(object *v1.IndexObject) bool {
+				filter: func(object *databasev1.IndexObject) bool {
 					return object.GetFields()[0] == "invalid"
 				},
 			},
@@ -85,23 +86,23 @@ func Test_service_RulesBySubject(t *testing.T) {
 	}
 }
 
-func getIndexRule(name, group string) []*v1.IndexRule {
+func getIndexRule(name, group string) []*databasev1.IndexRule {
 	indexRule, _ := sw.NewIndexRule().Get(context.Background(), common.Metadata{
 		KindVersion: common.MetadataKindVersion,
-		Spec: &v1.Metadata{
+		Spec: &commonv1.Metadata{
 			Group: group,
 			Name:  name,
 		}},
 	)
-	return []*v1.IndexRule{indexRule.Spec}
+	return []*databasev1.IndexRule{indexRule.Spec}
 }
 
-func createSubject(name, group string) *v1.Series {
-	return &v1.Series{
-		Series: &v1.Metadata{
+func createSubject(name, group string) *databasev1.Series {
+	return &databasev1.Series{
+		Series: &commonv1.Metadata{
 			Group: group,
 			Name:  name,
 		},
-		Catalog: v1.Series_CATALOG_TRACE,
+		Catalog: databasev1.Series_CATALOG_TRACE,
 	}
 }

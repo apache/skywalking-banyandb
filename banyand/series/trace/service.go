@@ -26,7 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -96,27 +97,27 @@ func (s *service) Serve() error {
 			SeriesMetadata(sMeta.group, sMeta.name).
 			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
 			Time(time.Now()).
-			Action(v1.Action_ACTION_PUT).
+			Action(databasev1.Action_ACTION_PUT).
 			Build()
 		_, err := s.repo.Publish(event.TopicSeriesEvent, bus.NewMessage(bus.MessageID(now), e))
 		if err != nil {
 			return err
 		}
-		seriesObj := &v1.Series{
-			Series: &v1.Metadata{
+		seriesObj := &databasev1.Series{
+			Series: &commonv1.Metadata{
 				Name:  sMeta.name,
 				Group: sMeta.group,
 			},
-			Catalog: v1.Series_CATALOG_TRACE,
+			Catalog: databasev1.Series_CATALOG_TRACE,
 		}
 		rules, errGetRules := s.IndexRules(context.Background(), seriesObj, nil)
 		if errGetRules != nil {
 			return errGetRules
 		}
-		shardedRuleIndex := make([]*v1.IndexRuleEvent_ShardedIndexRule, 0, len(rules)*int(sMeta.shardNum))
+		shardedRuleIndex := make([]*databasev1.IndexRuleEvent_ShardedIndexRule, 0, len(rules)*int(sMeta.shardNum))
 		for i := 0; i < int(sMeta.shardNum); i++ {
 			t := time.Now()
-			e := pb.NewShardEventBuilder().Action(v1.Action_ACTION_PUT).Time(t).
+			e := pb.NewShardEventBuilder().Action(databasev1.Action_ACTION_PUT).Time(t).
 				Shard(
 					pb.NewShardBuilder().
 						ID(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
@@ -129,16 +130,16 @@ func (s *service) Serve() error {
 			if errShard != nil {
 				return errShard
 			}
-			shardedRuleIndex = append(shardedRuleIndex, &v1.IndexRuleEvent_ShardedIndexRule{
+			shardedRuleIndex = append(shardedRuleIndex, &databasev1.IndexRuleEvent_ShardedIndexRule{
 				ShardId: uint64(i),
 				Rules:   rules,
 			})
 		}
 
-		indexRule := &v1.IndexRuleEvent{
+		indexRule := &databasev1.IndexRuleEvent{
 			Series: seriesObj.Series,
 			Rules:  shardedRuleIndex,
-			Action: v1.Action_ACTION_PUT,
+			Action: databasev1.Action_ACTION_PUT,
 			Time:   timestamppb.New(time.Now()),
 		}
 		_, errPublishRules := s.repo.Publish(event.TopicIndexRule, bus.NewMessage(bus.MessageID(now), indexRule))

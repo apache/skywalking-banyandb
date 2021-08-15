@@ -23,7 +23,8 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	seriesSchema "github.com/apache/skywalking-banyandb/banyand/series/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series/schema/sw"
@@ -35,6 +36,8 @@ var (
 	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
 	ErrInvalidSchema              = errors.New("invalid schema")
 	ErrIndexNotDefined            = errors.New("index is not define for the field")
+	ErrTraceIDWrongType           = errors.New("trace id type should be string")
+	ErrStateWrongType             = errors.New("state type should be int")
 )
 
 var (
@@ -80,60 +83,11 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 	return s, nil
 }
 
-func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
-	// parse tableScan
-	timeRange := criteria.GetTimeRange()
-
-	// parse projection
-	projStr := criteria.GetProjection().GetKeyNames()
-
-	var plan UnresolvedPlan
-
-	// parse selection
-	if criteria.GetFields() != nil && len(criteria.GetFields()) > 0 {
-		// mark if there is indexScan request
-		useIndexScan := false
-		var fieldExprs []Expr
-		traceState := series.TraceStateDefault
-
-		for _, pairQuery := range criteria.GetFields() {
-			op := pairQuery.GetOp()
-			typedPair := pairQuery.GetCondition()
-			switch v := typedPair.GetTyped().(type) {
-			case *apiv1.TypedPair_StrPair:
-				// check special field `trace_id`
-				if v.StrPair.GetKey() == s.TraceIDFieldName() {
-					plan = TraceIDFetch(v.StrPair.GetValues()[0], traceMetadata, projStr...)
-					break
-				}
-				useIndexScan = true
-				lit := parseStrLiteral(v.StrPair)
-				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.StrPair.GetKey()), lit))
-			case *apiv1.TypedPair_IntPair:
-				// check special field `state`
-				if v.IntPair.GetKey() == s.TraceStateFieldName() {
-					traceState = series.TraceState(v.IntPair.GetValues()[0])
-					continue
-				}
-				lit := parseIntLiteral(v.IntPair)
-				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(v.IntPair.GetKey()), lit))
-				useIndexScan = true
-			default:
-				return nil, ErrInvalidConditionType
-			}
-		}
-
-		// if plan is already assigned, skip
-		if plan == nil {
-			// first check if we can use index-scan
-			if useIndexScan {
-				plan = IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, fieldExprs, traceState, projStr...)
-			} else {
-				plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, traceState, projStr...)
-			}
-		}
-	} else {
-		plan = TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata, series.TraceStateDefault, projStr...)
+func (a *Analyzer) Analyze(_ context.Context, criteria *tracev1.QueryRequest, traceMetadata *common.Metadata, s Schema) (Plan, error) {
+	// parse fields
+	plan, err := parseFields(criteria, traceMetadata, s)
+	if err != nil {
+		return nil, err
 	}
 
 	// parse orderBy
@@ -155,20 +109,76 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *apiv1.QueryRequest, trac
 	return plan.Analyze(s)
 }
 
-func parseStrLiteral(pair *apiv1.StrPair) Expr {
-	if len(pair.GetValues()) == 1 {
-		return &strLiteral{
-			pair.GetValues()[0],
-		}
-	}
-	return &strArrLiteral{arr: pair.GetValues()}
-}
+func parseFields(criteria *tracev1.QueryRequest, traceMetadata *common.Metadata, s Schema) (UnresolvedPlan, error) {
+	timeRange := criteria.GetTimeRange()
 
-func parseIntLiteral(pair *apiv1.IntPair) Expr {
-	if len(pair.GetValues()) == 1 {
-		return &int64Literal{
-			pair.GetValues()[0],
-		}
+	projStr := criteria.GetProjection().GetKeyNames()
+
+	if criteria.GetFields() == nil || len(criteria.GetFields()) < 1 {
+		return TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
+			series.TraceStateDefault, projStr...), nil
 	}
-	return &int64ArrLiteral{arr: pair.GetValues()}
+
+	var plan UnresolvedPlan
+	// mark if there is indexScan request
+	useIndexScan := false
+	var fieldExprs []Expr
+	traceState := series.TraceStateDefault
+
+fieldsLoop:
+	for _, pairQuery := range criteria.GetFields() {
+		op := pairQuery.GetOp()
+		typedPair := pairQuery.GetCondition()
+		switch typedPair.GetKey() {
+		case s.TraceIDFieldName():
+			traceIDPair := typedPair.GetStrPair()
+			if traceIDPair == nil {
+				return nil, ErrTraceIDWrongType
+			}
+			plan = TraceIDFetch(typedPair.GetStrPair().GetValue(), traceMetadata, projStr...)
+			break fieldsLoop
+		case s.TraceStateFieldName():
+			statePair := typedPair.GetIntPair()
+			if statePair == nil {
+				return nil, ErrStateWrongType
+			}
+			traceState = series.TraceState(statePair.Value)
+			continue
+		}
+		useIndexScan = true
+		var e Expr
+		switch v := typedPair.GetTyped().(type) {
+		case *modelv1.TypedPair_StrPair:
+			e = &strLiteral{
+				string: v.StrPair.GetValue(),
+			}
+		case *modelv1.TypedPair_StrArrayPair:
+			e = &strArrLiteral{
+				arr: v.StrArrayPair.GetValue(),
+			}
+		case *modelv1.TypedPair_IntPair:
+			e = &int64Literal{
+				int64: v.IntPair.GetValue(),
+			}
+		case *modelv1.TypedPair_IntArrayPair:
+			e = &int64ArrLiteral{
+				arr: v.IntArrayPair.GetValue(),
+			}
+		default:
+			return nil, ErrInvalidConditionType
+		}
+		fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(typedPair.GetKey()), e))
+	}
+
+	// if plan is already assigned, skip
+	if plan != nil {
+		return plan, nil
+	}
+	// first check if we can use index-scan
+	if useIndexScan {
+		return IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
+			fieldExprs, traceState, projStr...), nil
+	}
+	return TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
+		traceState, projStr...), nil
 }

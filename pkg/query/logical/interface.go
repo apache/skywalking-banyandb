@@ -20,7 +20,7 @@ package logical
 import (
 	"fmt"
 
-	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/v1"
+	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
@@ -53,7 +53,7 @@ type Plan interface {
 
 type Expr interface {
 	fmt.Stringer
-	FieldType() apiv1.FieldSpec_FieldType
+	FieldType() apiv1.FieldType
 	Equal(Expr) bool
 }
 
