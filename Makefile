@@ -22,6 +22,8 @@ tool_bin := $(mk_dir)bin
 
 PROJECTS := banyand
 
+IMAGE_TAG ?= banyand:latest
+
 ##@ Build targets
 
 clean: TARGET=clean
@@ -108,7 +110,7 @@ license-fix: ## Fix license header issues
 .PHONY: build-docker
 build-docker: generate
 	@echo "Build multi-platform"
-	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 .
+	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 -t $(IMAGE_TAG) .
 
 default:
 	@for PRJ in $(PROJECTS); do \
