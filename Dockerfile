@@ -1,7 +1,7 @@
-ARG base_image
-ARG cert_image
+ARG BASE_IMAGE
+ARG CERT_IMAGE
 
-FROM $base_image AS base
+FROM $BASE_IMAGE AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"
@@ -13,9 +13,9 @@ FROM base AS builder
 
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
-            go build -o /out/banyand-server .
+            go build --ldflags '-w -s -X github.com/apache/skywalking-banyandb/pkg/version.build=-add-dockerfile' -o /out/banyand-server github.com/apache/skywalking-banyandb/banyand/cmd/server
 
-FROM $cert_image AS certs
+FROM $CERT_IMAGE AS certs
 RUN apk add --no-cache ca-certificates
 RUN update-ca-certificates
 

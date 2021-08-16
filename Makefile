@@ -105,6 +105,10 @@ license-check: ## Check license header
 license-fix: ## Fix license header issues
 	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header fix
 
+.PHONY: build-docker
+build-docker: generate
+	@echo "Build multi-platform"
+	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 --platform linux/amd64,linux/arm64,darwin/arm64,darwin/amd64 .
 
 default:
 	@for PRJ in $(PROJECTS); do \
