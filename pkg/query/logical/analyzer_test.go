@@ -123,7 +123,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		Metadata("default", "trace").
+		Metadata("default", "sw").
 		Fields("trace_id", "=", "123").
 		Build()
 
@@ -181,7 +181,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 		Limit(5).
 		Offset(10).
 		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
-		Metadata("default", "trace").
+		Metadata("default", "sw").
 		Projection("trace_id", "service_id").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
 		Build()
@@ -232,10 +232,10 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		Metadata("default", "trace").
+		Metadata("default", "sw").
 		Projection("duration", "service_id").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
-		Fields("service_name", "=", "app").
+		Fields("status_code", "=", "200").
 		Build()
 
 	metadata := &common.Metadata{

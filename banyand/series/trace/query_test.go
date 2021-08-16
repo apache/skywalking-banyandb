@@ -63,7 +63,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 			name: "multiple fields",
 			args: args{
 				chunkIDIndices: []int{0, 1, 2, 3, 4, 5, 6},
-				opt:            series.ScanOptions{Projection: []string{"trace_id", "service_name", "state", "duration", "mq.queue"}},
+				opt:            series.ScanOptions{Projection: []string{"trace_id", "service_id", "state", "duration", "mq.queue"}},
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", fieldsSize: 5},
@@ -311,8 +311,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			sort.Sort(entities)
 			for i, e := range entities {
-				// TODO: we have to check time accuracy
-				// assert.Greater(t, tt.args.end.UnixNano(), e.Timestamp.AsTime().UnixNano())
+				assert.GreaterOrEqual(t, tt.args.end.UnixNano(), e.Timestamp.AsTime().UnixNano())
 				assert.Equal(t, tt.wantEntities[i].entityID, e.GetEntityId())
 				assert.Equal(t, tt.wantEntities[i].dataBinary, e.GetDataBinary())
 				assert.Len(t, e.GetFields(), tt.wantEntities[i].fieldsSize)
