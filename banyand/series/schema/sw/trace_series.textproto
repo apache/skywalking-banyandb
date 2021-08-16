@@ -23,18 +23,6 @@ fields: [
     type: FIELD_TYPE_STRING
   },
   {
-    name: "service_name",
-    type: FIELD_TYPE_STRING
-  },
-  {
-    name: "service_instance_name",
-    type: FIELD_TYPE_STRING
-  },
-  {
-    name: "endpoint_name",
-    type: FIELD_TYPE_STRING
-  },
-  {
     name: "duration",
     type: FIELD_TYPE_INT
   },

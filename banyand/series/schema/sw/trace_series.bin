@@ -6,10 +6,7 @@
 
 service_id
 service_instance_id
-endpoint_id
-service_name
-service_instance_name
-endpoint_name
+endpoint_id
 duration
 
 start_time
