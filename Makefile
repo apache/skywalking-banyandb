@@ -108,7 +108,7 @@ license-fix: ## Fix license header issues
 .PHONY: build-docker
 build-docker: generate
 	@echo "Build multi-platform"
-	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 --platform linux/amd64,linux/arm64,darwin/arm64,darwin/amd64 .
+	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 .
 
 default:
 	@for PRJ in $(PROJECTS); do \

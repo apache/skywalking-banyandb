@@ -13,7 +13,7 @@ FROM base AS builder
 
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
-            go build --ldflags '-w -s -X github.com/apache/skywalking-banyandb/pkg/version.build=-add-dockerfile' -o /out/banyand-server github.com/apache/skywalking-banyandb/banyand/cmd/server
+            BUILD_DIR=/out make build
 
 FROM $CERT_IMAGE AS certs
 RUN apk add --no-cache ca-certificates
