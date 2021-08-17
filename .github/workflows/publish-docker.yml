@@ -19,7 +19,7 @@ name: publish-docker
 on:
   push:
     branches:
-      - master
+      - main
 
 env:
   HUB: ghcr.io/apache/skywalking-banyandb
