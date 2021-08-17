@@ -55,6 +55,7 @@ jobs:
       - name: Build docker image
         run: |
           make docker || make docker
+          docker image
       - name: Log in to the Container registry
         uses: docker/login-action@v1.10.0
         if: github.ref == 'refs/heads/main'
