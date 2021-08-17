@@ -34,9 +34,9 @@ BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_
 .PHONY: docker
 docker:
 	@echo "Build Skywalking/BanyanDB Docker Image"
-	@docker buildx build $(BUILD_ARGS) -t $(HUB):$(TAG) -f Dockerfile ..
+	@time docker buildx build $(BUILD_ARGS) -t $(HUB):$(TAG) -f Dockerfile ..
 
 .PHONY: docker.push
 docker.push:
 	@echo "Push Skywalking/BanyanDB Docker Image"
-	@docker push $(HUB):$(TAG)
+	@time docker push $(HUB):$(TAG)
