@@ -76,6 +76,7 @@ jobs:
       - name: Test
         run: make test
   result:
+    if: ${{ success() }}
     name: Continuous Integration
     runs-on: ubuntu-20.04
     needs: [check, build, test]
