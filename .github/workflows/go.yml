@@ -75,9 +75,10 @@ jobs:
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Test
         run: make test
-  checks:
-    name: build
+  result:
+    name: Result
     runs-on: ubuntu-20.04
     needs: [check, build, test]
     steps:
       - run: echo 'success'
+  
