@@ -120,6 +120,8 @@ license-check: ## Check license header
 license-fix: ## Fix license header issues
 	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header fix
 
+##@ Docker targets
+
 .PHONY: docker
 docker:
 	@echo "Build Skywalking/BanyanDB Docker Image"
