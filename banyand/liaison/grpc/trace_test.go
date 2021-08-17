@@ -162,9 +162,6 @@ func TestTraceService(t *testing.T) {
 						"webapp_id",
 						"10.0.0.1_id",
 						"/home_id",
-						"webapp",
-						"10.0.0.1",
-						"/home",
 						300,
 						1622933202000000000).
 					Timestamp(time.Now()).
@@ -204,9 +201,6 @@ func TestTraceService(t *testing.T) {
 						"webapp_id",
 						"10.0.0.1_id",
 						"/home_id",
-						"webapp",
-						"10.0.0.1",
-						"/home",
 						300,
 						1622933202000000000).
 					Timestamp(time.Now()).
