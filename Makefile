@@ -105,6 +105,15 @@ license-check: ## Check license header
 license-fix: ## Fix license header issues
 	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header fix
 
+##@ Docker targets
+
+docker: TARGET=docker
+docker: PROJECTS:=$(PROJECTS)
+docker: default  ## Run docker for all projects
+
+docker.push: TARGET=docker.push
+docker.push: PROJECTS:=$(PROJECTS)
+docker.push: default  ## Run docker.push for all projects
 
 default:
 	@for PRJ in $(PROJECTS); do \
