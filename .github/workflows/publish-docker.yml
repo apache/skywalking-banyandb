@@ -17,6 +17,7 @@
 name: publish-docker
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -41,6 +42,8 @@ jobs:
         uses: actions/setup-go@v2
         with:
           go-version: 1.16
+      - name: install goimports
+        run: GO111MODULE=off go get golang.org/x/tools/cmd/goimports
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
       - name: Update dependencies 
@@ -49,11 +52,13 @@ jobs:
         run: make generate
       - name: Log in to the Container registry
         uses: docker/login-action@v1.10.0
+        if: github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.HUB }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build docker image
+        if: github.ref == 'refs/heads/main'
         run: |
           make docker || make docker
           make docker.push || make docker.push
