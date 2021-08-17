@@ -39,4 +39,4 @@ docker:
 .PHONY: docker.push
 docker.push:
 	@echo "Push Skywalking/BanyanDB Docker Image"
-	time (docker push $(HUB):$(TAG))
+	@time (docker push $(HUB):$(TAG))
