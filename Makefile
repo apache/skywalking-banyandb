@@ -111,7 +111,7 @@ docker: TARGET=docker
 docker: PROJECTS:=$(PROJECTS)
 docker: default  ## Run docker for all projects
 
-docker.push: TARGET=clean
+docker.push: TARGET=docker.push
 docker.push: PROJECTS:=$(PROJECTS)
 docker.push: default  ## Run docker.push for all projects
 
