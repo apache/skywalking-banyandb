@@ -22,7 +22,20 @@ tool_bin := $(mk_dir)bin
 
 PROJECTS := banyand
 
-IMAGE_TAG ?= banyand:latest
+# The hub of the docker image. The default value is skywalking-banyandd.
+# For github registry, it would be ghcr.io/apache/skywalking-banyandb
+HUB ?= skywalking-banyandb
+
+# The tag of the docker image. The default value if latest.
+# For github actions, ${{ github.sha }} can be used for every commit.
+TAG ?= latest
+
+# Disable cache in CI environment
+ifeq (true,$(CI))
+	BUILD_ARGS := --no-cache
+endif
+
+BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16
 
 ##@ Build targets
 
@@ -107,10 +120,15 @@ license-check: ## Check license header
 license-fix: ## Fix license header issues
 	 docker run -it --rm -v $(mk_dir):/github/workspace apache/skywalking-eyes header fix
 
-.PHONY: build-docker
-build-docker: generate
-	@echo "Build multi-platform"
-	@docker buildx build --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16 -t $(IMAGE_TAG) .
+.PHONY: docker
+docker:
+	@echo "Build Skywalking/BanyanDB Docker Image"
+	@time (docker buildx build $(BUILD_ARGS) -t $(HUB):$(TAG) -f Dockerfile .)
+
+.PHONY: docker.push
+docker.push:
+	@echo "Push Skywalking/BanyanDB Docker Image"
+	time (docker push $(HUB):$(TAG))
 
 default:
 	@for PRJ in $(PROJECTS); do \
