@@ -50,6 +50,9 @@ jobs:
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate codes
         run: make generate
+      - name: Build docker image
+        run: |
+          make docker || make docker
       - name: Log in to the Container registry
         uses: docker/login-action@v1.10.0
         if: github.ref == 'refs/heads/main'
@@ -57,8 +60,7 @@ jobs:
           registry: ${{ env.HUB }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build docker image
+      - name: Push docker image
         if: github.ref == 'refs/heads/main'
         run: |
-          make docker || make docker
           make docker.push || make docker.push
