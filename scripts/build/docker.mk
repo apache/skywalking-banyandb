@@ -16,15 +16,27 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
+# The hub of the docker image. The default value is skywalking-banyandd.
+# For github registry, it would be ghcr.io/apache/skywalking-banyandb
+HUB ?= skywalking-banyandb
 
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/docker.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/help.mk
+# The tag of the docker image. The default value if latest.
+# For github actions, ${{ github.sha }} can be used for every commit.
+TAG ?= latest
+
+# Disable cache in CI environment
+ifeq (true,$(CI))
+	BUILD_ARGS := --no-cache
+endif
+
+BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16
+
+.PHONY: docker
+docker:
+	@echo "Build Skywalking/BanyanDB Docker Image"
+	@time (docker buildx build $(BUILD_ARGS) -t $(HUB):$(TAG) -f Dockerfile ..)
+
+.PHONY: docker.push
+docker.push:
+	@echo "Push Skywalking/BanyanDB Docker Image"
+	time (docker push $(HUB):$(TAG))
