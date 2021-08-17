@@ -31,6 +31,7 @@ github:
   protected_branches:
     main:
       required_status_checks:
+        strict: true
         contexts:
           - Continuous Integration
       required_pull_request_reviews:
