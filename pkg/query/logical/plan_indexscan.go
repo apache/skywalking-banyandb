@@ -210,7 +210,8 @@ func (i *indexScan) Equal(plan Plan) bool {
 		cmp.Equal(i.conditionMap, other.conditionMap)
 }
 
-func IndexScan(startTime, endTime int64, traceMetadata *common.Metadata, conditions []Expr, traceState series.TraceState, projectionDataBinary bool, projection ...string) UnresolvedPlan {
+func IndexScan(startTime, endTime int64, traceMetadata *common.Metadata, conditions []Expr,
+	traceState series.TraceState, projectionDataBinary bool, projection ...string) UnresolvedPlan {
 	return &unresolvedIndexScan{
 		startTime:            startTime,
 		endTime:              endTime,
