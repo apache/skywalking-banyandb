@@ -237,14 +237,6 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 			assert.NotNil(entities)
 
 			assert.True(logical.Sorted(entities, tt.targetFieldIdx, tt.sortDirection))
-			assert.False(logical.Sorted(entities, tt.targetFieldIdx, reverseSortDirection(tt.sortDirection)))
 		})
 	}
-}
-
-func reverseSortDirection(sort modelv1.QueryOrder_Sort) modelv1.QueryOrder_Sort {
-	if sort == modelv1.QueryOrder_SORT_DESC {
-		return modelv1.QueryOrder_SORT_ASC
-	}
-	return modelv1.QueryOrder_SORT_DESC
 }
