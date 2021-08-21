@@ -33,11 +33,12 @@ var _ Plan = (*tableScan)(nil)
 var _ UnresolvedPlan = (*unresolvedTableScan)(nil)
 
 type unresolvedTableScan struct {
-	startTime        int64
-	endTime          int64
-	projectionFields []string
-	traceMetadata    *common.Metadata
-	traceState       series.TraceState
+	startTime            int64
+	endTime              int64
+	projectionDataBinary bool
+	projectionFields     []string
+	traceMetadata        *common.Metadata
+	traceState           series.TraceState
 }
 
 func (u *unresolvedTableScan) Type() PlanType {
@@ -47,10 +48,11 @@ func (u *unresolvedTableScan) Type() PlanType {
 func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	if u.projectionFields == nil || len(u.projectionFields) == 0 {
 		return &tableScan{
-			startTime:     u.startTime,
-			endTime:       u.endTime,
-			schema:        schema,
-			traceMetadata: u.traceMetadata,
+			startTime:            u.startTime,
+			endTime:              u.endTime,
+			schema:               schema,
+			traceMetadata:        u.traceMetadata,
+			projectionDataBinary: u.projectionDataBinary,
 		}, nil
 	}
 
@@ -63,28 +65,31 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 		return nil, err
 	}
 	return &tableScan{
-		startTime:           u.startTime,
-		endTime:             u.endTime,
-		projectionFields:    u.projectionFields,
-		projectionFieldRefs: fieldRefs,
-		schema:              schema,
-		traceMetadata:       u.traceMetadata,
-		traceState:          u.traceState,
+		startTime:            u.startTime,
+		endTime:              u.endTime,
+		projectionFields:     u.projectionFields,
+		projectionFieldRefs:  fieldRefs,
+		projectionDataBinary: u.projectionDataBinary,
+		schema:               schema,
+		traceMetadata:        u.traceMetadata,
+		traceState:           u.traceState,
 	}, nil
 }
 
 type tableScan struct {
-	startTime           int64
-	endTime             int64
-	traceState          series.TraceState
-	projectionFields    []string
-	projectionFieldRefs []*FieldRef
-	schema              Schema
-	traceMetadata       *common.Metadata
+	startTime            int64
+	endTime              int64
+	traceState           series.TraceState
+	projectionFields     []string
+	projectionFieldRefs  []*FieldRef
+	projectionDataBinary bool
+	schema               Schema
+	traceMetadata        *common.Metadata
 }
 
 func (s *tableScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 	return ec.ScanEntity(*s.traceMetadata, uint64(s.startTime), uint64(s.endTime), series.ScanOptions{
+		DataBinary: s.projectionDataBinary,
 		Projection: s.projectionFields,
 		State:      s.traceState,
 	})
@@ -96,6 +101,7 @@ func (s *tableScan) Equal(plan Plan) bool {
 	}
 	other := plan.(*tableScan)
 	return s.startTime == other.startTime && s.endTime == other.endTime &&
+		s.projectionDataBinary == other.projectionDataBinary &&
 		cmp.Equal(s.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(s.schema, other.schema) &&
 		cmp.Equal(s.traceMetadata, other.traceMetadata)
@@ -125,12 +131,13 @@ func (s *tableScan) Type() PlanType {
 	return PlanTableScan
 }
 
-func TableScan(startTime, endTime int64, traceMetadata *common.Metadata, traceState series.TraceState, projection ...string) UnresolvedPlan {
+func TableScan(startTime, endTime int64, traceMetadata *common.Metadata, traceState series.TraceState, projectionDataBinary bool, projection ...string) UnresolvedPlan {
 	return &unresolvedTableScan{
-		startTime:        startTime,
-		endTime:          endTime,
-		projectionFields: projection,
-		traceMetadata:    traceMetadata,
-		traceState:       traceState,
+		startTime:            startTime,
+		endTime:              endTime,
+		projectionFields:     projection,
+		projectionDataBinary: projectionDataBinary,
+		traceMetadata:        traceMetadata,
+		traceState:           traceState,
 	}
 }

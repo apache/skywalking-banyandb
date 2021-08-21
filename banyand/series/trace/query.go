@@ -158,7 +158,8 @@ func (t *traceSeries) FetchEntity(chunkIDs posting.List, shardID uint, opt serie
 		return nil, ErrChunkIDsEmpty
 	}
 	entities = make([]data.Entity, 0, chunkIDsLen)
-	fetchDataBinary, fetchFieldsIndices, errInfo := t.parseFetchInfo(opt)
+	fetchFieldsIndices, errInfo := t.parseFetchInfo(opt)
+	fetchDataBinary := opt.DataBinary
 	if errInfo != nil {
 		return nil, errInfo
 	}
@@ -205,17 +206,12 @@ func (t *traceSeries) FetchEntity(chunkIDs posting.List, shardID uint, opt serie
 	return entities, err
 }
 
-func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchDataBinary bool, fetchFieldsIndices []pb.FieldEntry, err error) {
+func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchFieldsIndices []pb.FieldEntry, err error) {
 	fetchFieldsIndices = make([]pb.FieldEntry, 0)
 	for _, p := range opt.Projection {
-		if p == common.DataBinaryFieldName {
-			fetchDataBinary = true
-			t.l.Debug().Msg("to fetch data binary")
-			continue
-		}
 		f, ok := t.fieldIndex[p]
 		if !ok {
-			return false, nil, errors.Wrapf(ErrFieldNotFound, "field name:%s", p)
+			return nil, errors.Wrapf(ErrFieldNotFound, "field name:%s", p)
 		}
 		fetchFieldsIndices = append(fetchFieldsIndices, pb.FieldEntry{
 			Key:   p,
@@ -224,7 +220,7 @@ func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchDataBinary bo
 		})
 		t.l.Debug().Str("name", p).Interface("index", f).Msg("to fetch the field")
 	}
-	return fetchDataBinary, fetchFieldsIndices, nil
+	return fetchFieldsIndices, nil
 }
 
 func (t *traceSeries) getEntityByInternalRef(seriesID []byte, state State, fetchDataBinary bool,

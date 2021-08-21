@@ -47,7 +47,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 			name: "golden path",
 			args: args{
 				chunkIDIndices: []int{0, 1, 2, 3, 4, 5, 6},
-				opt:            series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
+				opt:            series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}},
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", dataBinary: []byte{11}, fieldsSize: 1},
@@ -79,7 +79,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 			name: "data binary",
 			args: args{
 				chunkIDIndices: []int{0, 1, 2, 3, 4, 5, 6},
-				opt:            series.ScanOptions{Projection: []string{"data_binary"}},
+				opt:            series.ScanOptions{DataBinary: true, Projection: []string{}},
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", dataBinary: []byte{11}},
@@ -99,7 +99,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 						id: common.ChunkID(0),
 					},
 				},
-				opt: series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
+				opt: series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}},
 			},
 			wantErr: true,
 		},
@@ -112,7 +112,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 					},
 				},
 				chunkIDIndices: []int{0, 1},
-				opt:            series.ScanOptions{Projection: []string{"trace_id", "data_binary"}},
+				opt:            series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}},
 			},
 			wantEntities: []wantEntity{
 				{entityID: "1", dataBinary: []byte{11}, fieldsSize: 1},
@@ -210,7 +210,7 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 	setupTestData(t, ts, testData(time.Now()))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			traceData, err := ts.FetchTrace(tt.args.traceID, series.ScanOptions{Projection: []string{"data_binary", "trace_id"}})
+			traceData, err := ts.FetchTrace(tt.args.traceID, series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -304,7 +304,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var entities ByEntityID
 			var err error
-			entities, err = ts.ScanEntity(uint64(tt.args.start.UnixNano()), uint64(tt.args.end.UnixNano()), series.ScanOptions{Projection: []string{"data_binary", "trace_id"}})
+			entities, err = ts.ScanEntity(uint64(tt.args.start.UnixNano()), uint64(tt.args.end.UnixNano()), series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}

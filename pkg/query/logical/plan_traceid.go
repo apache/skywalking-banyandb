@@ -33,9 +33,10 @@ var _ UnresolvedPlan = (*unresolvedTraceIDFetch)(nil)
 var _ Plan = (*traceIDFetch)(nil)
 
 type unresolvedTraceIDFetch struct {
-	metadata         *common.Metadata
-	traceID          string
-	projectionFields []string
+	metadata             *common.Metadata
+	traceID              string
+	projectionFields     []string
+	projectionDataBinary bool
 }
 
 func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
@@ -56,11 +57,12 @@ func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
 		return nil, err
 	}
 	return &traceIDFetch{
-		projectionFields:    t.projectionFields,
-		projectionFieldRefs: fieldRefs,
-		schema:              s,
-		traceID:             t.traceID,
-		metadata:            t.metadata,
+		projectionFields:     t.projectionFields,
+		projectionFieldRefs:  fieldRefs,
+		projectionDataBinary: t.projectionDataBinary,
+		schema:               s,
+		traceID:              t.traceID,
+		metadata:             t.metadata,
 	}, nil
 }
 
@@ -69,11 +71,12 @@ func (t *unresolvedTraceIDFetch) Type() PlanType {
 }
 
 type traceIDFetch struct {
-	metadata            *common.Metadata
-	traceID             string
-	projectionFields    []string
-	projectionFieldRefs []*FieldRef
-	schema              Schema
+	metadata             *common.Metadata
+	traceID              string
+	projectionFields     []string
+	projectionFieldRefs  []*FieldRef
+	projectionDataBinary bool
+	schema               Schema
 }
 
 func (t *traceIDFetch) String() string {
@@ -102,12 +105,15 @@ func (t *traceIDFetch) Equal(plan Plan) bool {
 	}
 	other := plan.(*traceIDFetch)
 	return t.traceID == other.traceID &&
+		t.projectionDataBinary == other.projectionDataBinary &&
+		cmp.Equal(t.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(t.schema, other.schema) &&
 		cmp.Equal(t.metadata, other.metadata)
 }
 
 func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
 	traceData, err := ec.FetchTrace(*t.metadata, t.traceID, series.ScanOptions{
+		DataBinary: t.projectionDataBinary,
 		Projection: t.projectionFields,
 	})
 	if err != nil {
@@ -116,10 +122,11 @@ func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]data.Entity, err
 	return traceData.Entities, nil
 }
 
-func TraceIDFetch(traceID string, metadata *common.Metadata, projection ...string) UnresolvedPlan {
+func TraceIDFetch(traceID string, metadata *common.Metadata, projectionDataBinary bool, projection ...string) UnresolvedPlan {
 	return &unresolvedTraceIDFetch{
-		metadata:         metadata,
-		traceID:          traceID,
-		projectionFields: projection,
+		metadata:             metadata,
+		traceID:              traceID,
+		projectionFields:     projection,
+		projectionDataBinary: projectionDataBinary,
 	}
 }

@@ -19,7 +19,3 @@ package common
 
 type ChunkID uint64
 type SeriesID uint64
-
-const (
-	DataBinaryFieldName = "data_binary"
-)

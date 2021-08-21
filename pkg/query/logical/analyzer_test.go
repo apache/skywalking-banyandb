@@ -60,7 +60,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.NotNil(plan)
 	correctPlan, err := logical.Limit(
 		logical.Offset(
-			logical.TableScan(sT.UnixNano(), eT.UnixNano(), metadata, series.TraceStateDefault),
+			logical.TableScan(sT.UnixNano(), eT.UnixNano(), metadata, series.TraceStateDefault, false),
 			0),
 		20).
 		Analyze(schema)
@@ -105,7 +105,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 					logical.Eq(logical.NewFieldRef("service_instance_id"), logical.Str("my_app")),
 					logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 				},
-				series.TraceStateDefault),
+				series.TraceStateDefault, false),
 				"service_instance_id", modelv1.QueryOrder_SORT_DESC),
 			10),
 		5).
@@ -139,7 +139,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.TraceIDFetch("123", metadata).Analyze(schema)
+	correctPlan, err := logical.TraceIDFetch("123", metadata, false).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	cmp.Equal(plan, correctPlan)
