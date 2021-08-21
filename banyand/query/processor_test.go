@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"os"
 	"path"
 	"testing"
@@ -306,6 +307,20 @@ func TestQueryProcessor(t *testing.T) {
 					Metadata("default", "sw").
 					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
 					Projection("trace_id").
+					Build()
+			},
+			wantLen: 3,
+		},
+		{
+			name: "query given timeRange which slightly covers the first three segments ans sort by duration",
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
+					OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
+					Projection("trace_id", "duration").
 					Build()
 			},
 			wantLen: 3,
