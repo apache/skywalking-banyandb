@@ -105,7 +105,7 @@ func (s *tableScan) Schema() Schema {
 	if s.projectionFieldRefs == nil || len(s.projectionFieldRefs) == 0 {
 		return s.schema
 	}
-	return s.schema.Map(s.projectionFieldRefs...)
+	return s.schema.Proj(s.projectionFieldRefs...)
 }
 
 func (s *tableScan) String() string {
