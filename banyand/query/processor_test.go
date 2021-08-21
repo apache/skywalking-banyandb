@@ -45,7 +45,25 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-var interval = time.Millisecond * 500
+var (
+	interval                 = time.Millisecond * 500
+	withoutDataBinaryChecker = func(entities []data.Entity) bool {
+		for _, entity := range entities {
+			if entity.DataBinary != nil {
+				return false
+			}
+		}
+		return true
+	}
+	withDataBinaryChecker = func(entities []data.Entity) bool {
+		for _, entity := range entities {
+			if entity.DataBinary == nil || len(entity.GetDataBinary()) == 0 {
+				return false
+			}
+		}
+		return true
+	}
+)
 
 type entityValue struct {
 	seriesID   string
@@ -313,6 +331,21 @@ func TestQueryProcessor(t *testing.T) {
 					Build()
 			},
 			wantLen: 3,
+			checker: withoutDataBinaryChecker,
+		},
+		{
+			name: "query given timeRange which slightly covers the first three segments with data binary projection",
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
+					ProjectionWithDataBinary("trace_id").
+					Build()
+			},
+			wantLen: 3,
+			checker: withDataBinaryChecker,
 		},
 		{
 			name: "query given timeRange which slightly covers the first three segments ans sort by duration",
@@ -344,6 +377,22 @@ func TestQueryProcessor(t *testing.T) {
 					Build()
 			},
 			wantLen: 3,
+			checker: withoutDataBinaryChecker,
+		},
+		{
+			name: "query TraceID given timeRange includes the time range of data with dataBinary projection",
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("trace_id", "=", "trace_id-zzpp.111323").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					ProjectionWithDataBinary("trace_id").
+					Build()
+			},
+			wantLen: 3,
+			checker: withDataBinaryChecker,
 		},
 		{
 			name: "query TraceID given timeRange includes the time range of data but limit to 1",
@@ -400,6 +449,22 @@ func TestQueryProcessor(t *testing.T) {
 					Build()
 			},
 			wantLen: 2,
+			checker: withoutDataBinaryChecker,
+		},
+		{
+			name: "Textual Index - db.type == MySQL with dataBinary projection",
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					Fields("db.type", "=", "MySQL").
+					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+					ProjectionWithDataBinary("trace_id").
+					Build()
+			},
+			wantLen: 2,
+			checker: withDataBinaryChecker,
 		},
 		{
 			name: "Mixed Index - db.type == MySQL AND duration <= 300",
