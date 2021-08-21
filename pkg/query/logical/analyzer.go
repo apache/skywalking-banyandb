@@ -77,7 +77,7 @@ func (a *Analyzer) BuildTraceSchema(ctx context.Context, metadata common.Metadat
 
 	// generate the schema of the fields for the traceSeries
 	for i, f := range traceSeries.Spec.GetFields() {
-		s.RegisterField(f.GetName(), i, f)
+		s.registerField(f.GetName(), i, f)
 	}
 
 	return s, nil

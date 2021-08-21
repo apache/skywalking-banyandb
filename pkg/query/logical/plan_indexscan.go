@@ -188,7 +188,7 @@ func (i *indexScan) Schema() Schema {
 	if i.projectionFieldRefs == nil || len(i.projectionFieldRefs) == 0 {
 		return i.schema
 	}
-	return i.schema.Map(i.projectionFieldRefs...)
+	return i.schema.Proj(i.projectionFieldRefs...)
 }
 
 func (i *indexScan) Equal(plan Plan) bool {

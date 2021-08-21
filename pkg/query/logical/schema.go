@@ -30,7 +30,7 @@ type Schema interface {
 	FieldSubscript(string) (bool, int)
 	FieldDefined(string) bool
 	CreateRef(names ...string) ([]*FieldRef, error)
-	Map(refs ...*FieldRef) Schema
+	Proj(refs ...*FieldRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
 	TraceIDFieldName() string
@@ -38,6 +38,12 @@ type Schema interface {
 }
 
 type fieldSpec struct {
+	// Idx is defined as
+	// 1) the field index based on the (trace) schema for the underlying plans which
+	//    directly interact with the database and index modules,
+	// 2) the projection index given by the users for those plans which can only access the data from parent plans,
+	//    e.g. orderBy plan uses this projection index to access the data entities (normally a projection view)
+	//    from the parent plan.
 	Idx  int
 	spec *databasev1.FieldSpec
 }
@@ -94,7 +100,7 @@ func (s *schema) Equal(s2 Schema) bool {
 	return false
 }
 
-func (s *schema) RegisterField(name string, i int, spec *databasev1.FieldSpec) {
+func (s *schema) registerField(name string, i int, spec *databasev1.FieldSpec) {
 	s.fieldMap[name] = &fieldSpec{
 		Idx:  i,
 		spec: spec,
@@ -120,19 +126,24 @@ func (s *schema) CreateRef(names ...string) ([]*FieldRef, error) {
 	return fieldRefs, nil
 }
 
-func (s *schema) Map(refs ...*FieldRef) Schema {
+// Proj creates a projection view from the present schema
+// with a given list of projections
+func (s *schema) Proj(refs ...*FieldRef) Schema {
 	if len(refs) == 0 {
 		return nil
 	}
-	newS := &schema{
+	newSchema := &schema{
 		traceSeries: s.traceSeries,
 		indexRule:   s.indexRule,
 		fieldMap:    make(map[string]*fieldSpec),
 	}
-	for _, ref := range refs {
-		newS.fieldMap[ref.name] = ref.Spec
+	for projIdx, ref := range refs {
+		newSchema.fieldMap[ref.name] = &fieldSpec{
+			Idx:  projIdx,
+			spec: ref.Spec.spec,
+		}
 	}
-	return newS
+	return newSchema
 }
 
 func (s *schema) ShardNumber() uint32 {

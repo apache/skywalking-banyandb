@@ -128,8 +128,21 @@ func getFieldRaw(typedPair *modelv1.TypedPair) ([]byte, error) {
 	}
 }
 
+// Sorted is used to test whether the given entities are sorted by the sortDirection
+// The given entities MUST satisfy both the positive check and the negative check for the reversed direction
 func Sorted(entities []data.Entity, fieldIdx int, sortDirection modelv1.QueryOrder_Sort) bool {
-	return sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, sortDirection))
+	if modelv1.QueryOrder_SORT_UNSPECIFIED == sortDirection {
+		return true
+	}
+	return sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, sortDirection)) &&
+		!sort.SliceIsSorted(entities, sortMethod(entities, fieldIdx, reverseSortDirection(sortDirection)))
+}
+
+func reverseSortDirection(sort modelv1.QueryOrder_Sort) modelv1.QueryOrder_Sort {
+	if sort == modelv1.QueryOrder_SORT_DESC {
+		return modelv1.QueryOrder_SORT_ASC
+	}
+	return modelv1.QueryOrder_SORT_DESC
 }
 
 func sortMethod(entities []data.Entity, fieldIdx int, sortDirection modelv1.QueryOrder_Sort) func(i, j int) bool {

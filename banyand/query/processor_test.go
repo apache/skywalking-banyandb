@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
@@ -41,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pb"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var interval = time.Millisecond * 500
@@ -146,7 +148,7 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 				"webapp_id",
 				"10.0.0.1_id",
 				"/home_id",
-				300,
+				400,
 				1622933202000000000,
 			},
 		},
@@ -188,7 +190,7 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 				"database_id",
 				"10.0.0.4_id",
 				"/home_id",
-				300,
+				350,
 				1622933202000000000,
 				nil,
 				nil,
@@ -207,7 +209,7 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 				"mq_id",
 				"10.0.0.5_id",
 				"/home_id",
-				300,
+				302,
 				1622933202000000000,
 				nil,
 				nil,
@@ -228,7 +230,7 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 				"database_id",
 				"10.0.0.6_id",
 				"/home_id",
-				300,
+				200,
 				1622933202000000000,
 				nil,
 				nil,
@@ -247,7 +249,7 @@ func setupData(tester *require.Assertions, baseTs time.Time, svc series.Service)
 				"nq_id",
 				"10.0.0.7_id",
 				"/home_id",
-				300,
+				100,
 				1622933202000000000,
 				nil,
 				nil,
@@ -283,6 +285,8 @@ func TestQueryProcessor(t *testing.T) {
 		queryGenerator func(baseTs time.Time) *tracev1.QueryRequest
 		// wantLen is the length of entities expected to return
 		wantLen int
+		// checker is the customized checker for extra checks
+		checker func([]data.Entity) bool
 	}{
 		{
 			name: "query given timeRange is out of the time range of data",
@@ -309,6 +313,23 @@ func TestQueryProcessor(t *testing.T) {
 					Build()
 			},
 			wantLen: 3,
+		},
+		{
+			name: "query given timeRange which slightly covers the first three segments ans sort by duration",
+			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					TimeRange(baseTs.Add(-1*time.Nanosecond), baseTs.Add(2*interval).Add(1*time.Nanosecond)).
+					OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
+					Projection("trace_id", "duration").
+					Build()
+			},
+			wantLen: 3,
+			checker: func(entities []data.Entity) bool {
+				return logical.Sorted(entities, 1, modelv1.QueryOrder_SORT_DESC)
+			},
 		},
 		{
 			name: "query TraceID given timeRange includes the time range of data",
@@ -339,13 +360,13 @@ func TestQueryProcessor(t *testing.T) {
 			wantLen: 1,
 		},
 		{
-			name: "Numerical Index - query duration < 200",
+			name: "Numerical Index - query duration < 100",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(1).
 					Offset(0).
 					Metadata("default", "sw").
-					Fields("duration", "<", 200).
+					Fields("duration", "<", 100).
 					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
 					Projection("trace_id").
 					Build()
@@ -353,13 +374,13 @@ func TestQueryProcessor(t *testing.T) {
 			wantLen: 0,
 		},
 		{
-			name: "Numerical Index - query duration < 400",
+			name: "Numerical Index - query duration <= 400",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
 				return pb.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					Fields("duration", "<", 400).
+					Fields("duration", "<=", 400).
 					TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
 					Projection("trace_id").
 					Build()
@@ -392,7 +413,7 @@ func TestQueryProcessor(t *testing.T) {
 					Projection("trace_id").
 					Build()
 			},
-			wantLen: 2,
+			wantLen: 1,
 		},
 	}
 
@@ -410,6 +431,9 @@ func TestQueryProcessor(t *testing.T) {
 			// TODO: better error response
 			singleTester.NotNil(msg.Data())
 			singleTester.Len(msg.Data(), tt.wantLen)
+			if tt.checker != nil {
+				singleTester.True(tt.checker(msg.Data().([]data.Entity)))
+			}
 		})
 	}
 }
