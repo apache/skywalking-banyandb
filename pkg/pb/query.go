@@ -168,7 +168,12 @@ func buildPair(key string, value interface{}) *modelv1.TypedPair {
 }
 
 func (b *QueryRequestBuilder) Projection(projections ...string) *QueryRequestBuilder {
-	b.ec.Projection = &modelv1.Projection{KeyNames: projections}
+	b.ec.Projection = &modelv1.Projection{DataBinary: false, KeyNames: projections}
+	return b
+}
+
+func (b *QueryRequestBuilder) ProjectionWithDataBinary(projections ...string) *QueryRequestBuilder {
+	b.ec.Projection = &modelv1.Projection{DataBinary: true, KeyNames: projections}
 	return b
 }
 

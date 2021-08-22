@@ -128,7 +128,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 
 	traceID := "asdf1234"
 
-	p, err := logical.TraceIDFetch(traceID, m).Analyze(s)
+	p, err := logical.TraceIDFetch(traceID, m, false).Analyze(s)
 	assert.NoError(err)
 	assert.NotNil(p)
 	f := newMockDataFactory(ctrl, m, s, 10)
@@ -156,7 +156,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			name: "Single Index Search",
 			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
 				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
-			}, series.TraceStateDefault),
+			}, series.TraceStateDefault, false),
 			indexMatchers: []*indexMatcher{newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
 			wantLength:    10,
 		},
@@ -165,7 +165,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
 				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
-			}, series.TraceStateDefault),
+			}, series.TraceStateDefault, false),
 			indexMatchers: []*indexMatcher{
 				newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
 				newIndexMatcher("service_id", 0, roaring.NewPostingListWithInitialData(1, 3, 5, 7, 9)),
@@ -177,7 +177,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.IndexScan(st.UnixNano(), et.UnixNano(), m, []logical.Expr{
 				logical.Eq(logical.NewFieldRef("http.method"), logical.Str("GET")),
 				logical.Eq(logical.NewFieldRef("service_id"), logical.Str("app")),
-			}, series.TraceStateDefault),
+			}, series.TraceStateDefault, false),
 			indexMatchers: []*indexMatcher{
 				newIndexMatcher("http.method", 0, roaring.NewPostingListWithInitialData(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
 				newIndexMatcher("service_id", 0, roaring.NewPostingList()),

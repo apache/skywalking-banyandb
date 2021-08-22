@@ -36,12 +36,13 @@ import (
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
-	startTime        int64
-	endTime          int64
-	traceMetadata    *common.Metadata
-	conditions       []Expr
-	projectionFields []string
-	traceState       series.TraceState
+	startTime            int64
+	endTime              int64
+	traceMetadata        *common.Metadata
+	conditions           []Expr
+	projectionFields     []string
+	projectionDataBinary bool
+	traceState           series.TraceState
 }
 
 func (uis *unresolvedIndexScan) Type() PlanType {
@@ -83,28 +84,30 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 	}
 
 	return &indexScan{
-		startTime:           uis.startTime,
-		endTime:             uis.endTime,
-		schema:              s,
-		projectionFields:    uis.projectionFields,
-		projectionFieldRefs: projFieldsRefs,
-		traceMetadata:       uis.traceMetadata,
-		conditionMap:        conditionMap,
-		traceState:          uis.traceState,
+		startTime:            uis.startTime,
+		endTime:              uis.endTime,
+		schema:               s,
+		projectionFields:     uis.projectionFields,
+		projectionFieldRefs:  projFieldsRefs,
+		projectionDataBinary: uis.projectionDataBinary,
+		traceMetadata:        uis.traceMetadata,
+		conditionMap:         conditionMap,
+		traceState:           uis.traceState,
 	}, nil
 }
 
 var _ Plan = (*indexScan)(nil)
 
 type indexScan struct {
-	startTime           int64
-	endTime             int64
-	schema              Schema
-	traceMetadata       *common.Metadata
-	conditionMap        map[*databasev1.IndexObject][]Expr
-	projectionFields    []string
-	projectionFieldRefs []*FieldRef
-	traceState          series.TraceState
+	startTime            int64
+	endTime              int64
+	schema               Schema
+	traceMetadata        *common.Metadata
+	conditionMap         map[*databasev1.IndexObject][]Expr
+	projectionFields     []string
+	projectionFieldRefs  []*FieldRef
+	projectionDataBinary bool
+	traceState           series.TraceState
 }
 
 func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error) {
@@ -142,6 +145,7 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]data.Entity, error)
 
 		// fetch entities with chunkIDs
 		entitiesFromSingleShard, err := ec.FetchEntity(*i.traceMetadata, uint(shardID), chunkSet, series.ScanOptions{
+			DataBinary: i.projectionDataBinary,
 			Projection: i.projectionFields,
 			State:      i.traceState,
 		})
@@ -198,21 +202,24 @@ func (i *indexScan) Equal(plan Plan) bool {
 	other := plan.(*indexScan)
 	return i.startTime == other.startTime &&
 		i.endTime == other.endTime &&
-		i.traceState != other.traceState &&
+		i.traceState == other.traceState &&
+		i.projectionDataBinary == other.projectionDataBinary &&
 		cmp.Equal(i.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(i.schema, other.schema) &&
 		cmp.Equal(i.traceMetadata, other.traceMetadata) &&
 		cmp.Equal(i.conditionMap, other.conditionMap)
 }
 
-func IndexScan(startTime, endTime int64, traceMetadata *common.Metadata, conditions []Expr, traceState series.TraceState, projection ...string) UnresolvedPlan {
+func IndexScan(startTime, endTime int64, traceMetadata *common.Metadata, conditions []Expr,
+	traceState series.TraceState, projectionDataBinary bool, projection ...string) UnresolvedPlan {
 	return &unresolvedIndexScan{
-		startTime:        startTime,
-		endTime:          endTime,
-		traceMetadata:    traceMetadata,
-		conditions:       conditions,
-		traceState:       traceState,
-		projectionFields: projection,
+		startTime:            startTime,
+		endTime:              endTime,
+		traceMetadata:        traceMetadata,
+		conditions:           conditions,
+		traceState:           traceState,
+		projectionFields:     projection,
+		projectionDataBinary: projectionDataBinary,
 	}
 }
 

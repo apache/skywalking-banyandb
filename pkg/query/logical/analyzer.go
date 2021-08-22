@@ -116,7 +116,7 @@ func parseFields(criteria *tracev1.QueryRequest, traceMetadata *common.Metadata,
 
 	if criteria.GetFields() == nil || len(criteria.GetFields()) < 1 {
 		return TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
-			series.TraceStateDefault, projStr...), nil
+			series.TraceStateDefault, criteria.GetProjection().GetDataBinary(), projStr...), nil
 	}
 
 	var plan UnresolvedPlan
@@ -135,7 +135,7 @@ fieldsLoop:
 			if traceIDPair == nil {
 				return nil, ErrTraceIDWrongType
 			}
-			plan = TraceIDFetch(typedPair.GetStrPair().GetValue(), traceMetadata, projStr...)
+			plan = TraceIDFetch(typedPair.GetStrPair().GetValue(), traceMetadata, criteria.GetProjection().GetDataBinary(), projStr...)
 			break fieldsLoop
 		case s.TraceStateFieldName():
 			statePair := typedPair.GetIntPair()
@@ -177,8 +177,8 @@ fieldsLoop:
 	// first check if we can use index-scan
 	if useIndexScan {
 		return IndexScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
-			fieldExprs, traceState, projStr...), nil
+			fieldExprs, traceState, criteria.GetProjection().GetDataBinary(), projStr...), nil
 	}
 	return TableScan(timeRange.GetBegin().AsTime().UnixNano(), timeRange.GetEnd().AsTime().UnixNano(), traceMetadata,
-		traceState, projStr...), nil
+		traceState, criteria.GetProjection().GetDataBinary(), projStr...), nil
 }

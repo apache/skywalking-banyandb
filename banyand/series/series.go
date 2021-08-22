@@ -43,6 +43,7 @@ const (
 //nolint
 type ScanOptions struct {
 	Projection []string
+	DataBinary bool
 	State      TraceState
 	Limit      uint32
 }

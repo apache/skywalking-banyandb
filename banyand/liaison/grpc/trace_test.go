@@ -244,7 +244,21 @@ func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
 	assert.NoError(t, err)
 	defer conn.Close()
 	traceWrite(t, tc, conn)
-	traceQuery(t, tc, conn)
+	requireTester := require.New(t)
+	retry := 10
+	for retry > 0 {
+		now := time.Now()
+		resp := traceQuery(requireTester, conn, tc.queryGenerator(now))
+		if assert.Len(t, resp.GetEntities(), tc.wantLen) {
+			break
+		} else {
+			time.Sleep(1 * time.Second)
+			retry--
+		}
+	}
+	if retry == 0 {
+		requireTester.FailNow("retry fail")
+	}
 }
 
 func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
@@ -276,14 +290,13 @@ func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 	<-waitc
 }
 
-func traceQuery(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
+func traceQuery(tester *require.Assertions, conn *grpclib.ClientConn, request *tracev1.QueryRequest) *tracev1.QueryResponse {
 	client := tracev1.NewTraceServiceClient(conn)
 	ctx := context.Background()
-	baseTs := time.Now()
-	stream, errRev := client.Query(ctx, tc.queryGenerator(baseTs))
+	stream, errRev := client.Query(ctx, request)
 	if errRev != nil {
-		t.Errorf("Retrieve client failed: %v", errRev)
+		tester.Errorf(errRev, "Retrieve client failed: %v")
 	}
-	assert.NotNil(t, stream)
-	assert.Len(t, stream.Entities, tc.wantLen)
+	tester.NotNil(stream)
+	return stream
 }
