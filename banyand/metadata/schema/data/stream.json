@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "name": "sw",
+    "group": "default"
+  },
+  "tags": [
+    {
+      "name": "trace_id",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "state",
+      "type": "TAG_TYPE_INT"
+    },
+    {
+      "name": "service_id",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "service_instance_id",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "endpoint_id",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "duration",
+      "type": "TAG_TYPE_INT"
+    },
+    {
+      "name": "start_time",
+      "type": "TAG_TYPE_INT"
+    },
+    {
+      "name": "http.method",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "status_code",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "db.type",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "db.instance",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "mq.queue",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "mq.topic",
+      "type": "TAG_TYPE_STRING"
+    },
+    {
+      "name": "mq.broker",
+      "type": "TAG_TYPE_STRING"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "service_id",
+      "service_instance_id",
+      "state"
+    ]
+  },
+  "shard_num": 2,
+  "duration": {
+    "val": 7,
+    "unit": "DURATION_UNIT_DAY"
+  },
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

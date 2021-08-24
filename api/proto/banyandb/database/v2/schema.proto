@@ -79,16 +79,23 @@ message IndexRule {
     // If the elements in tags are more than 1, the object will generate a multi-tag index
     // Caveat: All tags in a multi-tag MUST have an identical IndexType
     repeated string tags = 2;
-    // IndexType determine the index structure under the hood
-    enum IndexType {
-        INDEX_TYPE_UNSPECIFIED = 0;
-        INDEX_TYPE_BLOCK_ATTACHED = 1;
-        INDEX_TYPE_TRACE = 2;
+    // Type determine the index structure under the hood
+    enum Type {
+        TYPE_UNSPECIFIED = 0;
+        TYPE_TREE = 1;
+        TYPE_INVERTED = 2;
     }
     // type is the IndexType of this IndexObject.
-    IndexType type = 3;
+    Type type = 3;
+    enum Location {
+        LOCATION_UNSPECIFIED = 0;
+        LOCATION_ATTACHED_BLOCK = 1;
+        LOCATION_AGGREGATION = 2;
+    }
+    // location indicates where to store index.
+    Location location = 4;
     // updated_at_nanoseconds indicates when the IndexRule is updated
-    google.protobuf.Timestamp updated_at = 6;
+    google.protobuf.Timestamp updated_at = 5;
 }
 
 // Subject defines which stream or measure would generate indices
@@ -107,8 +114,8 @@ message IndexRuleBinding {
     common.v2.Metadata metadata = 1;
     // rules refers to the IndexRule
     repeated string rules = 2;
-    // subjects indicate the subjects of binding action
-    Subject subjects = 3;
+    // subject indicates the subject of binding action
+    Subject subject = 3;
     // begin_at_nanoseconds is the timestamp, after which the binding will be active
     google.protobuf.Timestamp begin_at = 4;
     // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
