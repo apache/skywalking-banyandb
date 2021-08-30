@@ -33,11 +33,12 @@ import (
 )
 
 var (
-	_             Store           = (*badgerDB)(nil)
-	_             IndexStore      = (*badgerDB)(nil)
-	_             y.Iterator      = (*mergedIter)(nil)
-	_             TimeSeriesStore = (*badgerTSS)(nil)
-	bitMergeEntry byte            = 1 << 3
+	_              Store           = (*badgerDB)(nil)
+	_              IndexStore      = (*badgerDB)(nil)
+	_              y.Iterator      = (*mergedIter)(nil)
+	_              TimeSeriesStore = (*badgerTSS)(nil)
+	bitMergeEntry  byte            = 1 << 3
+	ErrKeyNotFound                 = badger.ErrKeyNotFound
 )
 
 type badgerTSS struct {
@@ -184,6 +185,9 @@ func (b *badgerDB) Put(key, val []byte) error {
 
 func (b *badgerDB) Get(key []byte) ([]byte, error) {
 	v, err := b.db.Get(y.KeyWithTs(key, math.MaxInt64))
+	if err == badger.ErrKeyNotFound {
+		return nil, ErrKeyNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -33,9 +33,10 @@ import (
 )
 
 const (
-	shardTemplate = "%s/shard-%d"
-	segTemplate   = "%s/seg-%s"
-	blockTemplate = "%s/block-%s"
+	shardTemplate  = "%s/shard-%d"
+	seriesTemplate = "%s/series"
+	segTemplate    = "%s/seg-%s"
+	blockTemplate  = "%s/block-%s"
 
 	segFormat   = "20060102"
 	blockFormat = "1504"
@@ -49,6 +50,7 @@ type Database interface {
 }
 
 type Shard interface {
+	io.Closer
 	Series() SeriesDatabase
 	Index() IndexDatabase
 }
@@ -97,7 +99,10 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 }
 
 func (d *database) Close() error {
-	panic("implement me")
+	for _, s := range d.sLst {
+		_ = s.Close()
+	}
+	return nil
 }
 
 func (d *database) Shards() []Shard {

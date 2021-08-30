@@ -19,17 +19,15 @@ package tsdb
 
 import (
 	"context"
-	"sync"
-	"time"
 )
 
 var _ Shard = (*shard)(nil)
 
 type shard struct {
-	id  int
-	lst []*segment
-	sync.Mutex
-	location string
+	id int
+
+	location       string
+	seriesDatabase SeriesDatabase
 }
 
 func (s *shard) Series() SeriesDatabase {
@@ -45,24 +43,19 @@ func newShard(ctx context.Context, id int, location string) (*shard, error) {
 		id:       id,
 		location: location,
 	}
-	segPath, err := mkdir(segTemplate, s.location, time.Now().Format(segFormat))
+	seriesPath, err := mkdir(seriesTemplate, s.location)
 	if err != nil {
 		return nil, err
 	}
-	seg, err := newSegment(ctx, segPath)
+	sdb, err := newSeriesDataBase(ctx, seriesPath)
 	if err != nil {
 		return nil, err
 	}
-	{
-		s.Lock()
-		defer s.Unlock()
-		s.lst = append(s.lst, seg)
-	}
+	s.seriesDatabase = sdb
+
 	return s, nil
 }
 
-func (s *shard) stop() {
-	for _, seg := range s.lst {
-		seg.close()
-	}
+func (s *shard) Close() error {
+	return s.seriesDatabase.Close()
 }

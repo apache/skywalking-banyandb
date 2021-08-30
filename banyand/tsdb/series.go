@@ -82,3 +82,17 @@ type SeekerBuilder interface {
 type Seeker interface {
 	Seek() Iterator
 }
+
+var _ Series = (*series)(nil)
+
+type series struct {
+	id []byte
+}
+
+func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {
+	panic("implement me")
+}
+
+func (s *series) Get(id ItemID) (Item, error) {
+	panic("implement me")
+}

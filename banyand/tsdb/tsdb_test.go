@@ -36,8 +36,10 @@ func TestOpenDatabase(t *testing.T) {
 	defer removeDir(tempDir)
 	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
 	validateDirectory(tester, shardPath)
+	seriesPath := fmt.Sprintf(seriesTemplate, shardPath)
+	validateDirectory(tester, seriesPath)
 	now := time.Now()
-	segPath := fmt.Sprintf(segTemplate, shardPath, now.Format(segFormat))
+	segPath := fmt.Sprintf(segTemplate, seriesPath, now.Format(segFormat))
 	validateDirectory(tester, segPath)
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
 }
