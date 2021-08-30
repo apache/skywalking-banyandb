@@ -15,32 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package tsdb
 
-import (
-	"strings"
+import databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 
-	"github.com/rs/zerolog"
-)
-
-var ContextKey = contextKey{}
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
-}
-
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
-
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+type IndexDatabase interface {
+	CreateSeries(rule *databasev2.IndexRule) error
+	CreateGlobal(rule *databasev2.IndexRule) error
+	WriteGlobal() error
 }

@@ -15,32 +15,47 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package tsdb
 
 import (
-	"strings"
-
-	"github.com/rs/zerolog"
+	"context"
+	"sync"
+	"time"
 )
 
-var ContextKey = contextKey{}
+type segment struct {
+	path string
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+	lst []*block
+	sync.Mutex
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+func newSegment(ctx context.Context, path string) (s *segment, err error) {
+	s = &segment{
+		path: path,
+	}
+	blockPath, err := mkdir(blockTemplate, path, time.Now().Format(blockFormat))
+	if err != nil {
+		return nil, err
+	}
+	var b *block
+	if b, err = newBlock(ctx, blockOpts{
+		path: blockPath,
+	}); err != nil {
+		return nil, err
+	}
+	{
+		s.Lock()
+		defer s.Unlock()
+		s.lst = append(s.lst, b)
+	}
+	return s, nil
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func (s *segment) close() {
+	s.Lock()
+	defer s.Unlock()
+	for _, b := range s.lst {
+		b.close()
+	}
 }

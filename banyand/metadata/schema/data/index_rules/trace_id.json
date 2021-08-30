@@ -7,6 +7,6 @@
     "trace_id"
   ],
   "type": "TYPE_TREE",
-  "location": "LOCATION_AGGREGATION",
+  "location": "LOCATION_GLOBAL",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

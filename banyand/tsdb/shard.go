@@ -15,32 +15,54 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package tsdb
 
 import (
-	"strings"
-
-	"github.com/rs/zerolog"
+	"context"
+	"sync"
+	"time"
 )
 
-var ContextKey = contextKey{}
+var _ Shard = (*shard)(nil)
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+type shard struct {
+	id  int
+	lst []*segment
+	sync.Mutex
+	location string
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+func (s *shard) Series() SeriesDatabase {
+	panic("implement me")
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func (s *shard) Index() IndexDatabase {
+	panic("implement me")
+}
+
+func newShard(ctx context.Context, id int, location string) (*shard, error) {
+	s := &shard{
+		id:       id,
+		location: location,
+	}
+	segPath, err := mkdir(segTemplate, s.location, time.Now().Format(segFormat))
+	if err != nil {
+		return nil, err
+	}
+	seg, err := newSegment(ctx, segPath)
+	if err != nil {
+		return nil, err
+	}
+	{
+		s.Lock()
+		defer s.Unlock()
+		s.lst = append(s.lst, seg)
+	}
+	return s, nil
+}
+
+func (s *shard) stop() {
+	for _, seg := range s.lst {
+		seg.close()
+	}
 }

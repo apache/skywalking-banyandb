@@ -15,32 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package tsdb
 
-import (
-	"strings"
+import "bytes"
 
-	"github.com/rs/zerolog"
-)
+var AllEntry = Entry("*")
 
-var ContextKey = contextKey{}
+type Entity [][]byte
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+type Path struct {
+	prefix      []byte
+	suffixStack []Entry
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+type Entry []byte
+
+func (e Entry) Equal(another Entry) bool {
+	return bytes.Equal(e, another)
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func NewPath(entries []Entry) {
+	if entries[0].Equal(AllEntry) {
+
+	}
+}
+
+type SeriesDatabase interface {
+	Create(entity Entity) error
+	List(path Path) ([]Series, error)
 }

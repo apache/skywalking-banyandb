@@ -46,6 +46,12 @@ enum TagType {
     TAG_TYPE_INT_ARRAY = 4;
 }
 
+message TagFamily {
+    string name = 1;
+    // tags defines accepted tags
+    repeated TagSpec tags = 2; 
+}
+
 message TagSpec {
     string name = 1;
     TagType type = 2;
@@ -55,8 +61,8 @@ message TagSpec {
 message Stream {
     // metadata is the identity of a trace series
     common.v2.Metadata metadata = 1;
-    // tags defines accepted tags
-    repeated TagSpec tags = 2;
+    // tag_families 
+    repeated TagFamily tag_families = 2;
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
     // duration determines how long a TraceSeries keeps its data
@@ -89,8 +95,8 @@ message IndexRule {
     Type type = 3;
     enum Location {
         LOCATION_UNSPECIFIED = 0;
-        LOCATION_ATTACHED_BLOCK = 1;
-        LOCATION_AGGREGATION = 2;
+        LOCATION_SERIES = 1;
+        LOCATION_GLOBAL = 2;
     }
     // location indicates where to store index.
     Location location = 4;

@@ -3,62 +3,76 @@
     "name": "sw",
     "group": "default"
   },
-  "tags": [
+  "tag_families": [
     {
-      "name": "trace_id",
-      "type": "TAG_TYPE_STRING"
+      "name": "data",
+      "tags": [
+        {
+          "name": "data_binary",
+          "type": "TAG_TYPE_UNSPECIFIED"
+        }
+      ]
     },
     {
-      "name": "state",
-      "type": "TAG_TYPE_INT"
-    },
-    {
-      "name": "service_id",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "service_instance_id",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "endpoint_id",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "duration",
-      "type": "TAG_TYPE_INT"
-    },
-    {
-      "name": "start_time",
-      "type": "TAG_TYPE_INT"
-    },
-    {
-      "name": "http.method",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "status_code",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "db.type",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "db.instance",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "mq.queue",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "mq.topic",
-      "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "mq.broker",
-      "type": "TAG_TYPE_STRING"
+      "name": "searchable",
+      "tags": [
+        {
+          "name": "trace_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "state",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "service_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "service_instance_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "endpoint_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "duration",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "start_time",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "http.method",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "status_code",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "db.type",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "db.instance",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "mq.queue",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "mq.topic",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "mq.broker",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
     }
   ],
   "entity": {
