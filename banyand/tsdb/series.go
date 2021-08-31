@@ -20,6 +20,7 @@ package tsdb
 import (
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 )
 
@@ -50,6 +51,7 @@ type TimeRange struct {
 }
 
 type Series interface {
+	ID() common.SeriesID
 	Span(timeRange TimeRange) (SeriesSpan, error)
 	Get(id ItemID) (Item, error)
 }
@@ -86,7 +88,17 @@ type Seeker interface {
 var _ Series = (*series)(nil)
 
 type series struct {
-	id []byte
+	id common.SeriesID
+}
+
+func newSeries(id common.SeriesID) *series {
+	return &series{
+		id: id,
+	}
+}
+
+func (s *series) ID() common.SeriesID {
+	return s.id
 }
 
 func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {

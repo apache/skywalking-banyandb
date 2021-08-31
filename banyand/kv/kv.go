@@ -138,10 +138,15 @@ type StoreOptions func(Store)
 
 // StoreWithLogger sets a external logger into underlying Store
 func StoreWithLogger(l *logger.Logger) StoreOptions {
+	return StoreWithNamedLogger("normal-kv", l)
+}
+
+// StoreWithNamedLogger sets a external logger with a name into underlying Store
+func StoreWithNamedLogger(name string, l *logger.Logger) StoreOptions {
 	return func(store Store) {
 		if bdb, ok := store.(*badgerDB); ok {
 			bdb.dbOpts = bdb.dbOpts.WithLogger(&badgerLog{
-				delegated: l.Named("normal-kv"),
+				delegated: l.Named(name),
 			})
 		}
 	}

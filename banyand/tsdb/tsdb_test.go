@@ -20,7 +20,6 @@ package tsdb
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -28,12 +27,13 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 func TestOpenDatabase(t *testing.T) {
 	tester := assert.New(t)
-	tempDir, _ := setUp(tester)
-	defer removeDir(tempDir)
+	tempDir, deferFunc, _ := setUp(tester)
+	defer deferFunc()
 	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
 	validateDirectory(tester, shardPath)
 	seriesPath := fmt.Sprintf(seriesTemplate, shardPath)
@@ -44,14 +44,12 @@ func TestOpenDatabase(t *testing.T) {
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
 }
 
-func setUp(t *assert.Assertions) (tempDir string, db Database) {
+func setUp(t *assert.Assertions) (tempDir string, deferFunc func(), db Database) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "debug",
 	}))
-	var tempDirErr error
-	tempDir, tempDirErr = ioutil.TempDir("", "banyandb-test-*")
-	t.Nil(tempDirErr)
+	tempDir, deferFunc = test.Space(t)
 	db, err := OpenDatabase(
 		context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")),
 		DatabaseOpts{
@@ -60,7 +58,7 @@ func setUp(t *assert.Assertions) (tempDir string, db Database) {
 		})
 	t.NoError(err)
 	t.NotNil(db)
-	return tempDir, db
+	return tempDir, deferFunc, db
 }
 
 func validateDirectory(t *assert.Assertions, dir string) {
@@ -68,10 +66,4 @@ func validateDirectory(t *assert.Assertions, dir string) {
 	t.False(os.IsNotExist(err), "Directory does not exist: %v", dir)
 	t.NoError(err, "Directory error: %v", dir)
 	t.True(info.IsDir(), "Directory is a file, not a directory: %#v\n", dir)
-}
-
-func removeDir(dir string) {
-	if err := os.RemoveAll(dir); err != nil {
-		fmt.Printf("Error while removing dir: %v\n", err)
-	}
 }

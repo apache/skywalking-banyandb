@@ -27,6 +27,7 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,8 +49,8 @@ type Path struct {
 	isFull   bool
 }
 
-func NewPath(entries []Entry) *Path {
-	p := &Path{
+func NewPath(entries []Entry) Path {
+	p := Path{
 		mask:     make([]byte, 0),
 		template: make([]byte, 0),
 	}
@@ -80,7 +81,7 @@ func NewPath(entries []Entry) *Path {
 type SeriesDatabase interface {
 	io.Closer
 	Create(entity Entity) error
-	List(path Path) ([]Series, error)
+	List(path Path) (SeriesList, error)
 }
 
 var _ SeriesDatabase = (*seriesDB)(nil)
@@ -103,13 +104,14 @@ func (s *seriesDB) Close() error {
 func newSeriesDataBase(ctx context.Context, path string) (SeriesDatabase, error) {
 	sdb := &seriesDB{}
 	parentLogger := ctx.Value(logger.ContextKey)
-	if parentLogger != nil {
-		if pl, ok := parentLogger.(*logger.Logger); ok {
-			sdb.l = pl.Named("series")
-		}
+	if parentLogger == nil {
+		return nil, logger.ErrNoLoggerInContext
+	}
+	if pl, ok := parentLogger.(*logger.Logger); ok {
+		sdb.l = pl.Named("series")
 	}
 	var err error
-	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithLogger(sdb.l))
+	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))
 	if err != nil {
 		return nil, err
 	}
@@ -147,14 +149,14 @@ func (s *seriesDB) Create(entity Entity) error {
 	return nil
 }
 
-func (s *seriesDB) List(path Path) ([]Series, error) {
+func (s *seriesDB) List(path Path) (SeriesList, error) {
 	if path.isFull {
 		id, err := s.seriesMetadata.Get(path.prefix)
 		if err != nil && err != kv.ErrKeyNotFound {
 			return nil, err
 		}
 		if err == nil {
-			return []Series{&series{id: id}}, nil
+			return []Series{newSeries(common.SeriesID(convert.BytesToUint64(id)))}, nil
 		}
 		return nil, nil
 	}
@@ -171,7 +173,7 @@ func (s *seriesDB) List(path Path) ([]Series, error) {
 				err = multierr.Append(err, errGetVal)
 				return nil
 			}
-			result = append(result, &series{id: id})
+			result = append(result, newSeries(common.SeriesID(convert.BytesToUint64(id))))
 		}
 		return nil
 	})
@@ -191,4 +193,18 @@ func hashEntity(entity Entity) []byte {
 
 func hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
+}
+
+type SeriesList []Series
+
+func (a SeriesList) Len() int {
+	return len(a)
+}
+
+func (a SeriesList) Less(i, j int) bool {
+	return a[i].ID() < a[j].ID()
+}
+
+func (a SeriesList) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
 }

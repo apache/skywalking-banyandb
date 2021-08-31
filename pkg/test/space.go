@@ -15,34 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package test
 
 import (
-	"strings"
+	"fmt"
+	"io/ioutil"
+	"os"
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/assert"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
-}
-
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
-
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func Space(t *assert.Assertions) (tempDir string, deferFunc func()) {
+	var tempDirErr error
+	tempDir, tempDirErr = ioutil.TempDir("", "banyandb-test-*")
+	t.Nil(tempDirErr)
+	return tempDir, func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Error while removing dir: %v\n", err)
+		}
+	}
 }
