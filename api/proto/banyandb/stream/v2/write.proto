@@ -26,6 +26,8 @@ import "google/protobuf/timestamp.proto";
 import "banyandb/common/v2/common.proto";
 import "banyandb/model/v2/write.proto";
 
+
+
 message ElementValue {
   // element_id could be span_id of a Span or segment_id of a Segment in the context of stream
   string element_id = 1;
@@ -33,13 +35,11 @@ message ElementValue {
   // 1) either the start time of a Span/Segment,
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
-  // binary representation of segments, including tags, spans...
-  bytes data_binary = 3;
-  // support all of indexed tags in the tags.
-  // Tag only has value, as the value of value_type match with the key
-  // by the index rules and index rule bindings of Metadata group.
-  // indexed tags of multiple entities are compression in the tags.
-  repeated model.v2.Tag tags = 4;
+  message TagFamily {
+    repeated model.v2.Tag tags = 1;
+  }
+  // the order of tag_families' items match the stream schema
+  repeated TagFamily tag_families = 3;
 }
 
 message WriteRequest {

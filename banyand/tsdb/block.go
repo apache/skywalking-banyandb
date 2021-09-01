@@ -20,6 +20,9 @@ package tsdb
 import (
 	"context"
 	"io"
+	"time"
+
+	"github.com/dgraph-io/ristretto/z"
 
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -28,10 +31,14 @@ import (
 type block struct {
 	path string
 	l    *logger.Logger
+	ref  *z.Closer
 
 	store       kv.TimeSeriesStore
 	treeIndex   kv.Store
 	closableLst []io.Closer
+	endTime     time.Time
+	startTime   time.Time
+
 	//revertedIndex kv.Store
 }
 
@@ -43,7 +50,9 @@ type blockOpts struct {
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	b = &block{
-		path: opts.path,
+		path:      opts.path,
+		ref:       z.NewCloser(1),
+		startTime: time.Now(),
 	}
 	parentLogger := ctx.Value(logger.ContextKey)
 	if parentLogger != nil {
@@ -62,8 +71,54 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	return b, nil
 }
 
+func (b *block) delegate() blockDelegate {
+	b.incRef()
+	return &bDelegate{
+		delegate: b,
+	}
+}
+
+func (b *block) dscRef() {
+	b.ref.Done()
+}
+
+func (b *block) incRef() {
+	b.ref.AddRunning(1)
+}
+
 func (b *block) close() {
+	b.dscRef()
+	b.ref.SignalAndWait()
 	for _, closer := range b.closableLst {
 		_ = closer.Close()
 	}
+}
+
+type blockDelegate interface {
+	io.Closer
+	contains(ts time.Time) bool
+	write(key []byte, val []byte, ts time.Time) error
+}
+
+var _ blockDelegate = (*bDelegate)(nil)
+
+type bDelegate struct {
+	delegate *block
+}
+
+func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
+	return d.delegate.store.Put(key, val, uint64(ts.UnixNano()))
+}
+
+func (d *bDelegate) contains(ts time.Time) bool {
+	greaterAndEqualStart := d.delegate.startTime.Equal(ts) || d.delegate.startTime.Before(ts)
+	if d.delegate.endTime.IsZero() {
+		return greaterAndEqualStart
+	}
+	return greaterAndEqualStart && d.delegate.endTime.After(ts)
+}
+
+func (d *bDelegate) Close() error {
+	d.delegate.dscRef()
+	return nil
 }

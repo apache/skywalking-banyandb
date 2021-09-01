@@ -44,6 +44,7 @@ enum TagType {
     TAG_TYPE_INT = 2;
     TAG_TYPE_STRING_ARRAY = 3;
     TAG_TYPE_INT_ARRAY = 4;
+    TAG_TYPE_DATA_BINARY = 5;
 }
 
 message TagFamily {

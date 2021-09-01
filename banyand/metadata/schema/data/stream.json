@@ -9,7 +9,7 @@
       "tags": [
         {
           "name": "data_binary",
-          "type": "TAG_TYPE_UNSPECIFIED"
+          "type": "TAG_TYPE_DATA_BINARY"
         }
       ]
     },

@@ -31,7 +31,7 @@ type shard struct {
 }
 
 func (s *shard) Series() SeriesDatabase {
-	panic("implement me")
+	return s.seriesDatabase
 }
 
 func (s *shard) Index() IndexDatabase {

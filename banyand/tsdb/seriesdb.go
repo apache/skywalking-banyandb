@@ -80,11 +80,16 @@ func NewPath(entries []Entry) Path {
 
 type SeriesDatabase interface {
 	io.Closer
-	Create(entity Entity) error
+	Get(entity Entity) (Series, error)
 	List(path Path) (SeriesList, error)
 }
 
+type blockDatabase interface {
+	span(timeRange TimeRange) []blockDelegate
+}
+
 var _ SeriesDatabase = (*seriesDB)(nil)
+var _ blockDatabase = (*seriesDB)(nil)
 
 type seriesDB struct {
 	sync.Mutex
@@ -92,6 +97,68 @@ type seriesDB struct {
 
 	lst            []*segment
 	seriesMetadata kv.Store
+}
+
+func (s *seriesDB) Get(entity Entity) (Series, error) {
+	key := hashEntity(entity)
+	seriesID, err := s.seriesMetadata.Get(key)
+	if err != nil && err != kv.ErrKeyNotFound {
+		return nil, err
+	}
+	if err == nil {
+		return newSeries(bytesConvSeriesID(seriesID), s), nil
+	}
+	s.Lock()
+	defer s.Unlock()
+	seriesID = hash(key)
+	err = s.seriesMetadata.Put(key, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	return newSeries(bytesConvSeriesID(seriesID), s), nil
+}
+
+func (s *seriesDB) List(path Path) (SeriesList, error) {
+	if path.isFull {
+		id, err := s.seriesMetadata.Get(path.prefix)
+		if err != nil && err != kv.ErrKeyNotFound {
+			return nil, err
+		}
+		if err == nil {
+			return []Series{newSeries(bytesConvSeriesID(id), s)}, nil
+		}
+		return nil, nil
+	}
+	result := make([]Series, 0)
+	var err error
+	errScan := s.seriesMetadata.Scan(path.prefix, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+		comparableKey := make([]byte, len(key))
+		for i, b := range key {
+			comparableKey[i] = path.mask[i] & b
+		}
+		if bytes.Equal(path.template, comparableKey) {
+			id, errGetVal := getVal()
+			if errGetVal != nil {
+				err = multierr.Append(err, errGetVal)
+				return nil
+			}
+			result = append(result, newSeries(common.SeriesID(convert.BytesToUint64(id)), s))
+		}
+		return nil
+	})
+	if errScan != nil {
+		return nil, errScan
+	}
+	return result, err
+}
+
+func (s *seriesDB) span(_ TimeRange) []blockDelegate {
+	//TODO: return correct blocks
+	result := make([]blockDelegate, 0, len(s.lst[0].lst))
+	for _, b := range s.lst[0].lst {
+		result = append(result, b.delegate())
+	}
+	return result
 }
 
 func (s *seriesDB) Close() error {
@@ -131,58 +198,6 @@ func newSeriesDataBase(ctx context.Context, path string) (SeriesDatabase, error)
 	return sdb, nil
 }
 
-func (s *seriesDB) Create(entity Entity) error {
-	key := hashEntity(entity)
-	_, err := s.seriesMetadata.Get(key)
-	if err != nil && err != kv.ErrKeyNotFound {
-		return err
-	}
-	if err == nil {
-		return nil
-	}
-	s.Lock()
-	defer s.Unlock()
-	err = s.seriesMetadata.Put(key, hash(key))
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *seriesDB) List(path Path) (SeriesList, error) {
-	if path.isFull {
-		id, err := s.seriesMetadata.Get(path.prefix)
-		if err != nil && err != kv.ErrKeyNotFound {
-			return nil, err
-		}
-		if err == nil {
-			return []Series{newSeries(common.SeriesID(convert.BytesToUint64(id)))}, nil
-		}
-		return nil, nil
-	}
-	result := make([]Series, 0)
-	var err error
-	errScan := s.seriesMetadata.Scan(path.prefix, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
-		comparableKey := make([]byte, len(key))
-		for i, b := range key {
-			comparableKey[i] = path.mask[i] & b
-		}
-		if bytes.Equal(path.template, comparableKey) {
-			id, errGetVal := getVal()
-			if errGetVal != nil {
-				err = multierr.Append(err, errGetVal)
-				return nil
-			}
-			result = append(result, newSeries(common.SeriesID(convert.BytesToUint64(id))))
-		}
-		return nil
-	})
-	if errScan != nil {
-		return nil, errScan
-	}
-	return result, err
-}
-
 func hashEntity(entity Entity) []byte {
 	result := make(Entry, 0, len(entity)*8)
 	for _, entry := range entity {
@@ -193,6 +208,10 @@ func hashEntity(entity Entity) []byte {
 
 func hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
+}
+
+func bytesConvSeriesID(data []byte) common.SeriesID {
+	return common.SeriesID(convert.BytesToUint64(data))
 }
 
 type SeriesList []Series

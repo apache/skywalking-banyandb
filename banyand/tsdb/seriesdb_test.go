@@ -141,7 +141,7 @@ func TestNewPath(t *testing.T) {
 	}
 }
 
-func Test_SeriesDatabase_Create(t *testing.T) {
+func Test_SeriesDatabase_Get(t *testing.T) {
 
 	tests := []struct {
 		name     string
@@ -152,7 +152,7 @@ func Test_SeriesDatabase_Create(t *testing.T) {
 			entities: []Entity{{
 				Entry("productpage"),
 				Entry("10.0.0.1"),
-				Entry(convert.Uint64ToBytes(0)),
+				convert.Uint64ToBytes(0),
 			}},
 		},
 		{
@@ -161,12 +161,12 @@ func Test_SeriesDatabase_Create(t *testing.T) {
 				{
 					Entry("productpage"),
 					Entry("10.0.0.1"),
-					Entry(convert.Uint64ToBytes(0)),
+					convert.Uint64ToBytes(0),
 				},
 				{
 					Entry("productpage"),
 					Entry("10.0.0.1"),
-					Entry(convert.Uint64ToBytes(0)),
+					convert.Uint64ToBytes(0),
 				},
 			},
 		},
@@ -183,7 +183,9 @@ func Test_SeriesDatabase_Create(t *testing.T) {
 			s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), dir)
 			tester.NoError(err)
 			for _, entity := range tt.entities {
-				tester.NoError(s.Create(entity))
+				series, err := s.Get(entity)
+				tester.NoError(err)
+				tester.Equal(hashEntity(entity), series.ID())
 			}
 		})
 	}
@@ -214,7 +216,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(0),
 			}),
 			want: SeriesList{
-				newSeries(data[0].id),
+				newMockSeries(data[0].id),
 			},
 		},
 		{
@@ -225,8 +227,8 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				AnyEntry,
 			}),
 			want: SeriesList{
-				newSeries(data[1].id),
-				newSeries(data[2].id),
+				newMockSeries(data[1].id),
+				newMockSeries(data[2].id),
 			},
 		},
 		{
@@ -237,10 +239,10 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				AnyEntry,
 			}),
 			want: SeriesList{
-				newSeries(data[0].id),
-				newSeries(data[1].id),
-				newSeries(data[2].id),
-				newSeries(data[3].id),
+				newMockSeries(data[0].id),
+				newMockSeries(data[1].id),
+				newMockSeries(data[2].id),
+				newMockSeries(data[3].id),
 			},
 		},
 		{
@@ -251,9 +253,9 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(0),
 			}),
 			want: SeriesList{
-				newSeries(data[0].id),
-				newSeries(data[1].id),
-				newSeries(data[3].id),
+				newMockSeries(data[0].id),
+				newMockSeries(data[1].id),
+				newMockSeries(data[3].id),
 			},
 		},
 		{
@@ -264,8 +266,8 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(1),
 			}),
 			want: SeriesList{
-				newSeries(data[2].id),
-				newSeries(data[4].id),
+				newMockSeries(data[2].id),
+				newMockSeries(data[4].id),
 			},
 		},
 	}
@@ -278,9 +280,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				return
 			}
 			tester.NoError(err)
-			sort.Sort(tt.want)
-			sort.Sort(series)
-			tester.Equal(tt.want, series)
+			tester.Equal(transform(tt.want), transform(series))
 		})
 	}
 }
@@ -330,7 +330,21 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 	}
 	for _, d := range data {
 		d.id = common.SeriesID(convert.BytesToUint64(hash(hashEntity(d.entity))))
-		t.NoError(db.Create(d.entity))
+		series, err := db.Get(d.entity)
+		t.NoError(err)
+		t.Equal(hashEntity(d.entity), series.ID())
 	}
 	return data
+}
+
+func newMockSeries(id common.SeriesID) *series {
+	return newSeries(id, nil)
+}
+
+func transform(list SeriesList) (seriesIDs []common.SeriesID) {
+	sort.Sort(list)
+	for _, s := range list {
+		seriesIDs = append(seriesIDs, s.ID())
+	}
+	return seriesIDs
 }

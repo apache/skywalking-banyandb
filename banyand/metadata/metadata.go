@@ -35,8 +35,13 @@ type IndexFilter interface {
 	IndexRules(ctx context.Context, subject *commonv2.Metadata) ([]*databasev2.IndexRule, error)
 }
 
-type Metadata interface {
+type Repo interface {
 	IndexFilter
+	Stream() schema.Stream
+}
+
+type Service interface {
+	Repo
 	run.Unit
 }
 
@@ -46,11 +51,7 @@ type service struct {
 	indexRuleBinding schema.IndexRuleBinding
 }
 
-func (s *service) Name() string {
-	return "metadata"
-}
-
-func NewService(_ context.Context) (Metadata, error) {
+func NewService(_ context.Context) (Repo, error) {
 	stream, err := schema.NewStream()
 	if err != nil {
 		return nil, err
@@ -68,6 +69,14 @@ func NewService(_ context.Context) (Metadata, error) {
 		indexRule:        indexRule,
 		indexRuleBinding: indexRuleBinding,
 	}, nil
+}
+
+func (s *service) Stream() schema.Stream {
+	return s.stream
+}
+
+func (s *service) Name() string {
+	return "metadata"
 }
 
 func (s *service) IndexRules(ctx context.Context, subject *commonv2.Metadata) ([]*databasev2.IndexRule, error) {

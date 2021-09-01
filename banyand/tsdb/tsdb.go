@@ -44,9 +44,12 @@ const (
 	dirPerm = 0700
 )
 
+var ErrInvalidShardID = errors.New("invalid shard id")
+
 type Database interface {
 	io.Closer
 	Shards() []Shard
+	Shard(id uint) (Shard, error)
 }
 
 type Shard interface {
@@ -69,6 +72,24 @@ type database struct {
 
 	sLst []Shard
 	sync.Mutex
+}
+
+func (d *database) Shards() []Shard {
+	return d.sLst
+}
+
+func (d *database) Shard(id uint) (Shard, error) {
+	if id >= uint(len(d.sLst)) {
+		return nil, ErrInvalidShardID
+	}
+	return d.sLst[id], nil
+}
+
+func (d *database) Close() error {
+	for _, s := range d.sLst {
+		_ = s.Close()
+	}
+	return nil
 }
 
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
@@ -96,17 +117,6 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return loadDatabase(thisContext, db)
 	}
 	return createDatabase(thisContext, db)
-}
-
-func (d *database) Close() error {
-	for _, s := range d.sLst {
-		_ = s.Close()
-	}
-	return nil
-}
-
-func (d *database) Shards() []Shard {
-	return d.sLst
 }
 
 func createDatabase(ctx context.Context, db *database) (Database, error) {

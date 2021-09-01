@@ -15,23 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package data
 
-option java_package = "org.apache.skywalking.banyandb.model.v2";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2";
+import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+)
 
-package banyandb.model.v2;
+var StreamKindVersion = common.KindVersion{Version: "v2", Kind: "data-stream"}
 
-import "google/protobuf/struct.proto";
-import "banyandb/model/v2/common.proto";
+var StreamWriteEventKindVersion = common.KindVersion{
+	Version: "v2",
+	Kind:    "stream-write",
+}
 
-message Tag {
-    oneof value_type {
-        google.protobuf.NullValue null = 1;
-        Str str = 2;
-        StrArray str_array = 3;
-        Int int = 4;
-        IntArray int_array = 5;
-        bytes binary_data = 6;
-    }
+var TopicStreamWriteEvent = bus.UniTopic(StreamWriteEventKindVersion.String())
+
+type Stream struct {
+	common.KindVersion
+	Entities []Entity
+}
+
+type StreamWriteData struct {
+	ShardID      uint
+	SeriesID     uint64
+	WriteRequest *streamv2.WriteRequest
 }
