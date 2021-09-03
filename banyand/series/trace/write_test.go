@@ -182,11 +182,11 @@ func Test_traceSeries_Write(t *testing.T) {
 				EntityValue: ev,
 			})
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("write() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err == nil && got < 1 {
-				t.Error("Write() got empty chunkID")
+				t.Error("write() got empty chunkID")
 			}
 		})
 	}

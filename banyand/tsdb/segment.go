@@ -21,25 +21,54 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type segment struct {
 	path string
 
-	lst []*block
+	lst         []*block
+	globalIndex kv.Store
 	sync.Mutex
+	l         *logger.Logger
+	startTime time.Time
+	endTime   time.Time
+}
+
+func (s *segment) contains(ts time.Time) bool {
+	greaterAndEqualStart := s.startTime.Equal(ts) || s.startTime.Before(ts)
+	if s.endTime.IsZero() {
+		return greaterAndEqualStart
+	}
+	return greaterAndEqualStart && s.endTime.After(ts)
 }
 
 func newSegment(ctx context.Context, path string) (s *segment, err error) {
 	s = &segment{
-		path: path,
+		path:      path,
+		startTime: time.Now(),
+	}
+	parentLogger := ctx.Value(logger.ContextKey)
+	if parentLogger != nil {
+		if pl, ok := parentLogger.(*logger.Logger); ok {
+			s.l = pl.Named("segment")
+		}
+	}
+	indexPath, err := mkdir(globalIndexTemplate, path)
+	if err != nil {
+		return nil, err
+	}
+	if s.globalIndex, err = kv.OpenStore(0, indexPath, kv.StoreWithLogger(s.l)); err != nil {
+		return nil, err
 	}
 	blockPath, err := mkdir(blockTemplate, path, time.Now().Format(blockFormat))
 	if err != nil {
 		return nil, err
 	}
 	var b *block
-	if b, err = newBlock(ctx, blockOpts{
+	if b, err = newBlock(context.WithValue(ctx, logger.ContextKey, s.l), blockOpts{
 		path: blockPath,
 	}); err != nil {
 		return nil, err

@@ -38,11 +38,15 @@ type block struct {
 	closableLst []io.Closer
 	endTime     time.Time
 	startTime   time.Time
+	segID       uint16
+	blockID     uint16
 
 	//revertedIndex kv.Store
 }
 
 type blockOpts struct {
+	segID         uint16
+	blockID       uint16
 	path          string
 	compressLevel int
 	valueSize     int
@@ -50,6 +54,8 @@ type blockOpts struct {
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	b = &block{
+		segID:     opts.segID,
+		blockID:   opts.blockID,
 		path:      opts.path,
 		ref:       z.NewCloser(1),
 		startTime: time.Now(),
@@ -98,6 +104,9 @@ type blockDelegate interface {
 	io.Closer
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
+	writeLSMIndex(key []byte, val []byte) error
+	writeInvertedIndex(key []byte, val []byte) error
+	identity() (segID uint16, blockID uint16)
 }
 
 var _ blockDelegate = (*bDelegate)(nil)
@@ -106,8 +115,20 @@ type bDelegate struct {
 	delegate *block
 }
 
+func (d *bDelegate) identity() (segID uint16, blockID uint16) {
+	return d.delegate.segID, d.delegate.blockID
+}
+
 func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 	return d.delegate.store.Put(key, val, uint64(ts.UnixNano()))
+}
+
+func (d *bDelegate) writeLSMIndex(key []byte, val []byte) error {
+	return d.delegate.treeIndex.Put(key, val)
+}
+
+func (d *bDelegate) writeInvertedIndex(key []byte, val []byte) error {
+	return d.delegate.treeIndex.Put(key, val)
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {

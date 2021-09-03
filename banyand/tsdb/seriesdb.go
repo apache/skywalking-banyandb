@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"sync"
-	"time"
 
 	"go.uber.org/multierr"
 
@@ -85,6 +84,7 @@ type SeriesDatabase interface {
 }
 
 type blockDatabase interface {
+	shardID() common.ShardID
 	span(timeRange TimeRange) []blockDelegate
 }
 
@@ -97,6 +97,11 @@ type seriesDB struct {
 
 	lst            []*segment
 	seriesMetadata kv.Store
+	sID            common.ShardID
+}
+
+func (s *seriesDB) shardID() common.ShardID {
+	return s.sID
 }
 
 func (s *seriesDB) Get(entity Entity) (Series, error) {
@@ -168,8 +173,11 @@ func (s *seriesDB) Close() error {
 	return s.seriesMetadata.Close()
 }
 
-func newSeriesDataBase(ctx context.Context, path string) (SeriesDatabase, error) {
-	sdb := &seriesDB{}
+func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string, segLst []*segment) (SeriesDatabase, error) {
+	sdb := &seriesDB{
+		sID: shardID,
+		lst: segLst,
+	}
 	parentLogger := ctx.Value(logger.ContextKey)
 	if parentLogger == nil {
 		return nil, logger.ErrNoLoggerInContext
@@ -181,19 +189,6 @@ func newSeriesDataBase(ctx context.Context, path string) (SeriesDatabase, error)
 	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))
 	if err != nil {
 		return nil, err
-	}
-	segPath, err := mkdir(segTemplate, path, time.Now().Format(segFormat))
-	if err != nil {
-		return nil, err
-	}
-	seg, err := newSegment(ctx, segPath)
-	if err != nil {
-		return nil, err
-	}
-	{
-		sdb.Lock()
-		defer sdb.Unlock()
-		sdb.lst = append(sdb.lst, seg)
 	}
 	return sdb, nil
 }

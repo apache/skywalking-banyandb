@@ -19,15 +19,22 @@ package tsdb
 
 import (
 	"context"
+	"sync"
+	"time"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 var _ Shard = (*shard)(nil)
 
 type shard struct {
-	id int
+	sync.Mutex
+	id common.ShardID
 
 	location       string
 	seriesDatabase SeriesDatabase
+	indexDatabase  IndexDatabase
+	lst            []*segment
 }
 
 func (s *shard) Series() SeriesDatabase {
@@ -35,24 +42,41 @@ func (s *shard) Series() SeriesDatabase {
 }
 
 func (s *shard) Index() IndexDatabase {
-	panic("implement me")
+	return s.indexDatabase
 }
 
-func newShard(ctx context.Context, id int, location string) (*shard, error) {
+func newShard(ctx context.Context, id common.ShardID, location string) (*shard, error) {
 	s := &shard{
 		id:       id,
 		location: location,
+	}
+	segPath, err := mkdir(segTemplate, location, time.Now().Format(segFormat))
+	if err != nil {
+		return nil, err
+	}
+	seg, err := newSegment(ctx, segPath)
+	if err != nil {
+		return nil, err
+	}
+	{
+		s.Lock()
+		defer s.Unlock()
+		s.lst = append(s.lst, seg)
 	}
 	seriesPath, err := mkdir(seriesTemplate, s.location)
 	if err != nil {
 		return nil, err
 	}
-	sdb, err := newSeriesDataBase(ctx, seriesPath)
+	sdb, err := newSeriesDataBase(ctx, s.id, seriesPath, s.lst)
 	if err != nil {
 		return nil, err
 	}
 	s.seriesDatabase = sdb
-
+	idb, err := newIndexDatabase(ctx, s.id, s.lst)
+	if err != nil {
+		return nil, err
+	}
+	s.indexDatabase = idb
 	return s, nil
 }
 

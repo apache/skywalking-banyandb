@@ -65,7 +65,7 @@ func (s *service) Name() string {
 }
 
 func (s *service) PreRun() error {
-	schemas, err := s.metadata.Stream().List(context.Background(), schema.ListOpt{})
+	schemas, err := s.metadata.Stream().List(context.TODO(), schema.ListOpt{})
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,14 @@ func (s *service) PreRun() error {
 	s.schemaMap = make(map[string]*stream, len(schemas))
 	s.l = logger.GetLogger(s.Name())
 	for _, sa := range schemas {
-		sm, errTS := openStream(s.root, sa, s.l)
+		iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.Metadata)
+		if errIndexRules != nil {
+			return errIndexRules
+		}
+		sm, errTS := openStream(s.root, streamSpec{
+			schema:     sa,
+			indexRules: iRules,
+		}, s.l)
 		if errTS != nil {
 			return errTS
 		}

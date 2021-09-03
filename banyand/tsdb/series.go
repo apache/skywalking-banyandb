@@ -30,7 +30,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var ErrEmptySeriesSpan = errors.New("there is no data in such time range")
+var (
+	ErrEmptySeriesSpan = errors.New("there is no data in such time range")
+	ErrItemIDMalformed = errors.New("serialized item id is malformed")
+)
 
 type Iterator interface {
 	Next() bool
@@ -51,10 +54,34 @@ type ConditionValue struct {
 type Condition map[string][]ConditionValue
 
 type ItemID struct {
-	//shardID int
-	//segID   []byte
-	//blockID []byte
-	id []byte
+	shardID common.ShardID
+	segID   uint16
+	blockID uint16
+	id      []byte
+}
+
+func (i *ItemID) Marshal() []byte {
+	return bytes.Join([][]byte{
+		convert.Uint32ToBytes(uint32(i.shardID)),
+		convert.Uint16ToBytes(i.segID),
+		convert.Uint16ToBytes(i.blockID),
+		i.id,
+	}, nil)
+}
+
+func (i *ItemID) UnMarshal(data []byte) error {
+	if len(data) <= 32+16+16 {
+		return ErrItemIDMalformed
+	}
+	var offset int
+	i.shardID = common.ShardID(convert.BytesToUint32(data[offset : offset+4]))
+	offset += 4
+	i.segID = convert.BytesToUint16(data[offset : offset+2])
+	offset += 2
+	i.blockID = convert.BytesToUint16(data[offset : offset+2])
+	offset += 2
+	i.id = data[offset:]
+	return nil
 }
 
 type TimeRange struct {
@@ -83,9 +110,9 @@ type WriterBuilder interface {
 }
 
 type Writer interface {
+	IndexWriter
 	Write() (ItemID, error)
-	WriteLSMIndex(name string, val []byte) error
-	WriteInvertedIndex(name string, val []byte) error
+	ItemID() ItemID
 }
 
 type SeekerBuilder interface {
@@ -104,12 +131,14 @@ var _ Series = (*series)(nil)
 type series struct {
 	id      common.SeriesID
 	blockDB blockDatabase
+	shardID common.ShardID
 }
 
 func newSeries(id common.SeriesID, blockDB blockDatabase) *series {
 	return &series{
 		id:      id,
 		blockDB: blockDB,
+		shardID: blockDB.shardID(),
 	}
 }
 
@@ -122,7 +151,7 @@ func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
 	}
-	return newSeriesSpan(blocks, s.id), nil
+	return newSeriesSpan(blocks, s.id, s.shardID), nil
 }
 
 func (s *series) Get(id ItemID) (Item, error) {
@@ -134,6 +163,7 @@ var _ SeriesSpan = (*seriesSpan)(nil)
 type seriesSpan struct {
 	blocks   []blockDelegate
 	seriesID common.SeriesID
+	shardID  common.ShardID
 }
 
 func (s *seriesSpan) Close() (err error) {
@@ -155,10 +185,11 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	panic("implement me")
 }
 
-func newSeriesSpan(blocks []blockDelegate, id common.SeriesID) *seriesSpan {
+func newSeriesSpan(blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
 	return &seriesSpan{
 		blocks:   blocks,
 		seriesID: id,
+		shardID:  shardID,
 	}
 }
 
@@ -207,19 +238,23 @@ var ErrNoVal = errors.New("no value specified")
 
 func (w *writerBuilder) Build() (Writer, error) {
 	if w.block == nil {
-		return nil, ErrNoTime
+		return nil, errors.WithStack(ErrNoTime)
 	}
 	if len(w.values) < 1 {
-		return nil, ErrNoVal
+		return nil, errors.WithStack(ErrNoVal)
 	}
-	wt := &writer{
-		block:    w.block,
-		ts:       w.ts,
-		seriesID: w.seriesIDBytes,
-		itemID:   bytes.Join([][]byte{w.seriesIDBytes, convert.Int64ToBytes(w.ts.UnixNano())}, nil),
-		columns:  w.values,
-	}
-	return wt, nil
+	segID, blockID := w.block.identity()
+	return &writer{
+		block: w.block,
+		ts:    w.ts,
+		itemID: &ItemID{
+			shardID: w.series.shardID,
+			segID:   segID,
+			blockID: blockID,
+			id:      bytes.Join([][]byte{w.seriesIDBytes, convert.Int64ToBytes(w.ts.UnixNano())}, nil),
+		},
+		columns: w.values,
+	}, nil
 }
 
 func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
@@ -232,22 +267,25 @@ func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
 var _ Writer = (*writer)(nil)
 
 type writer struct {
-	block    blockDelegate
-	ts       time.Time
-	seriesID []byte
-	columns  []struct {
+	block   blockDelegate
+	ts      time.Time
+	columns []struct {
 		family []byte
 		val    []byte
 	}
-	itemID []byte
+	itemID *ItemID
+}
+
+func (w *writer) ItemID() ItemID {
+	return *w.itemID
 }
 
 func (w *writer) WriteLSMIndex(name string, val []byte) error {
-	panic("implement me")
+	return w.block.writeLSMIndex(bytes.Join([][]byte{[]byte(name), val}, nil), w.itemID.id)
 }
 
 func (w *writer) WriteInvertedIndex(name string, val []byte) error {
-	panic("implement me")
+	return w.block.writeInvertedIndex(bytes.Join([][]byte{[]byte(name), val}, nil), w.itemID.id)
 }
 
 func (w *writer) Write() (id ItemID, err error) {
@@ -257,6 +295,5 @@ func (w *writer) Write() (id ItemID, err error) {
 			return id, err
 		}
 	}
-	id.id = w.itemID
 	return id, nil
 }

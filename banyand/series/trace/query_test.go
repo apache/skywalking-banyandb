@@ -158,7 +158,7 @@ func Test_traceSeries_FetchEntity(t *testing.T) {
 				entities = append(entities, ee...)
 			}
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			sort.Sort(entities)
 			assert.Equal(t, len(tt.wantEntities), len(entities))
@@ -212,7 +212,7 @@ func Test_traceSeries_FetchTrace(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			traceData, err := ts.FetchTrace(tt.args.traceID, series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}})
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			var entities ByEntityID = traceData.Entities
 			assert.Equal(t, len(tt.wantEntities), len(entities))
@@ -306,7 +306,7 @@ func Test_traceSeries_ScanEntity(t *testing.T) {
 			var err error
 			entities, err = ts.ScanEntity(uint64(tt.args.start.UnixNano()), uint64(tt.args.end.UnixNano()), series.ScanOptions{DataBinary: true, Projection: []string{"trace_id"}})
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			assert.Equal(t, len(tt.wantEntities), len(entities))
 			sort.Sort(entities)

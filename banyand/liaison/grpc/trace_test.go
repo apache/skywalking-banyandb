@@ -266,7 +266,7 @@ func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 	ctx := context.Background()
 	stream, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
-		t.Errorf("%v.Write(_) = _, %v", client, errorWrite)
+		t.Errorf("%v.write(_) = _, %v", client, errorWrite)
 	}
 	waitc := make(chan struct{})
 	go func() {

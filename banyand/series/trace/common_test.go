@@ -244,10 +244,10 @@ func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 			EntityValue: ev,
 		})
 		if err != nil {
-			t.Error("Write() got error")
+			t.Error("write() got error")
 		}
 		if got < 1 {
-			t.Error("Write() got empty chunkID")
+			t.Error("write() got empty chunkID")
 		}
 		results = append(results, idWithShard{
 			id:      got,

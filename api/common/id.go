@@ -19,3 +19,4 @@ package common
 
 type ChunkID uint64
 type SeriesID uint64
+type ShardID uint32

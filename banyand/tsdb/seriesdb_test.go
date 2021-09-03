@@ -180,7 +180,7 @@ func Test_SeriesDatabase_Get(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir, deferFunc := test.Space(tester)
 			defer deferFunc()
-			s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), dir)
+			s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), 0, dir, nil)
 			tester.NoError(err)
 			for _, entity := range tt.entities {
 				series, err := s.Get(entity)
@@ -199,7 +199,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 	}))
 	dir, deferFunc := test.Space(tester)
 	defer deferFunc()
-	s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), dir)
+	s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), 0, dir, nil)
 	tester.NoError(err)
 	data := setUpEntities(tester, s)
 	tests := []struct {

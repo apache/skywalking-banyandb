@@ -29,14 +29,16 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
-	shardTemplate  = "%s/shard-%d"
-	seriesTemplate = "%s/series"
-	segTemplate    = "%s/seg-%s"
-	blockTemplate  = "%s/block-%s"
+	shardTemplate       = "%s/shard-%d"
+	seriesTemplate      = "%s/series"
+	segTemplate         = "%s/seg-%s"
+	blockTemplate       = "%s/block-%s"
+	globalIndexTemplate = "%s/index"
 
 	segFormat   = "20060102"
 	blockFormat = "1504"
@@ -62,13 +64,13 @@ var _ Database = (*database)(nil)
 
 type DatabaseOpts struct {
 	Location string
-	ShardNum uint
+	ShardNum uint32
 }
 
 type database struct {
 	logger   *logger.Logger
 	location string
-	shardNum uint
+	shardNum uint32
 
 	sLst []Shard
 	sync.Mutex
@@ -123,13 +125,13 @@ func createDatabase(ctx context.Context, db *database) (Database, error) {
 	var err error
 	db.Lock()
 	defer db.Unlock()
-	for i := 0; i < int(db.shardNum); i++ {
+	for i := uint32(0); i < db.shardNum; i++ {
 		shardLocation, errInternal := mkdir(shardTemplate, db.location, i)
 		if errInternal != nil {
 			err = multierr.Append(err, errInternal)
 			continue
 		}
-		so, errNewShard := newShard(ctx, i, shardLocation)
+		so, errNewShard := newShard(ctx, common.ShardID(i), shardLocation)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue

@@ -26,19 +26,30 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+type tagIndex struct {
+	family int
+	tag    int
+}
+
+type indexRule struct {
+	rule       *databasev2.IndexRule
+	tagIndices []tagIndex
+}
 type stream struct {
-	name        string
-	group       string
-	l           *logger.Logger
-	schema      *databasev2.Stream
-	db          tsdb.Database
-	entityIndex []struct {
-		family int
-		tag    int
-	}
+	name           string
+	group          string
+	l              *logger.Logger
+	schema         *databasev2.Stream
+	db             tsdb.Database
+	entityIndex    []tagIndex
+	indexRules     []*databasev2.IndexRule
+	indexRuleIndex []indexRule
+
+	indexCh chan indexMessage
 }
 
 func (s *stream) Close() error {
+	close(s.indexCh)
 	return s.db.Close()
 }
 
@@ -47,37 +58,58 @@ func (s *stream) parseSchema() {
 	meta := sm.GetMetadata()
 	s.name, s.group = meta.GetName(), meta.GetGroup()
 	for _, tagInEntity := range sm.Entity.GetTagNames() {
-	nextEntityTag:
-		for fi, family := range sm.GetTagFamilies() {
-			for ti, tag := range family.Tags {
-				if tagInEntity == tag.GetName() {
-					s.entityIndex = append(s.entityIndex, struct {
-						family int
-						tag    int
-					}{family: fi, tag: ti})
-					break nextEntityTag
-				}
+		fIndex, tIndex, tag := s.findTagByName(tagInEntity)
+		if tag != nil {
+			s.entityIndex = append(s.entityIndex, tagIndex{family: fIndex, tag: tIndex})
+		}
+	}
+	for _, rule := range s.indexRules {
+		tagIndices := make([]tagIndex, 0, len(rule.GetTags()))
+		for _, tagInIndex := range rule.GetTags() {
+			fIndex, tIndex, tag := s.findTagByName(tagInIndex)
+			if tag != nil {
+				tagIndices = append(tagIndices, tagIndex{family: fIndex, tag: tIndex})
 			}
 		}
+		s.indexRuleIndex = append(s.indexRuleIndex, indexRule{rule: rule, tagIndices: tagIndices})
 	}
 }
 
-func openStream(root string, schema *databasev2.Stream, l *logger.Logger) (*stream, error) {
+func (s *stream) findTagByName(tagName string) (int, int, *databasev2.TagSpec) {
+	for fi, family := range s.schema.GetTagFamilies() {
+		for ti, tag := range family.Tags {
+			if tagName == tag.GetName() {
+				return fi, ti, tag
+			}
+		}
+	}
+	return 0, 0, nil
+}
+
+type streamSpec struct {
+	schema     *databasev2.Stream
+	indexRules []*databasev2.IndexRule
+}
+
+func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error) {
 	sm := &stream{
-		schema: schema,
-		l:      l,
+		schema:     spec.schema,
+		indexRules: spec.indexRules,
+		l:          l,
+		indexCh:    make(chan indexMessage),
 	}
 	sm.parseSchema()
 	db, err := tsdb.OpenDatabase(
 		context.WithValue(context.Background(), logger.ContextKey, l),
 		tsdb.DatabaseOpts{
 			Location: root,
-			ShardNum: uint(schema.GetShardNum()),
+			ShardNum: sm.schema.GetShardNum(),
 		})
 	if err != nil {
 		return nil, err
 	}
 	sm.db = db
+	sm.bootIndexGenerator()
 	return sm, nil
 }
 

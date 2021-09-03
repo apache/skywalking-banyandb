@@ -29,6 +29,7 @@ import (
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -195,7 +196,7 @@ func Test_Stream_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.Write(tt.args.shardID, tt.args.ele)
+			err := s.write(tt.args.shardID, tt.args.ele)
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -214,12 +215,20 @@ func setup(t *assert.Assertions) (*stream, func()) {
 	tempDir, deferFunc := test.Space(t)
 	streamRepo, err := schema.NewStream()
 	t.NoError(err)
-	streamSpec, err := streamRepo.Get(context.TODO(), &commonv2.Metadata{
+	sa, err := streamRepo.Get(context.TODO(), &commonv2.Metadata{
 		Name:  "sw",
 		Group: "default",
 	})
 	t.NoError(err)
-	s, err := openStream(tempDir, streamSpec, logger.GetLogger("test"))
+	mService, err := metadata.NewService(context.TODO())
+	t.NoError(err)
+	iRules, err := mService.IndexRules(context.TODO(), sa.Metadata)
+	t.NoError(err)
+	sSpec := streamSpec{
+		schema:     sa,
+		indexRules: iRules,
+	}
+	s, err := openStream(tempDir, sSpec, logger.GetLogger("test"))
 	t.NoError(err)
 	return s, func() {
 		_ = s.Close()

@@ -35,7 +35,7 @@ var (
 	ErrUnsupportedTagTypeAsEntry = errors.New("the tag type can not be as an entry in an entity")
 )
 
-func (s *stream) Write(shardID uint, value *streamv2.ElementValue) error {
+func (s *stream) write(shardID uint, value *streamv2.ElementValue) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -62,54 +62,102 @@ func (s *stream) Write(shardID uint, value *streamv2.ElementValue) error {
 		Duration: 0,
 	})
 	if err != nil {
+		if wp != nil {
+			_ = wp.Close()
+		}
 		return err
 	}
-	defer func() {
-		_ = wp.Close()
-	}()
-	builder := wp.WriterBuilder().Time(t)
-	for fi, family := range value.GetTagFamilies() {
-		familySpec := sm.GetTagFamilies()[fi]
-		if len(family.GetTags()) > len(familySpec.GetTags()) {
-			return errors.Wrap(ErrMalformedElement, "tag number is more than expected")
-		}
-		for ti, tag := range family.GetTags() {
-			tagSpec := familySpec.GetTags()[ti]
-			tType, isNull := tagValueTypeConv(tag)
-			if isNull {
-				continue
+	writeFn := func() (tsdb.Writer, error) {
+		builder := wp.WriterBuilder().Time(t)
+		for fi, family := range value.GetTagFamilies() {
+			familySpec := sm.GetTagFamilies()[fi]
+			if len(family.GetTags()) > len(familySpec.GetTags()) {
+				return nil, errors.Wrap(ErrMalformedElement, "tag number is more than expected")
 			}
-			if tType != tagSpec.GetType() {
-				return errors.Wrapf(ErrMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
+			for ti, tag := range family.GetTags() {
+				tagSpec := familySpec.GetTags()[ti]
+				tType, isNull := tagValueTypeConv(tag)
+				if isNull {
+					continue
+				}
+				if tType != tagSpec.GetType() {
+					return nil, errors.Wrapf(ErrMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
+				}
 			}
+			bb, errMarshal := proto.Marshal(family)
+			if errMarshal != nil {
+				return nil, errMarshal
+			}
+			builder.Family(sm.GetTagFamilies()[fi].GetName(), bb)
 		}
-		bb, errMarshal := proto.Marshal(family)
-		if errMarshal != nil {
-			return errMarshal
+		writer, errWrite := builder.Build()
+		if errWrite != nil {
+			return nil, errWrite
 		}
-		builder.Family(sm.GetTagFamilies()[fi].GetName(), bb)
+		_, errWrite = writer.Write()
+		return writer, errWrite
 	}
-	writer, err := builder.Build()
+	writer, err := writeFn()
 	if err != nil {
+		_ = wp.Close()
 		return err
 	}
-	_, err = writer.Write()
+	m := indexMessage{
+		localWriter: writer,
+		value:       value,
+		blockCloser: wp,
+	}
+	go func(m indexMessage) {
+		defer func() {
+			if recover() != nil {
+				_ = m.blockCloser.Close()
+			}
+		}()
+		s.indexCh <- m
+	}(m)
 	return err
+}
+
+func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, err error) {
+	val = make([]byte, 0, len(ruleIndex.tagIndices))
+	for _, tIndex := range ruleIndex.tagIndices {
+		tag, err := getTagByOffset(value, tIndex.family, tIndex.tag)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "index rule:%v", ruleIndex.rule.Metadata)
+		}
+		v, err := proto.Marshal(tag)
+		if err != nil {
+			return nil, err
+		}
+		val = append(val, v...)
+	}
+	return val, nil
 }
 
 func (s *stream) buildEntity(value *streamv2.ElementValue) (entity tsdb.Entity, err error) {
 	for _, index := range s.entityIndex {
-		family := value.GetTagFamilies()[index.family]
-		if index.tag >= len(family.GetTags()) {
-			return nil, errors.Wrap(ErrMalformedElement, "the tag which composite the entity doesn't exist ")
+		tag, err := getTagByOffset(value, index.family, index.tag)
+		if err != nil {
+			return nil, err
 		}
-		entry, err := tagConvEntry(family.GetTags()[index.tag])
+		entry, err := tagConvEntry(tag)
 		if err != nil {
 			return nil, err
 		}
 		entity = append(entity, entry)
 	}
 	return entity, nil
+}
+
+func getTagByOffset(value *streamv2.ElementValue, fIndex, tIndex int) (*modelv2.Tag, error) {
+	if fIndex >= len(value.TagFamilies) {
+		return nil, errors.Wrap(ErrMalformedElement, "tag family offset is invalid")
+	}
+	family := value.GetTagFamilies()[fIndex]
+	if tIndex >= len(family.GetTags()) {
+		return nil, errors.Wrap(ErrMalformedElement, "tag offset is invalid")
+	}
+	return family.GetTags()[tIndex], nil
 }
 
 func tagConvEntry(tag *modelv2.Tag) (tsdb.Entry, error) {
@@ -144,7 +192,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	sm := writeEvent.WriteRequest.GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].Write(writeEvent.ShardID, writeEvent.WriteRequest.GetElement())
+	err := w.schemaMap[id].write(writeEvent.ShardID, writeEvent.WriteRequest.GetElement())
 	if err != nil {
 		w.l.Debug().Err(err)
 	}
