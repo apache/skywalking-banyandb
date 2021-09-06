@@ -24,7 +24,12 @@ import (
 
 	"github.com/dgraph-io/ristretto/z"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -33,13 +38,14 @@ type block struct {
 	l    *logger.Logger
 	ref  *z.Closer
 
-	store       kv.TimeSeriesStore
-	treeIndex   kv.Store
-	closableLst []io.Closer
-	endTime     time.Time
-	startTime   time.Time
-	segID       uint16
-	blockID     uint16
+	store         kv.TimeSeriesStore
+	primaryIndex  kv.Store
+	invertedIndex inverted.GlobalStore
+	closableLst   []io.Closer
+	endTime       time.Time
+	startTime     time.Time
+	segID         uint16
+	blockID       uint16
 
 	//revertedIndex kv.Store
 }
@@ -70,10 +76,27 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		kv.TSSWithLogger(b.l)); err != nil {
 		return nil, err
 	}
-	if b.treeIndex, err = kv.OpenStore(0, b.path+"/t_index", kv.StoreWithLogger(b.l)); err != nil {
+	if b.primaryIndex, err = kv.OpenStore(0, b.path+"/p_index", kv.StoreWithLogger(b.l)); err != nil {
 		return nil, err
 	}
-	b.closableLst = append(b.closableLst, b.store, b.treeIndex)
+	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
+	rules, ok := ctx.Value(indexRulesKey).([]*databasev2.IndexRule)
+	var specs []index.FieldSpec
+	for _, rule := range rules {
+		if rule.GetLocation() == databasev2.IndexRule_LOCATION_SERIES {
+			specs = append(specs, index.FieldSpec{
+				Name: rule.GetMetadata().GetName(),
+			})
+		}
+	}
+	if !ok || len(specs) == 0 {
+		return b, nil
+	}
+	b.invertedIndex = inverted.NewStore("inverted")
+	err = b.invertedIndex.Initialize(specs)
+	if err != nil {
+		return nil, err
+	}
 	return b, nil
 }
 
@@ -104,15 +127,41 @@ type blockDelegate interface {
 	io.Closer
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
-	writeLSMIndex(key []byte, val []byte) error
-	writeInvertedIndex(key []byte, val []byte) error
+	writePrimaryIndex(field index.Field, id common.ItemID) error
+	writeLSMIndex(field index.Field, id common.ItemID) error
+	writeInvertedIndex(field index.Field, id common.ItemID) error
+	dataReader() kv.TimeSeriesReader
+	lsmIndexReader() index.Searcher
+	invertedIndexReader() index.Searcher
+	primaryIndexReader() index.Searcher
 	identity() (segID uint16, blockID uint16)
+	startTime() time.Time
 }
 
 var _ blockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block
+}
+
+func (d *bDelegate) dataReader() kv.TimeSeriesReader {
+	return d.delegate.store
+}
+
+func (d *bDelegate) lsmIndexReader() index.Searcher {
+	return d.delegate.invertedIndex.Searcher()
+}
+
+func (d *bDelegate) invertedIndexReader() index.Searcher {
+	return d.delegate.invertedIndex.Searcher()
+}
+
+func (d *bDelegate) primaryIndexReader() index.Searcher {
+	return d.delegate.primaryIndex
+}
+
+func (d *bDelegate) startTime() time.Time {
+	return d.delegate.startTime
 }
 
 func (d *bDelegate) identity() (segID uint16, blockID uint16) {
@@ -123,12 +172,22 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 	return d.delegate.store.Put(key, val, uint64(ts.UnixNano()))
 }
 
-func (d *bDelegate) writeLSMIndex(key []byte, val []byte) error {
-	return d.delegate.treeIndex.Put(key, val)
+func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
+	return d.delegate.primaryIndex.Put(field.Marshal(), convert.Uint64ToBytes(uint64(id)))
 }
 
-func (d *bDelegate) writeInvertedIndex(key []byte, val []byte) error {
-	return d.delegate.treeIndex.Put(key, val)
+func (d *bDelegate) writeLSMIndex(field index.Field, id common.ItemID) error {
+	if d.delegate.invertedIndex == nil {
+		return nil
+	}
+	return d.delegate.invertedIndex.Insert(field, id)
+}
+
+func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) error {
+	if d.delegate.invertedIndex == nil {
+		return nil
+	}
+	return d.delegate.invertedIndex.Insert(field, id)
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {

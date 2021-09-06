@@ -30,12 +30,13 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
 	shardTemplate       = "%s/shard-%d"
-	seriesTemplate      = "%s/series"
+	seriesTemplate      = "%s/seriesSpan"
 	segTemplate         = "%s/seg-%s"
 	blockTemplate       = "%s/block-%s"
 	globalIndexTemplate = "%s/index"
@@ -47,11 +48,14 @@ const (
 )
 
 var ErrInvalidShardID = errors.New("invalid shard id")
+var indexRulesKey = contextIndexRulesKey{}
+
+type contextIndexRulesKey struct{}
 
 type Database interface {
 	io.Closer
 	Shards() []Shard
-	Shard(id uint) (Shard, error)
+	Shard(id common.ShardID) (Shard, error)
 }
 
 type Shard interface {
@@ -63,8 +67,9 @@ type Shard interface {
 var _ Database = (*database)(nil)
 
 type DatabaseOpts struct {
-	Location string
-	ShardNum uint32
+	Location   string
+	ShardNum   uint32
+	IndexRules []*databasev2.IndexRule
 }
 
 type database struct {
@@ -80,8 +85,8 @@ func (d *database) Shards() []Shard {
 	return d.sLst
 }
 
-func (d *database) Shard(id uint) (Shard, error) {
-	if id >= uint(len(d.sLst)) {
+func (d *database) Shard(id common.ShardID) (Shard, error) {
+	if uint(id) >= uint(len(d.sLst)) {
 		return nil, ErrInvalidShardID
 	}
 	return d.sLst[id], nil
@@ -115,6 +120,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
+	thisContext = context.WithValue(thisContext, indexRulesKey, opts.IndexRules)
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)
 	}

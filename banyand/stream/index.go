@@ -22,9 +22,11 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
@@ -60,7 +62,7 @@ func (s *stream) bootIndexGenerator() {
 }
 
 //TODO: should listen to pipeline in a distributed cluster
-func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.ItemID, value *streamv2.ElementValue) error {
+func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, value *streamv2.ElementValue) error {
 	val, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
@@ -69,11 +71,11 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.ItemID, value *s
 	if err != nil {
 		return err
 	}
-	shard, err := s.db.Shard(indexShardID)
+	shard, err := s.db.Shard(common.ShardID(indexShardID))
 	if err != nil {
 		return err
 	}
-	builder := shard.Index().IndexWriterBuilder()
+	builder := shard.Index().WriterBuilder()
 	indexWriter, err := builder.
 		GlobalItemID(ref).
 		Time(value.GetTimestamp().AsTime()).
@@ -84,9 +86,15 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.ItemID, value *s
 	rule := ruleIndex.rule
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
-		return indexWriter.WriteInvertedIndex(rule.Metadata.Name, val)
+		return indexWriter.WriteInvertedIndex(index.Field{
+			Term:  []byte(rule.Metadata.Name),
+			Value: val,
+		})
 	case databasev2.IndexRule_TYPE_TREE:
-		return indexWriter.WriteLSMIndex(rule.Metadata.Name, val)
+		return indexWriter.WriteLSMIndex(index.Field{
+			Term:  []byte(rule.Metadata.Name),
+			Value: val,
+		})
 	}
 	return err
 }
@@ -99,9 +107,15 @@ func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv2.El
 	rule := ruleIndex.rule
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
-		return writer.WriteInvertedIndex(rule.Metadata.Name, val)
+		return writer.WriteInvertedIndex(index.Field{
+			Term:  []byte(rule.Metadata.Name),
+			Value: val,
+		})
 	case databasev2.IndexRule_TYPE_TREE:
-		return writer.WriteLSMIndex(rule.Metadata.Name, val)
+		return writer.WriteLSMIndex(index.Field{
+			Term:  []byte(rule.Metadata.Name),
+			Value: val,
+		})
 	}
 	return err
 }

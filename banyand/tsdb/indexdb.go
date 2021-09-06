@@ -18,28 +18,32 @@
 package tsdb
 
 import (
-	"bytes"
 	"context"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 type IndexDatabase interface {
-	IndexWriterBuilder() IndexWriterBuilder
+	WriterBuilder() IndexWriterBuilder
+	Seek(field index.Field) ([]GlobalItemID, error)
 }
 
 type IndexWriter interface {
-	WriteLSMIndex(name string, val []byte) error
-	WriteInvertedIndex(name string, val []byte) error
+	WriteLSMIndex(field index.Field) error
+	WriteInvertedIndex(field index.Field) error
 }
 
 type IndexWriterBuilder interface {
 	Time(ts time.Time) IndexWriterBuilder
-	GlobalItemID(itemID ItemID) IndexWriterBuilder
+	GlobalItemID(itemID GlobalItemID) IndexWriterBuilder
 	Build() (IndexWriter, error)
+}
+
+type IndexSeekBuilder interface {
 }
 
 var _ IndexDatabase = (*indexDB)(nil)
@@ -49,7 +53,21 @@ type indexDB struct {
 	lst     []*segment
 }
 
-func (i *indexDB) IndexWriterBuilder() IndexWriterBuilder {
+func (i *indexDB) Seek(term index.Field) ([]GlobalItemID, error) {
+	var result []GlobalItemID
+	err := i.lst[0].globalIndex.GetAll(term.Marshal(), func(rawBytes []byte) error {
+		id := &GlobalItemID{}
+		err := id.UnMarshal(rawBytes)
+		if err != nil {
+			return err
+		}
+		result = append(result, *id)
+		return nil
+	})
+	return result, err
+}
+
+func (i *indexDB) WriterBuilder() IndexWriterBuilder {
 	return newIndexWriterBuilder(i.lst)
 }
 
@@ -66,7 +84,7 @@ type indexWriterBuilder struct {
 	segments     []*segment
 	ts           time.Time
 	seg          *segment
-	globalItemID *ItemID
+	globalItemID *GlobalItemID
 }
 
 func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
@@ -80,7 +98,7 @@ func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
 	return i
 }
 
-func (i *indexWriterBuilder) GlobalItemID(itemID ItemID) IndexWriterBuilder {
+func (i *indexWriterBuilder) GlobalItemID(itemID GlobalItemID) IndexWriterBuilder {
 	i.globalItemID = &itemID
 	return i
 }
@@ -110,13 +128,13 @@ var _ IndexWriter = (*indexWriter)(nil)
 type indexWriter struct {
 	seg    *segment
 	ts     time.Time
-	itemID *ItemID
+	itemID *GlobalItemID
 }
 
-func (i *indexWriter) WriteLSMIndex(name string, val []byte) error {
-	return i.seg.globalIndex.Put(bytes.Join([][]byte{[]byte(name), val}, nil), i.itemID.Marshal())
+func (i *indexWriter) WriteLSMIndex(field index.Field) error {
+	return i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.Marshal(), uint64(i.ts.UnixNano()))
 }
 
-func (i *indexWriter) WriteInvertedIndex(name string, val []byte) error {
-	return i.seg.globalIndex.Put(bytes.Join([][]byte{[]byte(name), val}, nil), i.itemID.Marshal())
+func (i *indexWriter) WriteInvertedIndex(field index.Field) error {
+	return i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.Marshal(), uint64(i.ts.UnixNano()))
 }

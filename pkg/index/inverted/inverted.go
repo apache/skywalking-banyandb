@@ -15,23 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package inverted
 
-option java_package = "org.apache.skywalking.banyandb.model.v2";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2";
+import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+)
 
-package banyandb.model.v2;
+type GlobalStore interface {
+	Searcher() index.Searcher
+	Initialize(fields []index.FieldSpec) error
+	Insert(field index.Field, docID common.ItemID) error
+}
 
-import "google/protobuf/struct.proto";
-import "banyandb/model/v2/common.proto";
+type store struct {
+	memTable *MemTable
+	//TODO: add data tables
+}
 
-message Tag {
-    oneof value_type {
-        google.protobuf.NullValue null = 1;
-        Str str = 2;
-        StrArray str_array = 3;
-        Int int = 4;
-        IntArray int_array = 5;
-        bytes binary_data = 6;
-    }
+func (s *store) Searcher() index.Searcher {
+	return s.memTable
+}
+
+func (s *store) Initialize(fields []index.FieldSpec) error {
+	return s.memTable.Initialize(fields)
+}
+
+func (s *store) Insert(field index.Field, chunkID common.ItemID) error {
+	return s.memTable.Insert(field, chunkID)
+}
+
+func NewStore(name string) GlobalStore {
+	return &store{
+		memTable: NewMemTable(name),
+	}
 }

@@ -26,7 +26,6 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
@@ -35,42 +34,26 @@ var (
 	ErrItemIDMalformed = errors.New("serialized item id is malformed")
 )
 
-type Iterator interface {
-	Next() bool
-	Val() Item
-	Close() error
+type GlobalItemID struct {
+	shardID  common.ShardID
+	segID    uint16
+	blockID  uint16
+	seriesID common.SeriesID
+	id       common.ItemID
 }
 
-type Item interface {
-	Val(family string) []byte
-	SortingVal() []byte
-}
-
-type ConditionValue struct {
-	Values [][]byte
-	Op     modelv2.PairQuery_BinaryOp
-}
-
-type Condition map[string][]ConditionValue
-
-type ItemID struct {
-	shardID common.ShardID
-	segID   uint16
-	blockID uint16
-	id      []byte
-}
-
-func (i *ItemID) Marshal() []byte {
+func (i *GlobalItemID) Marshal() []byte {
 	return bytes.Join([][]byte{
 		convert.Uint32ToBytes(uint32(i.shardID)),
 		convert.Uint16ToBytes(i.segID),
 		convert.Uint16ToBytes(i.blockID),
-		i.id,
+		convert.Uint64ToBytes(uint64(i.seriesID)),
+		convert.Uint64ToBytes(uint64(i.id)),
 	}, nil)
 }
 
-func (i *ItemID) UnMarshal(data []byte) error {
-	if len(data) <= 32+16+16 {
+func (i *GlobalItemID) UnMarshal(data []byte) error {
+	if len(data) <= 32+16+16+64+64 {
 		return ErrItemIDMalformed
 	}
 	var offset int
@@ -80,50 +63,44 @@ func (i *ItemID) UnMarshal(data []byte) error {
 	offset += 2
 	i.blockID = convert.BytesToUint16(data[offset : offset+2])
 	offset += 2
-	i.id = data[offset:]
+	i.seriesID = common.SeriesID(convert.BytesToUint64(data[offset : offset+8]))
+	offset += 8
+	i.id = common.ItemID(convert.BytesToUint64(data[offset:]))
 	return nil
 }
 
 type TimeRange struct {
 	Start    time.Time
 	Duration time.Duration
+	End      time.Time
+}
+
+func (t TimeRange) contains(unixNano uint64) bool {
+	tp := time.Unix(0, int64(unixNano))
+	if tp.Equal(t.End) || tp.After(t.End) {
+		return false
+	}
+	return tp.Equal(t.Start) || tp.After(t.Start)
+}
+
+func NewTimeRange(Start time.Time, Duration time.Duration) TimeRange {
+	return TimeRange{
+		Start:    Start,
+		Duration: Duration,
+		End:      Start.Add(Duration),
+	}
 }
 
 type Series interface {
 	ID() common.SeriesID
 	Span(timeRange TimeRange) (SeriesSpan, error)
-	Get(id ItemID) (Item, error)
+	Get(id GlobalItemID) (Item, error)
 }
 
 type SeriesSpan interface {
 	io.Closer
 	WriterBuilder() WriterBuilder
-	Iterator() Iterator
 	SeekerBuilder() SeekerBuilder
-}
-
-type WriterBuilder interface {
-	Family(name string, val []byte) WriterBuilder
-	Time(ts time.Time) WriterBuilder
-	Val(val []byte) WriterBuilder
-	Build() (Writer, error)
-}
-
-type Writer interface {
-	IndexWriter
-	Write() (ItemID, error)
-	ItemID() ItemID
-}
-
-type SeekerBuilder interface {
-	Filter(condition Condition) SeekerBuilder
-	OrderByIndex(name string, order modelv2.QueryOrder_Sort) SeekerBuilder
-	OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder
-	Build() Seeker
-}
-
-type Seeker interface {
-	Seek() Iterator
 }
 
 var _ Series = (*series)(nil)
@@ -132,6 +109,10 @@ type series struct {
 	id      common.SeriesID
 	blockDB blockDatabase
 	shardID common.ShardID
+}
+
+func (s *series) Get(id GlobalItemID) (Item, error) {
+	panic("implement me")
 }
 
 func newSeries(id common.SeriesID, blockDB blockDatabase) *series {
@@ -151,19 +132,16 @@ func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
 	}
-	return newSeriesSpan(blocks, s.id, s.shardID), nil
-}
-
-func (s *series) Get(id ItemID) (Item, error) {
-	panic("not implemented")
+	return newSeriesSpan(timeRange, blocks, s.id, s.shardID), nil
 }
 
 var _ SeriesSpan = (*seriesSpan)(nil)
 
 type seriesSpan struct {
-	blocks   []blockDelegate
-	seriesID common.SeriesID
-	shardID  common.ShardID
+	blocks    []blockDelegate
+	seriesID  common.SeriesID
+	shardID   common.ShardID
+	timeRange TimeRange
 }
 
 func (s *seriesSpan) Close() (err error) {
@@ -177,123 +155,16 @@ func (s *seriesSpan) WriterBuilder() WriterBuilder {
 	return newWriterBuilder(s)
 }
 
-func (s *seriesSpan) Iterator() Iterator {
-	panic("implement me")
-}
-
 func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
-	panic("implement me")
+	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(timeRange TimeRange, blocks []blockDelegate,
+	id common.SeriesID, shardID common.ShardID) *seriesSpan {
 	return &seriesSpan{
-		blocks:   blocks,
-		seriesID: id,
-		shardID:  shardID,
+		blocks:    blocks,
+		seriesID:  id,
+		shardID:   shardID,
+		timeRange: timeRange,
 	}
-}
-
-var _ WriterBuilder = (*writerBuilder)(nil)
-
-type writerBuilder struct {
-	series *seriesSpan
-	block  blockDelegate
-	values []struct {
-		family []byte
-		val    []byte
-	}
-	ts            time.Time
-	seriesIDBytes []byte
-}
-
-func (w *writerBuilder) Family(name string, val []byte) WriterBuilder {
-	w.values = append(w.values, struct {
-		family []byte
-		val    []byte
-	}{family: bytes.Join([][]byte{w.seriesIDBytes, hash([]byte(name))}, nil), val: val})
-	return w
-}
-
-func (w *writerBuilder) Time(ts time.Time) WriterBuilder {
-	w.ts = ts
-	for _, b := range w.series.blocks {
-		if b.contains(ts) {
-			w.block = b
-			break
-		}
-	}
-	return w
-}
-
-func (w *writerBuilder) Val(val []byte) WriterBuilder {
-	w.values = append(w.values, struct {
-		family []byte
-		val    []byte
-	}{val: val})
-	return w
-}
-
-var ErrNoTime = errors.New("no time specified")
-var ErrNoVal = errors.New("no value specified")
-
-func (w *writerBuilder) Build() (Writer, error) {
-	if w.block == nil {
-		return nil, errors.WithStack(ErrNoTime)
-	}
-	if len(w.values) < 1 {
-		return nil, errors.WithStack(ErrNoVal)
-	}
-	segID, blockID := w.block.identity()
-	return &writer{
-		block: w.block,
-		ts:    w.ts,
-		itemID: &ItemID{
-			shardID: w.series.shardID,
-			segID:   segID,
-			blockID: blockID,
-			id:      bytes.Join([][]byte{w.seriesIDBytes, convert.Int64ToBytes(w.ts.UnixNano())}, nil),
-		},
-		columns: w.values,
-	}, nil
-}
-
-func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
-	return &writerBuilder{
-		series:        seriesSpan,
-		seriesIDBytes: convert.Uint64ToBytes(uint64(seriesSpan.seriesID)),
-	}
-}
-
-var _ Writer = (*writer)(nil)
-
-type writer struct {
-	block   blockDelegate
-	ts      time.Time
-	columns []struct {
-		family []byte
-		val    []byte
-	}
-	itemID *ItemID
-}
-
-func (w *writer) ItemID() ItemID {
-	return *w.itemID
-}
-
-func (w *writer) WriteLSMIndex(name string, val []byte) error {
-	return w.block.writeLSMIndex(bytes.Join([][]byte{[]byte(name), val}, nil), w.itemID.id)
-}
-
-func (w *writer) WriteInvertedIndex(name string, val []byte) error {
-	return w.block.writeInvertedIndex(bytes.Join([][]byte{[]byte(name), val}, nil), w.itemID.id)
-}
-
-func (w *writer) Write() (id ItemID, err error) {
-	for _, c := range w.columns {
-		err = w.block.write(c.family, c.val, w.ts)
-		if err != nil {
-			return id, err
-		}
-	}
-	return id, nil
 }

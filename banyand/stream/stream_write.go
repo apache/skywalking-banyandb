@@ -18,9 +18,13 @@
 package stream
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
@@ -31,11 +35,12 @@ import (
 )
 
 var (
-	ErrMalformedElement          = errors.New("element is malformed")
-	ErrUnsupportedTagTypeAsEntry = errors.New("the tag type can not be as an entry in an entity")
+	ErrMalformedElement            = errors.New("element is malformed")
+	ErrUnsupportedTagTypeAsEntry   = errors.New("the tag type can not be as an entry in an entity")
+	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 )
 
-func (s *stream) write(shardID uint, value *streamv2.ElementValue) error {
+func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -57,10 +62,7 @@ func (s *stream) write(shardID uint, value *streamv2.ElementValue) error {
 		return err
 	}
 	t := value.GetTimestamp().AsTime()
-	wp, err := series.Span(tsdb.TimeRange{
-		Start:    t,
-		Duration: 0,
-	})
+	wp, err := series.Span(tsdb.NewTimeRange(t, 0))
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
@@ -125,7 +127,7 @@ func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byt
 		if err != nil {
 			return nil, errors.WithMessagef(err, "index rule:%v", ruleIndex.rule.Metadata)
 		}
-		v, err := proto.Marshal(tag)
+		v, err := marshalIndexFieldValue(tag)
 		if err != nil {
 			return nil, err
 		}
@@ -134,22 +136,43 @@ func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byt
 	return val, nil
 }
 
-func (s *stream) buildEntity(value *streamv2.ElementValue) (entity tsdb.Entity, err error) {
-	for _, index := range s.entityIndex {
+func marshalIndexFieldValue(tagValue *modelv2.TagValue) ([]byte, error) {
+	switch x := tagValue.GetValue().(type) {
+	case *modelv2.TagValue_Str:
+		return []byte(x.Str.GetValue()), nil
+	case *modelv2.TagValue_Int:
+		return convert.Int64ToBytes(x.Int.GetValue()), nil
+	case *modelv2.TagValue_StrArray:
+		return []byte(strings.Join(x.StrArray.GetValue(), strDelimiter)), nil
+	case *modelv2.TagValue_IntArray:
+		buf := bytes.NewBuffer(nil)
+		for _, i := range x.IntArray.GetValue() {
+			buf.Write(convert.Int64ToBytes(i))
+		}
+		return buf.Bytes(), nil
+	case *modelv2.TagValue_BinaryData:
+		return x.BinaryData, nil
+	}
+	return nil, ErrUnsupportedTagForIndexField
+}
+
+func (s *stream) buildEntity(value *streamv2.ElementValue) (tsdb.Entity, error) {
+	entity := make(tsdb.Entity, len(s.entityIndex))
+	for i, index := range s.entityIndex {
 		tag, err := getTagByOffset(value, index.family, index.tag)
 		if err != nil {
 			return nil, err
 		}
-		entry, err := tagConvEntry(tag)
-		if err != nil {
-			return nil, err
+		e, errMarshal := marshalIndexFieldValue(tag)
+		if errMarshal != nil {
+			return nil, errMarshal
 		}
-		entity = append(entity, entry)
+		entity[i] = e
 	}
 	return entity, nil
 }
 
-func getTagByOffset(value *streamv2.ElementValue, fIndex, tIndex int) (*modelv2.Tag, error) {
+func getTagByOffset(value *streamv2.ElementValue, fIndex, tIndex int) (*modelv2.TagValue, error) {
 	if fIndex >= len(value.TagFamilies) {
 		return nil, errors.Wrap(ErrMalformedElement, "tag family offset is invalid")
 	}
@@ -158,17 +181,6 @@ func getTagByOffset(value *streamv2.ElementValue, fIndex, tIndex int) (*modelv2.
 		return nil, errors.Wrap(ErrMalformedElement, "tag offset is invalid")
 	}
 	return family.GetTags()[tIndex], nil
-}
-
-func tagConvEntry(tag *modelv2.Tag) (tsdb.Entry, error) {
-	switch tag.GetValueType().(type) {
-	case *modelv2.Tag_Str:
-		return tsdb.Entry(tag.GetStr().GetValue()), nil
-	case *modelv2.Tag_Int:
-		return convert.Int64ToBytes(tag.GetInt().GetValue()), nil
-	default:
-		return nil, ErrUnsupportedTagTypeAsEntry
-	}
 }
 
 type writeCallback struct {
@@ -192,7 +204,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	sm := writeEvent.WriteRequest.GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].write(writeEvent.ShardID, writeEvent.WriteRequest.GetElement())
+	err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement())
 	if err != nil {
 		w.l.Debug().Err(err)
 	}

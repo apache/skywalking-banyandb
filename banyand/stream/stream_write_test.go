@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
@@ -196,7 +197,7 @@ func Test_Stream_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.write(tt.args.shardID, tt.args.ele)
+			err := s.write(common.ShardID(tt.args.shardID), tt.args.ele)
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -237,7 +238,7 @@ func setup(t *assert.Assertions) (*stream, func()) {
 }
 
 func getEle(tags ...interface{}) *streamv2.ElementValue {
-	searchableTags := make([]*modelv2.Tag, 0)
+	searchableTags := make([]*modelv2.TagValue, 0)
 	for _, tag := range tags {
 		searchableTags = append(searchableTags, getTag(tag))
 	}
@@ -247,9 +248,9 @@ func getEle(tags ...interface{}) *streamv2.ElementValue {
 		Timestamp: timestamppb.Now(),
 		TagFamilies: []*streamv2.ElementValue_TagFamily{
 			{
-				Tags: []*modelv2.Tag{
+				Tags: []*modelv2.TagValue{
 					{
-						ValueType: &modelv2.Tag_BinaryData{
+						Value: &modelv2.TagValue_BinaryData{
 							BinaryData: bb,
 						},
 					},
@@ -263,24 +264,24 @@ func getEle(tags ...interface{}) *streamv2.ElementValue {
 	return e
 }
 
-func getTag(tag interface{}) *modelv2.Tag {
+func getTag(tag interface{}) *modelv2.TagValue {
 	if tag == nil {
-		return &modelv2.Tag{
-			ValueType: &modelv2.Tag_Null{},
+		return &modelv2.TagValue{
+			Value: &modelv2.TagValue_Null{},
 		}
 	}
 	switch t := tag.(type) {
 	case int:
-		return &modelv2.Tag{
-			ValueType: &modelv2.Tag_Int{
+		return &modelv2.TagValue{
+			Value: &modelv2.TagValue_Int{
 				Int: &modelv2.Int{
 					Value: int64(t),
 				},
 			},
 		}
 	case string:
-		return &modelv2.Tag{
-			ValueType: &modelv2.Tag_Str{
+		return &modelv2.TagValue{
+			Value: &modelv2.TagValue_Str{
 				Str: &modelv2.Str{
 					Value: t,
 				},

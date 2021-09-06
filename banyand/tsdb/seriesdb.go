@@ -183,7 +183,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		return nil, logger.ErrNoLoggerInContext
 	}
 	if pl, ok := parentLogger.(*logger.Logger); ok {
-		sdb.l = pl.Named("series")
+		sdb.l = pl.Named("seriesSpan")
 	}
 	var err error
 	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))

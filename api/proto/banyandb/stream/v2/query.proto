@@ -36,15 +36,13 @@ message Element {
   // 1) either the start time of a Span/Segment,
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
-  // data_binary contains all un-indexed Tags and other key-value pairs
-  bytes data_binary = 3;
   // fields contains all indexed Field. Some typical names,
   // - stream_id
   // - duration
   // - service_name
   // - service_instance_id
   // - end_time_nanoseconds
-  repeated model.v2.TypedPair tags = 4;
+  repeated model.v2.TagFamily tag_families = 3;
 }
 
 // QueryResponse is the response for a query to the Query module.
@@ -68,8 +66,12 @@ message QueryRequest {
   uint32 limit = 4;
   // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
   model.v2.QueryOrder order_by = 5;
-  // tags are indexed. Some typical tags are listed below,
-  repeated model.v2.PairQuery tags = 6;
+  // tag_families are indexed.
+  message Criteria {
+    string tag_family_name = 1;
+    repeated model.v2.Condition conditions = 2;
+  }
+  repeated Criteria criteria = 6;
   // projection can be used to select the key names of the element in the response
   model.v2.Projection projection = 7;
 }

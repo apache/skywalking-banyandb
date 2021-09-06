@@ -22,6 +22,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -29,12 +30,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var ErrEmptyRootPath = errors.New("root path is empty")
+var (
+	ErrEmptyRootPath  = errors.New("root path is empty")
+	ErrStreamNotExist = errors.New("stream doesn't exist")
+)
 
 type Service interface {
 	run.PreRunner
 	run.Config
 	run.Service
+	Query
 }
 
 var _ Service = (*service)(nil)
@@ -45,6 +50,15 @@ type service struct {
 	l             *logger.Logger
 	metadata      metadata.Repo
 	root          string
+}
+
+func (s *service) Stream(stream *commonv2.Metadata) (Stream, error) {
+	sID := formatStreamID(stream.GetName(), stream.GetGroup())
+	sm, ok := s.schemaMap[sID]
+	if !ok {
+		return nil, errors.WithStack(ErrStreamNotExist)
+	}
+	return sm, nil
 }
 
 func (s *service) FlagSet() *run.FlagSet {

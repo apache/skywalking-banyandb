@@ -26,6 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+const strDelimiter = "\n"
+
 type tagIndex struct {
 	family int
 	tag    int
@@ -35,6 +37,7 @@ type indexRule struct {
 	rule       *databasev2.IndexRule
 	tagIndices []tagIndex
 }
+
 type stream struct {
 	name           string
 	group          string
@@ -102,8 +105,9 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 	db, err := tsdb.OpenDatabase(
 		context.WithValue(context.Background(), logger.ContextKey, l),
 		tsdb.DatabaseOpts{
-			Location: root,
-			ShardNum: sm.schema.GetShardNum(),
+			Location:   root,
+			ShardNum:   sm.schema.GetShardNum(),
+			IndexRules: spec.indexRules,
 		})
 	if err != nil {
 		return nil, err
@@ -117,19 +121,19 @@ func formatStreamID(name, group string) string {
 	return name + ":" + group
 }
 
-func tagValueTypeConv(tag *modelv2.Tag) (tagType databasev2.TagType, isNull bool) {
-	switch tag.GetValueType().(type) {
-	case *modelv2.Tag_Int:
+func tagValueTypeConv(tagValue *modelv2.TagValue) (tagType databasev2.TagType, isNull bool) {
+	switch tagValue.GetValue().(type) {
+	case *modelv2.TagValue_Int:
 		return databasev2.TagType_TAG_TYPE_INT, false
-	case *modelv2.Tag_Str:
+	case *modelv2.TagValue_Str:
 		return databasev2.TagType_TAG_TYPE_STRING, false
-	case *modelv2.Tag_IntArray:
+	case *modelv2.TagValue_IntArray:
 		return databasev2.TagType_TAG_TYPE_INT_ARRAY, false
-	case *modelv2.Tag_StrArray:
+	case *modelv2.TagValue_StrArray:
 		return databasev2.TagType_TAG_TYPE_STRING_ARRAY, false
-	case *modelv2.Tag_BinaryData:
+	case *modelv2.TagValue_BinaryData:
 		return databasev2.TagType_TAG_TYPE_DATA_BINARY, false
-	case *modelv2.Tag_Null:
+	case *modelv2.TagValue_Null:
 		return databasev2.TagType_TAG_TYPE_UNSPECIFIED, true
 	}
 	return databasev2.TagType_TAG_TYPE_UNSPECIFIED, false

@@ -15,13 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package tsdb
+package inverted
 
 import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 var ErrFieldAbsent = errors.New("field doesn't exist")
@@ -50,10 +51,10 @@ func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
 	return v, ok
 }
 
-func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
-	pm, ok := fm.get(fv.Name)
+func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
+	pm, ok := fm.get(fv.Term)
 	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed Term:%s", fv.Name)
+		return errors.Wrapf(ErrFieldAbsent, "filed Term:%s", fv.Term)
 	}
 	return pm.value.put(fv.Value, id)
 }

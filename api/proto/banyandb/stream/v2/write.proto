@@ -24,9 +24,7 @@ package banyandb.stream.v2;
 
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v2/common.proto";
-import "banyandb/model/v2/write.proto";
-
-
+import "banyandb/model/v2/common.proto";
 
 message ElementValue {
   // element_id could be span_id of a Span or segment_id of a Segment in the context of stream
@@ -36,7 +34,7 @@ message ElementValue {
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
   message TagFamily {
-    repeated model.v2.Tag tags = 1;
+    repeated model.v2.TagValue tags = 1;
   }
   // the order of tag_families' items match the stream schema
   repeated TagFamily tag_families = 3;

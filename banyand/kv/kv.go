@@ -20,12 +20,15 @@ package kv
 import (
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/posting"
+	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 var (
@@ -39,6 +42,7 @@ var (
 type Writer interface {
 	// Put a value
 	Put(key, val []byte) error
+	PutWithVersion(key, val []byte, version uint64) error
 }
 
 type ScanFunc func(shardID int, key []byte, getVal func() ([]byte, error)) error
@@ -46,11 +50,14 @@ type ScanFunc func(shardID int, key []byte, getVal func() ([]byte, error)) error
 type ScanOpts struct {
 	PrefetchSize   int
 	PrefetchValues bool
+	Reverse        bool
+	Prefix         []byte
 }
 
 type Reader interface {
 	// Get a value by its key
 	Get(key []byte) ([]byte, error)
+	GetAll(key []byte, applyFn func([]byte) error) error
 	Scan(prefix []byte, opt ScanOpts, f ScanFunc) error
 }
 
@@ -59,6 +66,7 @@ type Store interface {
 	io.Closer
 	Writer
 	Reader
+	index.Searcher
 }
 
 type TimeSeriesWriter interface {
@@ -106,11 +114,21 @@ type Iterator interface {
 	Close() error
 }
 
+type Iterator2 interface {
+	Next()
+	Rewind()
+	Seek(key []byte)
+	Key() []byte
+	Val() posting2.List
+	Valid() bool
+	Close() error
+}
+
 type HandoverCallback func()
 
 type IndexStore interface {
-	Handover(iterator Iterator) error
-	Seek(key []byte, limit int) (posting.List, error)
+	Handover(iterator Iterator2) error
+	Seek(key []byte, limit int) (posting2.List, error)
 	Close() error
 }
 
@@ -180,7 +198,8 @@ func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error)
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(1)
+	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(2)
+	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)
@@ -211,9 +230,8 @@ func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexSto
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(1)
-	// Put all values into LSM
-	bdb.dbOpts = bdb.dbOpts.WithVLogPercentile(1.0)
+	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(2)
+	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)

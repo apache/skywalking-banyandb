@@ -15,50 +15,61 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package tsdb
+package posting
 
 import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var ErrFieldAbsent = errors.New("field doesn't exist")
+var ErrListEmpty = errors.New("postings list is empty")
 
-type fieldHashID uint64
+// List is a collection of common.ItemID.
+type List interface {
+	Contains(id common.ItemID) bool
 
-type fieldMap struct {
-	repo map[fieldHashID]*fieldValue
+	IsEmpty() bool
+
+	Max() (common.ItemID, error)
+
+	Len() int
+
+	Iterator() Iterator
+
+	Clone() List
+
+	Equal(other List) bool
+
+	Insert(i common.ItemID)
+
+	Intersect(other List) error
+
+	Difference(other List) error
+
+	Union(other List) error
+
+	UnionMany(others []List) error
+
+	AddIterator(iter Iterator) error
+
+	AddRange(min, max common.ItemID) error
+
+	RemoveRange(min, max common.ItemID) error
+
+	Reset()
+
+	ToSlice() []common.ItemID
+
+	Marshall() ([]byte, error)
+
+	Unmarshall(data []byte) error
 }
 
-func newFieldMap(initialSize int) *fieldMap {
-	return &fieldMap{
-		repo: make(map[fieldHashID]*fieldValue, initialSize),
-	}
-}
+type Iterator interface {
+	Next() bool
 
-func (fm *fieldMap) createKey(key []byte) {
-	fm.repo[fieldHashID(convert.Hash(key))] = &fieldValue{
-		key:   key,
-		value: newPostingMap(),
-	}
-}
+	Current() common.ItemID
 
-func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
-	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
-	return v, ok
-}
-
-func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
-	pm, ok := fm.get(fv.Name)
-	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed Term:%s", fv.Name)
-	}
-	return pm.value.put(fv.Value, id)
-}
-
-type fieldValue struct {
-	key   []byte
-	value *postingMap
+	Close() error
 }
