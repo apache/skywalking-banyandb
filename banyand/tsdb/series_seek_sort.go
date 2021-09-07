@@ -19,6 +19,9 @@ package tsdb
 
 import (
 	"sort"
+	"time"
+
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
@@ -26,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func (s *seekerBuilder) OrderByIndex(indexRule *databasev2.IndexRule, order modelv2.QueryOrder_Sort) SeekerBuilder {
@@ -42,29 +46,20 @@ func (s *seekerBuilder) OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder
 
 func (s *seekerBuilder) buildSeries(filters []filterFn) []Iterator {
 	if s.indexRuleForSorting == nil {
-		return s.buildSeriesByIndex(filters)
+		return s.buildSeriesByTime(filters)
 	}
-	return s.buildSeriesByTime(filters)
+	return s.buildSeriesByIndex(filters)
 }
 
 func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator) {
 	for _, b := range s.seriesSpan.blocks {
 		switch s.indexRuleForSorting.GetType() {
 		case databasev2.IndexRule_TYPE_TREE:
-			series = append(series, newSearcherIterator(
-				b.lsmIndexReader().
-					FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order),
-				b.dataReader(),
-				s.seriesSpan.seriesID,
-				filters,
-			))
+			series = append(series, newSearcherIterator(s.seriesSpan.l, b.lsmIndexReader().
+				FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order), b.dataReader(), s.seriesSpan.seriesID, filters))
 		case databasev2.IndexRule_TYPE_INVERTED:
-			series = append(series, newSearcherIterator(b.invertedIndexReader().
-				FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order),
-				b.dataReader(),
-				s.seriesSpan.seriesID,
-				filters,
-			))
+			series = append(series, newSearcherIterator(s.seriesSpan.l, b.invertedIndexReader().
+				FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order), b.dataReader(), s.seriesSpan.seriesID, filters))
 		}
 	}
 	return
@@ -83,15 +78,23 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
 			return bb[i].startTime().After(bb[j].startTime())
 		})
 	}
-	delegated := make([]Iterator, len(bb))
+	delegated := make([]Iterator, 0, len(bb))
+	var bTimes []time.Time
 	for _, b := range bb {
-		delegated = append(delegated, newSearcherIterator(b.
-			primaryIndexReader().
-			FieldIterator(
-				s.seriesSpan.seriesID.Marshal(),
-				s.order,
-			), b.dataReader(), s.seriesSpan.seriesID, filters))
+		bTimes = append(bTimes, b.startTime())
+		delegated = append(delegated, newSearcherIterator(
+			s.seriesSpan.l,
+			b.primaryIndexReader().
+				FieldIterator(
+					s.seriesSpan.seriesID.Marshal(),
+					s.order,
+				), b.dataReader(), s.seriesSpan.seriesID, filters))
 	}
+	s.seriesSpan.l.Debug().
+		Str("order", modelv2.QueryOrder_Sort_name[int32(s.order)]).
+		Times("blocks", bTimes).
+		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
+		Msg("seek series by time")
 	return []Iterator{newMergedIterator(delegated)}
 }
 
@@ -104,6 +107,7 @@ type searcherIterator struct {
 	data          kv.TimeSeriesReader
 	seriesID      common.SeriesID
 	filters       []filterFn
+	l             *logger.Logger
 }
 
 func (s *searcherIterator) Next() bool {
@@ -112,20 +116,22 @@ func (s *searcherIterator) Next() bool {
 			v := s.fieldIterator.Val()
 			s.cur = v.Value.Iterator()
 			s.curKey = v.Key
+			s.l.Trace().Hex("term_field", s.curKey).Msg("got a new field")
 		} else {
-			_ = s.Close()
 			return false
 		}
 	}
 	if s.cur.Next() {
+
 		for _, filter := range s.filters {
 			if !filter(s.Val()) {
+				s.l.Trace().Uint64("item_id", uint64(s.Val().ID())).Msg("ignore the item")
 				return s.Next()
 			}
 		}
+		s.l.Trace().Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
 		return true
 	}
-	_ = s.cur.Close()
 	s.cur = nil
 	return s.Next()
 }
@@ -143,12 +149,14 @@ func (s *searcherIterator) Close() error {
 	return s.fieldIterator.Close()
 }
 
-func newSearcherIterator(fieldIterator index.FieldIterator, data kv.TimeSeriesReader, seriesID common.SeriesID, filters []filterFn) Iterator {
+func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, data kv.TimeSeriesReader,
+	seriesID common.SeriesID, filters []filterFn) Iterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
 		data:          data,
 		seriesID:      seriesID,
 		filters:       filters,
+		l:             l,
 	}
 }
 
@@ -158,17 +166,12 @@ type mergedIterator struct {
 	curr      Iterator
 	index     int
 	delegated []Iterator
-	closed    bool
 }
 
 func (m *mergedIterator) Next() bool {
-	if m.closed {
-		return false
-	}
 	if m.curr == nil {
 		m.index++
 		if m.index >= len(m.delegated) {
-			_ = m.Close()
 			return false
 		} else {
 			m.curr = m.delegated[m.index]
@@ -176,7 +179,6 @@ func (m *mergedIterator) Next() bool {
 	}
 	hasNext := m.curr.Next()
 	if !hasNext {
-		_ = m.curr.Close()
 		m.curr = nil
 		return m.Next()
 	}
@@ -188,8 +190,11 @@ func (m *mergedIterator) Val() Item {
 }
 
 func (m *mergedIterator) Close() error {
-	m.closed = true
-	return nil
+	var err error
+	for _, d := range m.delegated {
+		err = multierr.Append(err, d.Close())
+	}
+	return err
 }
 
 func newMergedIterator(delegated []Iterator) Iterator {

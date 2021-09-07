@@ -37,6 +37,10 @@ type shard struct {
 	lst            []*segment
 }
 
+func (s *shard) ID() common.ShardID {
+	return s.id
+}
+
 func (s *shard) Series() SeriesDatabase {
 	return s.seriesDatabase
 }

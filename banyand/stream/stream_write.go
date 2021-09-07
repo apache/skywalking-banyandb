@@ -40,34 +40,34 @@ var (
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 )
 
-func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) error {
+func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*tsdb.GlobalItemID, error) {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
-		return errors.Wrap(ErrMalformedElement, "no tag family")
+		return nil, errors.Wrap(ErrMalformedElement, "no tag family")
 	}
 	if fLen > len(sm.TagFamilies) {
-		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
+		return nil, errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.db.Shard(shardID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	entity, err := s.buildEntity(value)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	series, err := shard.Series().Get(entity)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t := value.GetTimestamp().AsTime()
-	wp, err := series.Span(tsdb.NewTimeRange(t, 0))
+	wp, err := series.Span(tsdb.NewTimeRangeDuration(t, 0))
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
 		}
-		return err
+		return nil, err
 	}
 	writeFn := func() (tsdb.Writer, error) {
 		builder := wp.WriterBuilder().Time(t)
@@ -97,12 +97,18 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) err
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
+		s.l.Debug().
+			Time("ts", t).
+			Int("ts_nano", t.Nanosecond()).
+			Interface("data", value).
+			Uint64("series_id", uint64(series.ID())).
+			Msg("write stream")
 		return writer, errWrite
 	}
 	writer, err := writeFn()
 	if err != nil {
 		_ = wp.Close()
-		return err
+		return nil, err
 	}
 	m := indexMessage{
 		localWriter: writer,
@@ -117,7 +123,8 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) err
 		}()
 		s.indexCh <- m
 	}(m)
-	return err
+	itemID := writer.ItemID()
+	return &itemID, err
 }
 
 func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, err error) {
@@ -204,7 +211,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	sm := writeEvent.WriteRequest.GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement())
+	_, err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement())
 	if err != nil {
 		w.l.Debug().Err(err)
 	}

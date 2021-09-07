@@ -159,9 +159,10 @@ func (d dataBucket) marshal() []byte {
 	}, nil)
 }
 
-func (w *writer) Write() (id GlobalItemID, err error) {
+func (w *writer) Write() (GlobalItemID, error) {
+	id := w.ItemID()
 	for _, c := range w.columns {
-		err = w.block.write(dataBucket{
+		err := w.block.write(dataBucket{
 			seriesID: w.itemID.seriesID,
 			family:   c.family,
 		}.marshal(),

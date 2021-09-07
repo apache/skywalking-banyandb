@@ -19,6 +19,7 @@ package tsdb
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
@@ -70,9 +72,8 @@ func (i *GlobalItemID) UnMarshal(data []byte) error {
 }
 
 type TimeRange struct {
-	Start    time.Time
-	Duration time.Duration
-	End      time.Time
+	Start time.Time
+	End   time.Time
 }
 
 func (t TimeRange) contains(unixNano uint64) bool {
@@ -83,18 +84,24 @@ func (t TimeRange) contains(unixNano uint64) bool {
 	return tp.Equal(t.Start) || tp.After(t.Start)
 }
 
-func NewTimeRange(Start time.Time, Duration time.Duration) TimeRange {
+func NewTimeRange(Start, End time.Time) TimeRange {
 	return TimeRange{
-		Start:    Start,
-		Duration: Duration,
-		End:      Start.Add(Duration),
+		Start: Start,
+		End:   End,
+	}
+}
+
+func NewTimeRangeDuration(Start time.Time, Duration time.Duration) TimeRange {
+	return TimeRange{
+		Start: Start,
+		End:   Start.Add(Duration),
 	}
 }
 
 type Series interface {
 	ID() common.SeriesID
 	Span(timeRange TimeRange) (SeriesSpan, error)
-	Get(id GlobalItemID) (Item, error)
+	Get(id GlobalItemID) (Item, io.Closer, error)
 }
 
 type SeriesSpan interface {
@@ -109,18 +116,16 @@ type series struct {
 	id      common.SeriesID
 	blockDB blockDatabase
 	shardID common.ShardID
+	l       *logger.Logger
 }
 
-func (s *series) Get(id GlobalItemID) (Item, error) {
-	panic("implement me")
-}
-
-func newSeries(id common.SeriesID, blockDB blockDatabase) *series {
-	return &series{
-		id:      id,
-		blockDB: blockDB,
-		shardID: blockDB.shardID(),
-	}
+func (s *series) Get(id GlobalItemID) (Item, io.Closer, error) {
+	b := s.blockDB.block(id)
+	return &item{
+		data:     b.dataReader(),
+		itemID:   id.id,
+		seriesID: s.id,
+	}, b, nil
 }
 
 func (s *series) ID() common.SeriesID {
@@ -132,7 +137,25 @@ func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
 	}
-	return newSeriesSpan(timeRange, blocks, s.id, s.shardID), nil
+	s.l.Debug().
+		Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
+		Msg("select series span")
+	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), timeRange, blocks, s.id, s.shardID), nil
+}
+
+func newSeries(ctx context.Context, id common.SeriesID, blockDB blockDatabase) *series {
+	s := &series{
+		id:      id,
+		blockDB: blockDB,
+		shardID: blockDB.shardID(),
+	}
+	parentLogger := ctx.Value(logger.ContextKey)
+	if pl, ok := parentLogger.(*logger.Logger); ok {
+		s.l = pl.Named("series")
+	} else {
+		s.l = logger.GetLogger("series")
+	}
+	return s
 }
 
 var _ SeriesSpan = (*seriesSpan)(nil)
@@ -142,6 +165,7 @@ type seriesSpan struct {
 	seriesID  common.SeriesID
 	shardID   common.ShardID
 	timeRange TimeRange
+	l         *logger.Logger
 }
 
 func (s *seriesSpan) Close() (err error) {
@@ -159,12 +183,18 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(timeRange TimeRange, blocks []blockDelegate,
-	id common.SeriesID, shardID common.ShardID) *seriesSpan {
-	return &seriesSpan{
+func newSeriesSpan(ctx context.Context, timeRange TimeRange, blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,
 		shardID:   shardID,
 		timeRange: timeRange,
 	}
+	parentLogger := ctx.Value(logger.ContextKey)
+	if pl, ok := parentLogger.(*logger.Logger); ok {
+		s.l = pl.Named("series_span")
+	} else {
+		s.l = logger.GetLogger("series_span")
+	}
+	return s
 }

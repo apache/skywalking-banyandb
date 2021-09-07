@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
@@ -109,7 +108,7 @@ type Iterator interface {
 	Rewind()
 	Seek(key []byte)
 	Key() []byte
-	Val() posting.List
+	Val() []byte
 	Valid() bool
 	Close() error
 }

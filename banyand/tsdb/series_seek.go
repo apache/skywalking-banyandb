@@ -63,15 +63,20 @@ type seekerBuilder struct {
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
+	if s.order == modelv2.QueryOrder_SORT_UNSPECIFIED {
+		s.order = modelv2.QueryOrder_SORT_DESC
+	}
 	indexFilter, err := s.buildIndexFilter()
 	if err != nil {
 		return nil, err
 	}
 	filters := []filterFn{
-		indexFilter,
 		func(item Item) bool {
 			return s.seriesSpan.timeRange.contains(item.Time())
 		},
+	}
+	if indexFilter != nil {
+		filters = append(filters, indexFilter)
 	}
 	return newSeeker(s.buildSeries(filters)), nil
 }

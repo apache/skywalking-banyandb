@@ -41,6 +41,14 @@ type Entry []byte
 
 type Entity []Entry
 
+func (e Entity) Marshal() []byte {
+	data := make([][]byte, len(e))
+	for i, entry := range e {
+		data[i] = entry
+	}
+	return bytes.Join(data, nil)
+}
+
 type Path struct {
 	prefix   []byte
 	mask     []byte
@@ -86,6 +94,7 @@ type SeriesDatabase interface {
 type blockDatabase interface {
 	shardID() common.ShardID
 	span(timeRange TimeRange) []blockDelegate
+	block(id GlobalItemID) blockDelegate
 }
 
 var _ SeriesDatabase = (*seriesDB)(nil)
@@ -100,6 +109,10 @@ type seriesDB struct {
 	sID            common.ShardID
 }
 
+func (s *seriesDB) block(id GlobalItemID) blockDelegate {
+	return s.lst[id.segID].lst[id.blockID].delegate()
+}
+
 func (s *seriesDB) shardID() common.ShardID {
 	return s.sID
 }
@@ -111,7 +124,7 @@ func (s *seriesDB) Get(entity Entity) (Series, error) {
 		return nil, err
 	}
 	if err == nil {
-		return newSeries(bytesConvSeriesID(seriesID), s), nil
+		return newSeries(s.context(), bytesConvSeriesID(seriesID), s), nil
 	}
 	s.Lock()
 	defer s.Unlock()
@@ -120,7 +133,7 @@ func (s *seriesDB) Get(entity Entity) (Series, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSeries(bytesConvSeriesID(seriesID), s), nil
+	return newSeries(s.context(), bytesConvSeriesID(seriesID), s), nil
 }
 
 func (s *seriesDB) List(path Path) (SeriesList, error) {
@@ -130,8 +143,14 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 			return nil, err
 		}
 		if err == nil {
-			return []Series{newSeries(bytesConvSeriesID(id), s)}, nil
+			seriesID := bytesConvSeriesID(id)
+			s.l.Debug().
+				Hex("path", path.prefix).
+				Uint64("series_id", uint64(seriesID)).
+				Msg("got a series")
+			return []Series{newSeries(s.context(), seriesID, s)}, nil
 		}
+		s.l.Debug().Hex("path", path.prefix).Msg("doesn't get any series")
 		return nil, nil
 	}
 	result := make([]Series, 0)
@@ -147,7 +166,12 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 				err = multierr.Append(err, errGetVal)
 				return nil
 			}
-			result = append(result, newSeries(common.SeriesID(convert.BytesToUint64(id)), s))
+			seriesID := bytesConvSeriesID(id)
+			s.l.Debug().
+				Hex("path", path.prefix).
+				Uint64("series_id", uint64(seriesID)).
+				Msg("got a series")
+			result = append(result, newSeries(s.context(), seriesID, s))
 		}
 		return nil
 	})
@@ -164,6 +188,10 @@ func (s *seriesDB) span(_ TimeRange) []blockDelegate {
 		result = append(result, b.delegate())
 	}
 	return result
+}
+
+func (s *seriesDB) context() context.Context {
+	return context.WithValue(context.Background(), logger.ContextKey, s.l)
 }
 
 func (s *seriesDB) Close() error {
@@ -183,7 +211,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		return nil, logger.ErrNoLoggerInContext
 	}
 	if pl, ok := parentLogger.(*logger.Logger); ok {
-		sdb.l = pl.Named("seriesSpan")
+		sdb.l = pl.Named("series_database")
 	}
 	var err error
 	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))

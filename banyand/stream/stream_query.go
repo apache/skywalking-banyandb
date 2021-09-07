@@ -18,8 +18,6 @@
 package stream
 
 import (
-	"bytes"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 
@@ -41,37 +39,22 @@ type Query interface {
 	Stream(stream *commonv2.Metadata) (Stream, error)
 }
 
-type EqualCondition struct {
-	tag   string
-	value []byte
-}
-
 type Stream interface {
-	Shards(equalConditions []EqualCondition) ([]tsdb.Shard, error)
+	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 }
 
 var _ Stream = (*stream)(nil)
 
-func (s *stream) Shards(equalConditions []EqualCondition) ([]tsdb.Shard, error) {
-	entityItemLen := len(s.entityIndex)
-	entityItems := make([][]byte, entityItemLen)
-	var entityCount int
-	for _, ec := range equalConditions {
-		fi, ti, tag := s.findTagByName(ec.tag)
-		if tag == nil {
-			return nil, ErrTagNotExist
-		}
-		for i, eIndex := range s.entityIndex {
-			if eIndex.family == fi && eIndex.tag == ti {
-				entityItems[i] = ec.value
-				entityCount++
-			}
-		}
-	}
-	if entityCount < entityItemLen {
+func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
+	if len(entity) < 1 {
 		return s.db.Shards(), nil
 	}
-	shardID, err := partition.ShardID(bytes.Join(entityItems, nil), s.schema.GetShardNum())
+	for _, e := range entity {
+		if e == nil {
+			return s.db.Shards(), nil
+		}
+	}
+	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetShardNum())
 	if err != nil {
 		return nil, err
 	}

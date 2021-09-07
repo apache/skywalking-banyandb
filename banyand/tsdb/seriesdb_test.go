@@ -338,7 +338,7 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 }
 
 func newMockSeries(id common.SeriesID) *series {
-	return newSeries(id, nil)
+	return newSeries(nil, id, nil)
 }
 
 func transform(list SeriesList) (seriesIDs []common.SeriesID) {

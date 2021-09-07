@@ -197,7 +197,7 @@ func Test_Stream_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.write(common.ShardID(tt.args.shardID), tt.args.ele)
+			_, err := s.write(common.ShardID(tt.args.shardID), tt.args.ele)
 			if tt.wantErr {
 				tester.Error(err)
 				return

@@ -44,6 +44,9 @@ func (s *seekerBuilder) Filter(indexRule *databasev2.IndexRule, condition Condit
 }
 
 func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
+	if len(s.conditions) < 1 {
+		return nil, nil
+	}
 	var treeIndexCondition, invertedIndexCondition []index.Condition
 	for _, condition := range s.conditions {
 		if len(condition.condition) > 1 {

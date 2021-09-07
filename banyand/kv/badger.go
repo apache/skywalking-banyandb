@@ -27,7 +27,9 @@ import (
 	"github.com/dgraph-io/badger/v3/y"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -196,15 +198,11 @@ func (i *iterator) Seek(key []byte) {
 }
 
 func (i *iterator) Key() []byte {
-	return i.delegated.Key()
+	return y.ParseKey(i.delegated.Key())
 }
 
-func (i *iterator) Val() posting.List {
-	list := roaring.NewPostingList()
-	data := make([]byte, len(i.delegated.Value().Value))
-	copy(data, i.delegated.Value().Value)
-	_ = list.Unmarshall(data)
-	return list
+func (i *iterator) Val() []byte {
+	return y.Copy(i.delegated.Value().Value)
 }
 
 func (i *iterator) Valid() bool {
@@ -286,22 +284,30 @@ var _ index.FieldIterator = (*fIterator)(nil)
 type fIterator struct {
 	init     bool
 	delegate Iterator
+	curr     *index.PostingValue
 }
 
 func (f *fIterator) Next() bool {
-	if f.init {
-		f.delegate.Next()
-	} else {
+	if !f.init {
 		f.init = true
+		f.delegate.Rewind()
 	}
-	return f.delegate.Valid()
+	if !f.delegate.Valid() {
+		return false
+	}
+	pv := &index.PostingValue{
+		Key:   f.delegate.Key(),
+		Value: roaring.NewPostingListWithInitialData(convert.BytesToUint64(f.delegate.Val())),
+	}
+	for ; f.delegate.Valid() && bytes.Equal(pv.Key, f.delegate.Key()); f.delegate.Next() {
+		pv.Value.Insert(common.ItemID(convert.BytesToUint64(f.delegate.Val())))
+	}
+	f.curr = pv
+	return true
 }
 
 func (f *fIterator) Val() *index.PostingValue {
-	return &index.PostingValue{
-		Key:   f.delegate.Key(),
-		Value: f.delegate.Val(),
-	}
+	return f.curr
 }
 
 func (f *fIterator) Close() error {

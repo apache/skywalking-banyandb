@@ -60,6 +60,7 @@ type Database interface {
 
 type Shard interface {
 	io.Closer
+	ID() common.ShardID
 	Series() SeriesDatabase
 	Index() IndexDatabase
 }
