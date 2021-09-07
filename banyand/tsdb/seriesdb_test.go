@@ -185,7 +185,7 @@ func Test_SeriesDatabase_Get(t *testing.T) {
 			for _, entity := range tt.entities {
 				series, err := s.Get(entity)
 				tester.NoError(err)
-				tester.Equal(hashEntity(entity), series.ID())
+				tester.Greater(uint(series.ID()), uint(0))
 			}
 		})
 	}
@@ -216,7 +216,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(0),
 			}),
 			want: SeriesList{
-				newMockSeries(data[0].id),
+				newMockSeries(data[0].id, s.(*seriesDB)),
 			},
 		},
 		{
@@ -227,8 +227,8 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				AnyEntry,
 			}),
 			want: SeriesList{
-				newMockSeries(data[1].id),
-				newMockSeries(data[2].id),
+				newMockSeries(data[1].id, s.(*seriesDB)),
+				newMockSeries(data[2].id, s.(*seriesDB)),
 			},
 		},
 		{
@@ -239,10 +239,10 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				AnyEntry,
 			}),
 			want: SeriesList{
-				newMockSeries(data[0].id),
-				newMockSeries(data[1].id),
-				newMockSeries(data[2].id),
-				newMockSeries(data[3].id),
+				newMockSeries(data[0].id, s.(*seriesDB)),
+				newMockSeries(data[1].id, s.(*seriesDB)),
+				newMockSeries(data[2].id, s.(*seriesDB)),
+				newMockSeries(data[3].id, s.(*seriesDB)),
 			},
 		},
 		{
@@ -253,9 +253,9 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(0),
 			}),
 			want: SeriesList{
-				newMockSeries(data[0].id),
-				newMockSeries(data[1].id),
-				newMockSeries(data[3].id),
+				newMockSeries(data[0].id, s.(*seriesDB)),
+				newMockSeries(data[1].id, s.(*seriesDB)),
+				newMockSeries(data[3].id, s.(*seriesDB)),
 			},
 		},
 		{
@@ -266,8 +266,8 @@ func Test_SeriesDatabase_List(t *testing.T) {
 				convert.Uint64ToBytes(1),
 			}),
 			want: SeriesList{
-				newMockSeries(data[2].id),
-				newMockSeries(data[4].id),
+				newMockSeries(data[2].id, s.(*seriesDB)),
+				newMockSeries(data[4].id, s.(*seriesDB)),
 			},
 		},
 	}
@@ -332,13 +332,13 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 		d.id = common.SeriesID(convert.BytesToUint64(hash(hashEntity(d.entity))))
 		series, err := db.Get(d.entity)
 		t.NoError(err)
-		t.Equal(hashEntity(d.entity), series.ID())
+		t.Greater(uint(series.ID()), uint(0))
 	}
 	return data
 }
 
-func newMockSeries(id common.SeriesID) *series {
-	return newSeries(context.TODO(), id, nil)
+func newMockSeries(id common.SeriesID, blockDB *seriesDB) *series {
+	return newSeries(context.TODO(), id, blockDB)
 }
 
 func transform(list SeriesList) (seriesIDs []common.SeriesID) {

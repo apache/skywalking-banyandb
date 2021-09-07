@@ -39,7 +39,7 @@ func TestOpenDatabase(t *testing.T) {
 	seriesPath := fmt.Sprintf(seriesTemplate, shardPath)
 	validateDirectory(tester, seriesPath)
 	now := time.Now()
-	segPath := fmt.Sprintf(segTemplate, seriesPath, now.Format(segFormat))
+	segPath := fmt.Sprintf(segTemplate, shardPath, now.Format(segFormat))
 	validateDirectory(tester, segPath)
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
 }

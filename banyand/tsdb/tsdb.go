@@ -36,7 +36,7 @@ import (
 
 const (
 	shardTemplate       = "%s/shard-%d"
-	seriesTemplate      = "%s/seriesSpan"
+	seriesTemplate      = "%s/series"
 	segTemplate         = "%s/seg-%s"
 	blockTemplate       = "%s/block-%s"
 	globalIndexTemplate = "%s/index"
