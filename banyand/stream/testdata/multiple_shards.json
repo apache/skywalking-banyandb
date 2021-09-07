@@ -16,7 +16,7 @@
       {"int":{"value": 0}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.3_id"}},
-      {"str":{"value": "/home_id"}},
+      {"str":{"value": "/product_id"}},
       {"int":{"value": 500}},
       {"int":{"value": 1622933202000000000}}
     ]
@@ -40,7 +40,7 @@
       {"int":{"value": 1}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.5_id"}},
-      {"str":{"value": "/home_id"}},
+      {"str":{"value": "/price_id"}},
       {"int":{"value": 60}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
@@ -53,7 +53,7 @@
       {"int":{"value": 1}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.1_id"}},
-      {"str":{"value": "/home_id"}},
+      {"str":{"value": "/item_id"}},
       {"int":{"value": 300}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},

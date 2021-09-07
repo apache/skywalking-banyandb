@@ -37,37 +37,37 @@ var (
 )
 
 type GlobalItemID struct {
-	shardID  common.ShardID
+	ShardID  common.ShardID
 	segID    uint16
 	blockID  uint16
-	seriesID common.SeriesID
-	id       common.ItemID
+	SeriesID common.SeriesID
+	ID       common.ItemID
 }
 
 func (i *GlobalItemID) Marshal() []byte {
 	return bytes.Join([][]byte{
-		convert.Uint32ToBytes(uint32(i.shardID)),
+		convert.Uint32ToBytes(uint32(i.ShardID)),
 		convert.Uint16ToBytes(i.segID),
 		convert.Uint16ToBytes(i.blockID),
-		convert.Uint64ToBytes(uint64(i.seriesID)),
-		convert.Uint64ToBytes(uint64(i.id)),
+		convert.Uint64ToBytes(uint64(i.SeriesID)),
+		convert.Uint64ToBytes(uint64(i.ID)),
 	}, nil)
 }
 
 func (i *GlobalItemID) UnMarshal(data []byte) error {
-	if len(data) <= 32+16+16+64+64 {
+	if len(data) != 4+2+2+8+8 {
 		return ErrItemIDMalformed
 	}
 	var offset int
-	i.shardID = common.ShardID(convert.BytesToUint32(data[offset : offset+4]))
+	i.ShardID = common.ShardID(convert.BytesToUint32(data[offset : offset+4]))
 	offset += 4
 	i.segID = convert.BytesToUint16(data[offset : offset+2])
 	offset += 2
 	i.blockID = convert.BytesToUint16(data[offset : offset+2])
 	offset += 2
-	i.seriesID = common.SeriesID(convert.BytesToUint64(data[offset : offset+8]))
+	i.SeriesID = common.SeriesID(convert.BytesToUint64(data[offset : offset+8]))
 	offset += 8
-	i.id = common.ItemID(convert.BytesToUint64(data[offset:]))
+	i.ID = common.ItemID(convert.BytesToUint64(data[offset:]))
 	return nil
 }
 
@@ -123,7 +123,7 @@ func (s *series) Get(id GlobalItemID) (Item, io.Closer, error) {
 	b := s.blockDB.block(id)
 	return &item{
 		data:     b.dataReader(),
-		itemID:   id.id,
+		itemID:   id.ID,
 		seriesID: s.id,
 	}, b, nil
 }

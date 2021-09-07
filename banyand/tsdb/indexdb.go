@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
@@ -54,7 +55,7 @@ type indexDB struct {
 }
 
 func (i *indexDB) Seek(term index.Field) ([]GlobalItemID, error) {
-	var result []GlobalItemID
+	result := make([]GlobalItemID, 0)
 	err := i.lst[0].globalIndex.GetAll(term.Marshal(), func(rawBytes []byte) error {
 		id := &GlobalItemID{}
 		err := id.UnMarshal(rawBytes)
@@ -64,6 +65,9 @@ func (i *indexDB) Seek(term index.Field) ([]GlobalItemID, error) {
 		result = append(result, *id)
 		return nil
 	})
+	if err == kv.ErrKeyNotFound {
+		return result, nil
+	}
 	return result, err
 }
 

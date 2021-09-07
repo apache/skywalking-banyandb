@@ -41,6 +41,7 @@ type Query interface {
 
 type Stream interface {
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+	Shard(id common.ShardID) (tsdb.Shard, error)
 }
 
 var _ Stream = (*stream)(nil)
@@ -63,6 +64,10 @@ func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 		return nil, err
 	}
 	return []tsdb.Shard{shard}, nil
+}
+
+func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
+	return s.db.Shard(id)
 }
 
 func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFamily, error) {

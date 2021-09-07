@@ -96,11 +96,11 @@ func (w *writerBuilder) Build() (Writer, error) {
 		block: w.block,
 		ts:    w.ts,
 		itemID: &GlobalItemID{
-			shardID:  w.series.shardID,
+			ShardID:  w.series.shardID,
 			segID:    segID,
 			blockID:  blockID,
-			seriesID: w.series.seriesID,
-			id:       common.ItemID(uint64(w.ts.UnixNano())),
+			SeriesID: w.series.seriesID,
+			ID:       common.ItemID(uint64(w.ts.UnixNano())),
 		},
 		columns: w.values,
 	}, nil
@@ -131,20 +131,20 @@ func (w *writer) ItemID() GlobalItemID {
 
 func (w *writer) WriteLSMIndex(field index.Field) error {
 	t := index.Term{
-		SeriesID:  w.itemID.seriesID,
+		SeriesID:  w.itemID.SeriesID,
 		IndexRule: string(field.Term),
 	}
 	field.Term = t.Marshal()
-	return w.block.writeLSMIndex(field, w.itemID.id)
+	return w.block.writeLSMIndex(field, w.itemID.ID)
 }
 
 func (w *writer) WriteInvertedIndex(field index.Field) error {
 	t := index.Term{
-		SeriesID:  w.itemID.seriesID,
+		SeriesID:  w.itemID.SeriesID,
 		IndexRule: string(field.Term),
 	}
 	field.Term = t.Marshal()
-	return w.block.writeInvertedIndex(field, w.itemID.id)
+	return w.block.writeInvertedIndex(field, w.itemID.ID)
 }
 
 type dataBucket struct {
@@ -163,7 +163,7 @@ func (w *writer) Write() (GlobalItemID, error) {
 	id := w.ItemID()
 	for _, c := range w.columns {
 		err := w.block.write(dataBucket{
-			seriesID: w.itemID.seriesID,
+			seriesID: w.itemID.SeriesID,
 			family:   c.family,
 		}.marshal(),
 			c.val, w.ts)
@@ -172,7 +172,7 @@ func (w *writer) Write() (GlobalItemID, error) {
 		}
 	}
 	return id, w.block.writePrimaryIndex(index.Field{
-		Term:  id.seriesID.Marshal(),
+		Term:  id.SeriesID.Marshal(),
 		Value: convert.Int64ToBytes(w.ts.UnixNano()),
-	}, id.id)
+	}, id.ID)
 }

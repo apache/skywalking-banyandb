@@ -87,6 +87,7 @@ func NewPath(entries []Entry) Path {
 
 type SeriesDatabase interface {
 	io.Closer
+	GetByID(id common.SeriesID) (Series, error)
 	Get(entity Entity) (Series, error)
 	List(path Path) (SeriesList, error)
 }
@@ -107,6 +108,10 @@ type seriesDB struct {
 	lst            []*segment
 	seriesMetadata kv.Store
 	sID            common.ShardID
+}
+
+func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
+	return newSeries(s.context(), id, s), nil
 }
 
 func (s *seriesDB) block(id GlobalItemID) blockDelegate {

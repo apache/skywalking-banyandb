@@ -41,19 +41,9 @@ type MemTable struct {
 
 func NewMemTable(name string) *MemTable {
 	return &MemTable{
-		name: name,
+		name:  name,
+		terms: newFieldMap(1000),
 	}
-}
-
-func (m *MemTable) Initialize(fields []index.FieldSpec) error {
-	if len(fields) < 1 {
-		return ErrFieldsAbsent
-	}
-	m.terms = newFieldMap(len(fields))
-	for _, f := range fields {
-		m.terms.createKey([]byte(f.Name))
-	}
-	return nil
 }
 
 func (m *MemTable) Insert(field index.Field, chunkID common.ItemID) error {

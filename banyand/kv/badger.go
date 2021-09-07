@@ -255,6 +255,9 @@ func (b *badgerDB) GetAll(key []byte, applyFn func([]byte) error) error {
 	iter := b.db.NewIterator(badger.DefaultIteratorOptions)
 	var count int
 	for iter.Seek(key); iter.Valid(); iter.Next() {
+		if !bytes.Equal(y.ParseKey(iter.Key()), key) {
+			break
+		}
 		count++
 		err := applyFn(y.Copy(iter.Value().Value))
 		if err != nil {

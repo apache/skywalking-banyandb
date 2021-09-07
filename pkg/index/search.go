@@ -268,7 +268,7 @@ type not struct {
 }
 
 func (n *not) Execute() (posting.List, error) {
-	all := n.searcher.MatchField([]byte(n.Key))
+	all := n.searcher.MatchField(n.Key)
 	list, err := n.Inner.Execute()
 	if err != nil {
 		return nil, err
@@ -289,7 +289,7 @@ type eq struct {
 
 func (eq *eq) Execute() (posting.List, error) {
 	return eq.searcher.MatchTerms(Field{
-		Term:  []byte(eq.Key),
+		Term:  eq.Key,
 		Value: bytes.Join(eq.Values, nil),
 	}), nil
 }

@@ -53,13 +53,19 @@ func (s *seekerBuilder) buildSeries(filters []filterFn) []Iterator {
 
 func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator) {
 	for _, b := range s.seriesSpan.blocks {
+		var inner index.FieldIterator
+		term := index.Term{
+			SeriesID:  s.seriesSpan.seriesID,
+			IndexRule: s.indexRuleForSorting.GetMetadata().GetName(),
+		}
 		switch s.indexRuleForSorting.GetType() {
 		case databasev2.IndexRule_TYPE_TREE:
-			series = append(series, newSearcherIterator(s.seriesSpan.l, b.lsmIndexReader().
-				FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order), b.dataReader(), s.seriesSpan.seriesID, filters))
+			inner = b.lsmIndexReader().FieldIterator(term.Marshal(), s.order)
 		case databasev2.IndexRule_TYPE_INVERTED:
-			series = append(series, newSearcherIterator(s.seriesSpan.l, b.invertedIndexReader().
-				FieldIterator([]byte(s.indexRuleForSorting.GetMetadata().GetName()), s.order), b.dataReader(), s.seriesSpan.seriesID, filters))
+			inner = b.invertedIndexReader().FieldIterator(term.Marshal(), s.order)
+		}
+		if inner != nil {
+			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, filters))
 		}
 	}
 	return
@@ -79,16 +85,17 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
 		})
 	}
 	delegated := make([]Iterator, 0, len(bb))
-	var bTimes []time.Time
+	bTimes := make([]time.Time, 0, len(bb))
 	for _, b := range bb {
 		bTimes = append(bTimes, b.startTime())
-		delegated = append(delegated, newSearcherIterator(
-			s.seriesSpan.l,
-			b.primaryIndexReader().
-				FieldIterator(
-					s.seriesSpan.seriesID.Marshal(),
-					s.order,
-				), b.dataReader(), s.seriesSpan.seriesID, filters))
+		inner := b.primaryIndexReader().
+			FieldIterator(
+				s.seriesSpan.seriesID.Marshal(),
+				s.order,
+			)
+		if inner != nil {
+			delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, filters))
+		}
 	}
 	s.seriesSpan.l.Debug().
 		Str("order", modelv2.QueryOrder_Sort_name[int32(s.order)]).
@@ -116,7 +123,7 @@ func (s *searcherIterator) Next() bool {
 			v := s.fieldIterator.Val()
 			s.cur = v.Value.Iterator()
 			s.curKey = v.Key
-			s.l.Trace().Hex("term_field", s.curKey).Msg("got a new field")
+			s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Hex("term_field", s.curKey).Msg("got a new field")
 		} else {
 			return false
 		}
@@ -125,11 +132,11 @@ func (s *searcherIterator) Next() bool {
 
 		for _, filter := range s.filters {
 			if !filter(s.Val()) {
-				s.l.Trace().Uint64("item_id", uint64(s.Val().ID())).Msg("ignore the item")
+				s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("ignore the item")
 				return s.Next()
 			}
 		}
-		s.l.Trace().Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
+		s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
 		return true
 	}
 	s.cur = nil
@@ -173,9 +180,8 @@ func (m *mergedIterator) Next() bool {
 		m.index++
 		if m.index >= len(m.delegated) {
 			return false
-		} else {
-			m.curr = m.delegated[m.index]
 		}
+		m.curr = m.delegated[m.index]
 	}
 	hasNext := m.curr.Next()
 	if !hasNext {

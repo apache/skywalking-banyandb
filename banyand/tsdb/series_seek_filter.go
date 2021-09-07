@@ -53,7 +53,7 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 			//TODO:// should support composite index rule
 			return nil, ErrUnsupportedIndexRule
 		}
-		var cond index.Condition
+		cond := make(index.Condition)
 		term := index.Term{
 			SeriesID:  s.seriesSpan.seriesID,
 			IndexRule: condition.indexRule,
@@ -100,7 +100,9 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 		}
 	}
 	return func(item Item) bool {
-		return allItemIDs.Contains(item.ID())
+		valid := allItemIDs.Contains(item.ID())
+		s.seriesSpan.l.Trace().Int("valid_item_num", allItemIDs.Len()).Bool("valid", valid).Msg("filter item by index")
+		return valid
 	}, nil
 }
 

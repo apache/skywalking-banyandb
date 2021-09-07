@@ -24,7 +24,6 @@ import (
 
 type GlobalStore interface {
 	Searcher() index.Searcher
-	Initialize(fields []index.FieldSpec) error
 	Insert(field index.Field, docID common.ItemID) error
 }
 
@@ -35,10 +34,6 @@ type store struct {
 
 func (s *store) Searcher() index.Searcher {
 	return s.memTable
-}
-
-func (s *store) Initialize(fields []index.FieldSpec) error {
-	return s.memTable.Initialize(fields)
 }
 
 func (s *store) Insert(field index.Field, chunkID common.ItemID) error {

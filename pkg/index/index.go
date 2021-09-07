@@ -33,10 +33,6 @@ func (f Field) Marshal() []byte {
 	return bytes.Join([][]byte{f.Term, f.Value}, nil)
 }
 
-type FieldSpec struct {
-	Name string
-}
-
 type RangeOpts struct {
 	Upper         []byte
 	Lower         []byte

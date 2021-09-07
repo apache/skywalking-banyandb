@@ -24,22 +24,35 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
+	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
+
+type shardStruct struct {
+	id       common.ShardID
+	location []string
+	elements []string
+}
+
+type shardsForTest []shardStruct
 
 func Test_Stream_SelectShard(t *testing.T) {
 	tester := assert.New(t)
@@ -87,86 +100,184 @@ func Test_Stream_Series(t *testing.T) {
 	s, deferFunc := setup(tester)
 	defer deferFunc()
 	baseTime := setupQueryData(tester, "multiple_shards.json", s)
-	type args struct {
-		entity tsdb.Entity
-	}
-	type shardStruct struct {
-		id       common.ShardID
-		location []string
-		elements []string
-	}
-	type want struct {
-		shards []shardStruct
-	}
-
 	tests := []struct {
 		name    string
-		args    args
-		want    want
+		args    queryOpts
+		want    shardsForTest
 		wantErr bool
 	}{
 		{
 			name: "all",
-			args: args{
-				entity: tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 			},
-			want: want{
-				shards: []shardStruct{
-					{
-						id:       0,
-						location: []string{"series_12243341348514563931", "data_flow_0"},
-						elements: []string{"1"},
-					},
-					{
-						id:       0,
-						location: []string{"series_1671844747554927007", "data_flow_0"},
-						elements: []string{"2"},
-					},
-					{
-						id:       1,
-						location: []string{"series_2374367181827824198", "data_flow_0"},
-						elements: []string{"5", "3"},
-					},
-					{
-						id:       1,
-						location: []string{"series_8429137420168685297", "data_flow_0"},
-						elements: []string{"4"},
-					},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_12243341348514563931", "data_flow_0"},
+					elements: []string{"1"},
+				},
+				{
+					id:       0,
+					location: []string{"series_1671844747554927007", "data_flow_0"},
+					elements: []string{"2"},
+				},
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"5", "3"},
+				},
+				{
+					id:       1,
+					location: []string{"series_8429137420168685297", "data_flow_0"},
+					elements: []string{"4"},
+				},
+			},
+		},
+
+		{
+			name: "time range",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime.Add(1500*time.Millisecond), 1*time.Hour),
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_12243341348514563931", "data_flow_0"},
+				},
+				{
+					id:       0,
+					location: []string{"series_1671844747554927007", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"5"},
+				},
+				{
+					id:       1,
+					location: []string{"series_8429137420168685297", "data_flow_0"},
+					elements: []string{"4"},
 				},
 			},
 		},
 		{
 			name: "find series by service_id and instance_id",
-			args: args{
-				entity: tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.AnyEntry},
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 			},
-			want: want{
-				shards: []shardStruct{
-					{
-						id:       0,
-						location: []string{"series_12243341348514563931", "data_flow_0"},
-						elements: []string{"1"},
-					},
-					{
-						id:       1,
-						location: []string{"series_2374367181827824198", "data_flow_0"},
-						elements: []string{"5", "3"},
-					},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_12243341348514563931", "data_flow_0"},
+					elements: []string{"1"},
+				},
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"5", "3"},
 				},
 			},
 		},
 		{
 			name: "find a series",
-			args: args{
-				entity: tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Uint64ToBytes(1)},
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Uint64ToBytes(1)},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 			},
-			want: want{
-				shards: []shardStruct{
-					{
-						id:       1,
-						location: []string{"series_2374367181827824198", "data_flow_0"},
-						elements: []string{"5", "3"},
-					},
+			want: shardsForTest{
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"5", "3"},
+				},
+			},
+		},
+		{
+			name: "filter",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					builder.Filter(&databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "endpoint_id",
+							Group: "default",
+						},
+						Tags:     []string{"endpoint_id"},
+						Type:     databasev2.IndexRule_TYPE_INVERTED,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}, tsdb.Condition{
+						"endpoint_id": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Values: [][]byte{[]byte("/home_id")},
+							},
+						},
+					})
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_12243341348514563931", "data_flow_0"},
+					elements: []string{"1"},
+				},
+				{
+					id:       0,
+					location: []string{"series_1671844747554927007", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"3"},
+				},
+				{
+					id:       1,
+					location: []string{"series_8429137420168685297", "data_flow_0"},
+				},
+			},
+		},
+		{
+			name: "order by duration",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					builder.OrderByIndex(&databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "duration",
+							Group: "default",
+						},
+						Tags:     []string{"duration"},
+						Type:     databasev2.IndexRule_TYPE_TREE,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}, modelv2.QueryOrder_SORT_ASC)
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_12243341348514563931", "data_flow_0"},
+					elements: []string{"1"},
+				},
+				{
+					id:       0,
+					location: []string{"series_1671844747554927007", "data_flow_0"},
+					elements: []string{"2"},
+				},
+				{
+					id:       1,
+					location: []string{"series_2374367181827824198", "data_flow_0"},
+					elements: []string{"3", "5"},
+				},
+				{
+					id:       1,
+					location: []string{"series_8429137420168685297", "data_flow_0"},
+					elements: []string{"4"},
 				},
 			},
 		},
@@ -174,59 +285,15 @@ func Test_Stream_Series(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shards, err := s.Shards(tt.args.entity)
-			tester.NoError(err)
-			got := want{
-				shards: []shardStruct{},
-			}
-
-			for _, shard := range shards {
-				seriesList, err := shard.Series().List(tsdb.NewPath(tt.args.entity))
-				tester.NoError(err)
-				for _, series := range seriesList {
-					func(g *want) {
-						sp, err := series.Span(tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour))
-						defer func(sp tsdb.SeriesSpan) {
-							_ = sp.Close()
-						}(sp)
-						tester.NoError(err)
-						seeker, err := sp.SeekerBuilder().Build()
-						tester.NoError(err)
-						iter, err := seeker.Seek()
-						tester.NoError(err)
-						for dataFlowID, iterator := range iter {
-							var elements []string
-							for iterator.Next() {
-								tagFamily, err := s.ParseTagFamily("searchable", iterator.Val())
-								tester.NoError(err)
-								for _, tag := range tagFamily.GetTags() {
-									if tag.GetKey() == "trace_id" {
-										elements = append(elements, tag.GetValue().GetStr().GetValue())
-									}
-								}
-							}
-							_ = iterator.Close()
-							g.shards = append(g.shards, shardStruct{
-								id: shard.ID(),
-								location: []string{
-									fmt.Sprintf("series_%v", series.ID()),
-									"data_flow_" + strconv.Itoa(dataFlowID),
-								},
-								elements: elements,
-							})
-						}
-
-					}(&got)
-				}
-			}
+			got, err := queryData(tester, s, tt.args)
 			if tt.wantErr {
 				tester.Error(err)
 				return
 			}
 			tester.NoError(err)
-			sort.SliceStable(got.shards, func(i, j int) bool {
-				a := got.shards[i]
-				b := got.shards[j]
+			sort.SliceStable(got, func(i, j int) bool {
+				a := got[i]
+				b := got[j]
 				if a.id > b.id {
 					return false
 				}
@@ -242,6 +309,169 @@ func Test_Stream_Series(t *testing.T) {
 		})
 	}
 
+}
+
+func Test_Stream_Global_Index(t *testing.T) {
+	tester := assert.New(t)
+	s, deferFunc := setup(tester)
+	defer deferFunc()
+	_ = setupQueryData(tester, "global_index.json", s)
+	tests := []struct {
+		name                string
+		traceID             string
+		wantTraceSegmentNum int
+		wantErr             bool
+	}{
+		{
+			name:                "trace id is 1",
+			traceID:             "1",
+			wantTraceSegmentNum: 2,
+		},
+		{
+			name:                "trace id is 2",
+			traceID:             "2",
+			wantTraceSegmentNum: 3,
+		},
+		{
+			name:    "unknown trace id",
+			traceID: "foo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shards, errShards := s.Shards(nil)
+			tester.NoError(errShards)
+			err := func() error {
+				for _, shard := range shards {
+					itemIDs, err := shard.Index().Seek(index.Field{
+						Term:  []byte("trace_id"),
+						Value: []byte(tt.traceID),
+					})
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					if len(itemIDs) < 1 {
+						continue
+					}
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					tester.Equal(tt.wantTraceSegmentNum, len(itemIDs))
+					for _, itemID := range itemIDs {
+						segShard, err := s.Shard(itemID.ShardID)
+						if err != nil {
+							return errors.WithStack(err)
+						}
+						series, err := segShard.Series().GetByID(itemID.SeriesID)
+						if err != nil {
+							return errors.WithStack(err)
+						}
+						err = func() error {
+							item, closer, errInner := series.Get(itemID)
+							defer func(closer io.Closer) {
+								_ = closer.Close()
+							}(closer)
+							if errInner != nil {
+								return errors.WithStack(errInner)
+							}
+							tagFamily, errInner := s.ParseTagFamily("searchable", item)
+							if errInner != nil {
+								return errors.WithStack(errInner)
+							}
+							for _, tag := range tagFamily.GetTags() {
+								if tag.GetKey() == "trace_id" {
+									tester.Equal(tt.traceID, tag.GetValue().GetStr().GetValue())
+								}
+							}
+							return nil
+						}()
+						if err != nil {
+							return errors.WithStack(err)
+						}
+
+					}
+				}
+				return nil
+			}()
+			if tt.wantErr {
+				tester.Error(err)
+				return
+			}
+			tester.NoError(err)
+		})
+	}
+
+}
+
+type queryOpts struct {
+	entity    tsdb.Entity
+	timeRange tsdb.TimeRange
+	buildFn   func(builder tsdb.SeekerBuilder)
+}
+
+func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForTest, error) {
+	shards, err := s.Shards(opts.entity)
+	tester.NoError(err)
+	got := shardsForTest{}
+	for _, shard := range shards {
+		seriesList, err := shard.Series().List(tsdb.NewPath(opts.entity))
+		if err != nil {
+			return nil, err
+		}
+		for _, series := range seriesList {
+			got, err = func(g shardsForTest) (shardsForTest, error) {
+				sp, errInner := series.Span(opts.timeRange)
+				defer func(sp tsdb.SeriesSpan) {
+					_ = sp.Close()
+				}(sp)
+				if errInner != nil {
+					return nil, errInner
+				}
+				builder := sp.SeekerBuilder()
+				if opts.buildFn != nil {
+					opts.buildFn(builder)
+				}
+				seeker, errInner := builder.Build()
+				if errInner != nil {
+					return nil, errInner
+				}
+				iter, errInner := seeker.Seek()
+				if errInner != nil {
+					return nil, errInner
+				}
+				for dataFlowID, iterator := range iter {
+					var elements []string
+					for iterator.Next() {
+						tagFamily, errInner := s.ParseTagFamily("searchable", iterator.Val())
+						if errInner != nil {
+							return nil, errInner
+						}
+						for _, tag := range tagFamily.GetTags() {
+							if tag.GetKey() == "trace_id" {
+								elements = append(elements, tag.GetValue().GetStr().GetValue())
+							}
+						}
+					}
+					_ = iterator.Close()
+					g = append(g, shardStruct{
+						id: shard.ID(),
+						location: []string{
+							fmt.Sprintf("series_%v", series.ID()),
+							"data_flow_" + strconv.Itoa(dataFlowID),
+						},
+						elements: elements,
+					})
+				}
+
+				return g, nil
+			}(got)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return got, nil
 }
 
 //go:embed testdata/*.json
@@ -261,7 +491,7 @@ func setupQueryData(t *assert.Assertions, dataFile string, stream *stream) (base
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
 		e := &streamv2.ElementValue{
 			ElementId: strconv.Itoa(i),
-			Timestamp: timestamppb.New(baseTime.Add(time.Millisecond * time.Duration(i))),
+			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
 			TagFamilies: []*streamv2.ElementValue_TagFamily{
 				{
 					Tags: []*modelv2.TagValue{
@@ -282,6 +512,7 @@ func setupQueryData(t *assert.Assertions, dataFile string, stream *stream) (base
 		itemID, err := stream.write(common.ShardID(shardID), e)
 		t.NoError(err)
 		sa, err := stream.Shards(entity)
+		t.NoError(err)
 		for _, shard := range sa {
 			se, err := shard.Series().Get(entity)
 			t.NoError(err)

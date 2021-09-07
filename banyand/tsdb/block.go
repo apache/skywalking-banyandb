@@ -81,22 +81,10 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
 	rules, ok := ctx.Value(indexRulesKey).([]*databasev2.IndexRule)
-	var specs []index.FieldSpec
-	for _, rule := range rules {
-		if rule.GetLocation() == databasev2.IndexRule_LOCATION_SERIES {
-			specs = append(specs, index.FieldSpec{
-				Name: rule.GetMetadata().GetName(),
-			})
-		}
-	}
-	if !ok || len(specs) == 0 {
+	if !ok || len(rules) == 0 {
 		return b, nil
 	}
 	b.invertedIndex = inverted.NewStore("inverted")
-	err = b.invertedIndex.Initialize(specs)
-	if err != nil {
-		return nil, err
-	}
 	return b, nil
 }
 

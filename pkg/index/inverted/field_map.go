@@ -18,6 +18,8 @@
 package inverted
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -30,7 +32,8 @@ var ErrFieldAbsent = errors.New("field doesn't exist")
 type fieldHashID uint64
 
 type fieldMap struct {
-	repo map[fieldHashID]*fieldValue
+	repo  map[fieldHashID]*fieldValue
+	mutex sync.RWMutex
 }
 
 func newFieldMap(initialSize int) *fieldMap {
@@ -39,22 +42,32 @@ func newFieldMap(initialSize int) *fieldMap {
 	}
 }
 
-func (fm *fieldMap) createKey(key []byte) {
-	fm.repo[fieldHashID(convert.Hash(key))] = &fieldValue{
+func (fm *fieldMap) createKey(key []byte) *fieldValue {
+	result := &fieldValue{
 		key:   key,
 		value: newPostingMap(),
 	}
+	fm.repo[fieldHashID(convert.Hash(key))] = result
+	return result
 }
 
 func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
+	fm.mutex.RLock()
+	defer fm.mutex.RUnlock()
+	return fm.getWithoutLock(key)
+}
+
+func (fm *fieldMap) getWithoutLock(key []byte) (*fieldValue, bool) {
 	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
 	return v, ok
 }
 
 func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
-	pm, ok := fm.get(fv.Term)
+	fm.mutex.Lock()
+	defer fm.mutex.Unlock()
+	pm, ok := fm.getWithoutLock(fv.Term)
 	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed Term:%s", fv.Term)
+		pm = fm.createKey(fv.Term)
 	}
 	return pm.value.put(fv.Value, id)
 }

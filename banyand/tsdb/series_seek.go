@@ -18,6 +18,8 @@
 package tsdb
 
 import (
+	"time"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
@@ -72,7 +74,12 @@ func (s *seekerBuilder) Build() (Seeker, error) {
 	}
 	filters := []filterFn{
 		func(item Item) bool {
-			return s.seriesSpan.timeRange.contains(item.Time())
+			valid := s.seriesSpan.timeRange.contains(item.Time())
+			timeRange := s.seriesSpan.timeRange
+			s.seriesSpan.l.Trace().
+				Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
+				Bool("valid", valid).Msg("filter item by time range")
+			return valid
 		},
 	}
 	if indexFilter != nil {
