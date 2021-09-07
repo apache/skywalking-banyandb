@@ -345,8 +345,8 @@ func Test_Stream_Global_Index(t *testing.T) {
 			err := func() error {
 				for _, shard := range shards {
 					itemIDs, err := shard.Index().Seek(index.Field{
-						Term:  []byte("trace_id"),
-						Value: []byte(tt.traceID),
+						Key:  []byte("trace_id"),
+						Term: []byte(tt.traceID),
 					})
 					if err != nil {
 						return errors.WithStack(err)

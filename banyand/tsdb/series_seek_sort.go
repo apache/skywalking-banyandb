@@ -54,7 +54,7 @@ func (s *seekerBuilder) buildSeries(filters []filterFn) []Iterator {
 func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator) {
 	for _, b := range s.seriesSpan.blocks {
 		var inner index.FieldIterator
-		term := index.Term{
+		term := index.FieldKey{
 			SeriesID:  s.seriesSpan.seriesID,
 			IndexRule: s.indexRuleForSorting.GetMetadata().GetName(),
 		}
@@ -123,7 +123,7 @@ func (s *searcherIterator) Next() bool {
 			v := s.fieldIterator.Val()
 			s.cur = v.Value.Iterator()
 			s.curKey = v.Key
-			s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Hex("term_field", s.curKey).Msg("got a new field")
+			s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Hex("term", s.curKey).Msg("got a new field")
 		} else {
 			return false
 		}

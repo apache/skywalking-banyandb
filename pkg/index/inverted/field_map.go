@@ -65,11 +65,11 @@ func (fm *fieldMap) getWithoutLock(key []byte) (*fieldValue, bool) {
 func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
-	pm, ok := fm.getWithoutLock(fv.Term)
+	pm, ok := fm.getWithoutLock(fv.Key)
 	if !ok {
-		pm = fm.createKey(fv.Term)
+		pm = fm.createKey(fv.Key)
 	}
-	return pm.value.put(fv.Value, id)
+	return pm.value.put(fv.Term, id)
 }
 
 type fieldValue struct {

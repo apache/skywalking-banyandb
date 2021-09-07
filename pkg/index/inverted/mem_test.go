@@ -53,8 +53,8 @@ func TestMemTable_Range(t *testing.T) {
 				},
 			},
 			wantList: m.MatchTerms(index.Field{
-				Term:  []byte("duration"),
-				Value: convert.Uint16ToBytes(200),
+				Key:  []byte("duration"),
+				Term: convert.Uint16ToBytes(200),
 			}),
 		},
 		{
@@ -68,8 +68,8 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(200),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -85,12 +85,12 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(50),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(50),
 				},
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(200),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -106,12 +106,12 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(200),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(200),
 				},
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(1000),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(1000),
 				},
 			),
 		},
@@ -128,16 +128,16 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(50),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(50),
 				},
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(200),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(200),
 				},
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(1000),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(1000),
 				},
 			),
 		},
@@ -154,8 +154,8 @@ func TestMemTable_Range(t *testing.T) {
 			},
 			wantList: union(m,
 				index.Field{
-					Term:  []byte("duration"),
-					Value: convert.Uint16ToBytes(200),
+					Key:  []byte("duration"),
+					Term: convert.Uint16ToBytes(200),
 				},
 			),
 		},
@@ -227,13 +227,13 @@ func setUp(t *testing.T, mt *MemTable) {
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
 			assert.NoError(t, mt.Insert(index.Field{
-				Term:  []byte("service_name"),
-				Value: []byte("gateway"),
+				Key:  []byte("service_name"),
+				Term: []byte("gateway"),
 			}, common.ItemID(i)))
 		} else {
 			assert.NoError(t, mt.Insert(index.Field{
-				Term:  []byte("service_name"),
-				Value: []byte("webpage"),
+				Key:  []byte("service_name"),
+				Term: []byte("webpage"),
 			}, common.ItemID(i)))
 		}
 	}
@@ -241,18 +241,18 @@ func setUp(t *testing.T, mt *MemTable) {
 		switch {
 		case i%3 == 0:
 			assert.NoError(t, mt.Insert(index.Field{
-				Term:  []byte("duration"),
-				Value: convert.Uint16ToBytes(50),
+				Key:  []byte("duration"),
+				Term: convert.Uint16ToBytes(50),
 			}, common.ItemID(i)))
 		case i%3 == 1:
 			assert.NoError(t, mt.Insert(index.Field{
-				Term:  []byte("duration"),
-				Value: convert.Uint16ToBytes(200),
+				Key:  []byte("duration"),
+				Term: convert.Uint16ToBytes(200),
 			}, common.ItemID(i)))
 		case i%3 == 2:
 			assert.NoError(t, mt.Insert(index.Field{
-				Term:  []byte("duration"),
-				Value: convert.Uint16ToBytes(1000),
+				Key:  []byte("duration"),
+				Term: convert.Uint16ToBytes(1000),
 			}, common.ItemID(i)))
 		}
 	}

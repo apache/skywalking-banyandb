@@ -54,7 +54,7 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 			return nil, ErrUnsupportedIndexRule
 		}
 		cond := make(index.Condition)
-		term := index.Term{
+		term := index.FieldKey{
 			SeriesID:  s.seriesSpan.seriesID,
 			IndexRule: condition.indexRule,
 		}

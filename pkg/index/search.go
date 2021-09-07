@@ -40,19 +40,19 @@ type Tree interface {
 	Executor
 }
 
-type Term struct {
+type FieldKey struct {
 	SeriesID  common.SeriesID
 	IndexRule string
 }
 
-func (t *Term) Marshal() []byte {
+func (t *FieldKey) Marshal() []byte {
 	return bytes.Join([][]byte{
 		t.SeriesID.Marshal(),
 		[]byte(t.IndexRule),
 	}, []byte(":"))
 }
 
-type Condition map[Term][]ConditionValue
+type Condition map[FieldKey][]ConditionValue
 
 type ConditionValue struct {
 	Values [][]byte
@@ -289,8 +289,8 @@ type eq struct {
 
 func (eq *eq) Execute() (posting.List, error) {
 	return eq.searcher.MatchTerms(Field{
-		Term:  eq.Key,
-		Value: bytes.Join(eq.Values, nil),
+		Key:  eq.Key,
+		Term: bytes.Join(eq.Values, nil),
 	}), nil
 }
 

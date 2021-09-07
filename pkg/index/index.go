@@ -25,12 +25,12 @@ import (
 )
 
 type Field struct {
-	Term  []byte
-	Value []byte
+	Key  []byte
+	Term []byte
 }
 
 func (f Field) Marshal() []byte {
-	return bytes.Join([][]byte{f.Term, f.Value}, nil)
+	return bytes.Join([][]byte{f.Key, f.Term}, nil)
 }
 
 type RangeOpts struct {

@@ -87,13 +87,13 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
 		return indexWriter.WriteInvertedIndex(index.Field{
-			Term:  []byte(rule.Metadata.Name),
-			Value: val,
+			Key:  []byte(rule.Metadata.Name),
+			Term: val,
 		})
 	case databasev2.IndexRule_TYPE_TREE:
 		return indexWriter.WriteLSMIndex(index.Field{
-			Term:  []byte(rule.Metadata.Name),
-			Value: val,
+			Key:  []byte(rule.Metadata.Name),
+			Term: val,
 		})
 	}
 	return err
@@ -108,13 +108,13 @@ func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv2.El
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
 		return writer.WriteInvertedIndex(index.Field{
-			Term:  []byte(rule.Metadata.Name),
-			Value: val,
+			Key:  []byte(rule.Metadata.Name),
+			Term: val,
 		})
 	case databasev2.IndexRule_TYPE_TREE:
 		return writer.WriteLSMIndex(index.Field{
-			Term:  []byte(rule.Metadata.Name),
-			Value: val,
+			Key:  []byte(rule.Metadata.Name),
+			Term: val,
 		})
 	}
 	return err

@@ -129,11 +129,11 @@ func (m *MemTable) FieldIterator(fieldName []byte, order modelv2.QueryOrder_Sort
 }
 
 func (m *MemTable) MatchTerms(field index.Field) (list posting.List) {
-	fieldsValues, ok := m.terms.get(field.Term)
+	fieldsValues, ok := m.terms.get(field.Key)
 	if !ok {
 		return roaring.EmptyPostingList
 	}
-	return fieldsValues.value.get(field.Value).Clone()
+	return fieldsValues.value.get(field.Term).Clone()
 }
 
 func (m *MemTable) Range(fieldName []byte, opts index.RangeOpts) (list posting.List) {
