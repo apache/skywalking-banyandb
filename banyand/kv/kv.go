@@ -139,7 +139,6 @@ func OpenTimeSeriesStore(shardID int, path string, compressLevel int, valueSize 
 	for _, opt := range options {
 		opt(btss)
 	}
-	btss.dbOpts = btss.dbOpts.WithMaxLevels(1)
 	// Put all values into LSM
 	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
 	var err error
@@ -197,7 +196,6 @@ func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error)
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(2)
 	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 
 	var err error
@@ -229,7 +227,6 @@ func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexSto
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithMaxLevels(2)
 	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 
 	var err error
