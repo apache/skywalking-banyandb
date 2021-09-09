@@ -15,34 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package schema
 
 import (
-	"strings"
+	"context"
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
+	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+type ListOpt struct {
+	Group string
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+type Stream interface {
+	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.Stream, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev2.Stream, error)
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+type IndexRule interface {
+	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.IndexRule, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev2.IndexRule, error)
+}
+
+type IndexRuleBinding interface {
+	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.IndexRuleBinding, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev2.IndexRuleBinding, error)
 }

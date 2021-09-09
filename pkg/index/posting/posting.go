@@ -15,34 +15,61 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package posting
 
 import (
-	"strings"
-
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
+var ErrListEmpty = errors.New("postings list is empty")
 
-type contextKey struct{}
+// List is a collection of common.ItemID.
+type List interface {
+	Contains(id common.ItemID) bool
 
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+	IsEmpty() bool
+
+	Max() (common.ItemID, error)
+
+	Len() int
+
+	Iterator() Iterator
+
+	Clone() List
+
+	Equal(other List) bool
+
+	Insert(i common.ItemID)
+
+	Intersect(other List) error
+
+	Difference(other List) error
+
+	Union(other List) error
+
+	UnionMany(others []List) error
+
+	AddIterator(iter Iterator) error
+
+	AddRange(min, max common.ItemID) error
+
+	RemoveRange(min, max common.ItemID) error
+
+	Reset()
+
+	ToSlice() []common.ItemID
+
+	Marshall() ([]byte, error)
+
+	Unmarshall(data []byte) error
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
+type Iterator interface {
+	Next() bool
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+	Current() common.ItemID
+
+	Close() error
 }

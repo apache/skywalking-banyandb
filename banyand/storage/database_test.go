@@ -168,7 +168,7 @@ func TestDB_FlushCallback(t *testing.T) {
 	}
 }
 
-var _ kv.Iterator = (*iter)(nil)
+var _ kv.Iterator2 = (*iter)(nil)
 
 type iter struct {
 	data map[int]posting.List
@@ -204,7 +204,7 @@ func (i *iter) Close() error {
 	return nil
 }
 
-func mockMemtable(data ...[]uint64) kv.Iterator {
+func mockMemtable(data ...[]uint64) kv.Iterator2 {
 	it := &iter{
 		data: make(map[int]posting.List),
 	}

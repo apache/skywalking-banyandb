@@ -15,34 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+syntax = "proto3";
 
-import (
-	"strings"
+package banyandb.model.v2;
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
-)
+option java_package = "org.apache.skywalking.banyandb.model.v2";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2";
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
+import "google/protobuf/struct.proto";
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+message Str {
+    string value = 1;
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+message Int {
+    int64 value = 1;
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+message StrArray {
+    repeated string value = 1;
+}
+
+message IntArray {
+    repeated int64 value = 1;
+}
+
+message TagValue {
+    oneof value {
+        google.protobuf.NullValue null = 1;
+        Str str = 2;
+        StrArray str_array = 3;
+        Int int = 4;
+        IntArray int_array = 5;
+        bytes binary_data = 6;
+    }
 }

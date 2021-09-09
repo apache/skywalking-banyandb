@@ -15,34 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package inverted
 
 import (
-	"strings"
-
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+type GlobalStore interface {
+	Searcher() index.Searcher
+	Insert(field index.Field, docID common.ItemID) error
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+type store struct {
+	memTable *MemTable
+	//TODO: add data tables
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func (s *store) Searcher() index.Searcher {
+	return s.memTable
+}
+
+func (s *store) Insert(field index.Field, chunkID common.ItemID) error {
+	return s.memTable.Insert(field, chunkID)
+}
+
+func NewStore(name string) GlobalStore {
+	return &store{
+		memTable: NewMemTable(name),
+	}
 }

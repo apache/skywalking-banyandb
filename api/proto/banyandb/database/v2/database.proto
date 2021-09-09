@@ -15,34 +15,29 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+syntax = "proto3";
 
-import (
-	"strings"
+option java_package = "org.apache.skywalking.banyandb.database.v2";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2";
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
-)
+package banyandb.database.v2;
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
+import "google/protobuf/timestamp.proto";
+import "banyandb/common/v2/common.proto";
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+message Node {
+    string id = 1;
+    string addr = 2;
+    google.protobuf.Timestamp updated_at = 3;
+    google.protobuf.Timestamp created_at = 4;
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
-
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+message Shard {
+    uint64 id = 1;
+    common.v2.Metadata metadata = 2;
+    common.v2.Catalog catalog = 3;
+    Node node = 4;
+    uint32 total = 5;
+    google.protobuf.Timestamp updated_at = 6;
+    google.protobuf.Timestamp created_at = 7;
 }

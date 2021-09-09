@@ -15,34 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package data
 
 import (
-	"strings"
-
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	"github.com/apache/skywalking-banyandb/api/common"
+	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
+var StreamKindVersion = common.KindVersion{Version: "v2", Kind: "data-stream"}
 
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+var StreamWriteEventKindVersion = common.KindVersion{
+	Version: "v2",
+	Kind:    "stream-write",
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+var TopicStreamWriteEvent = bus.UniTopic(StreamWriteEventKindVersion.String())
+
+type Stream struct {
+	common.KindVersion
+	Entities []Entity
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+type StreamWriteData struct {
+	ShardID      uint
+	SeriesID     uint64
+	WriteRequest *streamv2.WriteRequest
 }

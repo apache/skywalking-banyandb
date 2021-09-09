@@ -15,34 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+syntax = "proto3";
 
-import (
-	"strings"
+option java_package = "org.apache.skywalking.banyandb.common.v2";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2";
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
-)
+package banyandb.common.v2;
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+enum Catalog {
+    CATALOG_UNSPECIFIED = 0;
+    CATALOG_STREAM = 1;
+    CATALOG_MEASURE = 2;
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
-
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+// Metadata is for multi-tenant, multi-model use
+message Metadata {
+    // group contains a set of options, like retention policy, max
+    string group = 1;
+    // name of the entity
+    string name = 2;
 }

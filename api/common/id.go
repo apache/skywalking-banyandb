@@ -17,5 +17,13 @@
 
 package common
 
+import "github.com/apache/skywalking-banyandb/pkg/convert"
+
 type ChunkID uint64
 type SeriesID uint64
+type ShardID uint32
+type ItemID uint64
+
+func (s SeriesID) Marshal() []byte {
+	return convert.Uint64ToBytes(uint64(s))
+}

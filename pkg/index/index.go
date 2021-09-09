@@ -15,34 +15,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package index
 
 import (
-	"strings"
+	"bytes"
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
+type Field struct {
+	Key  []byte
+	Term []byte
 }
 
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
+func (f Field) Marshal() []byte {
+	return bytes.Join([][]byte{f.Key, f.Term}, nil)
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+type RangeOpts struct {
+	Upper         []byte
+	Lower         []byte
+	IncludesUpper bool
+	IncludesLower bool
+}
+
+type FieldIterator interface {
+	Next() bool
+	Val() *PostingValue
+	Close() error
+}
+
+type PostingValue struct {
+	Key   []byte
+	Value posting.List
+}
+
+type Searcher interface {
+	MatchField(fieldName []byte) (list posting.List)
+	MatchTerms(field Field) (list posting.List)
+	Range(fieldName []byte, opts RangeOpts) (list posting.List)
+	FieldIterator(fieldName []byte, order modelv2.QueryOrder_Sort) FieldIterator
 }
