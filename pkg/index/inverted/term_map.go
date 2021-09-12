@@ -18,8 +18,6 @@
 package inverted
 
 import (
-	"bytes"
-	"sort"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,48 +29,50 @@ import (
 
 type termHashID uint64
 
-type postingMap struct {
+type termMap struct {
 	repo  map[termHashID]*index.PostingValue
+	lst   []termHashID
 	mutex sync.RWMutex
 }
 
-func newPostingMap() *postingMap {
-	return &postingMap{
+func newPostingMap() *termMap {
+	return &termMap{
 		repo: make(map[termHashID]*index.PostingValue),
 	}
 }
 
-func (p *postingMap) put(key []byte, id common.ItemID) error {
+func (p *termMap) put(key []byte, id common.ItemID) error {
 	list := p.getOrCreate(key)
 	list.Insert(id)
 	return nil
 }
 
-func (p *postingMap) getOrCreate(key []byte) posting.List {
+func (p *termMap) getOrCreate(key []byte) posting.List {
 	list := p.get(key)
-	if list != roaring.EmptyPostingList {
+	if list != nil {
 		return list
 	}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	hashedKey := termHashID(convert.Hash(key))
 	v := &index.PostingValue{
-		Key:   key,
+		Term:  key,
 		Value: roaring.NewPostingList(),
 	}
 	p.repo[hashedKey] = v
+	p.lst = append(p.lst, hashedKey)
 	return v.Value
 }
 
-func (p *postingMap) get(key []byte) posting.List {
+func (p *termMap) get(key []byte) posting.List {
 	e := p.getEntry(key)
 	if e == nil {
-		return roaring.EmptyPostingList
+		return nil
 	}
 	return e.Value
 }
 
-func (p *postingMap) getEntry(key []byte) *index.PostingValue {
+func (p *termMap) getEntry(key []byte) *index.PostingValue {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 	hashedKey := termHashID(convert.Hash(key))
@@ -81,81 +81,4 @@ func (p *postingMap) getEntry(key []byte) *index.PostingValue {
 		return nil
 	}
 	return v
-}
-
-func (p *postingMap) allValues() posting.List {
-	result := roaring.NewPostingList()
-	for _, value := range p.repo {
-		_ = result.Union(value.Value)
-	}
-	return result
-}
-
-func (p *postingMap) getRange(opts index.RangeOpts) posting.List {
-	switch bytes.Compare(opts.Upper, opts.Lower) {
-	case -1:
-		return roaring.EmptyPostingList
-	case 0:
-		if opts.IncludesUpper && opts.IncludesLower {
-			return p.get(opts.Upper)
-		}
-		return roaring.EmptyPostingList
-	}
-	p.mutex.RLock()
-	defer p.mutex.RUnlock()
-	keys := make(Asc, 0, len(p.repo))
-	for _, v := range p.repo {
-		keys = append(keys, v.Key)
-	}
-	sort.Sort(keys)
-	index := sort.Search(len(keys), func(i int) bool {
-		return bytes.Compare(keys[i], opts.Lower) >= 0
-	})
-	result := roaring.NewPostingList()
-	for i := index; i < len(keys); i++ {
-		k := keys[i]
-		switch {
-		case bytes.Equal(k, opts.Lower):
-			if opts.IncludesLower {
-				_ = result.Union(p.repo[termHashID(convert.Hash(k))].Value)
-			}
-		case bytes.Compare(k, opts.Upper) > 0:
-			break
-		case bytes.Equal(k, opts.Upper):
-			if opts.IncludesUpper {
-				_ = result.Union(p.repo[termHashID(convert.Hash(k))].Value)
-			}
-		default:
-			_ = result.Union(p.repo[termHashID(convert.Hash(k))].Value)
-		}
-	}
-	return result
-}
-
-type Asc [][]byte
-
-func (a Asc) Len() int {
-	return len(a)
-}
-
-func (a Asc) Less(i, j int) bool {
-	return bytes.Compare(a[i], a[j]) < 0
-}
-
-func (a Asc) Swap(i, j int) {
-	a[i], a[j] = a[j], a[i]
-}
-
-type Desc [][]byte
-
-func (d Desc) Len() int {
-	return len(d)
-}
-
-func (d Desc) Less(i, j int) bool {
-	return bytes.Compare(d[i], d[j]) > 0
-}
-
-func (d Desc) Swap(i, j int) {
-	d[i], d[j] = d[j], d[i]
 }

@@ -172,7 +172,9 @@ func (w *writer) Write() (GlobalItemID, error) {
 		}
 	}
 	return id, w.block.writePrimaryIndex(index.Field{
-		Key:  id.SeriesID.Marshal(),
+		Key: index.FieldKey{
+			SeriesID: id.SeriesID,
+		}.Marshal(),
 		Term: convert.Int64ToBytes(w.ts.UnixNano()),
 	}, id.ID)
 }

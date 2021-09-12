@@ -211,7 +211,7 @@ func Test_Stream_Write(t *testing.T) {
 func setup(t *assert.Assertions) (*stream, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "trace",
 	}))
 	tempDir, deferFunc := test.Space(t)
 	streamRepo, err := schema.NewStream()

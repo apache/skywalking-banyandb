@@ -20,44 +20,44 @@ package inverted
 import (
 	"sync"
 
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var ErrFieldAbsent = errors.New("field doesn't exist")
-
 type fieldHashID uint64
 
 type fieldMap struct {
-	repo  map[fieldHashID]*fieldValue
+	repo  map[fieldHashID]*termContainer
+	lst   []fieldHashID
 	mutex sync.RWMutex
 }
 
 func newFieldMap(initialSize int) *fieldMap {
 	return &fieldMap{
-		repo: make(map[fieldHashID]*fieldValue, initialSize),
+		repo: make(map[fieldHashID]*termContainer, initialSize),
+		lst:  make([]fieldHashID, 0),
 	}
 }
 
-func (fm *fieldMap) createKey(key []byte) *fieldValue {
-	result := &fieldValue{
+func (fm *fieldMap) createKey(key []byte) *termContainer {
+	k := fieldHashID(convert.Hash(key))
+	result := &termContainer{
 		key:   key,
 		value: newPostingMap(),
 	}
-	fm.repo[fieldHashID(convert.Hash(key))] = result
+	fm.repo[k] = result
+	fm.lst = append(fm.lst, k)
 	return result
 }
 
-func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
+func (fm *fieldMap) get(key []byte) (*termContainer, bool) {
 	fm.mutex.RLock()
 	defer fm.mutex.RUnlock()
 	return fm.getWithoutLock(key)
 }
 
-func (fm *fieldMap) getWithoutLock(key []byte) (*fieldValue, bool) {
+func (fm *fieldMap) getWithoutLock(key []byte) (*termContainer, bool) {
 	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
 	return v, ok
 }
@@ -72,7 +72,7 @@ func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
 	return pm.value.put(fv.Term, id)
 }
 
-type fieldValue struct {
+type termContainer struct {
 	key   []byte
-	value *postingMap
+	value *termMap
 }

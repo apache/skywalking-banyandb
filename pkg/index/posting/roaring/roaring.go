@@ -62,6 +62,14 @@ func NewPostingListWithInitialData(data ...uint64) posting.List {
 	return list
 }
 
+func NewRange(start, end uint64) posting.List {
+	list := &postingsList{
+		bitmap: roaring64.New(),
+	}
+	list.bitmap.AddRange(start, end)
+	return list
+}
+
 func (p *postingsList) Contains(id common.ItemID) bool {
 	return p.bitmap.Contains(uint64(id))
 }

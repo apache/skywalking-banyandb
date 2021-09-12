@@ -102,6 +102,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 			Int("ts_nano", t.Nanosecond()).
 			Interface("data", value).
 			Uint64("series_id", uint64(series.ID())).
+			Int("shard_id", int(shardID)).
 			Msg("write stream")
 		return writer, errWrite
 	}

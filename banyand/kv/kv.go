@@ -25,9 +25,7 @@ import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
 var (
@@ -54,6 +52,7 @@ type ScanOpts struct {
 }
 
 type Reader interface {
+	Iterable
 	// Get a value by its key
 	Get(key []byte) ([]byte, error)
 	GetAll(key []byte, applyFn func([]byte) error) error
@@ -65,7 +64,6 @@ type Store interface {
 	io.Closer
 	Writer
 	Reader
-	index.Searcher
 }
 
 type TimeSeriesWriter interface {
@@ -113,21 +111,16 @@ type Iterator interface {
 	Close() error
 }
 
-type Iterator2 interface {
-	Next()
-	Rewind()
-	Seek(key []byte)
-	Key() []byte
-	Val() posting2.List
-	Valid() bool
-	Close() error
+type Iterable interface {
+	NewIterator(opt ScanOpts) Iterator
 }
 
 type HandoverCallback func()
 
 type IndexStore interface {
-	Handover(iterator Iterator2) error
-	Seek(key []byte, limit int) (posting2.List, error)
+	Iterable
+	Reader
+	Handover(iterator Iterator) error
 	Close() error
 }
 

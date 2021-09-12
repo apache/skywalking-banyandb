@@ -75,6 +75,13 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 		if err != nil {
 			return err
 		}
+		rangeOpts, found := tree.TrimRangeLeaf(index.FieldKey{
+			SeriesID:  s.seriesSpan.seriesID,
+			IndexRule: s.indexRuleForSorting.GetMetadata().GetName(),
+		})
+		if found {
+			s.rangeOptsForSorting = rangeOpts
+		}
 		list, err := tree.Execute()
 		if err != nil {
 			return err
