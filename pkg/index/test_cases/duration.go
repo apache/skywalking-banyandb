@@ -51,8 +51,8 @@ type args struct {
 }
 
 type result struct {
-	key   []byte
-	items posting.List
+	key   int
+	items []int
 }
 
 func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
@@ -63,14 +63,14 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 		args args
 		want []int
 	}{
-		//{
-		//	name: "sort in asc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_ASC,
-		//	},
-		//	want: []int{50, 200, 500, 1000, 2000},
-		//},
+		{
+			name: "sort in asc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_ASC,
+			},
+			want: []int{50, 200, 500, 1000, 2000},
+		},
 		//{
 		//	name: "sort in desc order",
 		//	args: args{
@@ -79,58 +79,58 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 		//	},
 		//	want: []int{2000, 1000, 500, 200, 50},
 		//},
-		//{
-		//	name: "scan in (lower, upper) and sort in asc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_ASC,
-		//		termRange: index.RangeOpts{
-		//			Lower: convert.Int64ToBytes(50),
-		//			Upper: convert.Int64ToBytes(2000),
-		//		},
-		//	},
-		//	want: []int{200, 500, 1000},
-		//},
-		//{
-		//	name: "scan in (lower, upper) and sort in desc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_DESC,
-		//		termRange: index.RangeOpts{
-		//			Lower: convert.Int64ToBytes(50),
-		//			Upper: convert.Int64ToBytes(2000),
-		//		},
-		//	},
-		//	want: []int{1000, 500, 200},
-		//},
-		//{
-		//	name: "scan in [lower, upper] and sort in asc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_ASC,
-		//		termRange: index.RangeOpts{
-		//			Lower:         convert.Int64ToBytes(200),
-		//			IncludesLower: true,
-		//			Upper:         convert.Int64ToBytes(1000),
-		//			IncludesUpper: true,
-		//		},
-		//	},
-		//	want: []int{200, 500, 1000},
-		//},
-		//{
-		//	name: "scan in [lower, upper] and sort in desc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_DESC,
-		//		termRange: index.RangeOpts{
-		//			Lower:         convert.Int64ToBytes(200),
-		//			IncludesLower: true,
-		//			Upper:         convert.Int64ToBytes(1000),
-		//			IncludesUpper: true,
-		//		},
-		//	},
-		//	want: []int{1000, 500, 200},
-		//},
+		{
+			name: "scan in (lower, upper) and sort in asc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_ASC,
+				termRange: index.RangeOpts{
+					Lower: convert.Int64ToBytes(50),
+					Upper: convert.Int64ToBytes(2000),
+				},
+			},
+			want: []int{200, 500, 1000},
+		},
+		{
+			name: "scan in (lower, upper) and sort in desc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_DESC,
+				termRange: index.RangeOpts{
+					Lower: convert.Int64ToBytes(50),
+					Upper: convert.Int64ToBytes(2000),
+				},
+			},
+			want: []int{1000, 500, 200},
+		},
+		{
+			name: "scan in [lower, upper] and sort in asc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_ASC,
+				termRange: index.RangeOpts{
+					Lower:         convert.Int64ToBytes(200),
+					IncludesLower: true,
+					Upper:         convert.Int64ToBytes(1000),
+					IncludesUpper: true,
+				},
+			},
+			want: []int{200, 500, 1000},
+		},
+		{
+			name: "scan in [lower, upper] and sort in desc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_DESC,
+				termRange: index.RangeOpts{
+					Lower:         convert.Int64ToBytes(200),
+					IncludesLower: true,
+					Upper:         convert.Int64ToBytes(1000),
+					IncludesUpper: true,
+				},
+			},
+			want: []int{1000, 500, 200},
+		},
 		{
 			name: "scan in [lower, undefined)  and sort in asc order",
 			args: args{
@@ -167,18 +167,18 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			},
 			want: []int{50, 200, 500, 1000},
 		},
-		//{
-		//	name: "scan in (undefined, upper] and sort in desc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_DESC,
-		//		termRange: index.RangeOpts{
-		//			Upper:         convert.Int64ToBytes(1000),
-		//			IncludesUpper: true,
-		//		},
-		//	},
-		//	want: []int{1000, 500, 200, 50},
-		//},
+		{
+			name: "scan in (undefined, upper] and sort in desc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_DESC,
+				termRange: index.RangeOpts{
+					Upper:         convert.Int64ToBytes(1000),
+					IncludesUpper: true,
+				},
+			},
+			want: []int{1000, 500, 200, 50},
+		},
 		{
 			name: "scan splice in (lower, upper) and sort in asc order",
 			args: args{
@@ -275,24 +275,38 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 				}
 			}()
 			is.NotNil(iter)
-			var got []result
+			got := make([]result, 0)
 			for iter.Next() {
 				got = append(got, result{
-					key:   iter.Val().Term,
-					items: iter.Val().Value,
+					key:   int(convert.BytesToInt64(iter.Val().Term)),
+					items: toArray(iter.Val().Value),
 				})
 			}
 			for i := 0; i < 10; i++ {
 				is.False(iter.Next())
 			}
-			is.Equal(len(tt.want), len(got))
-			for i, w := range tt.want {
-				g := got[i]
-				tester.Equal(int64(w), convert.BytesToInt64(g.key))
-				tester.True(data[w].Equal(g.items))
+			wants := make([]result, 0, len(tt.want))
+			for _, w := range tt.want {
+				wants = append(wants, result{
+					key:   w,
+					items: toArray(data[w]),
+				})
 			}
+			tester.Equal(wants, got)
 		})
 	}
+}
+
+func toArray(list posting.List) []int {
+	ints := make([]int, 0, list.Len())
+	iter := list.Iterator()
+	defer func(iter posting.Iterator) {
+		_ = iter.Close()
+	}(iter)
+	for iter.Next() {
+		ints = append(ints, int(iter.Current()))
+	}
+	return ints
 }
 
 func SetUpDuration(t *assert.Assertions, store index.Writer) map[int]posting.List {

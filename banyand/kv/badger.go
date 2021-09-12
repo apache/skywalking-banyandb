@@ -141,6 +141,7 @@ func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
 var _ Iterator = (*iterator)(nil)
 
 type iterator struct {
+	reverse   bool
 	delegated y.Iterator
 }
 
@@ -153,7 +154,11 @@ func (i *iterator) Rewind() {
 }
 
 func (i *iterator) Seek(key []byte) {
-	i.delegated.Seek(y.KeyWithTs(key, math.MaxInt64))
+	if i.reverse {
+		i.delegated.Seek(y.KeyWithTs(key, 0))
+	} else {
+		i.delegated.Seek(y.KeyWithTs(key, math.MaxInt64))
+	}
 }
 
 func (i *iterator) Key() []byte {
@@ -181,6 +186,7 @@ func (b *badgerDB) NewIterator(opt ScanOpts) Iterator {
 	it := b.db.NewIterator(opts)
 	return &iterator{
 		delegated: it,
+		reverse:   opts.Reverse,
 	}
 }
 

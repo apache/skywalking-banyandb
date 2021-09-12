@@ -109,6 +109,10 @@ func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order mode
 		Prefix:  fieldKey.Marshal(),
 		Reverse: reverse,
 	})
+	iter = iterable.NewIterator(kv.ScanOpts{
+		Prefix:  fieldKey.Marshal(),
+		Reverse: reverse,
+	})
 	return &FieldIteratorTemplate{
 		delegated: iter,
 		termRange: termRange,
