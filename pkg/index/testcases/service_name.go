@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package test_cases
+package testcases
 
 import (
 	"testing"
@@ -29,8 +29,10 @@ import (
 )
 
 var serviceName = index.FieldKey{
-	IndexRule: "service_name",
-}.Marshal()
+	// http_method
+	IndexRuleID: 6,
+	EncodeTerm:  true,
+}
 
 func RunServiceName(t *testing.T, store SimpleStore) {
 	tester := assert.New(t)

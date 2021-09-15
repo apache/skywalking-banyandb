@@ -37,8 +37,12 @@ func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err erro
 }
 
 func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
+	f, err := field.Marshal(s.termMetadata)
+	if err != nil {
+		return nil, err
+	}
 	list = roaring.NewPostingList()
-	err = s.lsm.GetAll(field.Marshal(), func(itemID []byte) error {
+	err = s.lsm.GetAll(f, func(itemID []byte) error {
 		list.Insert(common.ItemID(convert.BytesToUint64(itemID)))
 		return nil
 	})
@@ -49,9 +53,9 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, found := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
-	if !found {
-		return roaring.EmptyPostingList, nil
+	iter, err := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
+	if err != nil {
+		return roaring.EmptyPostingList, err
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
@@ -61,8 +65,8 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv2.QueryOrder_Sort) (index.FieldIterator, bool) {
-	return index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.lsm, func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv2.QueryOrder_Sort) (index.FieldIterator, error) {
+	return index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.lsm, s.termMetadata, func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 		pv := &index.PostingValue{
 			Term:  term,
 			Value: roaring.NewPostingListWithInitialData(convert.BytesToUint64(value)),
@@ -70,7 +74,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 
 		for ; delegated.Valid(); delegated.Next() {
 			f := index.Field{}
-			err := f.Unmarshal(delegated.Key())
+			err := f.Unmarshal(s.termMetadata, delegated.Key())
 			if err != nil {
 				return nil, err
 			}
@@ -80,5 +84,5 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 			pv.Value.Insert(common.ItemID(convert.BytesToUint64(delegated.Val())))
 		}
 		return pv, nil
-	}), true
+	})
 }

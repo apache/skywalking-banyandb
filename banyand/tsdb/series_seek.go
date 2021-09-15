@@ -56,7 +56,7 @@ type seekerBuilder struct {
 
 	conditions []struct {
 		indexRuleType databasev2.IndexRule_Type
-		indexRule     string
+		indexRuleID   uint32
 		condition     Condition
 	}
 	order               modelv2.QueryOrder_Sort
@@ -76,7 +76,11 @@ func (s *seekerBuilder) Build() (Seeker, error) {
 	if indexFilter != nil {
 		filters = append(filters, indexFilter)
 	}
-	return newSeeker(s.buildSeries(filters)), nil
+	se, err := s.buildSeries(filters)
+	if err != nil {
+		return nil, err
+	}
+	return newSeeker(se), nil
 }
 
 func newSeekerBuilder(s *seriesSpan) SeekerBuilder {

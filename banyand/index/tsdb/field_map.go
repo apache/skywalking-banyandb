@@ -53,7 +53,7 @@ func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
 func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
 	pm, ok := fm.get(fv.Name)
 	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed Term:%s", fv.Name)
+		return errors.Wrapf(ErrFieldAbsent, "filed term:%s", fv.Name)
 	}
 	return pm.value.put(fv.Value, id)
 }

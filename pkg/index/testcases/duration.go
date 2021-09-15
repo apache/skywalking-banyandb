@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package test_cases
+package testcases
 
 import (
 	"sort"
@@ -34,7 +34,8 @@ import (
 
 var (
 	duration = index.FieldKey{
-		IndexRule: "duration",
+		//duration
+		IndexRuleID: 3,
 	}
 )
 
@@ -71,14 +72,14 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			},
 			want: []int{50, 200, 500, 1000, 2000},
 		},
-		//{
-		//	name: "sort in desc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_DESC,
-		//	},
-		//	want: []int{2000, 1000, 500, 200, 50},
-		//},
+		{
+			name: "sort in desc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_DESC,
+			},
+			want: []int{2000, 1000, 500, 200, 50},
+		},
 		{
 			name: "scan in (lower, upper) and sort in asc order",
 			args: args{
@@ -143,18 +144,18 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			},
 			want: []int{200, 500, 1000, 2000},
 		},
-		//{
-		//	name: "scan in [lower, undefined) and sort in desc order",
-		//	args: args{
-		//		fieldKey:  duration,
-		//		orderType: modelv2.QueryOrder_SORT_DESC,
-		//		termRange: index.RangeOpts{
-		//			Lower:         convert.Int64ToBytes(200),
-		//			IncludesLower: true,
-		//		},
-		//	},
-		//	want: []int{2000, 1000, 500, 200},
-		//},
+		{
+			name: "scan in [lower, undefined) and sort in desc order",
+			args: args{
+				fieldKey:  duration,
+				orderType: modelv2.QueryOrder_SORT_DESC,
+				termRange: index.RangeOpts{
+					Lower:         convert.Int64ToBytes(200),
+					IncludesLower: true,
+				},
+			},
+			want: []int{2000, 1000, 500, 200},
+		},
 		{
 			name: "scan in (undefined, upper] and sort in asc order",
 			args: args{
@@ -239,7 +240,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			name: "unknown field key",
 			args: args{
 				fieldKey: index.FieldKey{
-					IndexRule: "unknown",
+					IndexRuleID: 0,
 				},
 			},
 		},
@@ -263,8 +264,9 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iter, found := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType)
-			if !found {
+			iter, err := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType)
+			is.NoError(err)
+			if iter == nil {
 				tester.Empty(tt.want)
 				return
 			}
@@ -322,7 +324,7 @@ func SetUpDuration(t *assert.Assertions, store index.Writer) map[int]posting.Lis
 
 func SetUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]posting.List) map[int]posting.List {
 	idx := make([]int, 0, len(r))
-	for key, _ := range r {
+	for key := range r {
 		idx = append(idx, key)
 	}
 	sort.Ints(idx)
@@ -333,7 +335,7 @@ func SetUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 				continue
 			}
 			t.NoError(store.Write(index.Field{
-				Key:  duration.Marshal(),
+				Key:  duration,
 				Term: convert.Int64ToBytes(int64(term)),
 			}, id))
 			r[term].Insert(id)

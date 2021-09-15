@@ -86,10 +86,12 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if !ok || len(rules) == 0 {
 		return b, nil
 	}
-	b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
+	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
 		Path:   b.path + "/inverted",
 		Logger: b.l,
-	})
+	}); err != nil {
+		return nil, err
+	}
 	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
 		Path:   b.path + "/lsm",
 		Logger: b.l,

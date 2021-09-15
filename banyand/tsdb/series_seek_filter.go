@@ -33,11 +33,11 @@ type Condition map[string][]index.ConditionValue
 func (s *seekerBuilder) Filter(indexRule *databasev2.IndexRule, condition Condition) SeekerBuilder {
 	s.conditions = append(s.conditions, struct {
 		indexRuleType databasev2.IndexRule_Type
-		indexRule     string
+		indexRuleID   uint32
 		condition     Condition
 	}{
 		indexRuleType: indexRule.GetType(),
-		indexRule:     indexRule.GetMetadata().GetName(),
+		indexRuleID:   indexRule.GetMetadata().GetId(),
 		condition:     condition,
 	})
 	return s
@@ -55,8 +55,8 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 		}
 		cond := make(index.Condition)
 		term := index.FieldKey{
-			SeriesID:  s.seriesSpan.seriesID,
-			IndexRule: condition.indexRule,
+			SeriesID:    s.seriesSpan.seriesID,
+			IndexRuleID: condition.indexRuleID,
 		}
 		for _, c := range condition.condition {
 			cond[term] = c
@@ -76,8 +76,8 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 			return err
 		}
 		rangeOpts, found := tree.TrimRangeLeaf(index.FieldKey{
-			SeriesID:  s.seriesSpan.seriesID,
-			IndexRule: s.indexRuleForSorting.GetMetadata().GetName(),
+			SeriesID:    s.seriesSpan.seriesID,
+			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 		})
 		if found {
 			s.rangeOptsForSorting = rangeOpts

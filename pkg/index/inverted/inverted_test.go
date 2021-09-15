@@ -24,7 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
-	"github.com/apache/skywalking-banyandb/pkg/index/test_cases"
+	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -41,8 +41,8 @@ func TestStore_MatchTerm(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	test_cases.SetUp(tester, s)
-	test_cases.RunServiceName(t, s)
+	testcases.SetUp(tester, s)
+	testcases.RunServiceName(t, s)
 }
 
 func TestStore_MatchTerm_AfterFlush(t *testing.T) {
@@ -57,9 +57,9 @@ func TestStore_MatchTerm_AfterFlush(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	test_cases.SetUp(tester, s)
+	testcases.SetUp(tester, s)
 	tester.NoError(s.(*store).Flush())
-	test_cases.RunServiceName(t, s)
+	testcases.RunServiceName(t, s)
 }
 
 func TestStore_Iterator(t *testing.T) {
@@ -74,8 +74,8 @@ func TestStore_Iterator(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	data := test_cases.SetUpDuration(tester, s)
-	test_cases.RunDuration(t, data, s)
+	data := testcases.SetUpDuration(tester, s)
+	testcases.RunDuration(t, data, s)
 }
 
 func TestStore_Iterator_AfterFlush(t *testing.T) {
@@ -90,9 +90,9 @@ func TestStore_Iterator_AfterFlush(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	data := test_cases.SetUpDuration(tester, s)
+	data := testcases.SetUpDuration(tester, s)
 	tester.NoError(s.(*store).Flush())
-	test_cases.RunDuration(t, data, s)
+	testcases.RunDuration(t, data, s)
 }
 
 func TestStore_Iterator_Hybrid(t *testing.T) {
@@ -114,7 +114,7 @@ func TestStore_Iterator_Hybrid(t *testing.T) {
 		1000: nil,
 		2000: roaring.NewPostingList(),
 	}
-	data1 := test_cases.SetUpPartialDuration(tester, s, r)
+	data1 := testcases.SetUpPartialDuration(tester, s, r)
 	tester.NoError(s.(*store).Flush())
 	r = map[int]posting.List{
 		50:   nil,
@@ -123,13 +123,13 @@ func TestStore_Iterator_Hybrid(t *testing.T) {
 		1000: roaring.NewPostingList(),
 		2000: nil,
 	}
-	data := test_cases.SetUpPartialDuration(tester, s, r)
+	data := testcases.SetUpPartialDuration(tester, s, r)
 	for i, list := range data {
 		if list == nil {
 			data[i] = data1[i]
 		}
 	}
-	test_cases.RunDuration(t, data, s)
+	testcases.RunDuration(t, data, s)
 }
 
 func setUp(t *assert.Assertions) (tempDir string, deferFunc func()) {

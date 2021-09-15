@@ -17,7 +17,9 @@
 
 package convert
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 func Uint64ToBytes(u uint64) []byte {
 	bs := make([]byte, 8)
@@ -26,9 +28,17 @@ func Uint64ToBytes(u uint64) []byte {
 }
 
 func Int64ToBytes(i int64) []byte {
-	var buf = make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(i))
-	return buf
+	abs := i
+	if i < 0 {
+		abs = -abs
+	}
+	u := uint64(abs)
+	if i >= 0 {
+		u = u | 1<<63
+	} else {
+		u = 1<<63 - u
+	}
+	return Uint64ToBytes(u)
 }
 
 func Uint16ToBytes(u uint16) []byte {
@@ -44,7 +54,17 @@ func Uint32ToBytes(u uint32) []byte {
 }
 
 func BytesToInt64(b []byte) int64 {
-	return int64(binary.BigEndian.Uint64(b))
+	u := binary.BigEndian.Uint64(b)
+	if b[0] >= 128 {
+		u = u ^ 1<<63
+	} else {
+		u = 1<<63 - u
+	}
+	abs := int64(u)
+	if b[0] < 128 {
+		abs = -abs
+	}
+	return abs
 }
 
 func BytesToUint64(b []byte) uint64 {

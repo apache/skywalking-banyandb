@@ -22,17 +22,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/test_cases"
+	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 )
 
 func TestMemTable_MatchTerm(t *testing.T) {
 	mt := newMemTable()
-	test_cases.SetUp(assert.New(t), mt)
-	test_cases.RunServiceName(t, mt)
+	testcases.SetUp(assert.New(t), mt)
+	testcases.RunServiceName(t, mt)
 }
 
 func TestMemTable_Iterator(t *testing.T) {
 	mt := newMemTable()
-	data := test_cases.SetUpDuration(assert.New(t), mt)
-	test_cases.RunDuration(t, data, mt)
+	data := testcases.SetUpDuration(assert.New(t), mt)
+	testcases.RunDuration(t, data, mt)
 }

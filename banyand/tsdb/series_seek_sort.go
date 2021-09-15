@@ -45,7 +45,7 @@ func (s *seekerBuilder) OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder
 	return s
 }
 
-func (s *seekerBuilder) buildSeries(filters []filterFn) []Iterator {
+func (s *seekerBuilder) buildSeries(filters []filterFn) ([]Iterator, error) {
 	if s.indexRuleForSorting == nil {
 		return s.buildSeriesByTime(filters)
 	}
@@ -60,32 +60,32 @@ func (s *seekerBuilder) buildSeries(filters []filterFn) []Iterator {
 	return s.buildSeriesByIndex(filters)
 }
 
-func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator) {
+func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator, err error) {
 	for _, b := range s.seriesSpan.blocks {
 		var inner index.FieldIterator
-		var found bool
+		var err error
 		fieldKey := index.FieldKey{
-			SeriesID:  s.seriesSpan.seriesID,
-			IndexRule: s.indexRuleForSorting.GetMetadata().GetName(),
+			SeriesID:    s.seriesSpan.seriesID,
+			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 		}
 
 		switch s.indexRuleForSorting.GetType() {
 		case databasev2.IndexRule_TYPE_TREE:
-			inner, found = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
+			inner, err = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
 		case databasev2.IndexRule_TYPE_INVERTED:
-			inner, found = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
-		default:
-			// only tree index supports sorting
-			continue
+			inner, err = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
 		}
-		if found {
+		if err != nil {
+			return nil, err
+		}
+		if inner != nil {
 			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, filters))
 		}
 	}
 	return
 }
 
-func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
+func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
 	case modelv2.QueryOrder_SORT_ASC:
@@ -108,7 +108,7 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
 	}
 	for _, b := range bb {
 		bTimes = append(bTimes, b.startTime())
-		inner, found := b.primaryIndexReader().
+		inner, err := b.primaryIndexReader().
 			Iterator(
 				index.FieldKey{
 					SeriesID: s.seriesSpan.seriesID,
@@ -116,7 +116,10 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
 				termRange,
 				s.order,
 			)
-		if found {
+		if err != nil {
+			return nil, err
+		}
+		if inner != nil {
 			delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, filters))
 		}
 	}
@@ -126,7 +129,7 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) []Iterator {
 		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
 		Int("shard_id", int(s.seriesSpan.shardID)).
 		Msg("seek series by time")
-	return []Iterator{newMergedIterator(delegated)}
+	return []Iterator{newMergedIterator(delegated)}, nil
 }
 
 var _ Iterator = (*searcherIterator)(nil)

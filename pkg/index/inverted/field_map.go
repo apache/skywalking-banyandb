@@ -40,25 +40,25 @@ func newFieldMap(initialSize int) *fieldMap {
 	}
 }
 
-func (fm *fieldMap) createKey(key []byte) *termContainer {
-	k := fieldHashID(convert.Hash(key))
+func (fm *fieldMap) createKey(field index.Field) *termContainer {
 	result := &termContainer{
-		key:   key,
+		key:   field.Key,
 		value: newPostingMap(),
 	}
+	k := fieldHashID(convert.Hash(field.Key.Marshal()))
 	fm.repo[k] = result
 	fm.lst = append(fm.lst, k)
 	return result
 }
 
-func (fm *fieldMap) get(key []byte) (*termContainer, bool) {
+func (fm *fieldMap) get(key index.FieldKey) (*termContainer, bool) {
 	fm.mutex.RLock()
 	defer fm.mutex.RUnlock()
 	return fm.getWithoutLock(key)
 }
 
-func (fm *fieldMap) getWithoutLock(key []byte) (*termContainer, bool) {
-	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
+func (fm *fieldMap) getWithoutLock(key index.FieldKey) (*termContainer, bool) {
+	v, ok := fm.repo[fieldHashID(convert.Hash(key.Marshal()))]
 	return v, ok
 }
 
@@ -67,12 +67,12 @@ func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
 	defer fm.mutex.Unlock()
 	pm, ok := fm.getWithoutLock(fv.Key)
 	if !ok {
-		pm = fm.createKey(fv.Key)
+		pm = fm.createKey(fv)
 	}
 	return pm.value.put(fv.Term, id)
 }
 
 type termContainer struct {
-	key   []byte
+	key   index.FieldKey
 	value *termMap
 }

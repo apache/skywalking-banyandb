@@ -28,6 +28,7 @@ import (
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -36,6 +37,7 @@ import (
 var _ index.Store = (*store)(nil)
 
 type store struct {
+	termMetadata      metadata.Term
 	diskTable         kv.IndexStore
 	memTable          *memTable
 	immutableMemTable *memTable
@@ -48,13 +50,21 @@ type StoreOpts struct {
 }
 
 func NewStore(opts StoreOpts) (index.Store, error) {
-	diskTable, err := kv.OpenIndexStore(0, opts.Path, kv.IndexWithLogger(opts.Logger))
+	diskTable, err := kv.OpenIndexStore(0, opts.Path+"/table", kv.IndexWithLogger(opts.Logger))
 	if err != nil {
 		return nil, err
 	}
+	var md metadata.Term
+	if md, err = metadata.NewTerm(metadata.TermOpts{
+		Path:   opts.Path + "/tmd",
+		Logger: opts.Logger,
+	}); err != nil {
+		return nil, err
+	}
 	return &store{
-		memTable:  newMemTable(),
-		diskTable: diskTable,
+		memTable:     newMemTable(),
+		diskTable:    diskTable,
+		termMetadata: md,
 	}, nil
 }
 
@@ -74,7 +84,7 @@ func (s *store) Flush() error {
 		s.memTable = newMemTable()
 	}
 	err := s.diskTable.
-		Handover(s.immutableMemTable.Iter())
+		Handover(s.immutableMemTable.Iter(s.termMetadata))
 	if err != nil {
 		return err
 	}
@@ -87,6 +97,10 @@ func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, error) {
 }
 
 func (s *store) MatchTerms(field index.Field) (posting.List, error) {
+	f, err := field.Marshal(s.termMetadata)
+	if err != nil {
+		return nil, err
+	}
 	result := roaring.NewPostingList()
 	result, errMem := s.searchInMemTables(result, func(table *memTable) (posting.List, error) {
 		list, errInner := table.MatchTerms(field)
@@ -98,7 +112,7 @@ func (s *store) MatchTerms(field index.Field) (posting.List, error) {
 	if errMem != nil {
 		return nil, errors.Wrap(errMem, "mem table of inverted index")
 	}
-	raw, errTable := s.diskTable.Get(field.Marshal())
+	raw, errTable := s.diskTable.Get(f)
 	switch {
 	case errors.Is(errTable, kv.ErrKeyNotFound):
 		return result, nil
@@ -106,7 +120,7 @@ func (s *store) MatchTerms(field index.Field) (posting.List, error) {
 		return nil, errors.Wrap(errTable, "disk table of inverted index")
 	}
 	list := roaring.NewPostingList()
-	err := list.Unmarshall(raw)
+	err = list.Unmarshall(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +132,11 @@ func (s *store) MatchTerms(field index.Field) (posting.List, error) {
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, found := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
-	if !found {
+	iter, err := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
+	if err != nil {
+		return roaring.EmptyPostingList, err
+	}
+	if iter == nil {
 		return roaring.EmptyPostingList, nil
 	}
 	list = roaring.NewPostingList()
@@ -131,7 +148,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv2.QueryOrder_Sort) (index.FieldIterator, bool) {
+	order modelv2.QueryOrder_Sort) (index.FieldIterator, error) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
 	tt := []*memTable{s.memTable, s.immutableMemTable}
@@ -140,48 +157,57 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		if table == nil {
 			continue
 		}
-		it, found := table.Iterator(fieldKey, termRange, order)
-		if !found {
+		it, err := table.Iterator(fieldKey, termRange, order)
+		if err != nil {
+			return nil, err
+		}
+		if it == nil {
 			continue
 		}
 		iters = append(iters, it)
 	}
-	it := index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.diskTable, func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
-		list := roaring.NewPostingList()
-		err := list.Unmarshall(val)
-		if err != nil {
-			return nil, err
-		}
+	it, err := index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.diskTable, s.termMetadata,
+		func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
+			list := roaring.NewPostingList()
+			err := list.Unmarshall(val)
+			if err != nil {
+				return nil, err
+			}
 
-		pv := &index.PostingValue{
-			Term:  term,
-			Value: list,
-		}
+			pv := &index.PostingValue{
+				Term:  term,
+				Value: list,
+			}
 
-		for ; delegated.Valid(); delegated.Next() {
-			f := index.Field{}
-			err := f.Unmarshal(delegated.Key())
-			if err != nil {
-				return nil, err
+			for ; delegated.Valid(); delegated.Next() {
+				f := index.Field{
+					Key: fieldKey,
+				}
+				err := f.Unmarshal(s.termMetadata, delegated.Key())
+				if err != nil {
+					return nil, err
+				}
+				if !bytes.Equal(f.Term, term) {
+					break
+				}
+				l := roaring.NewPostingList()
+				err = l.Unmarshall(delegated.Val())
+				if err != nil {
+					return nil, err
+				}
+				err = pv.Value.Union(l)
+				if err != nil {
+					return nil, err
+				}
 			}
-			if !bytes.Equal(f.Term, term) {
-				break
-			}
-			l := roaring.NewPostingList()
-			err = l.Unmarshall(delegated.Val())
-			if err != nil {
-				return nil, err
-			}
-			err = pv.Value.Union(l)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return pv, nil
-	})
+			return pv, nil
+		})
+	if err != nil {
+		return nil, err
+	}
 	iters = append(iters, it)
 	if len(iters) < 1 {
-		return nil, false
+		return nil, nil
 	}
 	var fn index.SwitchFn
 	switch order {
@@ -194,7 +220,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 			return bytes.Compare(a, b) < 0
 		}
 	}
-	return index.NewMergedIterator(iters, fn), true
+	return index.NewMergedIterator(iters, fn), nil
 }
 
 func (s *store) searchInMemTables(result posting.List, entityFunc entityFunc) (posting.List, error) {

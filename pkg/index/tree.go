@@ -296,7 +296,7 @@ type eq struct {
 
 func (eq *eq) Execute() (posting.List, error) {
 	return eq.searcher.MatchTerms(Field{
-		Key:  eq.Key.Marshal(),
+		Key:  eq.Key,
 		Term: bytes.Join(eq.Values, nil),
 	})
 }

@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/test_cases"
+	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -39,8 +39,8 @@ func TestStore_MatchTerm(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	test_cases.SetUp(tester, s)
-	test_cases.RunServiceName(t, s)
+	testcases.SetUp(tester, s)
+	testcases.RunServiceName(t, s)
 }
 
 func TestStore_Iterator(t *testing.T) {
@@ -55,8 +55,8 @@ func TestStore_Iterator(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	data := test_cases.SetUpDuration(tester, s)
-	test_cases.RunDuration(t, data, s)
+	data := testcases.SetUpDuration(tester, s)
+	testcases.RunDuration(t, data, s)
 }
 
 func setUp(t *assert.Assertions) (tempDir string, deferFunc func()) {

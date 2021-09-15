@@ -27,6 +27,7 @@ import (
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
@@ -46,8 +47,8 @@ func newMemTable() *memTable {
 	}
 }
 
-func (m *memTable) Write(field index.Field, chunkID common.ItemID) error {
-	return m.fields.put(field, chunkID)
+func (m *memTable) Write(field index.Field, itemID common.ItemID) error {
+	return m.fields.put(field, itemID)
 }
 
 var _ index.FieldIterator = (*fIterator)(nil)
@@ -93,10 +94,10 @@ func newFieldIterator(keys [][]byte, fValue *termMap) index.FieldIterator {
 }
 
 func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
-	order modelv2.QueryOrder_Sort) (iter index.FieldIterator, found bool) {
-	fieldsValues, ok := m.fields.get(fieldKey.Marshal())
+	order modelv2.QueryOrder_Sort) (iter index.FieldIterator, err error) {
+	fieldsValues, ok := m.fields.get(fieldKey)
 	if !ok {
-		return nil, false
+		return nil, nil
 	}
 	fValue := fieldsValues.value
 	var terms [][]byte
@@ -110,7 +111,7 @@ func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
 		}
 	}
 	if len(terms) < 1 {
-		return nil, false
+		return nil, nil
 	}
 	switch order {
 	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
@@ -122,7 +123,7 @@ func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
 			return bytes.Compare(terms[i], terms[j]) > 0
 		})
 	}
-	return newFieldIterator(terms, fValue), true
+	return newFieldIterator(terms, fValue), nil
 }
 
 func (m *memTable) MatchTerms(field index.Field) (posting.List, error) {
@@ -140,13 +141,14 @@ func (m *memTable) MatchTerms(field index.Field) (posting.List, error) {
 var _ kv.Iterator = (*flushIterator)(nil)
 
 type flushIterator struct {
-	fieldIdx int
-	termIdx  int
-	key      []byte
-	value    []byte
-	fields   *fieldMap
-	valid    bool
-	err      error
+	fieldIdx     int
+	termIdx      int
+	key          []byte
+	value        []byte
+	fields       *fieldMap
+	valid        bool
+	err          error
+	termMetadata metadata.Term
 }
 
 func (i *flushIterator) Next() {
@@ -216,15 +218,21 @@ func (i *flushIterator) setCurr() bool {
 		return false
 	}
 	i.value = v
-	i.key = index.Field{
+	f := index.Field{
 		Key:  term.key,
 		Term: value.Term,
-	}.Marshal()
+	}
+	i.key, err = f.Marshal(i.termMetadata)
+	if err != nil {
+		i.err = multierr.Append(i.err, err)
+		return false
+	}
 	return true
 }
 
-func (m *memTable) Iter() kv.Iterator {
+func (m *memTable) Iter(termMetadata metadata.Term) kv.Iterator {
 	return &flushIterator{
-		fields: m.fields,
+		fields:       m.fields,
+		termMetadata: termMetadata,
 	}
 }

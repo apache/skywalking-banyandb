@@ -15,57 +15,52 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package lsm
+package metadata
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var _ index.Store = (*store)(nil)
-
-type store struct {
-	lsm          kv.Store
-	termMetadata metadata.Term
+type Term interface {
+	ID(term []byte) (id []byte, err error)
+	Literal(id []byte) (term []byte, err error)
 }
 
-func (s *store) Close() error {
-	return s.lsm.Close()
+var _ Term = (*term)(nil)
+
+type term struct {
+	store kv.Store
 }
 
-func (s *store) Write(field index.Field, itemID common.ItemID) error {
-	f, err := field.Marshal(s.termMetadata)
-	if err != nil {
-		return err
-	}
-	itemIDInt := uint64(itemID)
-	return s.lsm.PutWithVersion(f, convert.Uint64ToBytes(itemIDInt), itemIDInt)
-}
-
-type StoreOpts struct {
+type TermOpts struct {
 	Path   string
 	Logger *logger.Logger
 }
 
-func NewStore(opts StoreOpts) (index.Store, error) {
+func NewTerm(opts TermOpts) (Term, error) {
+	var store kv.Store
 	var err error
-	var lsm kv.Store
-	if lsm, err = kv.OpenStore(0, opts.Path+"/lsm", kv.StoreWithLogger(opts.Logger)); err != nil {
+	if store, err = kv.OpenStore(0, opts.Path, kv.StoreWithNamedLogger("term_metadata", opts.Logger)); err != nil {
 		return nil, err
 	}
-	var md metadata.Term
-	if md, err = metadata.NewTerm(metadata.TermOpts{
-		Path:   opts.Path + "/tmd",
-		Logger: opts.Logger,
-	}); err != nil {
-		return nil, err
-	}
-	return &store{
-		lsm:          lsm,
-		termMetadata: md,
+	return &term{
+		store: store,
 	}, nil
+}
+
+func (t *term) ID(term []byte) (id []byte, err error) {
+	id = convert.Uint64ToBytes(convert.Hash(term))
+	_, err = t.store.Get(id)
+	if errors.Is(err, kv.ErrKeyNotFound) {
+		return id, t.store.Put(id, term)
+	}
+	return id, nil
+}
+
+func (t *term) Literal(id []byte) (term []byte, err error) {
+	return t.store.Get(id)
 }
