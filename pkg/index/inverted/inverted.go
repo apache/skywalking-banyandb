@@ -18,30 +18,229 @@
 package inverted
 
 import (
+	"bytes"
+	"sync"
+
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type GlobalStore interface {
-	Searcher() index.Searcher
-	Insert(field index.Field, docID common.ItemID) error
-}
+var _ index.Store = (*store)(nil)
 
 type store struct {
-	memTable *MemTable
-	//TODO: add data tables
+	termMetadata      metadata.Term
+	diskTable         kv.IndexStore
+	memTable          *memTable
+	immutableMemTable *memTable
+	rwMutex           sync.RWMutex
 }
 
-func (s *store) Searcher() index.Searcher {
-	return s.memTable
+type StoreOpts struct {
+	Path   string
+	Logger *logger.Logger
 }
 
-func (s *store) Insert(field index.Field, chunkID common.ItemID) error {
-	return s.memTable.Insert(field, chunkID)
-}
-
-func NewStore(name string) GlobalStore {
-	return &store{
-		memTable: NewMemTable(name),
+func NewStore(opts StoreOpts) (index.Store, error) {
+	diskTable, err := kv.OpenIndexStore(0, opts.Path+"/table", kv.IndexWithLogger(opts.Logger))
+	if err != nil {
+		return nil, err
 	}
+	var md metadata.Term
+	if md, err = metadata.NewTerm(metadata.TermOpts{
+		Path:   opts.Path + "/tmd",
+		Logger: opts.Logger,
+	}); err != nil {
+		return nil, err
+	}
+	return &store{
+		memTable:     newMemTable(),
+		diskTable:    diskTable,
+		termMetadata: md,
+	}, nil
 }
+
+func (s *store) Close() error {
+	return s.diskTable.Close()
+}
+
+func (s *store) Write(field index.Field, chunkID common.ItemID) error {
+	return s.memTable.Write(field, chunkID)
+}
+
+func (s *store) Flush() error {
+	s.rwMutex.Lock()
+	defer s.rwMutex.Unlock()
+	if s.immutableMemTable == nil {
+		s.immutableMemTable = s.memTable
+		s.memTable = newMemTable()
+	}
+	err := s.diskTable.
+		Handover(s.immutableMemTable.Iter(s.termMetadata))
+	if err != nil {
+		return err
+	}
+	s.immutableMemTable = nil
+	return nil
+}
+
+func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, error) {
+	return s.Range(fieldKey, index.RangeOpts{})
+}
+
+func (s *store) MatchTerms(field index.Field) (posting.List, error) {
+	f, err := field.Marshal(s.termMetadata)
+	if err != nil {
+		return nil, err
+	}
+	result := roaring.NewPostingList()
+	result, errMem := s.searchInMemTables(result, func(table *memTable) (posting.List, error) {
+		list, errInner := table.MatchTerms(field)
+		if errInner != nil {
+			return nil, errInner
+		}
+		return list, nil
+	})
+	if errMem != nil {
+		return nil, errors.Wrap(errMem, "mem table of inverted index")
+	}
+	raw, errTable := s.diskTable.Get(f)
+	switch {
+	case errors.Is(errTable, kv.ErrKeyNotFound):
+		return result, nil
+	case errTable != nil:
+		return nil, errors.Wrap(errTable, "disk table of inverted index")
+	}
+	list := roaring.NewPostingList()
+	err = list.Unmarshall(raw)
+	if err != nil {
+		return nil, err
+	}
+	err = result.Union(list)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
+	iter, err := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
+	if err != nil {
+		return roaring.EmptyPostingList, err
+	}
+	if iter == nil {
+		return roaring.EmptyPostingList, nil
+	}
+	list = roaring.NewPostingList()
+	for iter.Next() {
+		err = multierr.Append(err, list.Union(iter.Val().Value))
+	}
+	err = multierr.Append(err, iter.Close())
+	return
+}
+
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
+	order modelv2.QueryOrder_Sort) (index.FieldIterator, error) {
+	s.rwMutex.RLock()
+	defer s.rwMutex.RUnlock()
+	tt := []*memTable{s.memTable, s.immutableMemTable}
+	iters := make([]index.FieldIterator, 0, len(tt)+1)
+	for _, table := range tt {
+		if table == nil {
+			continue
+		}
+		it, err := table.Iterator(fieldKey, termRange, order)
+		if err != nil {
+			return nil, err
+		}
+		if it == nil {
+			continue
+		}
+		iters = append(iters, it)
+	}
+	it, err := index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.diskTable, s.termMetadata,
+		func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
+			list := roaring.NewPostingList()
+			err := list.Unmarshall(val)
+			if err != nil {
+				return nil, err
+			}
+
+			pv := &index.PostingValue{
+				Term:  term,
+				Value: list,
+			}
+
+			for ; delegated.Valid(); delegated.Next() {
+				f := index.Field{
+					Key: fieldKey,
+				}
+				err := f.Unmarshal(s.termMetadata, delegated.Key())
+				if err != nil {
+					return nil, err
+				}
+				if !bytes.Equal(f.Term, term) {
+					break
+				}
+				l := roaring.NewPostingList()
+				err = l.Unmarshall(delegated.Val())
+				if err != nil {
+					return nil, err
+				}
+				err = pv.Value.Union(l)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return pv, nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	iters = append(iters, it)
+	if len(iters) < 1 {
+		return nil, nil
+	}
+	var fn index.SwitchFn
+	switch order {
+	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
+		fn = func(a, b []byte) bool {
+			return bytes.Compare(a, b) > 0
+		}
+	case modelv2.QueryOrder_SORT_DESC:
+		fn = func(a, b []byte) bool {
+			return bytes.Compare(a, b) < 0
+		}
+	}
+	return index.NewMergedIterator(iters, fn), nil
+}
+
+func (s *store) searchInMemTables(result posting.List, entityFunc entityFunc) (posting.List, error) {
+	s.rwMutex.RLock()
+	defer s.rwMutex.RUnlock()
+	tt := []*memTable{s.memTable, s.immutableMemTable}
+	for _, table := range tt {
+		if table == nil {
+			continue
+		}
+		list, err := entityFunc(table)
+		if err != nil {
+			return result, err
+		}
+		err = result.Union(list)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+type entityFunc func(table *memTable) (posting.List, error)

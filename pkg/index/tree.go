@@ -25,7 +25,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
@@ -38,18 +37,7 @@ type Executor interface {
 
 type Tree interface {
 	Executor
-}
-
-type FieldKey struct {
-	SeriesID  common.SeriesID
-	IndexRule string
-}
-
-func (t *FieldKey) Marshal() []byte {
-	return bytes.Join([][]byte{
-		t.SeriesID.Marshal(),
-		[]byte(t.IndexRule),
-	}, []byte(":"))
+	TrimRangeLeaf(key FieldKey) (rangeOpts RangeOpts, found bool)
 }
 
 type Condition map[FieldKey][]ConditionValue
@@ -66,8 +54,7 @@ func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
 			searcher: searcher,
 		},
 	}
-	for term, conds := range condMap {
-		key := term.Marshal()
+	for key, conds := range condMap {
 		var rangeLeaf *rangeOp
 		for _, cond := range conds {
 			if rangeLeaf != nil && !rangeOP(cond.Op) {
@@ -136,7 +123,7 @@ type node struct {
 	SubNodes []Executor `json:"sub_nodes,omitempty"`
 }
 
-func (n *node) newEq(key []byte, values [][]byte) *eq {
+func (n *node) newEq(key FieldKey, values [][]byte) *eq {
 	return &eq{
 		leaf: &leaf{
 			Key:      key,
@@ -146,11 +133,11 @@ func (n *node) newEq(key []byte, values [][]byte) *eq {
 	}
 }
 
-func (n *node) addEq(key []byte, values [][]byte) {
+func (n *node) addEq(key FieldKey, values [][]byte) {
 	n.SubNodes = append(n.SubNodes, n.newEq(key, values))
 }
 
-func (n *node) addNot(key []byte, inner Executor) {
+func (n *node) addNot(key FieldKey, inner Executor) {
 	n.SubNodes = append(n.SubNodes, &not{
 		Key:      key,
 		searcher: n.searcher,
@@ -158,13 +145,13 @@ func (n *node) addNot(key []byte, inner Executor) {
 	})
 }
 
-func (n *node) addRangeLeaf(key []byte) *rangeOp {
+func (n *node) addRangeLeaf(key FieldKey) *rangeOp {
 	r := &rangeOp{
 		leaf: &leaf{
 			Key:      key,
 			searcher: n.searcher,
 		},
-		Opts: &RangeOpts{},
+		Opts: RangeOpts{},
 	}
 	n.SubNodes = append(n.SubNodes, r)
 	return r
@@ -221,6 +208,23 @@ type andNode struct {
 	*node
 }
 
+func (an *andNode) TrimRangeLeaf(key FieldKey) (RangeOpts, bool) {
+	removeLeaf := func(s []Executor, index int) []Executor {
+		return append(s[:index], s[index+1:]...)
+	}
+	for i, subNode := range an.SubNodes {
+		leafRange, ok := subNode.(*rangeOp)
+		if !ok {
+			continue
+		}
+		if key.Equal(leafRange.Key) {
+			an.SubNodes = removeLeaf(an.SubNodes, i)
+			return leafRange.Opts, true
+		}
+	}
+	return RangeOpts{}, false
+}
+
 func (an *andNode) merge(list posting.List) error {
 	return an.value.Intersect(list)
 }
@@ -255,20 +259,23 @@ func (on *orNode) MarshalJSON() ([]byte, error) {
 
 type leaf struct {
 	Executor
-	Key      []byte
+	Key      FieldKey
 	Values   [][]byte
 	searcher Searcher
 }
 
 type not struct {
 	Executor
-	Key      []byte
+	Key      FieldKey
 	searcher Searcher
 	Inner    Executor
 }
 
 func (n *not) Execute() (posting.List, error) {
-	all := n.searcher.MatchField(n.Key)
+	all, err := n.searcher.MatchField(n.Key)
+	if err != nil {
+		return nil, err
+	}
 	list, err := n.Inner.Execute()
 	if err != nil {
 		return nil, err
@@ -291,7 +298,7 @@ func (eq *eq) Execute() (posting.List, error) {
 	return eq.searcher.MatchTerms(Field{
 		Key:  eq.Key,
 		Term: bytes.Join(eq.Values, nil),
-	}), nil
+	})
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -302,11 +309,11 @@ func (eq *eq) MarshalJSON() ([]byte, error) {
 
 type rangeOp struct {
 	*leaf
-	Opts *RangeOpts
+	Opts RangeOpts
 }
 
 func (r *rangeOp) Execute() (posting.List, error) {
-	return r.searcher.Range(r.Key, *r.Opts), nil
+	return r.searcher.Range(r.Key, r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {

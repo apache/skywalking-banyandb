@@ -102,6 +102,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 			Int("ts_nano", t.Nanosecond()).
 			Interface("data", value).
 			Uint64("series_id", uint64(series.ID())).
+			Int("shard_id", int(shardID)).
 			Msg("write stream")
 		return writer, errWrite
 	}
@@ -127,20 +128,27 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 	return &itemID, err
 }
 
-func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, err error) {
+func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, isInt bool, err error) {
 	val = make([]byte, 0, len(ruleIndex.tagIndices))
+	var existInt bool
 	for _, tIndex := range ruleIndex.tagIndices {
 		tag, err := getTagByOffset(value, tIndex.family, tIndex.tag)
 		if err != nil {
-			return nil, errors.WithMessagef(err, "index rule:%v", ruleIndex.rule.Metadata)
+			return nil, false, errors.WithMessagef(err, "index rule:%v", ruleIndex.rule.Metadata)
+		}
+		if tag.GetInt() != nil {
+			existInt = true
 		}
 		v, err := marshalIndexFieldValue(tag)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		val = append(val, v...)
 	}
-	return val, nil
+	if len(ruleIndex.tagIndices) == 1 && existInt {
+		return val, true, nil
+	}
+	return val, false, nil
 }
 
 func marshalIndexFieldValue(tagValue *modelv2.TagValue) ([]byte, error) {

@@ -21,41 +21,34 @@ import (
 	"bytes"
 	"sort"
 
-	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
-var ErrFieldsAbsent = errors.New("fields are absent")
+var (
+	_ index.Writer        = (*memTable)(nil)
+	_ index.FieldIterable = (*memTable)(nil)
+)
 
-var _ index.Searcher = (*MemTable)(nil)
-
-type MemTable struct {
-	terms *fieldMap
-	name  string
+type memTable struct {
+	fields *fieldMap
 }
 
-func NewMemTable(name string) *MemTable {
-	return &MemTable{
-		name:  name,
-		terms: newFieldMap(1000),
+func newMemTable() *memTable {
+	return &memTable{
+		fields: newFieldMap(1000),
 	}
 }
 
-func (m *MemTable) Insert(field index.Field, chunkID common.ItemID) error {
-	return m.terms.put(field, chunkID)
-}
-
-func (m *MemTable) MatchField(fieldName []byte) (list posting.List) {
-	fieldsValues, ok := m.terms.get(fieldName)
-	if !ok {
-		return roaring.EmptyPostingList
-	}
-	return fieldsValues.value.allValues()
+func (m *memTable) Write(field index.Field, itemID common.ItemID) error {
+	return m.fields.put(field, itemID)
 }
 
 var _ index.FieldIterator = (*fIterator)(nil)
@@ -64,7 +57,7 @@ type fIterator struct {
 	index     int
 	val       *index.PostingValue
 	keys      [][]byte
-	valueRepo *postingMap
+	valueRepo *termMap
 	closed    bool
 }
 
@@ -74,7 +67,6 @@ func (f *fIterator) Next() bool {
 	}
 	f.index++
 	if f.index >= len(f.keys) {
-		_ = f.Close()
 		return false
 	}
 	f.val = f.valueRepo.getEntry(f.keys[f.index])
@@ -93,7 +85,7 @@ func (f *fIterator) Close() error {
 	return nil
 }
 
-func newFieldIterator(keys [][]byte, fValue *postingMap) index.FieldIterator {
+func newFieldIterator(keys [][]byte, fValue *termMap) index.FieldIterator {
 	return &fIterator{
 		keys:      keys,
 		valueRepo: fValue,
@@ -101,45 +93,146 @@ func newFieldIterator(keys [][]byte, fValue *postingMap) index.FieldIterator {
 	}
 }
 
-func (m *MemTable) FieldIterator(fieldName []byte, order modelv2.QueryOrder_Sort) index.FieldIterator {
-	fieldsValues, ok := m.terms.get(fieldName)
+func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
+	order modelv2.QueryOrder_Sort) (iter index.FieldIterator, err error) {
+	fieldsValues, ok := m.fields.get(fieldKey)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	fValue := fieldsValues.value
-	var keys [][]byte
+	var terms [][]byte
 	{
 		fValue.mutex.RLock()
 		defer fValue.mutex.RUnlock()
 		for _, value := range fValue.repo {
-			keys = append(keys, value.Key)
+			if rangeOpts.Between(value.Term) == 0 {
+				terms = append(terms, value.Term)
+			}
 		}
 	}
+	if len(terms) < 1 {
+		return nil, nil
+	}
 	switch order {
-	case modelv2.QueryOrder_SORT_ASC:
-		sort.SliceStable(keys, func(i, j int) bool {
-			return bytes.Compare(keys[i], keys[j]) < 0
+	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
+		sort.SliceStable(terms, func(i, j int) bool {
+			return bytes.Compare(terms[i], terms[j]) < 0
 		})
 	case modelv2.QueryOrder_SORT_DESC:
-		sort.SliceStable(keys, func(i, j int) bool {
-			return bytes.Compare(keys[i], keys[j]) > 0
+		sort.SliceStable(terms, func(i, j int) bool {
+			return bytes.Compare(terms[i], terms[j]) > 0
 		})
 	}
-	return newFieldIterator(keys, fValue)
+	return newFieldIterator(terms, fValue), nil
 }
 
-func (m *MemTable) MatchTerms(field index.Field) (list posting.List) {
-	fieldsValues, ok := m.terms.get(field.Key)
+func (m *memTable) MatchTerms(field index.Field) (posting.List, error) {
+	fieldsValues, ok := m.fields.get(field.Key)
 	if !ok {
-		return roaring.EmptyPostingList
+		return roaring.EmptyPostingList, nil
 	}
-	return fieldsValues.value.get(field.Term).Clone()
+	list := fieldsValues.value.get(field.Term)
+	if list == nil {
+		return roaring.EmptyPostingList, nil
+	}
+	return list, nil
 }
 
-func (m *MemTable) Range(fieldName []byte, opts index.RangeOpts) (list posting.List) {
-	fieldsValues, ok := m.terms.get(fieldName)
-	if !ok {
-		return roaring.EmptyPostingList
+var _ kv.Iterator = (*flushIterator)(nil)
+
+type flushIterator struct {
+	fieldIdx     int
+	termIdx      int
+	key          []byte
+	value        []byte
+	fields       *fieldMap
+	valid        bool
+	err          error
+	termMetadata metadata.Term
+}
+
+func (i *flushIterator) Next() {
+	if i.fieldIdx >= len(i.fields.lst) {
+		i.valid = false
+		return
 	}
-	return fieldsValues.value.getRange(opts)
+	fieldID := i.fields.lst[i.fieldIdx]
+	terms := i.fields.repo[fieldID]
+	if i.termIdx < len(terms.value.lst) {
+		i.termIdx++
+		if !i.setCurr() {
+			i.Next()
+		}
+		return
+	}
+	i.fieldIdx++
+	i.termIdx = 0
+	if !i.setCurr() {
+		i.Next()
+	}
+}
+
+func (i *flushIterator) Rewind() {
+	i.fieldIdx = 0
+	i.termIdx = 0
+	i.valid = true
+	if !i.setCurr() {
+		i.valid = false
+	}
+}
+
+func (i *flushIterator) Seek(_ []byte) {
+	panic("unsupported")
+}
+
+func (i *flushIterator) Key() []byte {
+	return i.key
+}
+
+func (i *flushIterator) Val() []byte {
+	return i.value
+}
+
+func (i *flushIterator) Valid() bool {
+	return i.valid
+}
+
+func (i *flushIterator) Close() error {
+	return i.err
+}
+
+func (i *flushIterator) setCurr() bool {
+	if i.fieldIdx >= len(i.fields.lst) {
+		return false
+	}
+	fieldID := i.fields.lst[i.fieldIdx]
+	term := i.fields.repo[fieldID]
+	if i.termIdx >= len(term.value.lst) {
+		return false
+	}
+	valueID := term.value.lst[i.termIdx]
+	value := term.value.repo[valueID]
+	v, err := value.Value.Marshall()
+	if err != nil {
+		i.err = multierr.Append(i.err, err)
+		return false
+	}
+	i.value = v
+	f := index.Field{
+		Key:  term.key,
+		Term: value.Term,
+	}
+	i.key, err = f.Marshal(i.termMetadata)
+	if err != nil {
+		i.err = multierr.Append(i.err, err)
+		return false
+	}
+	return true
+}
+
+func (m *memTable) Iter(termMetadata metadata.Term) kv.Iterator {
+	return &flushIterator{
+		fields:       m.fields,
+		termMetadata: termMetadata,
+	}
 }

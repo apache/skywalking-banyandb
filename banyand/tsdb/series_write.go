@@ -130,20 +130,12 @@ func (w *writer) ItemID() GlobalItemID {
 }
 
 func (w *writer) WriteLSMIndex(field index.Field) error {
-	t := index.FieldKey{
-		SeriesID:  w.itemID.SeriesID,
-		IndexRule: string(field.Key),
-	}
-	field.Key = t.Marshal()
+	field.Key.SeriesID = w.itemID.SeriesID
 	return w.block.writeLSMIndex(field, w.itemID.ID)
 }
 
 func (w *writer) WriteInvertedIndex(field index.Field) error {
-	t := index.FieldKey{
-		SeriesID:  w.itemID.SeriesID,
-		IndexRule: string(field.Key),
-	}
-	field.Key = t.Marshal()
+	field.Key.SeriesID = w.itemID.SeriesID
 	return w.block.writeInvertedIndex(field, w.itemID.ID)
 }
 
@@ -172,7 +164,9 @@ func (w *writer) Write() (GlobalItemID, error) {
 		}
 	}
 	return id, w.block.writePrimaryIndex(index.Field{
-		Key:  id.SeriesID.Marshal(),
+		Key: index.FieldKey{
+			SeriesID: id.SeriesID,
+		},
 		Term: convert.Int64ToBytes(w.ts.UnixNano()),
 	}, id.ID)
 }

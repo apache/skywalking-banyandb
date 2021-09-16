@@ -19,6 +19,7 @@ package stream
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	_ "embed"
 	"encoding/base64"
@@ -33,6 +34,7 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -58,7 +60,7 @@ func Test_Stream_SelectShard(t *testing.T) {
 	tester := assert.New(t)
 	s, deferFunc := setup(tester)
 	defer deferFunc()
-	_ = setupQueryData(tester, "multiple_shards.json", s)
+	_ = setupQueryData(t, "multiple_shards.json", s)
 	tests := []struct {
 		name         string
 		entity       tsdb.Entity
@@ -99,7 +101,7 @@ func Test_Stream_Series(t *testing.T) {
 	tester := assert.New(t)
 	s, deferFunc := setup(tester)
 	defer deferFunc()
-	baseTime := setupQueryData(tester, "multiple_shards.json", s)
+	baseTime := setupQueryData(t, "multiple_shards.json", s)
 	tests := []struct {
 		name    string
 		args    queryOpts
@@ -115,23 +117,23 @@ func Test_Stream_Series(t *testing.T) {
 			want: shardsForTest{
 				{
 					id:       0,
-					location: []string{"series_12243341348514563931", "data_flow_0"},
-					elements: []string{"1"},
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+					elements: []string{"4"},
 				},
 				{
 					id:       0,
-					location: []string{"series_1671844747554927007", "data_flow_0"},
+					location: []string{"series_4862694201852929188", "data_flow_0"},
 					elements: []string{"2"},
 				},
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
-					elements: []string{"5", "3"},
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+					elements: []string{"1"},
 				},
 				{
 					id:       1,
-					location: []string{"series_8429137420168685297", "data_flow_0"},
-					elements: []string{"4"},
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"5", "3"},
 				},
 			},
 		},
@@ -145,21 +147,21 @@ func Test_Stream_Series(t *testing.T) {
 			want: shardsForTest{
 				{
 					id:       0,
-					location: []string{"series_12243341348514563931", "data_flow_0"},
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+					elements: []string{"4"},
 				},
 				{
 					id:       0,
-					location: []string{"series_1671844747554927007", "data_flow_0"},
+					location: []string{"series_4862694201852929188", "data_flow_0"},
 				},
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
 					elements: []string{"5"},
-				},
-				{
-					id:       1,
-					location: []string{"series_8429137420168685297", "data_flow_0"},
-					elements: []string{"4"},
 				},
 			},
 		},
@@ -171,13 +173,13 @@ func Test_Stream_Series(t *testing.T) {
 			},
 			want: shardsForTest{
 				{
-					id:       0,
-					location: []string{"series_12243341348514563931", "data_flow_0"},
+					id:       1,
+					location: []string{"series_13343478452567673284", "data_flow_0"},
 					elements: []string{"1"},
 				},
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
+					location: []string{"series_7898679171060804990", "data_flow_0"},
 					elements: []string{"5", "3"},
 				},
 			},
@@ -185,13 +187,13 @@ func Test_Stream_Series(t *testing.T) {
 		{
 			name: "find a series",
 			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Uint64ToBytes(1)},
+				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 			},
 			want: shardsForTest{
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
+					location: []string{"series_7898679171060804990", "data_flow_0"},
 					elements: []string{"5", "3"},
 				},
 			},
@@ -206,6 +208,7 @@ func Test_Stream_Series(t *testing.T) {
 						Metadata: &commonv2.Metadata{
 							Name:  "endpoint_id",
 							Group: "default",
+							Id:    4,
 						},
 						Tags:     []string{"endpoint_id"},
 						Type:     databasev2.IndexRule_TYPE_INVERTED,
@@ -223,21 +226,21 @@ func Test_Stream_Series(t *testing.T) {
 			want: shardsForTest{
 				{
 					id:       0,
-					location: []string{"series_12243341348514563931", "data_flow_0"},
-					elements: []string{"1"},
+					location: []string{"series_16283518706331625322", "data_flow_0"},
 				},
 				{
 					id:       0,
-					location: []string{"series_1671844747554927007", "data_flow_0"},
+					location: []string{"series_4862694201852929188", "data_flow_0"},
 				},
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+					elements: []string{"1"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
 					elements: []string{"3"},
-				},
-				{
-					id:       1,
-					location: []string{"series_8429137420168685297", "data_flow_0"},
 				},
 			},
 		},
@@ -251,6 +254,7 @@ func Test_Stream_Series(t *testing.T) {
 						Metadata: &commonv2.Metadata{
 							Name:  "duration",
 							Group: "default",
+							Id:    3,
 						},
 						Tags:     []string{"duration"},
 						Type:     databasev2.IndexRule_TYPE_TREE,
@@ -261,23 +265,23 @@ func Test_Stream_Series(t *testing.T) {
 			want: shardsForTest{
 				{
 					id:       0,
-					location: []string{"series_12243341348514563931", "data_flow_0"},
-					elements: []string{"1"},
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+					elements: []string{"4"},
 				},
 				{
 					id:       0,
-					location: []string{"series_1671844747554927007", "data_flow_0"},
+					location: []string{"series_4862694201852929188", "data_flow_0"},
 					elements: []string{"2"},
 				},
 				{
 					id:       1,
-					location: []string{"series_2374367181827824198", "data_flow_0"},
-					elements: []string{"3", "5"},
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+					elements: []string{"1"},
 				},
 				{
 					id:       1,
-					location: []string{"series_8429137420168685297", "data_flow_0"},
-					elements: []string{"4"},
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"3", "5"},
 				},
 			},
 		},
@@ -315,7 +319,7 @@ func Test_Stream_Global_Index(t *testing.T) {
 	tester := assert.New(t)
 	s, deferFunc := setup(tester)
 	defer deferFunc()
-	_ = setupQueryData(tester, "global_index.json", s)
+	_ = setupQueryData(t, "global_index.json", s)
 	tests := []struct {
 		name                string
 		traceID             string
@@ -345,7 +349,10 @@ func Test_Stream_Global_Index(t *testing.T) {
 			err := func() error {
 				for _, shard := range shards {
 					itemIDs, err := shard.Index().Seek(index.Field{
-						Key:  []byte("trace_id"),
+						Key: index.FieldKey{
+							//trace_id
+							IndexRuleID: 10,
+						},
 						Term: []byte(tt.traceID),
 					})
 					if err != nil {
@@ -477,7 +484,8 @@ func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForT
 //go:embed testdata/*.json
 var dataFS embed.FS
 
-func setupQueryData(t *assert.Assertions, dataFile string, stream *stream) (baseTime time.Time) {
+func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTime time.Time) {
+	t := assert.New(testing)
 	var templates []interface{}
 	baseTime = time.Now()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
@@ -485,8 +493,8 @@ func setupQueryData(t *assert.Assertions, dataFile string, stream *stream) (base
 	t.NoError(json.Unmarshal(content, &templates))
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	for i, template := range templates {
-		rawSearchTagFamily, err := json.Marshal(template)
-		t.NoError(err)
+		rawSearchTagFamily, errMarshal := json.Marshal(template)
+		t.NoError(errMarshal)
 		searchTagFamily := &streamv2.ElementValue_TagFamily{}
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
 		e := &streamv2.ElementValue{
@@ -505,28 +513,41 @@ func setupQueryData(t *assert.Assertions, dataFile string, stream *stream) (base
 			},
 		}
 		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
-		entity, err := stream.buildEntity(e)
-		t.NoError(err)
-		shardID, err := partition.ShardID(entity.Marshal(), stream.schema.GetShardNum())
-		t.NoError(err)
-		itemID, err := stream.write(common.ShardID(shardID), e)
-		t.NoError(err)
-		sa, err := stream.Shards(entity)
-		t.NoError(err)
-		for _, shard := range sa {
-			se, err := shard.Series().Get(entity)
-			t.NoError(err)
-			for {
-				item, closer, _ := se.Get(*itemID)
-				rawTagFamily, _ := item.Val("searchable")
-				if len(rawTagFamily) > 0 {
-					_ = closer.Close()
-					break
-				}
-				_ = closer.Close()
-			}
+		entity, errInner := stream.buildEntity(e)
+		t.NoError(errInner)
+		shardID, errInner := partition.ShardID(entity.Marshal(), stream.schema.GetShardNum())
+		t.NoError(errInner)
+		_, errInner = stream.write(common.ShardID(shardID), e)
+		t.NoError(errInner)
+	}
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+	err = ready(ctx, t, stream, queryOpts{
+		entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+		timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+	})
+	require.NoError(testing, err)
+	return baseTime
+}
 
+func ready(ctx context.Context, t *assert.Assertions, stream *stream, options queryOpts) error {
+	for {
+	loop:
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			data, err := queryData(t, stream, options)
+			if err != nil {
+				return err
+			}
+			for _, d := range data {
+				if len(d.elements) < 1 {
+					time.Sleep(300 * time.Millisecond)
+					break loop
+				}
+			}
+			return nil
 		}
 	}
-	return baseTime
 }

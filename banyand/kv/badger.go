@@ -25,17 +25,8 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/y"
-	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
-	roaring2 "github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 )
 
 var (
@@ -62,7 +53,7 @@ func (b *badgerTSS) Close() error {
 }
 
 type mergedIter struct {
-	delegated Iterator2
+	delegated Iterator
 	valid     bool
 	data      []byte
 }
@@ -95,12 +86,7 @@ func (i *mergedIter) parseData() {
 	if !i.valid {
 		return
 	}
-	data, err := i.delegated.Val().Marshall()
-	if err != nil {
-		i.valid = false
-		return
-	}
-	i.data = data
+	i.data = i.delegated.Val()
 }
 
 func (i *mergedIter) Close() error {
@@ -122,37 +108,10 @@ type badgerDB struct {
 	db      *badger.DB
 }
 
-func (b *badgerDB) Handover(iterator Iterator2) error {
+func (b *badgerDB) Handover(iterator Iterator) error {
 	return b.db.HandoverIterator(&mergedIter{
 		delegated: iterator,
 	})
-}
-
-func (b *badgerDB) Seek(key []byte, limit int) (posting2.List, error) {
-	opts := badger.DefaultIteratorOptions
-	it := b.db.NewIterator(opts)
-	defer func() {
-		_ = it.Close()
-	}()
-	result := roaring2.NewPostingList()
-	var errMerged error
-	for it.Seek(y.KeyWithTs(key, math.MaxInt64)); it.Valid(); it.Next() {
-		k := y.ParseKey(it.Key())
-		if !bytes.Equal(key, k) {
-			break
-		}
-		list := roaring2.NewPostingList()
-		err := list.Unmarshall(it.Value().Value)
-		if err != nil {
-			errMerged = multierr.Append(errMerged, err)
-			continue
-		}
-		_ = result.Union(list)
-		if result.Len() > limit {
-			break
-		}
-	}
-	return result, errMerged
 }
 
 func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
@@ -182,6 +141,7 @@ func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
 var _ Iterator = (*iterator)(nil)
 
 type iterator struct {
+	reverse   bool
 	delegated y.Iterator
 }
 
@@ -194,7 +154,11 @@ func (i *iterator) Rewind() {
 }
 
 func (i *iterator) Seek(key []byte) {
-	i.delegated.Seek(key)
+	if i.reverse {
+		i.delegated.Seek(y.KeyWithTs(key, 0))
+	} else {
+		i.delegated.Seek(y.KeyWithTs(key, math.MaxInt64))
+	}
 }
 
 func (i *iterator) Key() []byte {
@@ -222,6 +186,7 @@ func (b *badgerDB) NewIterator(opt ScanOpts) Iterator {
 	it := b.db.NewIterator(opts)
 	return &iterator{
 		delegated: it,
+		reverse:   opts.Reverse,
 	}
 }
 
@@ -254,7 +219,7 @@ func (b *badgerDB) Get(key []byte) ([]byte, error) {
 func (b *badgerDB) GetAll(key []byte, applyFn func([]byte) error) error {
 	iter := b.db.NewIterator(badger.DefaultIteratorOptions)
 	var count int
-	for iter.Seek(key); iter.Valid(); iter.Next() {
+	for iter.Seek(y.KeyWithTs(key, math.MaxInt64)); iter.Valid(); iter.Next() {
 		if !bytes.Equal(y.ParseKey(iter.Key()), key) {
 			break
 		}
@@ -268,67 +233,6 @@ func (b *badgerDB) GetAll(key []byte, applyFn func([]byte) error) error {
 		return nil
 	}
 	return ErrKeyNotFound
-}
-
-func (b *badgerDB) MatchField(fieldName []byte) (list posting.List) {
-	panic("implement me")
-}
-
-func (b *badgerDB) MatchTerms(field index.Field) (list posting.List) {
-	panic("implement me")
-}
-
-func (b *badgerDB) Range(fieldName []byte, opts index.RangeOpts) (list posting.List) {
-	panic("implement me")
-}
-
-var _ index.FieldIterator = (*fIterator)(nil)
-
-type fIterator struct {
-	init     bool
-	delegate Iterator
-	curr     *index.PostingValue
-}
-
-func (f *fIterator) Next() bool {
-	if !f.init {
-		f.init = true
-		f.delegate.Rewind()
-	}
-	if !f.delegate.Valid() {
-		return false
-	}
-	pv := &index.PostingValue{
-		Key:   f.delegate.Key(),
-		Value: roaring.NewPostingListWithInitialData(convert.BytesToUint64(f.delegate.Val())),
-	}
-	for ; f.delegate.Valid() && bytes.Equal(pv.Key, f.delegate.Key()); f.delegate.Next() {
-		pv.Value.Insert(common.ItemID(convert.BytesToUint64(f.delegate.Val())))
-	}
-	f.curr = pv
-	return true
-}
-
-func (f *fIterator) Val() *index.PostingValue {
-	return f.curr
-}
-
-func (f *fIterator) Close() error {
-	return f.delegate.Close()
-}
-
-func (b *badgerDB) FieldIterator(fieldName []byte, order modelv2.QueryOrder_Sort) index.FieldIterator {
-	var reverse bool
-	if order == modelv2.QueryOrder_SORT_DESC {
-		reverse = true
-	}
-	iter := b.NewIterator(ScanOpts{
-		Prefix:  fieldName,
-		Reverse: reverse,
-	})
-	return &fIterator{
-		delegate: iter,
-	}
 }
 
 // badgerLog delegates the zap log to the badger logger

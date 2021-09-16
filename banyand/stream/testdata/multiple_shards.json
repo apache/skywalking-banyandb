@@ -2,7 +2,7 @@
   {
     "tags": [
       {"str":{"value": "1"}},
-      {"int":{"value": 0}},
+      {"int":{"value": 1}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.1_id"}},
       {"str":{"value": "/home_id"}},
@@ -13,7 +13,7 @@
   {
     "tags": [
       {"str":{"value": "2"}},
-      {"int":{"value": 0}},
+      {"int":{"value": 1}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.3_id"}},
       {"str":{"value": "/product_id"}},
@@ -24,7 +24,7 @@
   {
     "tags": [
       {"str":{"value": "3"}},
-      {"int":{"value": 1}},
+      {"int":{"value": 0}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.1_id"}},
       {"str":{"value": "/home_id"}},
@@ -37,7 +37,7 @@
   {
     "tags": [
       {"str":{"value": "4"}},
-      {"int":{"value": 1}},
+      {"int":{"value": 0}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.5_id"}},
       {"str":{"value": "/price_id"}},
@@ -50,7 +50,7 @@
   {
     "tags": [
       {"str":{"value": "5"}},
-      {"int":{"value": 1}},
+      {"int":{"value": 0}},
       {"str":{"value": "webapp_id"}},
       {"str":{"value": "10.0.0.1_id"}},
       {"str":{"value": "/item_id"}},

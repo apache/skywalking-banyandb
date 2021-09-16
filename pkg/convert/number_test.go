@@ -15,24 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package convert
 
-option java_package = "org.apache.skywalking.banyandb.common.v2";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2";
+import (
+	"fmt"
+	"testing"
+)
 
-package banyandb.common.v2;
-
-enum Catalog {
-    CATALOG_UNSPECIFIED = 0;
-    CATALOG_STREAM = 1;
-    CATALOG_MEASURE = 2;
-}
-
-// Metadata is for multi-tenant, multi-model use
-message Metadata {
-    // group contains a set of options, like retention policy, max
-    string group = 1;
-    // name of the entity
-    string name = 2;
-    uint32 id = 3;
+func TestInt64ToBytes(t *testing.T) {
+	fmt.Println(Int64ToBytes(-100))
+	fmt.Println(Int64ToBytes(-2))
+	fmt.Println(Int64ToBytes(-1))
+	fmt.Println(Int64ToBytes(0))
+	fmt.Println(Int64ToBytes(1))
+	fmt.Println(Int64ToBytes(2))
+	fmt.Println(Int64ToBytes(100))
 }

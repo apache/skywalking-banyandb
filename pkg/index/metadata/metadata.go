@@ -15,50 +15,52 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package tsdb
+package metadata
 
 import (
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var ErrFieldAbsent = errors.New("field doesn't exist")
-
-type fieldHashID uint64
-
-type fieldMap struct {
-	repo map[fieldHashID]*fieldValue
+type Term interface {
+	ID(term []byte) (id []byte, err error)
+	Literal(id []byte) (term []byte, err error)
 }
 
-func newFieldMap(initialSize int) *fieldMap {
-	return &fieldMap{
-		repo: make(map[fieldHashID]*fieldValue, initialSize),
+var _ Term = (*term)(nil)
+
+type term struct {
+	store kv.Store
+}
+
+type TermOpts struct {
+	Path   string
+	Logger *logger.Logger
+}
+
+func NewTerm(opts TermOpts) (Term, error) {
+	var store kv.Store
+	var err error
+	if store, err = kv.OpenStore(0, opts.Path, kv.StoreWithNamedLogger("term_metadata", opts.Logger)); err != nil {
+		return nil, err
 	}
+	return &term{
+		store: store,
+	}, nil
 }
 
-func (fm *fieldMap) createKey(key []byte) {
-	fm.repo[fieldHashID(convert.Hash(key))] = &fieldValue{
-		key:   key,
-		value: newPostingMap(),
+func (t *term) ID(term []byte) (id []byte, err error) {
+	id = convert.Uint64ToBytes(convert.Hash(term))
+	_, err = t.store.Get(id)
+	if errors.Is(err, kv.ErrKeyNotFound) {
+		return id, t.store.Put(id, term)
 	}
+	return id, nil
 }
 
-func (fm *fieldMap) get(key []byte) (*fieldValue, bool) {
-	v, ok := fm.repo[fieldHashID(convert.Hash(key))]
-	return v, ok
-}
-
-func (fm *fieldMap) put(fv *Field, id common.ChunkID) error {
-	pm, ok := fm.get(fv.Name)
-	if !ok {
-		return errors.Wrapf(ErrFieldAbsent, "filed term:%s", fv.Name)
-	}
-	return pm.value.put(fv.Value, id)
-}
-
-type fieldValue struct {
-	key   []byte
-	value *postingMap
+func (t *term) Literal(id []byte) (term []byte, err error) {
+	return t.store.Get(id)
 }

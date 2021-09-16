@@ -116,7 +116,7 @@ func Test_service_Insert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := setUpModules(tester)
 			if err := s.Insert(tt.args.series, tt.args.shardID, tt.args.field); (err != nil) != tt.wantErr {
-				t.Errorf("Insert() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

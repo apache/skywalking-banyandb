@@ -18,12 +18,11 @@
 package tsdb
 
 import (
-	"time"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 type Iterator interface {
@@ -57,11 +56,12 @@ type seekerBuilder struct {
 
 	conditions []struct {
 		indexRuleType databasev2.IndexRule_Type
-		indexRule     string
+		indexRuleID   uint32
 		condition     Condition
 	}
 	order               modelv2.QueryOrder_Sort
 	indexRuleForSorting *databasev2.IndexRule
+	rangeOptsForSorting index.RangeOpts
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
@@ -72,20 +72,15 @@ func (s *seekerBuilder) Build() (Seeker, error) {
 	if err != nil {
 		return nil, err
 	}
-	filters := []filterFn{
-		func(item Item) bool {
-			valid := s.seriesSpan.timeRange.contains(item.Time())
-			timeRange := s.seriesSpan.timeRange
-			s.seriesSpan.l.Trace().
-				Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
-				Bool("valid", valid).Msg("filter item by time range")
-			return valid
-		},
-	}
+	filters := make([]filterFn, 0, 2)
 	if indexFilter != nil {
 		filters = append(filters, indexFilter)
 	}
-	return newSeeker(s.buildSeries(filters)), nil
+	se, err := s.buildSeries(filters)
+	if err != nil {
+		return nil, err
+	}
+	return newSeeker(se), nil
 }
 
 func newSeekerBuilder(s *seriesSpan) SeekerBuilder {

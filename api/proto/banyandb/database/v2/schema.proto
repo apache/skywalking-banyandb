@@ -47,7 +47,7 @@ enum TagType {
     TAG_TYPE_DATA_BINARY = 5;
 }
 
-message TagFamily {
+message TagFamilySpec {
     string name = 1;
     // tags defines accepted tags
     repeated TagSpec tags = 2; 
@@ -63,7 +63,7 @@ message Stream {
     // metadata is the identity of a trace series
     common.v2.Metadata metadata = 1;
     // tag_families 
-    repeated TagFamily tag_families = 2;
+    repeated TagFamilySpec tag_families = 2;
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
     // duration determines how long a TraceSeries keeps its data

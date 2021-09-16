@@ -63,7 +63,7 @@ func (s *stream) bootIndexGenerator() {
 
 //TODO: should listen to pipeline in a distributed cluster
 func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, value *streamv2.ElementValue) error {
-	val, err := getIndexValue(ruleIndex, value)
+	val, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
 	}
@@ -87,12 +87,16 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
 		return indexWriter.WriteInvertedIndex(index.Field{
-			Key:  []byte(rule.Metadata.Name),
+			Key: index.FieldKey{
+				IndexRuleID: rule.GetMetadata().GetId(),
+			},
 			Term: val,
 		})
 	case databasev2.IndexRule_TYPE_TREE:
 		return indexWriter.WriteLSMIndex(index.Field{
-			Key:  []byte(rule.Metadata.Name),
+			Key: index.FieldKey{
+				IndexRuleID: rule.GetMetadata().GetId(),
+			},
 			Term: val,
 		})
 	}
@@ -100,7 +104,7 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 }
 
 func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv2.ElementValue) (err error) {
-	val, err := getIndexValue(ruleIndex, value)
+	val, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
 	}
@@ -108,12 +112,16 @@ func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv2.El
 	switch rule.GetType() {
 	case databasev2.IndexRule_TYPE_INVERTED:
 		return writer.WriteInvertedIndex(index.Field{
-			Key:  []byte(rule.Metadata.Name),
+			Key: index.FieldKey{
+				IndexRuleID: rule.GetMetadata().GetId(),
+			},
 			Term: val,
 		})
 	case databasev2.IndexRule_TYPE_TREE:
 		return writer.WriteLSMIndex(index.Field{
-			Key:  []byte(rule.Metadata.Name),
+			Key: index.FieldKey{
+				IndexRuleID: rule.GetMetadata().GetId(),
+			},
 			Term: val,
 		})
 	}

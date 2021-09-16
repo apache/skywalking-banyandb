@@ -54,13 +54,17 @@ type indexDB struct {
 	lst     []*segment
 }
 
-func (i *indexDB) Seek(term index.Field) ([]GlobalItemID, error) {
+func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 	result := make([]GlobalItemID, 0)
-	err := i.lst[0].globalIndex.GetAll(term.Marshal(), func(rawBytes []byte) error {
+	f, err := field.MarshalStraight()
+	if err != nil {
+		return nil, err
+	}
+	err = i.lst[0].globalIndex.GetAll(f, func(rawBytes []byte) error {
 		id := &GlobalItemID{}
-		err := id.UnMarshal(rawBytes)
-		if err != nil {
-			return err
+		errUnMarshal := id.UnMarshal(rawBytes)
+		if errUnMarshal != nil {
+			return errUnMarshal
 		}
 		result = append(result, *id)
 		return nil
@@ -136,9 +140,17 @@ type indexWriter struct {
 }
 
 func (i *indexWriter) WriteLSMIndex(field index.Field) error {
-	return i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.Marshal(), uint64(i.ts.UnixNano()))
+	key, err := field.MarshalStraight()
+	if err != nil {
+		return err
+	}
+	return i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano()))
 }
 
 func (i *indexWriter) WriteInvertedIndex(field index.Field) error {
-	return i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.Marshal(), uint64(i.ts.UnixNano()))
+	key, err := field.MarshalStraight()
+	if err != nil {
+		return err
+	}
+	return i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano()))
 }

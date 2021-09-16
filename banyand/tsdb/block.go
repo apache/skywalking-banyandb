@@ -27,9 +27,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -39,15 +39,14 @@ type block struct {
 	ref  *z.Closer
 
 	store         kv.TimeSeriesStore
-	primaryIndex  kv.Store
-	invertedIndex inverted.GlobalStore
+	primaryIndex  index.Store
+	invertedIndex index.Store
+	lsmIndex      index.Store
 	closableLst   []io.Closer
 	endTime       time.Time
 	startTime     time.Time
 	segID         uint16
 	blockID       uint16
-
-	//revertedIndex kv.Store
 }
 
 type blockOpts struct {
@@ -76,7 +75,10 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		kv.TSSWithLogger(b.l)); err != nil {
 		return nil, err
 	}
-	if b.primaryIndex, err = kv.OpenStore(0, b.path+"/p_index", kv.StoreWithLogger(b.l)); err != nil {
+	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
+		Path:   b.path + "/primary",
+		Logger: b.l,
+	}); err != nil {
 		return nil, err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
@@ -84,8 +86,20 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if !ok || len(rules) == 0 {
 		return b, nil
 	}
-	b.invertedIndex = inverted.NewStore("inverted")
-	return b, nil
+	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
+		Path:   b.path + "/inverted",
+		Logger: b.l,
+	}); err != nil {
+		return nil, err
+	}
+	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
+		Path:   b.path + "/lsm",
+		Logger: b.l,
+	}); err != nil {
+		return nil, err
+	}
+	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
+	return b, err
 }
 
 func (b *block) delegate() blockDelegate {
@@ -137,11 +151,11 @@ func (d *bDelegate) dataReader() kv.TimeSeriesReader {
 }
 
 func (d *bDelegate) lsmIndexReader() index.Searcher {
-	return d.delegate.invertedIndex.Searcher()
+	return d.delegate.lsmIndex
 }
 
 func (d *bDelegate) invertedIndexReader() index.Searcher {
-	return d.delegate.invertedIndex.Searcher()
+	return d.delegate.invertedIndex
 }
 
 func (d *bDelegate) primaryIndexReader() index.Searcher {
@@ -161,21 +175,21 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.primaryIndex.Put(field.Marshal(), convert.Uint64ToBytes(uint64(id)))
+	return d.delegate.primaryIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeLSMIndex(field index.Field, id common.ItemID) error {
-	if d.delegate.invertedIndex == nil {
+	if d.delegate.lsmIndex == nil {
 		return nil
 	}
-	return d.delegate.invertedIndex.Insert(field, id)
+	return d.delegate.lsmIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) error {
 	if d.delegate.invertedIndex == nil {
 		return nil
 	}
-	return d.delegate.invertedIndex.Insert(field, id)
+	return d.delegate.invertedIndex.Write(field, id)
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {
