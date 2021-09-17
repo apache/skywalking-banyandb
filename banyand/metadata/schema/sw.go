@@ -21,12 +21,15 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"strings"
 
 	"github.com/golang/protobuf/jsonpb"
 
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 )
+
+const indexRuleDir = "data/index_rules"
 
 var (
 	_ Stream    = (*streamRepo)(nil)
@@ -58,7 +61,7 @@ func (l *streamRepo) Get(_ context.Context, _ *commonv2.Metadata) (*databasev2.S
 	return l.data, nil
 }
 
-func (l *streamRepo) List(ctx context.Context, _ ListOpt) ([]*databasev2.Stream, error) {
+func (l *streamRepo) List(ctx context.Context, opts ListOpt) ([]*databasev2.Stream, error) {
 	s, err := l.Get(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -77,7 +80,7 @@ func NewIndexRule() (IndexRule, error) {
 }
 
 func (i *indexRuleRepo) Get(_ context.Context, metadata *commonv2.Metadata) (*databasev2.IndexRule, error) {
-	bb, err := i.store.ReadFile("data/index_rules/" + metadata.Name + ".json")
+	bb, err := i.store.ReadFile(indexRuleDir + "/" + metadata.Name + ".json")
 	if err != nil {
 		return nil, err
 	}
@@ -89,12 +92,24 @@ func (i *indexRuleRepo) Get(_ context.Context, metadata *commonv2.Metadata) (*da
 	return indexRule, nil
 }
 
-func (i *indexRuleRepo) List(ctx context.Context, _ ListOpt) ([]*databasev2.IndexRule, error) {
-	t, err := i.Get(ctx, nil)
+func (i *indexRuleRepo) List(ctx context.Context, opt ListOpt) ([]*databasev2.IndexRule, error) {
+	entries, err := i.store.ReadDir(indexRuleDir)
 	if err != nil {
 		return nil, err
 	}
-	return []*databasev2.IndexRule{t}, nil
+	rules := make([]*databasev2.IndexRule, 0, len(entries))
+	for _, entry := range entries {
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		r, errInternal := i.Get(ctx, &commonv2.Metadata{
+			Name:  name,
+			Group: opt.Group,
+		})
+		if errInternal != nil {
+			return nil, errInternal
+		}
+		rules = append(rules, r)
+	}
+	return rules, nil
 }
 
 type indexRuleBindingRepo struct {

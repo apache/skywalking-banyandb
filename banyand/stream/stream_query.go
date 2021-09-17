@@ -31,7 +31,6 @@ import (
 )
 
 var (
-	ErrTagNotExist       = errors.New("the tag doesn't exist")
 	ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
 )
 
