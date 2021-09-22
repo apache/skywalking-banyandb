@@ -23,7 +23,6 @@ import (
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
 var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
@@ -43,11 +42,16 @@ func (s *seekerBuilder) Filter(indexRule *databasev2.IndexRule, condition Condit
 	return s
 }
 
-func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
+type condWithIRT struct {
+	indexRuleType databasev2.IndexRule_Type
+	condition     index.Condition
+}
+
+func (s *seekerBuilder) buildConditions() ([]condWithIRT, error) {
 	if len(s.conditions) < 1 {
 		return nil, nil
 	}
-	var treeIndexCondition, invertedIndexCondition []index.Condition
+	conditions := make([]condWithIRT, 0, len(s.conditions))
 	for _, condition := range s.conditions {
 		if len(condition.condition) > 1 {
 			//TODO:// should support composite index rule
@@ -62,18 +66,17 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 			cond[term] = c
 			break
 		}
-		switch condition.indexRuleType {
-		case databasev2.IndexRule_TYPE_TREE:
-			treeIndexCondition = append(treeIndexCondition, cond)
-		case databasev2.IndexRule_TYPE_INVERTED:
-			invertedIndexCondition = append(invertedIndexCondition, cond)
-		}
+		conditions = append(conditions, condWithIRT{indexRuleType: condition.indexRuleType, condition: cond})
 	}
-	allItemIDs := roaring.NewPostingList()
-	addIDs := func(allList posting.List, searcher index.Searcher, cond index.Condition) error {
+	return conditions, nil
+}
+
+func (s *seekerBuilder) buildIndexFilter(block blockDelegate, conditions []condWithIRT) (filterFn, error) {
+	var allItemIDs posting.List
+	addIDs := func(allList posting.List, searcher index.Searcher, cond index.Condition) (posting.List, bool, error) {
 		tree, err := index.BuildTree(searcher, cond)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 		rangeOpts, found := tree.TrimRangeLeaf(index.FieldKey{
 			SeriesID:    s.seriesSpan.seriesID,
@@ -83,28 +86,47 @@ func (s *seekerBuilder) buildIndexFilter() (filterFn, error) {
 			s.rangeOptsForSorting = rangeOpts
 		}
 		list, err := tree.Execute()
-		if err != nil {
-			return err
+		if errors.Is(err, index.ErrEmptyTree) {
+			return allList, false, nil
 		}
-		err = allList.Union(list)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
-		return nil
+		if allList == nil {
+			allList = list
+		} else {
+			err = allList.Intersect(list)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		return allList, true, nil
 	}
-	for _, b := range s.seriesSpan.blocks {
-		for _, tCond := range treeIndexCondition {
-			err := addIDs(allItemIDs, b.lsmIndexReader(), tCond)
-			if err != nil {
-				return nil, err
-			}
+	allInvalid := true
+	for i, condition := range conditions {
+		var valid bool
+		var err error
+		switch condition.indexRuleType {
+		case databasev2.IndexRule_TYPE_INVERTED:
+			allItemIDs, valid, err = addIDs(allItemIDs, block.invertedIndexReader(), condition.condition)
+		case databasev2.IndexRule_TYPE_TREE:
+			allItemIDs, valid, err = addIDs(allItemIDs, block.lsmIndexReader(), condition.condition)
+		default:
+			return nil, ErrUnsupportedIndexRule
 		}
-		for _, iCond := range invertedIndexCondition {
-			err := addIDs(allItemIDs, b.invertedIndexReader(), iCond)
-			if err != nil {
-				return nil, err
-			}
+		if err != nil {
+			return nil, err
 		}
+		if i > 0 && allItemIDs.IsEmpty() {
+			return func(_ Item) bool {
+				return false
+			}, nil
+		}
+		allInvalid = allInvalid && !valid
+	}
+
+	if allInvalid {
+		return nil, nil
 	}
 	return func(item Item) bool {
 		valid := allItemIDs.Contains(item.ID())

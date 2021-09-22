@@ -33,6 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+var emptyFilters = make([]filterFn, 0)
+
 func (s *seekerBuilder) OrderByIndex(indexRule *databasev2.IndexRule, order modelv2.QueryOrder_Sort) SeekerBuilder {
 	s.indexRuleForSorting = indexRule
 	s.order = order
@@ -45,22 +47,22 @@ func (s *seekerBuilder) OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder
 	return s
 }
 
-func (s *seekerBuilder) buildSeries(filters []filterFn) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeries(conditions []condWithIRT) ([]Iterator, error) {
 	if s.indexRuleForSorting == nil {
-		return s.buildSeriesByTime(filters)
+		return s.buildSeriesByTime(conditions)
 	}
-	filters = append(filters, func(item Item) bool {
+	return s.buildSeriesByIndex(conditions)
+}
+
+func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []Iterator, err error) {
+	timeFilter := func(item Item) bool {
 		valid := s.seriesSpan.timeRange.contains(item.Time())
 		timeRange := s.seriesSpan.timeRange
 		s.seriesSpan.l.Trace().
 			Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
 			Bool("valid", valid).Msg("filter item by time range")
 		return valid
-	})
-	return s.buildSeriesByIndex(filters)
-}
-
-func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterator, err error) {
+	}
 	for _, b := range s.seriesSpan.blocks {
 		var inner index.FieldIterator
 		var err error
@@ -68,7 +70,14 @@ func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterato
 			SeriesID:    s.seriesSpan.seriesID,
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 		}
-
+		filters := []filterFn{timeFilter}
+		filter, err := s.buildIndexFilter(b, conditions)
+		if err != nil {
+			return nil, err
+		}
+		if filter != nil {
+			filters = append(filters, filter)
+		}
 		switch s.indexRuleForSorting.GetType() {
 		case databasev2.IndexRule_TYPE_TREE:
 			inner, err = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
@@ -85,7 +94,7 @@ func (s *seekerBuilder) buildSeriesByIndex(filters []filterFn) (series []Iterato
 	return
 }
 
-func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
 	case modelv2.QueryOrder_SORT_ASC:
@@ -120,7 +129,15 @@ func (s *seekerBuilder) buildSeriesByTime(filters []filterFn) ([]Iterator, error
 			return nil, err
 		}
 		if inner != nil {
-			delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, filters))
+			filter, err := s.buildIndexFilter(b, conditions)
+			if err != nil {
+				return nil, err
+			}
+			if filter == nil {
+				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, emptyFilters))
+			} else {
+				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, []filterFn{filter}))
+			}
 		}
 	}
 	s.seriesSpan.l.Debug().

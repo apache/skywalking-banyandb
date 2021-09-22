@@ -29,7 +29,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
-var ErrNotRangeOperation = errors.New("this is not an range operation")
+var (
+	ErrNotRangeOperation = errors.New("this is not an range operation")
+	ErrEmptyTree         = errors.New("tree is empty")
+)
 
 type Executor interface {
 	Execute() (posting.List, error)
@@ -151,7 +154,7 @@ func (n *node) addRangeLeaf(key FieldKey) *rangeOp {
 			Key:      key,
 			searcher: n.searcher,
 		},
-		Opts: RangeOpts{},
+		Opts: &RangeOpts{},
 	}
 	n.SubNodes = append(n.SubNodes, r)
 	return r
@@ -184,6 +187,9 @@ func (n *node) pop() (Executor, bool) {
 func execute(n *node, lp logicalOP) (posting.List, error) {
 	ex, hasNext := n.pop()
 	if !hasNext {
+		if n.value == nil {
+			return nil, ErrEmptyTree
+		}
 		return n.value, nil
 	}
 	r, err := ex.Execute()
@@ -219,7 +225,7 @@ func (an *andNode) TrimRangeLeaf(key FieldKey) (RangeOpts, bool) {
 		}
 		if key.Equal(leafRange.Key) {
 			an.SubNodes = removeLeaf(an.SubNodes, i)
-			return leafRange.Opts, true
+			return *leafRange.Opts, true
 		}
 	}
 	return RangeOpts{}, false
@@ -309,11 +315,11 @@ func (eq *eq) MarshalJSON() ([]byte, error) {
 
 type rangeOp struct {
 	*leaf
-	Opts RangeOpts
+	Opts *RangeOpts
 }
 
 func (r *rangeOp) Execute() (posting.List, error) {
-	return r.searcher.Range(r.Key, r.Opts)
+	return r.searcher.Range(r.Key, *r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
