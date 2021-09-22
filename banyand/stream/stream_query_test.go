@@ -681,6 +681,11 @@ func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForT
 								elements = append(elements, tag.GetValue().GetStr().GetValue())
 							}
 						}
+						eleID, errInner := s.ParseElementID(iterator.Val())
+						if errInner != nil {
+							return nil, errInner
+						}
+						tester.NotEmpty(eleID)
 					}
 					_ = iterator.Close()
 					g = append(g, shardStruct{

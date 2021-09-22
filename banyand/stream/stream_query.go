@@ -70,7 +70,7 @@ func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
 }
 
 func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFamily, error) {
-	familyRawBytes, err := item.Val(family)
+	familyRawBytes, err := item.Family(family)
 	if err != nil {
 		return nil, err
 	}
@@ -101,4 +101,12 @@ func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFami
 		Name: family,
 		Tags: tags,
 	}, err
+}
+
+func (s *stream) ParseElementID(item tsdb.Item) (string, error) {
+	rawBytes, err := item.Val()
+	if err != nil {
+		return "", err
+	}
+	return string(rawBytes), nil
 }
