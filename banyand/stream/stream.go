@@ -51,9 +51,16 @@ type stream struct {
 	indexCh chan indexMessage
 }
 
+var _ Stream = (*stream)(nil)
+var _ StreamT = (*stream)(nil)
+
 func (s *stream) Close() error {
 	close(s.indexCh)
 	return s.db.Close()
+}
+
+func (s *stream) GetShardNum() uint32 {
+	return s.schema.GetShardNum()
 }
 
 func (s *stream) parseSchema() {
@@ -92,6 +99,21 @@ func (s *stream) findTagByName(tagName string) (int, int, *databasev2.TagSpec) {
 type streamSpec struct {
 	schema     *databasev2.Stream
 	indexRules []*databasev2.IndexRule
+}
+
+func OpenStreamT(root string, streamEntity *databasev2.Stream, rules []*databasev2.IndexRule, l *logger.Logger) (StreamT, error) {
+	spec := streamSpec{
+		schema:     streamEntity,
+		indexRules: rules,
+	}
+
+	s, err := openStream(root, spec, l)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
 
 func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error) {

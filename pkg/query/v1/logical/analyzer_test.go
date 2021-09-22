@@ -19,7 +19,6 @@ package logical_test
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"testing"
 	"time"
 
@@ -30,12 +29,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-<<<<<<< HEAD
-	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	logical2 "github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
-=======
-	"github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
->>>>>>> dba269f (move pb builder as v1)
 )
 
 func TestAnalyzer_SimpleTimeScan(t *testing.T) {

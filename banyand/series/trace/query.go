@@ -19,7 +19,6 @@ package trace
 
 import (
 	"encoding/hex"
-	v12 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -33,10 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-<<<<<<< HEAD
 	v12 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-=======
->>>>>>> dba269f (move pb builder as v1)
 	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 )

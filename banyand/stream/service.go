@@ -61,6 +61,15 @@ func (s *service) Stream(stream *commonv2.Metadata) (Stream, error) {
 	return sm, nil
 }
 
+func (s *service) StreamT(stream *commonv2.Metadata) (StreamT, error) {
+	sID := formatStreamID(stream.GetName(), stream.GetGroup())
+	sm, ok := s.schemaMap[sID]
+	if !ok {
+		return nil, errors.WithStack(ErrStreamNotExist)
+	}
+	return sm, nil
+}
+
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "root-path", "/tmp", "the root path of database")

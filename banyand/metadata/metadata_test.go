@@ -48,7 +48,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 				"trace_id",
 				"duration",
 				"endpoint_id",
-				"http.code",
+				"status_code",
 				"http.method",
 				"db.instance",
 				"db.type",
