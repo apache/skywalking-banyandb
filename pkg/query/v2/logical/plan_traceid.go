@@ -43,11 +43,17 @@ type unresolvedTraceIDFetch struct {
 }
 
 func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
+	defined, idxRule := s.IndexDefined(NewTag("", s.TraceIDFieldName()))
+	if !defined {
+		return nil, errors.Wrap(ErrIndexNotDefined, "trace_id")
+	}
+
 	if t.projectionFields == nil || len(t.projectionFields) == 0 {
 		return &traceIDFetch{
-			metadata: t.metadata,
-			schema:   s,
-			traceID:  t.traceID,
+			metadata:           t.metadata,
+			schema:             s,
+			traceID:            t.traceID,
+			traceIdIndexRuleID: idxRule.GetMetadata().GetId(),
 		}, nil
 	}
 
@@ -64,6 +70,7 @@ func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
 		schema:              s,
 		traceID:             t.traceID,
 		metadata:            t.metadata,
+		traceIdIndexRuleID:  idxRule.GetMetadata().GetId(),
 	}, nil
 }
 
@@ -76,6 +83,7 @@ type traceIDFetch struct {
 	traceID             string
 	projectionFieldRefs [][]*FieldRef
 	schema              Schema
+	traceIdIndexRuleID  uint32
 }
 
 func (t *traceIDFetch) String() string {
@@ -130,8 +138,7 @@ func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.
 	var elementsInShard []*streamv2.Element
 	itemIDs, err := shard.Index().Seek(index.Field{
 		Key: index.FieldKey{
-			// TODO: use real indexRuleID for trace_id
-			IndexRuleID: 10,
+			IndexRuleID: t.traceIdIndexRuleID,
 		},
 		Term: []byte(t.traceID),
 	})

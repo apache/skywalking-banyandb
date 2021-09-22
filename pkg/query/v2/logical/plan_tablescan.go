@@ -77,6 +77,10 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	// resolve sub-plan with the projected view of schema
 	orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema.Proj(fieldRefs...))
 
+	if err != nil {
+		return nil, err
+	}
+
 	return &tableScan{
 		orderBy:             orderBySubPlan,
 		timeRange:           tsdb.NewTimeRange(u.startTime, u.endTime),
@@ -125,7 +129,6 @@ func (s *tableScan) executeForShard(ec executor.ExecutionContext, shard tsdb.Sha
 		return nil, err
 	}
 	var orderByFilter seekerBuilder
-	// TODO: a possible optimization here is check whether users are using `start_time` as the indexRule
 	if s.index != nil {
 		orderByFilter = func(builder tsdb.SeekerBuilder) {
 			builder.OrderByIndex(s.index, s.sort)
