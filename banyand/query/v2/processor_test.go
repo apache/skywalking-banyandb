@@ -410,7 +410,7 @@ func TestQueryProcessor(t *testing.T) {
 					Projection("searchable", "trace_id").
 					Build()
 			},
-			wantLen: 2,
+			wantLen: 3,
 			checker: withoutDataBinaryChecker,
 		},
 		{

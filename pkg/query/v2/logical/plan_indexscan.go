@@ -84,8 +84,8 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
-	// resolve sub-plan
-	orderBySubPlan, err := uis.unresolvedOrderBy.Analyze(s)
+	// resolve sub-plan with the projected view of schema
+	orderBySubPlan, err := uis.unresolvedOrderBy.Analyze(s.Proj(projFieldsRefs...))
 
 	if err != nil {
 		return nil, err

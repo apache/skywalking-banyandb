@@ -52,14 +52,14 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 		return nil, errors.Wrap(ErrInvalidSchema, "nil")
 	}
 
-	// resolve sub-plan
-	orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema)
-
-	if err != nil {
-		return nil, err
-	}
-
 	if u.projectionFields == nil || len(u.projectionFields) == 0 {
+		// directly resolve sub-plan if no projection exists
+		orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema)
+
+		if err != nil {
+			return nil, err
+		}
+
 		return &tableScan{
 			timeRange: tsdb.NewTimeRange(u.startTime, u.endTime),
 			schema:    schema,
@@ -73,6 +73,9 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// resolve sub-plan with the projected view of schema
+	orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema.Proj(fieldRefs...))
 
 	return &tableScan{
 		orderBy:             orderBySubPlan,

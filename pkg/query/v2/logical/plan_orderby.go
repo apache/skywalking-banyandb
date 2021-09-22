@@ -54,13 +54,7 @@ func (u *unresolvedOrderBy) Analyze(s Schema) (*orderBy, error) {
 		return nil, errors.Wrap(ErrIndexNotDefined, u.targetIndexRuleName)
 	}
 
-	refs, err := s.CreateRef(NewTags("", indexRule.GetTags()...))
-
-	if err != nil {
-		return nil, ErrFieldNotDefined
-	}
-
-	projFieldSpecs, err := s.Proj(refs...).CreateRef(NewTags("", indexRule.GetTags()...))
+	projFieldSpecs, err := s.CreateRef(NewTags("", indexRule.GetTags()...))
 
 	if err != nil {
 		return nil, ErrFieldNotDefined
