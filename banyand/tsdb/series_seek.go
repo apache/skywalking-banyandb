@@ -68,15 +68,11 @@ func (s *seekerBuilder) Build() (Seeker, error) {
 	if s.order == modelv2.QueryOrder_SORT_UNSPECIFIED {
 		s.order = modelv2.QueryOrder_SORT_DESC
 	}
-	indexFilter, err := s.buildIndexFilter()
+	conditions, err := s.buildConditions()
 	if err != nil {
 		return nil, err
 	}
-	filters := make([]filterFn, 0, 2)
-	if indexFilter != nil {
-		filters = append(filters, indexFilter)
-	}
-	se, err := s.buildSeries(filters)
+	se, err := s.buildSeries(conditions)
 	if err != nil {
 		return nil, err
 	}

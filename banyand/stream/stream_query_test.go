@@ -285,6 +285,228 @@ func Test_Stream_Series(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "filter by duration",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					rule := &databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "duration",
+							Group: "default",
+							Id:    3,
+						},
+						Tags:     []string{"duration"},
+						Type:     databasev2.IndexRule_TYPE_TREE,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}
+					builder.Filter(rule, tsdb.Condition{
+						"duration": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_LT,
+								Values: [][]byte{convert.Int64ToBytes(500)},
+							},
+						},
+					})
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+					elements: []string{"4"},
+				},
+				{
+					id:       0,
+					location: []string{"series_4862694201852929188", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"5", "3"},
+				},
+			},
+		},
+		{
+			name: "filter and sort by duration",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					rule := &databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "duration",
+							Group: "default",
+							Id:    3,
+						},
+						Tags:     []string{"duration"},
+						Type:     databasev2.IndexRule_TYPE_TREE,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}
+					builder.Filter(rule, tsdb.Condition{
+						"duration": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_LT,
+								Values: [][]byte{convert.Int64ToBytes(500)},
+							},
+						},
+					})
+					builder.OrderByIndex(rule, modelv2.QueryOrder_SORT_ASC)
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+					elements: []string{"4"},
+				},
+				{
+					id:       0,
+					location: []string{"series_4862694201852929188", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"3", "5"},
+				},
+			},
+		},
+		{
+			name: "filter by several conditions",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					rule := &databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "duration",
+							Group: "default",
+							Id:    3,
+						},
+						Tags:     []string{"duration"},
+						Type:     databasev2.IndexRule_TYPE_TREE,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}
+					builder.Filter(rule, tsdb.Condition{
+						"duration": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_LT,
+								Values: [][]byte{convert.Int64ToBytes(500)},
+							},
+						},
+					})
+					builder.Filter(&databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "endpoint_id",
+							Group: "default",
+							Id:    4,
+						},
+						Tags:     []string{"endpoint_id"},
+						Type:     databasev2.IndexRule_TYPE_INVERTED,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}, tsdb.Condition{
+						"endpoint_id": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Values: [][]byte{[]byte("/home_id")},
+							},
+						},
+					})
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+				},
+				{
+					id:       0,
+					location: []string{"series_4862694201852929188", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"3"},
+				},
+			},
+		},
+		{
+			name: "filter by several conditions, sort by duration",
+			args: queryOpts{
+				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				buildFn: func(builder tsdb.SeekerBuilder) {
+					rule := &databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "duration",
+							Group: "default",
+							Id:    3,
+						},
+						Tags:     []string{"duration"},
+						Type:     databasev2.IndexRule_TYPE_TREE,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}
+					builder.Filter(rule, tsdb.Condition{
+						"duration": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_LT,
+								Values: [][]byte{convert.Int64ToBytes(500)},
+							},
+						},
+					})
+					builder.OrderByIndex(rule, modelv2.QueryOrder_SORT_ASC)
+					builder.Filter(&databasev2.IndexRule{
+						Metadata: &commonv2.Metadata{
+							Name:  "endpoint_id",
+							Group: "default",
+							Id:    4,
+						},
+						Tags:     []string{"endpoint_id"},
+						Type:     databasev2.IndexRule_TYPE_INVERTED,
+						Location: databasev2.IndexRule_LOCATION_SERIES,
+					}, tsdb.Condition{
+						"endpoint_id": []index.ConditionValue{
+							{
+								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Values: [][]byte{[]byte("/home_id")},
+							},
+						},
+					})
+				},
+			},
+			want: shardsForTest{
+				{
+					id:       0,
+					location: []string{"series_16283518706331625322", "data_flow_0"},
+				},
+				{
+					id:       0,
+					location: []string{"series_4862694201852929188", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_13343478452567673284", "data_flow_0"},
+				},
+				{
+					id:       1,
+					location: []string{"series_7898679171060804990", "data_flow_0"},
+					elements: []string{"3"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
