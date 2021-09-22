@@ -32,7 +32,8 @@ type Iterator interface {
 }
 
 type Item interface {
-	Val(family string) ([]byte, error)
+	Family(family string) ([]byte, error)
+	Val() ([]byte, error)
 	ID() common.ItemID
 	SortedField() []byte
 	Time() uint64
@@ -118,10 +119,17 @@ func (i *item) SortedField() []byte {
 	return i.sortedField
 }
 
-func (i *item) Val(family string) ([]byte, error) {
+func (i *item) Family(family string) ([]byte, error) {
 	d := dataBucket{
 		seriesID: i.seriesID,
 		family:   []byte(family),
+	}
+	return i.data.Get(d.marshal(), uint64(i.itemID))
+}
+
+func (i *item) Val() ([]byte, error) {
+	d := dataBucket{
+		seriesID: i.seriesID,
 	}
 	return i.data.Get(d.marshal(), uint64(i.itemID))
 }

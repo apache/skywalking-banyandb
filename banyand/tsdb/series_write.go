@@ -84,12 +84,24 @@ func (w *writerBuilder) Val(val []byte) WriterBuilder {
 var ErrNoTime = errors.New("no time specified")
 var ErrNoVal = errors.New("no value specified")
 
+var ErrDuplicatedFamily = errors.New("duplicated family")
+
 func (w *writerBuilder) Build() (Writer, error) {
 	if w.block == nil {
 		return nil, errors.WithStack(ErrNoTime)
 	}
 	if len(w.values) < 1 {
 		return nil, errors.WithStack(ErrNoVal)
+	}
+	for i, value := range w.values {
+		for j := i + 1; j < len(w.values); j = j + 1 {
+			if value.family == nil && w.values[j].family == nil {
+				return nil, errors.Wrap(ErrDuplicatedFamily, "default family")
+			}
+			if bytes.Equal(value.family, w.values[j].family) {
+				return nil, errors.Wrapf(ErrDuplicatedFamily, "family:%s", value.family)
+			}
+		}
 	}
 	segID, blockID := w.block.identity()
 	return &writer{
@@ -145,6 +157,9 @@ type dataBucket struct {
 }
 
 func (d dataBucket) marshal() []byte {
+	if d.family == nil {
+		return d.seriesID.Marshal()
+	}
 	return bytes.Join([][]byte{
 		d.seriesID.Marshal(),
 		hash(d.family),

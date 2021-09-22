@@ -36,7 +36,6 @@ import (
 
 var (
 	ErrMalformedElement            = errors.New("element is malformed")
-	ErrUnsupportedTagTypeAsEntry   = errors.New("the tag type can not be as an entry in an entity")
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 )
 
@@ -92,6 +91,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 			}
 			builder.Family(sm.GetTagFamilies()[fi].GetName(), bb)
 		}
+		builder.Val([]byte(value.GetElementId()))
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
