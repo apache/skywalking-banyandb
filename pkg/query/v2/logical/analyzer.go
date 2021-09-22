@@ -58,9 +58,9 @@ func NewTag(family, name string) *Tag {
 
 // NewTags create an array of Tag within a TagFamily
 func NewTags(family string, tagNames ...string) []*Tag {
-	var tags []*Tag
-	for _, name := range tagNames {
-		tags = append(tags, NewTag(family, name))
+	tags := make([]*Tag, len(tagNames))
+	for i, name := range tagNames {
+		tags[i] = NewTag(family, name)
 	}
 	return tags
 }
@@ -170,13 +170,13 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv2.QueryRequest, m
 func parseFields(criteria *streamv2.QueryRequest, metadata *commonv2.Metadata, s Schema) (UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
-	var projTags [][]*Tag
-	for _, tagFamily := range criteria.GetProjection().GetTagFamilies() {
+	projTags := make([][]*Tag, len(criteria.GetProjection().GetTagFamilies()))
+	for i, tagFamily := range criteria.GetProjection().GetTagFamilies() {
 		var projTagInFamily []*Tag
 		for _, tagName := range tagFamily.GetTags() {
 			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
 		}
-		projTags = append(projTags, projTagInFamily)
+		projTags[i] = projTagInFamily
 	}
 
 	var plan UnresolvedPlan

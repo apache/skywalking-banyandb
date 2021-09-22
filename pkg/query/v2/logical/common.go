@@ -39,10 +39,10 @@ func createTimestampComparator(sort modelv2.QueryOrder_Sort) comparator {
 		return func(a, b *streamv2.Element) bool {
 			return a.GetTimestamp().AsTime().Before(b.GetTimestamp().AsTime())
 		}
-	} else {
-		return func(a, b *streamv2.Element) bool {
-			return a.GetTimestamp().AsTime().After(b.GetTimestamp().AsTime())
-		}
+	}
+
+	return func(a, b *streamv2.Element) bool {
+		return a.GetTimestamp().AsTime().After(b.GetTimestamp().AsTime())
 	}
 }
 
@@ -65,22 +65,22 @@ func createMultiTagsComparator(fieldRefs []*FieldRef, sortDirection modelv2.Quer
 // tag list where the inner list must exist in the same tag family.
 // Strict order can be guaranteed in the result.
 func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*FieldRef) ([]*modelv2.TagFamily, error) {
-	var tagFamily []*modelv2.TagFamily
-	for _, refs := range projectionFieldRefs {
-		var tags []*modelv2.Tag
+	tagFamily := make([]*modelv2.TagFamily, len(projectionFieldRefs))
+	for i, refs := range projectionFieldRefs {
+		tags := make([]*modelv2.Tag, len(refs))
 		familyName := refs[0].tag.GetFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, err
 		}
-		for _, ref := range refs {
-			tags = append(tags, parsedTagFamily.GetTags()[ref.Spec.TagIdx])
+		for j, ref := range refs {
+			tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
 		}
 
-		tagFamily = append(tagFamily, &modelv2.TagFamily{
+		tagFamily[i] = &modelv2.TagFamily{
 			Name: familyName,
 			Tags: tags,
-		})
+		}
 	}
 
 	return tagFamily, nil
@@ -165,7 +165,7 @@ func mergeSort(input [][]*streamv2.Element, c comparator) []*streamv2.Element {
 
 func merge(left, right []*streamv2.Element, c comparator) []*streamv2.Element {
 	size, i, j := len(left)+len(right), 0, 0
-	slice := make([]*streamv2.Element, size, size)
+	slice := make([]*streamv2.Element, size)
 
 	for k := 0; k < size; k++ {
 		if i > len(left)-1 && j <= len(right)-1 {

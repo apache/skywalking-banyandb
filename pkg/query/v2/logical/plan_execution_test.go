@@ -70,6 +70,8 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
 			schema, err := logical.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)
@@ -120,6 +122,8 @@ func TestPlanExecution_Offset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
 			schema, err := logical.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)
@@ -144,22 +148,22 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		traceId    string
+		traceID    string
 		wantLength int
 	}{
 		{
 			name:       "traceID = 1",
-			traceId:    "1",
+			traceID:    "1",
 			wantLength: 1,
 		},
 		{
 			name:       "traceID = 2",
-			traceId:    "2",
+			traceID:    "2",
 			wantLength: 1,
 		},
 		{
 			name:       "traceID = 3",
-			traceId:    "3",
+			traceID:    "3",
 			wantLength: 1,
 		},
 	}
@@ -168,7 +172,9 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
 			s, err := logical.DefaultAnalyzer().BuildStreamSchema(context.TODO(), m)
-			p, err := logical.TraceIDFetch(tt.traceId, m, logical.NewTags("searchable", "trace_id")).Analyze(s)
+			tester.NoError(err)
+
+			p, err := logical.TraceIDFetch(tt.traceID, m, logical.NewTags("searchable", "trace_id")).Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
 			entities, err := p.Execute(streamT)
@@ -176,7 +182,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 			for _, entity := range entities {
 				tester.Len(entity.GetTagFamilies(), 1)
 				tester.Len(entity.GetTagFamilies()[0].GetTags(), 1)
-				tester.Equal(entity.GetTagFamilies()[0].GetTags()[0].GetValue().GetStr().GetValue(), tt.traceId)
+				tester.Equal(entity.GetTagFamilies()[0].GetTags()[0].GetValue().GetStr().GetValue(), tt.traceID)
 			}
 			tester.Len(entities, tt.wantLength)
 		})
@@ -259,6 +265,8 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
 			schema, err := logical.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)

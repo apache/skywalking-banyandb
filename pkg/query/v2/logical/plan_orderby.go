@@ -30,12 +30,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-type unresolvedOrderBy struct {
+type UnresolvedOrderBy struct {
 	sort                modelv2.QueryOrder_Sort
 	targetIndexRuleName string
 }
 
-func (u *unresolvedOrderBy) Analyze(s Schema) (*orderBy, error) {
+func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
 	if u == nil {
 		// return a default orderBy sub-plan
 		return &orderBy{
@@ -87,17 +87,17 @@ func (o *orderBy) Equal(other interface{}) bool {
 		}
 		return o.sort == otherOrderBy.sort &&
 			o.index.GetMetadata().GetName() == otherOrderBy.index.GetMetadata().GetName()
-	} else {
-		return false
 	}
+
+	return false
 }
 
 func (o *orderBy) String() string {
 	return fmt.Sprintf("OrderBy: %v, sort=%s", o.index.GetTags(), o.sort.String())
 }
 
-func OrderBy(indexRuleName string, sort modelv2.QueryOrder_Sort) *unresolvedOrderBy {
-	return &unresolvedOrderBy{
+func OrderBy(indexRuleName string, sort modelv2.QueryOrder_Sort) *UnresolvedOrderBy {
+	return &UnresolvedOrderBy{
 		sort:                sort,
 		targetIndexRuleName: indexRuleName,
 	}

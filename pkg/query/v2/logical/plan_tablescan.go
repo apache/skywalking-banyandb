@@ -35,12 +35,12 @@ var _ Plan = (*tableScan)(nil)
 var _ UnresolvedPlan = (*unresolvedTableScan)(nil)
 
 type unresolvedTableScan struct {
-	*unresolvedOrderBy
-	startTime        time.Time
-	endTime          time.Time
-	projectionFields [][]*Tag
-	metadata         *commonv2.Metadata
-	entity           tsdb.Entity
+	unresolvedOrderBy *UnresolvedOrderBy
+	startTime         time.Time
+	endTime           time.Time
+	projectionFields  [][]*Tag
+	metadata          *commonv2.Metadata
+	entity            tsdb.Entity
 }
 
 func (u *unresolvedTableScan) Type() PlanType {
@@ -54,7 +54,7 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 
 	if u.projectionFields == nil || len(u.projectionFields) == 0 {
 		// directly resolve sub-plan if no projection exists
-		orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema)
+		orderBySubPlan, err := u.unresolvedOrderBy.analyze(schema)
 
 		if err != nil {
 			return nil, err
@@ -75,7 +75,7 @@ func (u *unresolvedTableScan) Analyze(schema Schema) (Plan, error) {
 	}
 
 	// resolve sub-plan with the projected view of schema
-	orderBySubPlan, err := u.unresolvedOrderBy.Analyze(schema.Proj(fieldRefs...))
+	orderBySubPlan, err := u.unresolvedOrderBy.analyze(schema.Proj(fieldRefs...))
 
 	if err != nil {
 		return nil, err
@@ -182,7 +182,7 @@ func (s *tableScan) Type() PlanType {
 	return PlanTableScan
 }
 
-func TableScan(startTime, endTime time.Time, metadata *commonv2.Metadata, entity tsdb.Entity, orderBy *unresolvedOrderBy,
+func TableScan(startTime, endTime time.Time, metadata *commonv2.Metadata, entity tsdb.Entity, orderBy *UnresolvedOrderBy,
 	projection ...[]*Tag) UnresolvedPlan {
 	return &unresolvedTableScan{
 		unresolvedOrderBy: orderBy,

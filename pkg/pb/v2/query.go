@@ -184,8 +184,8 @@ func NewQueryEntityBuilder() *QueryResponseElementBuilder {
 	return &QueryResponseElementBuilder{elem: &streamv2.Element{}}
 }
 
-func (qeb *QueryResponseElementBuilder) EntityID(elementId string) *QueryResponseElementBuilder {
-	qeb.elem.ElementId = elementId
+func (qeb *QueryResponseElementBuilder) EntityID(elementID string) *QueryResponseElementBuilder {
+	qeb.elem.ElementId = elementID
 	return qeb
 }
 

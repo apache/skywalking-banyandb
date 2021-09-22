@@ -53,7 +53,7 @@ func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
 			metadata:           t.metadata,
 			schema:             s,
 			traceID:            t.traceID,
-			traceIdIndexRuleID: idxRule.GetMetadata().GetId(),
+			traceIDIndexRuleID: idxRule.GetMetadata().GetId(),
 		}, nil
 	}
 
@@ -70,7 +70,7 @@ func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
 		schema:              s,
 		traceID:             t.traceID,
 		metadata:            t.metadata,
-		traceIdIndexRuleID:  idxRule.GetMetadata().GetId(),
+		traceIDIndexRuleID:  idxRule.GetMetadata().GetId(),
 	}, nil
 }
 
@@ -83,7 +83,7 @@ type traceIDFetch struct {
 	traceID             string
 	projectionFieldRefs [][]*FieldRef
 	schema              Schema
-	traceIdIndexRuleID  uint32
+	traceIDIndexRuleID  uint32
 }
 
 func (t *traceIDFetch) String() string {
@@ -138,7 +138,7 @@ func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.
 	var elementsInShard []*streamv2.Element
 	itemIDs, err := shard.Index().Seek(index.Field{
 		Key: index.FieldKey{
-			IndexRuleID: t.traceIdIndexRuleID,
+			IndexRuleID: t.traceIDIndexRuleID,
 		},
 		Term: []byte(t.traceID),
 	})
@@ -174,6 +174,9 @@ func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.
 			})
 			return nil
 		}()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return elementsInShard, nil
 }

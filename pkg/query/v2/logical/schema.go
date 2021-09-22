@@ -132,8 +132,8 @@ func (s *schema) FieldDefined(name string) bool {
 // The family name of the tag is actually not used
 // since the uniqueness of the tag names can be guaranteed across families.
 func (s *schema) CreateRef(tags ...[]*Tag) ([][]*FieldRef, error) {
-	var fieldRefs [][]*FieldRef
-	for _, tagInFamily := range tags {
+	fieldRefs := make([][]*FieldRef, len(tags))
+	for i, tagInFamily := range tags {
 		var fieldRefsInFamily []*FieldRef
 		for _, tag := range tagInFamily {
 			if fs, ok := s.fieldMap[tag.GetTagName()]; ok {
@@ -142,7 +142,7 @@ func (s *schema) CreateRef(tags ...[]*Tag) ([][]*FieldRef, error) {
 				return nil, errors.Wrap(ErrFieldNotDefined, tag.GetCompoundName())
 			}
 		}
-		fieldRefs = append(fieldRefs, fieldRefsInFamily)
+		fieldRefs[i] = fieldRefsInFamily
 	}
 	return fieldRefs, nil
 }

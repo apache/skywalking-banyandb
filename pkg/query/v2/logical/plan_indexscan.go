@@ -37,13 +37,13 @@ import (
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
-	*unresolvedOrderBy
-	startTime        time.Time
-	endTime          time.Time
-	metadata         *commonv2.Metadata
-	conditions       []Expr
-	projectionFields [][]*Tag
-	entity           tsdb.Entity
+	unresolvedOrderBy *UnresolvedOrderBy
+	startTime         time.Time
+	endTime           time.Time
+	metadata          *commonv2.Metadata
+	conditions        []Expr
+	projectionFields  [][]*Tag
+	entity            tsdb.Entity
 }
 
 func (uis *unresolvedIndexScan) Type() PlanType {
@@ -85,7 +85,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 	}
 
 	// resolve sub-plan with the projected view of schema
-	orderBySubPlan, err := uis.unresolvedOrderBy.Analyze(s.Proj(projFieldsRefs...))
+	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.Proj(projFieldsRefs...))
 
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func (i *indexScan) Equal(plan Plan) bool {
 }
 
 func IndexScan(startTime, endTime time.Time, metadata *commonv2.Metadata, conditions []Expr, entity tsdb.Entity,
-	orderBy *unresolvedOrderBy, projection ...[]*Tag) UnresolvedPlan {
+	orderBy *UnresolvedOrderBy, projection ...[]*Tag) UnresolvedPlan {
 	return &unresolvedIndexScan{
 		unresolvedOrderBy: orderBy,
 		startTime:         startTime,
