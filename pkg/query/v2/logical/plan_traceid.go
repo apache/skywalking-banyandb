@@ -166,9 +166,12 @@ func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.
 			if errInner != nil {
 				return errors.WithStack(errInner)
 			}
-			// TODO: what is element id
+			elementID, errInner := ec.ParseElementID(item)
+			if errInner != nil {
+				return errors.WithStack(errInner)
+			}
 			elementsInShard = append(elementsInShard, &streamv2.Element{
-				ElementId:   "",
+				ElementId:   elementID,
 				Timestamp:   timestamppb.New(time.Unix(0, int64(item.Time()))),
 				TagFamilies: tagFamilies,
 			})

@@ -19,6 +19,7 @@ package logical
 
 import (
 	"bytes"
+	"github.com/pkg/errors"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -120,11 +121,14 @@ func executeForShard(ec executor.ExecutionContext, series tsdb.SeriesList, timeR
 					item := iterator.Val()
 					tagFamilies, errInner := projectItem(ec, item, projectionFieldRefs)
 					if errInner != nil {
-						return nil, errInner
+						return nil, errors.WithStack(errInner)
+					}
+					elementID, errInner := ec.ParseElementID(item)
+					if errInner != nil {
+						return nil, errors.WithStack(errInner)
 					}
 					elems = append(elems, &streamv2.Element{
-						// TODO: what is elementId?
-						ElementId:   "",
+						ElementId:   elementID,
 						Timestamp:   timestamppb.New(time.Unix(0, int64(item.Time()))),
 						TagFamilies: tagFamilies,
 					})
