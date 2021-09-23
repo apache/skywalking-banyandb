@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package query
+package v1
 
 import (
 	"context"
@@ -41,8 +41,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
 )
 
 var (
@@ -309,7 +309,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange is out of the time range of data",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -322,7 +322,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange which slightly covers the first three segments",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -336,7 +336,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange which slightly covers the first three segments with data binary projection",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -350,7 +350,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange which slightly covers the first three segments ans sort by duration",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -367,7 +367,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query TraceID given timeRange includes the time range of data",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -382,7 +382,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query TraceID given timeRange includes the time range of data with dataBinary projection",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -397,7 +397,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query TraceID given timeRange includes the time range of data but limit to 1",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(1).
 					Offset(0).
 					Metadata("default", "sw").
@@ -411,7 +411,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Numerical Index - query duration < 100",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(1).
 					Offset(0).
 					Metadata("default", "sw").
@@ -425,7 +425,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Numerical Index - query duration <= 400",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -439,7 +439,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Textual Index - db.type == MySQL",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -454,7 +454,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Textual Index - db.type == MySQL with dataBinary projection",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -469,7 +469,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Mixed Index - db.type == MySQL AND duration <= 300",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").

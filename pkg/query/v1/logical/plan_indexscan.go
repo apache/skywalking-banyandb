@@ -30,7 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
 )
 
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)

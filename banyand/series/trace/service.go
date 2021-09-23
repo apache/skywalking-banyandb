@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var _ series.Service = (*service)(nil)
@@ -93,7 +93,7 @@ func (s *service) PreRun() error {
 func (s *service) Serve() error {
 	now := time.Now().UnixNano()
 	for _, sMeta := range s.schemaMap {
-		e := pb.NewSeriesEventBuilder().
+		e := v1.NewSeriesEventBuilder().
 			SeriesMetadata(sMeta.group, sMeta.name).
 			FieldNames(sMeta.fieldsNamesCompositeSeriesID...).
 			Time(time.Now()).
@@ -117,11 +117,11 @@ func (s *service) Serve() error {
 		shardedRuleIndex := make([]*databasev1.IndexRuleEvent_ShardedIndexRule, 0, len(rules)*int(sMeta.shardNum))
 		for i := 0; i < int(sMeta.shardNum); i++ {
 			t := time.Now()
-			e := pb.NewShardEventBuilder().Action(databasev1.Action_ACTION_PUT).Time(t).
+			e := v1.NewShardEventBuilder().Action(databasev1.Action_ACTION_PUT).Time(t).
 				Shard(
-					pb.NewShardBuilder().
+					v1.NewShardBuilder().
 						ID(uint64(i)).Total(sMeta.shardNum).SeriesMetadata(sMeta.group, sMeta.name).UpdatedAt(t).CreatedAt(t).
-						Node(pb.NewNodeBuilder().
+						Node(v1.NewNodeBuilder().
 							ID(s.repo.NodeID()).CreatedAt(t).UpdatedAt(t).Addr("localhost").
 							Build()).
 						Build()).

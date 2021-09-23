@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v12 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
 )
@@ -206,14 +206,14 @@ func (t *traceSeries) FetchEntity(chunkIDs posting.List, shardID uint, opt serie
 	return entities, err
 }
 
-func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchFieldsIndices []pb.FieldEntry, err error) {
-	fetchFieldsIndices = make([]pb.FieldEntry, 0)
+func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchFieldsIndices []v12.FieldEntry, err error) {
+	fetchFieldsIndices = make([]v12.FieldEntry, 0)
 	for _, p := range opt.Projection {
 		f, ok := t.fieldIndex[p]
 		if !ok {
 			return nil, errors.Wrapf(ErrFieldNotFound, "field name:%s", p)
 		}
-		fetchFieldsIndices = append(fetchFieldsIndices, pb.FieldEntry{
+		fetchFieldsIndices = append(fetchFieldsIndices, v12.FieldEntry{
 			Key:   p,
 			Index: f.idx,
 			Type:  f.spec.GetType(),
@@ -224,7 +224,7 @@ func (t *traceSeries) parseFetchInfo(opt series.ScanOptions) (fetchFieldsIndices
 }
 
 func (t *traceSeries) getEntityByInternalRef(seriesID []byte, state State, fetchDataBinary bool,
-	fetchFieldsIndices []pb.FieldEntry, shardID uint, ts uint64) (data.Entity, error) {
+	fetchFieldsIndices []v12.FieldEntry, shardID uint, ts uint64) (data.Entity, error) {
 	fieldsStore, dataStore, err := getStoreName(state)
 	if err != nil {
 		return data.Entity{}, err
@@ -246,7 +246,7 @@ func (t *traceSeries) getEntityByInternalRef(seriesID []byte, state State, fetch
 
 	// Copy selected fields
 	if len(fetchFieldsIndices) > 0 {
-		entity.Fields = pb.Transform(entityVal, fetchFieldsIndices)
+		entity.Fields = v12.Transform(entityVal, fetchFieldsIndices)
 	}
 
 	if fetchDataBinary {

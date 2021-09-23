@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	apiv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
 )
 
 type PlanType uint8
