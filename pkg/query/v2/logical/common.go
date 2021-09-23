@@ -19,9 +19,9 @@ package logical
 
 import (
 	"bytes"
-	"github.com/pkg/errors"
 	"time"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
