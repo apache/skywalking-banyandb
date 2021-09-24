@@ -19,7 +19,6 @@ package stream
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	_ "embed"
 	"encoding/base64"
@@ -34,7 +33,6 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -45,7 +43,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
 type shardStruct struct {
@@ -511,12 +508,13 @@ func Test_Stream_Series(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := queryData(tester, s, tt.args)
+			ast := assert.New(t)
+			got, err := queryData(ast, s, tt.args)
 			if tt.wantErr {
-				tester.Error(err)
+				ast.Error(err)
 				return
 			}
-			tester.NoError(err)
+			ast.NoError(err)
 			sort.SliceStable(got, func(i, j int) bool {
 				a := got[i]
 				b := got[j]
@@ -531,7 +529,7 @@ func Test_Stream_Series(t *testing.T) {
 				}
 				return true
 			})
-			tester.Equal(tt.want, got)
+			ast.Equal(tt.want, got)
 		})
 	}
 
@@ -740,41 +738,8 @@ func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTi
 			},
 		}
 		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
-		entity, errInner := stream.buildEntity(e)
-		t.NoError(errInner)
-		shardID, errInner := partition.ShardID(entity.Marshal(), stream.schema.GetShardNum())
-		t.NoError(errInner)
-		_, errInner = stream.write(common.ShardID(shardID), e)
+		errInner := stream.Write(e)
 		t.NoError(errInner)
 	}
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelFunc()
-	err = ready(ctx, t, stream, queryOpts{
-		entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-		timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
-	})
-	require.NoError(testing, err)
 	return baseTime
-}
-
-func ready(ctx context.Context, t *assert.Assertions, stream *stream, options queryOpts) error {
-	for {
-	loop:
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			data, err := queryData(t, stream, options)
-			if err != nil {
-				return err
-			}
-			for _, d := range data {
-				if len(d.elements) < 1 {
-					time.Sleep(300 * time.Millisecond)
-					break loop
-				}
-			}
-			return nil
-		}
-	}
 }

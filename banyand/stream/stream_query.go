@@ -18,6 +18,8 @@
 package stream
 
 import (
+	"io"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 
@@ -39,8 +41,12 @@ type Query interface {
 }
 
 type Stream interface {
+	io.Closer
+	Write(value *streamv2.ElementValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
+	ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFamily, error)
+	ParseElementID(item tsdb.Item) (string, error)
 }
 
 var _ Stream = (*stream)(nil)
