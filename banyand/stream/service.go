@@ -100,7 +100,6 @@ func (s *service) PreRun() error {
 		}
 		id := formatStreamID(sm.name, sm.group)
 		s.schemaMap[id] = sm
-		s.writeListener.schemaMap[id] = sm
 		s.l.Info().Str("id", id).Msg("initialize stream")
 	}
 	s.writeListener = setUpWriteCallback(s.l, s.schemaMap)
