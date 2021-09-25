@@ -25,9 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
-var (
-	ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
-)
+var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
 
 type Condition map[string][]index.ConditionValue
 
