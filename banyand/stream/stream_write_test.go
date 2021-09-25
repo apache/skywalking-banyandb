@@ -197,7 +197,7 @@ func Test_Stream_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := s.write(common.ShardID(tt.args.shardID), tt.args.ele)
+			err := s.write(common.ShardID(tt.args.shardID), tt.args.ele, nil)
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -211,7 +211,7 @@ func Test_Stream_Write(t *testing.T) {
 func setup(t *assert.Assertions) (*stream, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "trace",
+		Level: "info",
 	}))
 	tempDir, deferFunc := test.Space(t)
 	streamRepo, err := schema.NewStream()

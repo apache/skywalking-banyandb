@@ -30,10 +30,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
+type callbackFn func()
 type indexMessage struct {
 	localWriter tsdb.Writer
 	blockCloser io.Closer
 	value       *streamv2.ElementValue
+	cb          callbackFn
 }
 
 func (s *stream) bootIndexGenerator() {
@@ -56,6 +58,9 @@ func (s *stream) bootIndexGenerator() {
 			err = multierr.Append(err, m.blockCloser.Close())
 			if err != nil {
 				s.l.Error().Err(err).Msg("encounter some errors when generating indices")
+			}
+			if m.cb != nil {
+				m.cb()
 			}
 		}
 	}()

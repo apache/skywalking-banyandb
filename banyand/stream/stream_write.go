@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
 var (
@@ -39,26 +40,47 @@ var (
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 )
 
-func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*tsdb.GlobalItemID, error) {
+func (s *stream) Write(value *streamv2.ElementValue) error {
+	entity, err := s.buildEntity(value)
+	if err != nil {
+		return err
+	}
+	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetShardNum())
+	if err != nil {
+		return err
+	}
+	waitCh := make(chan struct{})
+	err = s.write(common.ShardID(shardID), value, func() {
+		close(waitCh)
+	})
+	if err != nil {
+		close(waitCh)
+		return err
+	}
+	<-waitCh
+	return nil
+}
+
+func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue, cb callbackFn) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
-		return nil, errors.Wrap(ErrMalformedElement, "no tag family")
+		return errors.Wrap(ErrMalformedElement, "no tag family")
 	}
 	if fLen > len(sm.TagFamilies) {
-		return nil, errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
+		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.db.Shard(shardID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	entity, err := s.buildEntity(value)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	series, err := shard.Series().Get(entity)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	t := value.GetTimestamp().AsTime()
 	wp, err := series.Span(tsdb.NewTimeRangeDuration(t, 0))
@@ -66,7 +88,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 		if wp != nil {
 			_ = wp.Close()
 		}
-		return nil, err
+		return err
 	}
 	writeFn := func() (tsdb.Writer, error) {
 		builder := wp.WriterBuilder().Time(t)
@@ -109,12 +131,13 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 	writer, err := writeFn()
 	if err != nil {
 		_ = wp.Close()
-		return nil, err
+		return err
 	}
 	m := indexMessage{
 		localWriter: writer,
 		value:       value,
 		blockCloser: wp,
+		cb:          cb,
 	}
 	go func(m indexMessage) {
 		defer func() {
@@ -124,8 +147,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue) (*t
 		}()
 		s.indexCh <- m
 	}(m)
-	itemID := writer.ItemID()
-	return &itemID, err
+	return err
 }
 
 func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, isInt bool, err error) {
@@ -219,7 +241,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	sm := writeEvent.WriteRequest.GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	_, err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement())
+	err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement(), nil)
 	if err != nil {
 		w.l.Debug().Err(err)
 	}
