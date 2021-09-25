@@ -27,7 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
 )
 
 var _ Plan = (*orderBy)(nil)

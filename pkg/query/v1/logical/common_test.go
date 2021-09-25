@@ -34,11 +34,13 @@ import (
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/posting"
 	"github.com/apache/skywalking-banyandb/pkg/posting/roaring"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
+	executor2 "github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
+	logical2 "github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
 )
 
 type ChunkIDGenerator interface {
@@ -101,7 +103,7 @@ func GenerateEntities(g ChunkIDGenerator) []data.Entity {
 	entities := make([]data.Entity, 0)
 	rand.Seed(time.Now().UnixNano())
 	for g.HasNext() {
-		et := pb.NewQueryEntityBuilder().
+		et := v1.NewQueryEntityBuilder().
 			EntityID(strconv.FormatUint(uint64(g.Next()), 10)).
 			Timestamp(time.Now()).
 			Fields("trace_id", generateRndServiceName(rand.Int63()), "http.method", "GET").
@@ -121,10 +123,10 @@ type mockDataFactory struct {
 	ctrl          *gomock.Controller
 	num           int
 	traceMetadata *common.Metadata
-	s             logical.Schema
+	s             logical2.Schema
 }
 
-func newMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical.Schema, num int) *mockDataFactory {
+func newMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata, s logical2.Schema, num int) *mockDataFactory {
 	return &mockDataFactory{
 		ctrl:          ctrl,
 		num:           num,
@@ -133,7 +135,7 @@ func newMockDataFactory(ctrl *gomock.Controller, traceMetadata *common.Metadata,
 	}
 }
 
-func (f *mockDataFactory) MockParentPlan() logical.UnresolvedPlan {
+func (f *mockDataFactory) MockParentPlan() logical2.UnresolvedPlan {
 	p := logical.NewMockPlan(f.ctrl)
 	p.EXPECT().Execute(gomock.Any()).Return(GenerateEntities(GeneratorFromRange(0, common.ChunkID(f.num-1))), nil)
 	p.EXPECT().Schema().Return(f.s).AnyTimes()
@@ -142,7 +144,7 @@ func (f *mockDataFactory) MockParentPlan() logical.UnresolvedPlan {
 	return up
 }
 
-func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor.ExecutionContext {
+func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor2.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
 	ec.EXPECT().FetchTrace(*f.traceMetadata, traceID, series.ScanOptions{}).Return(data.Trace{
 		KindVersion: common.KindVersion{},
@@ -151,7 +153,7 @@ func (f *mockDataFactory) MockTraceIDFetch(traceID string) executor.ExecutionCon
 	return ec
 }
 
-func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor.ExecutionContext {
+func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatches ...*indexMatcher) executor2.ExecutionContext {
 	ec := executor.NewMockExecutionContext(f.ctrl)
 	usedShards := make(map[uint]posting.List)
 
@@ -187,12 +189,12 @@ func (f *mockDataFactory) MockIndexScan(startTime, endTime time.Time, indexMatch
 	return ec
 }
 
-func prepareSchema(assert *require.Assertions) (*common.Metadata, logical.Schema) {
-	ana := logical.DefaultAnalyzer()
+func prepareSchema(assert *require.Assertions) (*common.Metadata, logical2.Schema) {
+	ana := logical2.DefaultAnalyzer()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := v1.NewQueryRequestBuilder().
 		Limit(0).Offset(0).
 		Metadata("default", "trace").
 		TimeRange(sT, eT).

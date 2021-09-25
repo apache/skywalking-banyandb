@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
-	"github.com/apache/skywalking-banyandb/banyand/query"
+	v1 "github.com/apache/skywalking-banyandb/banyand/query/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
@@ -65,7 +65,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	q, err := query.NewExecutor(ctx, repo, idx, traceSeries, traceSeries, pipeline)
+	q, err := v1.NewExecutor(ctx, repo, idx, traceSeries, traceSeries, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}

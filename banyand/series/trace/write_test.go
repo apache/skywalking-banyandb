@@ -25,7 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func Test_traceSeries_Write(t *testing.T) {
@@ -172,7 +172,7 @@ func Test_traceSeries_Write(t *testing.T) {
 			if shardIDError != nil {
 				return
 			}
-			ev := pb.NewEntityValueBuilder().
+			ev := v1.NewEntityValueBuilder().
 				DataBinary(tt.args.entity.binary).
 				EntityID(tt.args.entity.id).
 				Fields(tt.args.entity.items...).

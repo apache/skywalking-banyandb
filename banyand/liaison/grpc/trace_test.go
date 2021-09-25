@@ -37,12 +37,12 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/query"
+	v12 "github.com/apache/skywalking-banyandb/banyand/query/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/series/trace"
 	"github.com/apache/skywalking-banyandb/banyand/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type testData struct {
@@ -78,7 +78,7 @@ func setup(tester *require.Assertions) (*grpc.Server, *grpc.Server, func()) {
 	traceSvc, err := trace.NewService(context.TODO(), db, repo, indexSvc, pipeline)
 	tester.NoError(err)
 	// Init `Query` module
-	executor, err := query.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc, pipeline)
+	executor, err := v12.NewExecutor(context.TODO(), repo, indexSvc, traceSvc, traceSvc, pipeline)
 	tester.NoError(err)
 	// Init `liaison` module
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo)
@@ -144,7 +144,7 @@ func TestTraceService(t *testing.T) {
 		{
 			name: "isTLS",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -154,7 +154,7 @@ func TestTraceService(t *testing.T) {
 					Build()
 			},
 			writeGenerator: func() *tracev1.WriteRequest {
-				entityValue := pb.NewEntityValueBuilder().
+				entityValue := v1.NewEntityValueBuilder().
 					EntityID("entityId123").
 					DataBinary([]byte{12}).
 					Fields("trace_id-xxfff.111",
@@ -166,7 +166,7 @@ func TestTraceService(t *testing.T) {
 						1622933202000000000).
 					Timestamp(time.Now()).
 					Build()
-				criteria := pb.NewWriteEntityBuilder().
+				criteria := v1.NewWriteEntityBuilder().
 					EntityValue(entityValue).
 					Metadata("default", "sw").
 					Build()
@@ -183,7 +183,7 @@ func TestTraceService(t *testing.T) {
 		{
 			name: "noTLS",
 			queryGenerator: func(baseTs time.Time) *tracev1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return v1.NewQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -193,7 +193,7 @@ func TestTraceService(t *testing.T) {
 					Build()
 			},
 			writeGenerator: func() *tracev1.WriteRequest {
-				entityValue := pb.NewEntityValueBuilder().
+				entityValue := v1.NewEntityValueBuilder().
 					EntityID("entityId123").
 					DataBinary([]byte{12}).
 					Fields("trace_id-xxfff.111323",
@@ -205,7 +205,7 @@ func TestTraceService(t *testing.T) {
 						1622933202000000000).
 					Timestamp(time.Now()).
 					Build()
-				criteria := pb.NewWriteEntityBuilder().
+				criteria := v1.NewWriteEntityBuilder().
 					EntityValue(entityValue).
 					Metadata("default", "sw").
 					Build()

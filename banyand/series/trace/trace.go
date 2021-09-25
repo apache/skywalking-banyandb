@@ -35,7 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	posting2 "github.com/apache/skywalking-banyandb/pkg/posting"
 )
 
@@ -114,7 +114,7 @@ func (s *service) Write(traceSeriesMetadata common.Metadata, ts time.Time, serie
 		return false, err
 	}
 
-	ev := pb.NewEntityValueBuilder().
+	ev := v1.NewEntityValueBuilder().
 		DataBinary(dataBinary).
 		EntityID(entityID).
 		Fields(items...).

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package query
+package v1
 
 import (
 	"context"
@@ -31,8 +31,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
 )
 
 const (

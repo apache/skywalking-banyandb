@@ -38,7 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/pb"
+	v12 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var _ sort.Interface = (ByEntityID)(nil)
@@ -233,7 +233,7 @@ func setupTestData(t *testing.T, ts *traceSeries, seriesEntities []seriesEntity)
 	results = make([]idWithShard, 0, len(seriesEntities))
 	for _, se := range seriesEntities {
 		seriesID := []byte(se.seriesID)
-		ev := pb.NewEntityValueBuilder().
+		ev := v12.NewEntityValueBuilder().
 			DataBinary(se.entity.binary).
 			EntityID(se.entity.id).
 			Timestamp(se.entity.t).

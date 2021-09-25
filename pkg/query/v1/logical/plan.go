@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/v1/executor"
 )
 
 var _ Plan = (*limit)(nil)
