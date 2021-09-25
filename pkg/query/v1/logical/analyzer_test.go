@@ -29,7 +29,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	apischema "github.com/apache/skywalking-banyandb/api/schema"
 	"github.com/apache/skywalking-banyandb/banyand/series"
-	v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	logical2 "github.com/apache/skywalking-banyandb/pkg/query/v1/logical"
 )
 
@@ -40,7 +40,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(0).
 		Offset(0).
 		Metadata("default", "trace").
@@ -76,7 +76,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("service_instance_id", modelv1.QueryOrder_SORT_DESC).
@@ -120,7 +120,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 
 	ana := logical2.DefaultAnalyzer()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		Metadata("default", "sw").
@@ -150,7 +150,7 @@ func TestAnalyzer_Fields_FieldNotDefined(t *testing.T) {
 
 	ana := logical2.DefaultAnalyzer()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("service_instance_id", modelv1.QueryOrder_SORT_DESC).
@@ -177,7 +177,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 
 	ana := logical2.DefaultAnalyzer()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
@@ -203,7 +203,7 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 
 	ana := logical2.DefaultAnalyzer()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
@@ -229,7 +229,7 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 
 	ana := logical2.DefaultAnalyzer()
 
-	criteria := v1.NewQueryRequestBuilder().
+	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		Metadata("default", "sw").
