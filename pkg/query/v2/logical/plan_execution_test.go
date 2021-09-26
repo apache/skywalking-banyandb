@@ -51,17 +51,17 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 	}{
 		{
 			name:           "Limit 1",
-			unresolvedPlan: logical.Limit(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
 			wantLength:     1,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical.Limit(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     5,
 		},
 		{
 			name:           "Limit 10",
-			unresolvedPlan: logical.Limit(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
 			wantLength:     5,
 		},
 	}
@@ -103,17 +103,17 @@ func TestPlanExecution_Offset(t *testing.T) {
 	}{
 		{
 			name:           "Offset 0",
-			unresolvedPlan: logical.Offset(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
 			wantLength:     5,
 		},
 		{
 			name:           "Offset 3",
-			unresolvedPlan: logical.Offset(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
 			wantLength:     2,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical.Offset(logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     0,
 		},
 	}
@@ -333,7 +333,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 			tester.NotNil(schema)
 
 			if tt.targetIndexRule == "" {
-				p, err := logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 					logical.OrderBy("", tt.sortDirection), logical.NewTags("searchable", "start_time")).
 					Analyze(schema)
 				tester.NoError(err)
@@ -345,7 +345,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 
 				tester.True(logical.SortedByTimestamp(entities, tt.sortDirection))
 			} else {
-				p, err := logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 					logical.OrderBy(tt.targetIndexRule, tt.sortDirection), logical.NewTags("searchable", tt.targetIndexRule)).
 					Analyze(schema)
 				tester.NoError(err)

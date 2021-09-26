@@ -55,7 +55,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.NotNil(plan)
 	correctPlan, err := logical.Limit(
 		logical.Offset(
-			logical.TableScan(sT, eT, metadata, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
+			logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			0),
 		20).
 		Analyze(schema)

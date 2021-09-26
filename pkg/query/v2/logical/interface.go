@@ -29,7 +29,6 @@ type PlanType uint8
 const (
 	PlanLimit PlanType = iota
 	PlanOffset
-	PlanTableScan
 	PlanIndexScan
 	PlanTraceIDFetch
 )

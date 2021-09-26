@@ -140,8 +140,6 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv2.QueryRequest, m
 	queryOrder := criteria.GetOrderBy()
 	if queryOrder != nil {
 		switch plan.Type() {
-		case PlanTableScan:
-			plan.(*unresolvedTableScan).unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 		case PlanIndexScan:
 			plan.(*unresolvedIndexScan).unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 		}
@@ -179,8 +177,6 @@ func parseFields(criteria *streamv2.QueryRequest, metadata *commonv2.Metadata, s
 	}
 
 	var plan UnresolvedPlan
-	// mark if there is indexScan request
-	useIndexScan := false
 	var fieldExprs []Expr
 
 	entityList := s.EntityList()
@@ -190,11 +186,6 @@ func parseFields(criteria *streamv2.QueryRequest, metadata *commonv2.Metadata, s
 		entityMap[e] = idx
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
-	}
-
-	if criteria.GetCriteria() == nil || len(criteria.GetCriteria()) == 0 {
-		return TableScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata, entity, nil,
-			projTags...), nil
 	}
 
 fieldsLoop:
@@ -211,7 +202,6 @@ fieldsLoop:
 				plan = TraceIDFetch(typedTagValue.GetStr().GetValue(), metadata, projTags...)
 				break fieldsLoop
 			}
-			useIndexScan = true
 			var e Expr
 			switch v := typedTagValue.GetValue().(type) {
 			case *modelv2.TagValue_Str:
@@ -252,10 +242,7 @@ fieldsLoop:
 	if plan != nil {
 		return plan, nil
 	}
-	// first check if we can use index-scan
-	if useIndexScan {
-		return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-			fieldExprs, entity, nil, projTags...), nil
-	}
-	return TableScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata, entity, nil, projTags...), nil
+
+	return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+		fieldExprs, entity, nil, projTags...), nil
 }

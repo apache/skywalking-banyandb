@@ -144,17 +144,27 @@ func (i *indexScan) executeInShard(ec executor.ExecutionContext, shard tsdb.Shar
 		return nil, err
 	}
 
-	var indexBuilder seekerBuilder = nil
+	var builders []seekerBuilder
+
+	if i.index != nil {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByIndex(i.index, i.sort)
+		})
+	} else {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByTime(i.sort)
+		})
+	}
 
 	if i.conditionMap != nil && len(i.conditionMap) > 0 {
-		indexBuilder = func(b tsdb.SeekerBuilder) {
+		builders = append(builders, func(b tsdb.SeekerBuilder) {
 			for idxRule, exprs := range i.conditionMap {
 				b.Filter(idxRule, exprToCondition(exprs))
 			}
-		}
+		})
 	}
 
-	return executeForShard(ec, seriesList, i.timeRange, i.projectionFieldRefs, indexBuilder)
+	return executeForShard(ec, seriesList, i.timeRange, i.projectionFieldRefs, builders...)
 }
 
 func (i *indexScan) String() string {
