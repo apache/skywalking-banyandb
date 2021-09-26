@@ -244,21 +244,18 @@ func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
 	assert.NoError(t, err)
 	defer conn.Close()
 	traceWrite(t, tc, conn)
-	//requireTester := require.New(t)
-	//retry := 10
-	//for retry > 0 {
-	//	now := time.Now()
-	//	resp := traceQuery(requireTester, conn, tc.queryGenerator(now))
-	//	if assert.Len(t, resp.GetEntities(), tc.wantLen) {
-	//		break
-	//	} else {
-	//		time.Sleep(1 * time.Second)
-	//		retry--
-	//	}
-	//}
-	//if retry == 0 {
-	//	requireTester.FailNow("retry fail")
-	//}
+	requireTester := require.New(t)
+	retry := 10
+	for retry > 0 {
+		now := time.Now()
+		resp := traceQuery(requireTester, conn, tc.queryGenerator(now))
+		if len(resp.GetEntities()) == tc.wantLen {
+			break
+		} else {
+			time.Sleep(1 * time.Second)
+			retry--
+		}
+	}
 }
 
 func traceWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
