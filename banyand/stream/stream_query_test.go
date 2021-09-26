@@ -130,7 +130,7 @@ func Test_Stream_Series(t *testing.T) {
 				{
 					id:       1,
 					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"5", "3"},
+					elements: []string{"3", "5"},
 				},
 			},
 		},
@@ -177,7 +177,7 @@ func Test_Stream_Series(t *testing.T) {
 				{
 					id:       1,
 					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"5", "3"},
+					elements: []string{"3", "5"},
 				},
 			},
 		},
@@ -191,7 +191,7 @@ func Test_Stream_Series(t *testing.T) {
 				{
 					id:       1,
 					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"5", "3"},
+					elements: []string{"3", "5"},
 				},
 			},
 		},
@@ -325,7 +325,7 @@ func Test_Stream_Series(t *testing.T) {
 				{
 					id:       1,
 					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"5", "3"},
+					elements: []string{"3", "5"},
 				},
 			},
 		},
