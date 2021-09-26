@@ -40,7 +40,7 @@ var (
 )
 
 var (
-	DefaultLimit uint32 = 20
+	DefaultLimit uint32 = 100
 )
 
 type Tag struct {

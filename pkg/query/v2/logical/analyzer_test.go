@@ -113,8 +113,8 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	ana := logical.DefaultAnalyzer()
 
 	criteria := pb.NewQueryRequestBuilder().
-		Limit(5).
-		Offset(10).
+		Limit(100).
+		Offset(0).
 		Metadata("default", "sw").
 		FieldsInTagFamily("searchable", "trace_id", "=", "123").
 		Build()
@@ -127,9 +127,12 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical.IndexScan(time.Now(), time.Now(), metadata, []logical.Expr{
-		logical.Eq(logical.NewSearchableFieldRef("trace_id"), logical.Str("123")),
-	}, nil, nil).Analyze(schema)
+	correctPlan, err := logical.Limit(
+		logical.Offset(logical.IndexScan(time.Now(), time.Now(), metadata, []logical.Expr{
+			logical.Eq(logical.NewSearchableFieldRef("trace_id"), logical.Str("123")),
+		}, nil, nil),
+			0),
+		100).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
