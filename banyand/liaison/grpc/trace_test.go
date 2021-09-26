@@ -249,15 +249,12 @@ func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
 	for retry > 0 {
 		now := time.Now()
 		resp := traceQuery(requireTester, conn, tc.queryGenerator(now))
-		if assert.Len(t, resp.GetEntities(), tc.wantLen) {
+		if len(resp.GetEntities()) == tc.wantLen {
 			break
 		} else {
 			time.Sleep(1 * time.Second)
 			retry--
 		}
-	}
-	if retry == 0 {
-		requireTester.FailNow("retry fail")
 	}
 }
 

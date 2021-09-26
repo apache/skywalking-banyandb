@@ -58,8 +58,9 @@ message Condition {
         BINARY_OP_HAVING = 7;
         BINARY_OP_NOT_HAVING = 8;
     }
-    BinaryOp op = 1;
-    TagValue value = 2;
+    string name = 1;
+    BinaryOp op = 2;
+    TagValue value = 3;
 }
 
 // QueryOrder means a Sort operation to be done for a given index rule.

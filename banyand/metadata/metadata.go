@@ -51,7 +51,7 @@ type service struct {
 	indexRuleBinding schema.IndexRuleBinding
 }
 
-func NewService(_ context.Context) (Repo, error) {
+func NewService(_ context.Context) (Service, error) {
 	stream, err := schema.NewStream()
 	if err != nil {
 		return nil, err

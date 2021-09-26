@@ -1,11 +1,11 @@
 {
   "metadata": {
     "id": 5,
-    "name": "http.code",
+    "name": "status_code",
     "group": "default"
   },
   "tags": [
-    "http.code"
+    "status_code"
   ],
   "type": "TYPE_INVERTED",
   "location": "LOCATION_SERIES",

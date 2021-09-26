@@ -97,7 +97,7 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
-	case modelv2.QueryOrder_SORT_ASC:
+	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
 		sort.SliceStable(bb, func(i, j int) bool {
 			return bb[i].startTime().Before(bb[j].startTime())
 		})

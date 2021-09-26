@@ -7,7 +7,7 @@
     "trace_id",
     "duration",
     "endpoint_id",
-    "http.code",
+    "status_code",
     "http.method",
     "db.instance",
     "db.type",
