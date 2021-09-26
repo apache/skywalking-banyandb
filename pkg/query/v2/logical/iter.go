@@ -62,9 +62,9 @@ func NewItemIter(iters []tsdb.Iterator, c comparator) ItemIterator {
 // init function MUST be called while initialization.
 // 1. Move all iterator to the first item by invoking their Next.
 // 2. Load all first items into a slice.
-func (iT *itemIter) init() {
-	for _, iter := range iT.iters {
-		iT.pushIterator(iter)
+func (it *itemIter) init() {
+	for _, iter := range it.iters {
+		it.pushIterator(iter)
 	}
 }
 
@@ -74,31 +74,31 @@ func (iT *itemIter) init() {
 //     which means inactive iterator does not exist in the deq.
 // 2 - If so, it will be wrapped into a container and push to the deq.
 //     Then we call SliceStable sort to sort the deq.
-func (iT *itemIter) pushIterator(iter tsdb.Iterator) {
+func (it *itemIter) pushIterator(iter tsdb.Iterator) {
 	if !iter.Next() {
 		_ = iter.Close()
 		return
 	}
-	iT.deq = append(iT.deq, &container{
+	it.deq = append(it.deq, &container{
 		item: iter.Val(),
 		iter: iter,
 	})
-	sort.SliceStable(iT.deq, func(i, j int) bool {
-		return iT.c(iT.deq[i].item, iT.deq[j].item)
+	sort.SliceStable(it.deq, func(i, j int) bool {
+		return it.c(it.deq[i].item, it.deq[j].item)
 	})
 }
 
-func (iT *itemIter) HasNext() bool {
-	return len(iT.deq) > 0
+func (it *itemIter) HasNext() bool {
+	return len(it.deq) > 0
 }
 
-func (iT *itemIter) Next() tsdb.Item {
+func (it *itemIter) Next() tsdb.Item {
 	var c *container
 	// 3. Pop up the minimal item through the order value
-	c, iT.deq = iT.deq[0], iT.deq[1:]
+	c, it.deq = it.deq[0], it.deq[1:]
 
 	// 4. Move the iterator whose value is popped in step 3, push the next value of this iterator into the slice.
-	iT.pushIterator(c.iter)
+	it.pushIterator(c.iter)
 
 	return c.item
 }

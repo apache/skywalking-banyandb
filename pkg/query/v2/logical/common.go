@@ -81,7 +81,7 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // executeForShard fetches elements from series within a single shard. A list of series must be prepared in advanced
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
-// This method is used by the underlying tableScan and indexScan plans.
+// This method is used by the underlying tableScan and localIndexScan plans.
 func executeForShard(series tsdb.SeriesList, timeRange tsdb.TimeRange,
 	builders ...seekerBuilder) ([]tsdb.Iterator, error) {
 	var itersInShard []tsdb.Iterator

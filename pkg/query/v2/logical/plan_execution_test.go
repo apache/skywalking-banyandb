@@ -174,7 +174,9 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 			s, err := logical.DefaultAnalyzer().BuildStreamSchema(context.TODO(), m)
 			tester.NoError(err)
 
-			p, err := logical.TraceIDFetch(tt.traceID, m, logical.NewTags("searchable", "trace_id")).Analyze(s)
+			p, err := logical.GlobalIndexScan(m, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "trace_id"), logical.Str(tt.traceID)),
+			}, logical.NewTags("searchable", "trace_id")).Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
 			entities, err := p.Execute(streamT)

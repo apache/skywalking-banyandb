@@ -29,12 +29,11 @@ type PlanType uint8
 const (
 	PlanLimit PlanType = iota
 	PlanOffset
-	PlanIndexScan
-	PlanTraceIDFetch
+	PlanLocalIndexScan
+	PlanGlobalIndexScan
 )
 
 type UnresolvedPlan interface {
-	Type() PlanType
 	Analyze(Schema) (Plan, error)
 }
 

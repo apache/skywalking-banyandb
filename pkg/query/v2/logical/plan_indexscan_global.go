@@ -27,98 +27,59 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
+	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/v2/executor"
 )
 
-var _ UnresolvedPlan = (*unresolvedTraceIDFetch)(nil)
-var _ Plan = (*traceIDFetch)(nil)
+var _ Plan = (*globalIndexScan)(nil)
 
-type unresolvedTraceIDFetch struct {
-	metadata         *commonv2.Metadata
-	traceID          string
-	projectionFields [][]*Tag
-}
-
-func (t *unresolvedTraceIDFetch) Analyze(s Schema) (Plan, error) {
-	defined, idxRule := s.IndexDefined(NewTag("", s.TraceIDFieldName()))
-	if !defined {
-		return nil, errors.Wrap(ErrIndexNotDefined, "trace_id")
-	}
-
-	if t.projectionFields == nil || len(t.projectionFields) == 0 {
-		return &traceIDFetch{
-			metadata:           t.metadata,
-			schema:             s,
-			traceID:            t.traceID,
-			traceIDIndexRuleID: idxRule.GetMetadata().GetId(),
-		}, nil
-	}
-
-	if s == nil {
-		return nil, errors.Wrap(ErrInvalidSchema, "nil")
-	}
-
-	fieldRefs, err := s.CreateRef(t.projectionFields...)
-	if err != nil {
-		return nil, err
-	}
-	return &traceIDFetch{
-		projectionFieldRefs: fieldRefs,
-		schema:              s,
-		traceID:             t.traceID,
-		metadata:            t.metadata,
-		traceIDIndexRuleID:  idxRule.GetMetadata().GetId(),
-	}, nil
-}
-
-func (t *unresolvedTraceIDFetch) Type() PlanType {
-	return PlanTraceIDFetch
-}
-
-type traceIDFetch struct {
-	metadata            *commonv2.Metadata
-	traceID             string
-	projectionFieldRefs [][]*FieldRef
+type globalIndexScan struct {
 	schema              Schema
-	traceIDIndexRuleID  uint32
+	metadata            *commonv2.Metadata
+	globalIndexRule     *databasev2.IndexRule
+	expr                Expr
+	projectionFieldRefs [][]*FieldRef
 }
 
-func (t *traceIDFetch) String() string {
-	return fmt.Sprintf("TraceIDFetch: traceID=%s,Metadata{group=%s,name=%s}",
-		t.traceID,
-		t.metadata.GetGroup(),
-		t.metadata.GetName(),
-	)
+func (t *globalIndexScan) String() string {
+	if len(t.projectionFieldRefs) == 0 {
+		return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},condition=%s; projection=None",
+			t.metadata.GetGroup(), t.metadata.GetName(), t.expr.String())
+	}
+	return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},conditions=%s; projection=%s",
+		t.metadata.GetGroup(), t.metadata.GetName(),
+		t.expr.String(), formatExpr(", ", t.projectionFieldRefs...))
 }
 
-func (t *traceIDFetch) Children() []Plan {
+func (t *globalIndexScan) Children() []Plan {
 	return []Plan{}
 }
 
-func (t *traceIDFetch) Type() PlanType {
-	return PlanTraceIDFetch
+func (t *globalIndexScan) Type() PlanType {
+	return PlanGlobalIndexScan
 }
 
-func (t *traceIDFetch) Schema() Schema {
+func (t *globalIndexScan) Schema() Schema {
 	return t.schema
 }
 
-func (t *traceIDFetch) Equal(plan Plan) bool {
-	if plan.Type() != PlanTraceIDFetch {
+func (t *globalIndexScan) Equal(plan Plan) bool {
+	if plan.Type() != PlanGlobalIndexScan {
 		return false
 	}
-	other := plan.(*traceIDFetch)
-	return t.traceID == other.traceID &&
+	other := plan.(*globalIndexScan)
+	return t.metadata.GetGroup() == other.metadata.GetGroup() &&
+		t.metadata.GetName() == other.metadata.GetName() &&
 		cmp.Equal(t.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(t.schema, other.schema) &&
-		t.metadata.GetGroup() == other.metadata.GetGroup() &&
-		t.metadata.GetName() == other.metadata.GetName()
+		cmp.Equal(t.globalIndexRule.GetMetadata().GetId(), other.globalIndexRule.GetMetadata().GetId()) &&
+		cmp.Equal(t.expr, other.expr)
 }
 
-func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, error) {
+func (t *globalIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, error) {
 	shards, err := ec.Shards(nil)
 	if err != nil {
 		return nil, err
@@ -134,13 +95,13 @@ func (t *traceIDFetch) Execute(ec executor.ExecutionContext) ([]*streamv2.Elemen
 	return elements, nil
 }
 
-func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.Shard) ([]*streamv2.Element, error) {
+func (t *globalIndexScan) executeForShard(ec executor.ExecutionContext, shard tsdb.Shard) ([]*streamv2.Element, error) {
 	var elementsInShard []*streamv2.Element
 	itemIDs, err := shard.Index().Seek(index.Field{
 		Key: index.FieldKey{
-			IndexRuleID: t.traceIDIndexRuleID,
+			IndexRuleID: t.globalIndexRule.GetMetadata().GetId(),
 		},
-		Term: []byte(t.traceID),
+		Term: t.expr.(*binaryExpr).r.(LiteralExpr).Bytes()[0],
 	})
 	if err != nil || len(itemIDs) < 1 {
 		return elementsInShard, nil
@@ -182,12 +143,4 @@ func (t *traceIDFetch) executeForShard(ec executor.ExecutionContext, shard tsdb.
 		}
 	}
 	return elementsInShard, nil
-}
-
-func TraceIDFetch(traceID string, metadata *commonv2.Metadata, projection ...[]*Tag) UnresolvedPlan {
-	return &unresolvedTraceIDFetch{
-		metadata:         metadata,
-		traceID:          traceID,
-		projectionFields: projection,
-	}
 }

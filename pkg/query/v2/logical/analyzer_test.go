@@ -127,7 +127,9 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical.TraceIDFetch("123", metadata).Analyze(schema)
+	correctPlan, err := logical.IndexScan(time.Now(), time.Now(), metadata, []logical.Expr{
+		logical.Eq(logical.NewSearchableFieldRef("trace_id"), logical.Str("123")),
+	}, nil, nil).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")

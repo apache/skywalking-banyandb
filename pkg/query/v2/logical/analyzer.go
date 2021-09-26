@@ -35,9 +35,8 @@ var (
 	ErrFieldNotDefined            = errors.New("field is not defined")
 	ErrInvalidConditionType       = errors.New("invalid pair type")
 	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
-	ErrInvalidSchema              = errors.New("invalid schema")
 	ErrIndexNotDefined            = errors.New("index is not define for the field")
-	ErrTraceIDWrongType           = errors.New("trace id type should be string")
+	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
 )
 
 var (
@@ -132,16 +131,11 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv2.QueryRequest, m
 		return nil, err
 	}
 
-	if plan.Type() == PlanTraceIDFetch {
-		return plan.Analyze(s)
-	}
-
 	// parse orderBy
 	queryOrder := criteria.GetOrderBy()
 	if queryOrder != nil {
-		switch plan.Type() {
-		case PlanIndexScan:
-			plan.(*unresolvedIndexScan).unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
+		if v, ok := plan.(*unresolvedIndexScan); ok {
+			v.unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 		}
 	}
 
@@ -176,8 +170,7 @@ func parseFields(criteria *streamv2.QueryRequest, metadata *commonv2.Metadata, s
 		projTags[i] = projTagInFamily
 	}
 
-	var plan UnresolvedPlan
-	var fieldExprs []Expr
+	var tagExprs []Expr
 
 	entityList := s.EntityList()
 	entityMap := make(map[string]int)
@@ -188,20 +181,10 @@ func parseFields(criteria *streamv2.QueryRequest, metadata *commonv2.Metadata, s
 		entity[idx] = tsdb.AnyEntry
 	}
 
-fieldsLoop:
 	for _, criteriaFamily := range criteria.GetCriteria() {
 		for _, pairQuery := range criteriaFamily.GetConditions() {
 			op := pairQuery.GetOp()
 			typedTagValue := pairQuery.GetValue()
-			switch pairQuery.GetName() {
-			case s.TraceIDFieldName():
-				traceIDPair := typedTagValue.GetStr()
-				if traceIDPair == nil {
-					return nil, ErrTraceIDWrongType
-				}
-				plan = TraceIDFetch(typedTagValue.GetStr().GetValue(), metadata, projTags...)
-				break fieldsLoop
-			}
 			var e Expr
 			switch v := typedTagValue.GetValue().(type) {
 			case *modelv2.TagValue_Str:
@@ -233,16 +216,11 @@ fieldsLoop:
 			}
 			// we collect Condition only if it is not a part of entity
 			if e != nil {
-				fieldExprs = append(fieldExprs, binaryOpFactory[op](NewFieldRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
+				tagExprs = append(tagExprs, binaryOpFactory[op](NewFieldRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
 			}
 		}
 	}
 
-	// if plan is already assigned, skip
-	if plan != nil {
-		return plan, nil
-	}
-
 	return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		fieldExprs, entity, nil, projTags...), nil
+		tagExprs, entity, nil, projTags...), nil
 }

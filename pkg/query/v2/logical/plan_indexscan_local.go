@@ -47,12 +47,9 @@ type unresolvedIndexScan struct {
 	entity            tsdb.Entity
 }
 
-func (uis *unresolvedIndexScan) Type() PlanType {
-	return PlanIndexScan
-}
-
 func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
-	conditionMap := make(map[*databasev2.IndexRule][]Expr)
+	localConditionMap := make(map[*databasev2.IndexRule][]Expr)
+	globalConditions := make([]interface{}, 0)
 	for _, cond := range uis.conditions {
 		if resolvable, ok := cond.(ResolvableExpr); ok {
 			err := resolvable.Resolve(s)
@@ -63,11 +60,15 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 			if bCond, ok := cond.(*binaryExpr); ok {
 				tag := bCond.l.(*FieldRef).tag
 				if defined, indexObj := s.IndexDefined(tag); defined {
-					if v, exist := conditionMap[indexObj]; exist {
-						v = append(v, cond)
-						conditionMap[indexObj] = v
-					} else {
-						conditionMap[indexObj] = []Expr{cond}
+					if indexObj.GetLocation() == databasev2.IndexRule_LOCATION_SERIES {
+						if v, exist := localConditionMap[indexObj]; exist {
+							v = append(v, cond)
+							localConditionMap[indexObj] = v
+						} else {
+							localConditionMap[indexObj] = []Expr{cond}
+						}
+					} else if indexObj.GetLocation() == databasev2.IndexRule_LOCATION_GLOBAL {
+						globalConditions = append(globalConditions, indexObj, cond)
 					}
 				} else {
 					return nil, errors.Wrap(ErrIndexNotDefined, tag.GetCompoundName())
@@ -85,6 +86,19 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
+	if len(globalConditions) > 0 {
+		if len(globalConditions)/2 > 1 {
+			return nil, ErrMultipleGlobalIndexes
+		}
+		return &globalIndexScan{
+			schema:              s,
+			projectionFieldRefs: projFieldsRefs,
+			metadata:            uis.metadata,
+			globalIndexRule:     globalConditions[0].(*databasev2.IndexRule),
+			expr:                globalConditions[1].(Expr),
+		}, nil
+	}
+
 	// resolve sub-plan with the projected view of schema
 	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.Proj(projFieldsRefs...))
 
@@ -92,20 +106,20 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 		return nil, err
 	}
 
-	return &indexScan{
+	return &localIndexScan{
 		orderBy:             orderBySubPlan,
 		timeRange:           tsdb.NewTimeRange(uis.startTime, uis.endTime),
 		schema:              s,
 		projectionFieldRefs: projFieldsRefs,
 		metadata:            uis.metadata,
-		conditionMap:        conditionMap,
+		conditionMap:        localConditionMap,
 		entity:              uis.entity,
 	}, nil
 }
 
-var _ Plan = (*indexScan)(nil)
+var _ Plan = (*localIndexScan)(nil)
 
-type indexScan struct {
+type localIndexScan struct {
 	*orderBy
 	timeRange           tsdb.TimeRange
 	schema              Schema
@@ -115,7 +129,7 @@ type indexScan struct {
 	entity              tsdb.Entity
 }
 
-func (i *indexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, error) {
+func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, error) {
 	shards, err := ec.Shards(i.entity)
 	if err != nil {
 		return nil, err
@@ -157,7 +171,7 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, 
 	return elems, nil
 }
 
-func (i *indexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
+func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
 	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
 	if err != nil {
 		return nil, err
@@ -186,7 +200,7 @@ func (i *indexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
 	return executeForShard(seriesList, i.timeRange, builders...)
 }
 
-func (i *indexScan) String() string {
+func (i *localIndexScan) String() string {
 	exprStr := make([]string, 0, len(i.conditionMap))
 	for _, conditions := range i.conditionMap {
 		var conditionStr []string
@@ -204,26 +218,26 @@ func (i *indexScan) String() string {
 		strings.Join(exprStr, " AND "), formatExpr(", ", i.projectionFieldRefs...))
 }
 
-func (i *indexScan) Type() PlanType {
-	return PlanIndexScan
+func (i *localIndexScan) Type() PlanType {
+	return PlanLocalIndexScan
 }
 
-func (i *indexScan) Children() []Plan {
+func (i *localIndexScan) Children() []Plan {
 	return []Plan{}
 }
 
-func (i *indexScan) Schema() Schema {
+func (i *localIndexScan) Schema() Schema {
 	if i.projectionFieldRefs == nil || len(i.projectionFieldRefs) == 0 {
 		return i.schema
 	}
 	return i.schema.Proj(i.projectionFieldRefs...)
 }
 
-func (i *indexScan) Equal(plan Plan) bool {
-	if plan.Type() != PlanIndexScan {
+func (i *localIndexScan) Equal(plan Plan) bool {
+	if plan.Type() != PlanLocalIndexScan {
 		return false
 	}
-	other := plan.(*indexScan)
+	other := plan.(*localIndexScan)
 	return i.metadata.GetGroup() == other.metadata.GetGroup() &&
 		i.metadata.GetName() == other.metadata.GetName() &&
 		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
@@ -245,6 +259,15 @@ func IndexScan(startTime, endTime time.Time, metadata *commonv2.Metadata, condit
 		conditions:        conditions,
 		projectionFields:  projection,
 		entity:            entity,
+	}
+}
+
+// GlobalIndexScan is a short-hand method for composing a globalIndexScan plan
+func GlobalIndexScan(metadata *commonv2.Metadata, conditions []Expr, projection ...[]*Tag) UnresolvedPlan {
+	return &unresolvedIndexScan{
+		metadata:         metadata,
+		conditions:       conditions,
+		projectionFields: projection,
 	}
 }
 
