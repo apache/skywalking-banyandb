@@ -67,7 +67,7 @@ type seekerBuilder struct {
 
 func (s *seekerBuilder) Build() (Seeker, error) {
 	if s.order == modelv2.QueryOrder_SORT_UNSPECIFIED {
-		s.order = modelv2.QueryOrder_SORT_DESC
+		s.order = modelv2.QueryOrder_SORT_ASC
 	}
 	conditions, err := s.buildConditions()
 	if err != nil {

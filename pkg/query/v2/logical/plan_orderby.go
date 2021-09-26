@@ -120,6 +120,9 @@ func SortedByIndex(elements []*streamv2.Element, tagFamilyIdx, tagIdx int, sortD
 	if modelv2.QueryOrder_SORT_UNSPECIFIED == sortDirection {
 		sortDirection = modelv2.QueryOrder_SORT_ASC
 	}
+	if len(elements) == 1 {
+		return true
+	}
 	return sort.SliceIsSorted(elements, sortByIndex(elements, tagFamilyIdx, tagIdx, sortDirection)) &&
 		!sort.SliceIsSorted(elements, sortByIndex(elements, tagFamilyIdx, tagIdx, reverseSortDirection(sortDirection)))
 }
@@ -127,6 +130,9 @@ func SortedByIndex(elements []*streamv2.Element, tagFamilyIdx, tagIdx int, sortD
 func SortedByTimestamp(elements []*streamv2.Element, sortDirection modelv2.QueryOrder_Sort) bool {
 	if modelv2.QueryOrder_SORT_UNSPECIFIED == sortDirection {
 		sortDirection = modelv2.QueryOrder_SORT_ASC
+	}
+	if len(elements) == 1 {
+		return true
 	}
 	return sort.SliceIsSorted(elements, sortByTimestamp(elements, sortDirection)) &&
 		!sort.SliceIsSorted(elements, sortByTimestamp(elements, reverseSortDirection(sortDirection)))

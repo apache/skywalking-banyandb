@@ -30,18 +30,6 @@ type (
 	comparator    func(a, b tsdb.Item) bool
 )
 
-func createTimestampComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
-	if sortDirection == modelv2.QueryOrder_SORT_DESC {
-		return func(a, b tsdb.Item) bool {
-			return a.Time() > b.Time()
-		}
-	}
-
-	return func(a, b tsdb.Item) bool {
-		return a.Time() < b.Time()
-	}
-}
-
 func createComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())

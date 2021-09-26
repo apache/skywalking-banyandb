@@ -143,12 +143,7 @@ func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Elem
 		iters = append(iters, itersInShard...)
 	}
 
-	var c comparator
-	if i.index == nil {
-		c = createTimestampComparator(i.sort)
-	} else {
-		c = createComparator(i.sort)
-	}
+	c := createComparator(i.sort)
 
 	var elems []*streamv2.Element
 	it := NewItemIter(iters, c)
