@@ -24,12 +24,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/index"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
-	v1 "github.com/apache/skywalking-banyandb/banyand/query/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	query "github.com/apache/skywalking-banyandb/banyand/query/v2"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/series/trace"
-	"github.com/apache/skywalking-banyandb/banyand/storage"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -53,21 +52,17 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
-	db, err := storage.NewDB(ctx, repo)
+	metaSvc, err := metadata.NewService(ctx)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate database")
+		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	idx, err := index.NewService(ctx, repo)
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate index builder")
+		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	traceSeries, err := trace.NewService(ctx, db, repo, idx, pipeline)
+	q, err := query.NewExecutor(ctx, streamSvc, repo, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
-	}
-	q, err := v1.NewExecutor(ctx, repo, idx, traceSeries, traceSeries, pipeline)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate query executor")
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo)
 	if err != nil {
@@ -78,9 +73,8 @@ func newStandaloneCmd() *cobra.Command {
 	g.Register(
 		new(signal.Handler),
 		repo,
-		traceSeries,
-		db,
-		idx,
+		metaSvc,
+		streamSvc,
 		q,
 		tcp,
 	)
