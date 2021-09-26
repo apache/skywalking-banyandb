@@ -79,6 +79,7 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 			entities, err := plan.Execute(streamT)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
+			tester.True(logical.SortedByTimestamp(entities, modelv2.QueryOrder_SORT_ASC))
 		})
 	}
 }

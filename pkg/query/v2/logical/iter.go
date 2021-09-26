@@ -18,7 +18,7 @@
 package logical
 
 import (
-	"sort"
+	"container/heap"
 
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
@@ -30,10 +30,31 @@ type ItemIterator interface {
 	Next() tsdb.Item
 }
 
+var _ heap.Interface = (*containerHeap)(nil)
+
 // container contains both iter and its current item
 type container struct {
+	c    comparator
 	item tsdb.Item
 	iter tsdb.Iterator
+}
+
+type containerHeap []*container
+
+func (h containerHeap) Len() int           { return len(h) }
+func (h containerHeap) Less(i, j int) bool { return h[i].c(h[i].item, h[j].item) }
+func (h containerHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *containerHeap) Push(x interface{}) {
+	*h = append(*h, x.(*container))
+}
+
+func (h *containerHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
 }
 
 type itemIter struct {
@@ -46,17 +67,17 @@ type itemIter struct {
 	//    and then sort the whole slice
 	// 2. When we pop a new container, we can just pop out the first element in the deq.
 	//    The rest of the slice is still sorted.
-	deq []*container
+	h *containerHeap
 }
 
 func NewItemIter(iters []tsdb.Iterator, c comparator) ItemIterator {
-	iT := &itemIter{
+	it := &itemIter{
 		c:     c,
 		iters: iters,
-		deq:   make([]*container, 0),
+		h:     &containerHeap{},
 	}
-	iT.init()
-	return iT
+	it.init()
+	return it
 }
 
 // init function MUST be called while initialization.
@@ -66,6 +87,8 @@ func (it *itemIter) init() {
 	for _, iter := range it.iters {
 		it.pushIterator(iter)
 	}
+	// heap initialization
+	heap.Init(it.h)
 }
 
 // pushIterator pushes the given iterator into the underlying deque.
@@ -79,23 +102,20 @@ func (it *itemIter) pushIterator(iter tsdb.Iterator) {
 		_ = iter.Close()
 		return
 	}
-	it.deq = append(it.deq, &container{
+	heap.Push(it.h, &container{
 		item: iter.Val(),
 		iter: iter,
-	})
-	sort.SliceStable(it.deq, func(i, j int) bool {
-		return it.c(it.deq[i].item, it.deq[j].item)
+		c:    it.c,
 	})
 }
 
 func (it *itemIter) HasNext() bool {
-	return len(it.deq) > 0
+	return it.h.Len() > 0
 }
 
 func (it *itemIter) Next() tsdb.Item {
-	var c *container
 	// 3. Pop up the minimal item through the order value
-	c, it.deq = it.deq[0], it.deq[1:]
+	c := heap.Pop(it.h).(*container)
 
 	// 4. Move the iterator whose value is popped in step 3, push the next value of this iterator into the slice.
 	it.pushIterator(c.iter)

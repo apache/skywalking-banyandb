@@ -118,7 +118,7 @@ func getRawTagValue(typedPair *modelv2.Tag) ([]byte, error) {
 // The given entities MUST satisfy both the positive check and the negative check for the reversed direction
 func SortedByIndex(elements []*streamv2.Element, tagFamilyIdx, tagIdx int, sortDirection modelv2.QueryOrder_Sort) bool {
 	if modelv2.QueryOrder_SORT_UNSPECIFIED == sortDirection {
-		return true
+		sortDirection = modelv2.QueryOrder_SORT_ASC
 	}
 	return sort.SliceIsSorted(elements, sortByIndex(elements, tagFamilyIdx, tagIdx, sortDirection)) &&
 		!sort.SliceIsSorted(elements, sortByIndex(elements, tagFamilyIdx, tagIdx, reverseSortDirection(sortDirection)))
@@ -126,7 +126,7 @@ func SortedByIndex(elements []*streamv2.Element, tagFamilyIdx, tagIdx int, sortD
 
 func SortedByTimestamp(elements []*streamv2.Element, sortDirection modelv2.QueryOrder_Sort) bool {
 	if modelv2.QueryOrder_SORT_UNSPECIFIED == sortDirection {
-		return true
+		sortDirection = modelv2.QueryOrder_SORT_ASC
 	}
 	return sort.SliceIsSorted(elements, sortByTimestamp(elements, sortDirection)) &&
 		!sort.SliceIsSorted(elements, sortByTimestamp(elements, reverseSortDirection(sortDirection)))
@@ -157,9 +157,9 @@ func sortByTimestamp(entities []*streamv2.Element, sortDirection modelv2.QueryOr
 	return func(i, j int) bool {
 		iPair := entities[i].GetTimestamp().AsTime().UnixNano()
 		jPair := entities[j].GetTimestamp().AsTime().UnixNano()
-		if sortDirection == modelv2.QueryOrder_SORT_ASC {
-			return iPair < jPair
+		if sortDirection == modelv2.QueryOrder_SORT_DESC {
+			return iPair > jPair
 		}
-		return iPair > jPair
+		return iPair < jPair
 	}
 }
