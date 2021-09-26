@@ -23,6 +23,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
+var _ ItemIterator = (*itemIter)(nil)
+
+type ItemIterator interface {
+	HasNext() bool
+	Next() tsdb.Item
+}
+
 // container contains both iter and its current item
 type container struct {
 	item tsdb.Item
@@ -42,7 +49,7 @@ type itemIter struct {
 	deq []*container
 }
 
-func NewItemIter(iters []tsdb.Iterator, c comparator) *itemIter {
+func NewItemIter(iters []tsdb.Iterator, c comparator) ItemIterator {
 	iT := &itemIter{
 		c:     c,
 		iters: iters,
