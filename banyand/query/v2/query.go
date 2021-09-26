@@ -23,7 +23,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -35,7 +34,6 @@ func NewExecutor(_ context.Context, streamService stream.Service, serviceRepo di
 	return &queryProcessor{
 		streamService: streamService,
 		serviceRepo:   serviceRepo,
-		logger:        logger.GetLogger("query"),
 		pipeline:      pipeline,
 	}, nil
 }

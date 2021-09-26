@@ -113,7 +113,7 @@ func (s *schema) Equal(s2 Schema) bool {
 }
 
 // registerField registers the field spec with given tagFamilyName, tagName and indexes.
-func (s *schema) registerField(tagFamilyName, tagName string, tagFamilyIdx, tagIdx int, spec *databasev2.TagSpec) {
+func (s *schema) registerField(tagName string, tagFamilyIdx, tagIdx int, spec *databasev2.TagSpec) {
 	s.fieldMap[tagName] = &tagSpec{
 		TagIdx:       tagIdx,
 		TagFamilyIdx: tagFamilyIdx,

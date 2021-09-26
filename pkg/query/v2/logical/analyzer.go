@@ -38,7 +38,6 @@ var (
 	ErrInvalidSchema              = errors.New("invalid schema")
 	ErrIndexNotDefined            = errors.New("index is not define for the field")
 	ErrTraceIDWrongType           = errors.New("trace id type should be string")
-	ErrStateWrongType             = errors.New("state type should be int")
 )
 
 var (
@@ -67,7 +66,7 @@ func NewTags(family string, tagNames ...string) []*Tag {
 
 // GetCompoundName is only used for error message
 func (t *Tag) GetCompoundName() string {
-	return t.familyName + "$" + t.name
+	return t.familyName + ":" + t.name
 }
 
 func (t *Tag) GetTagName() string {
@@ -118,8 +117,8 @@ func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv2.Met
 
 	// generate the schema of the fields for the traceSeries
 	for tagFamilyIdx, tagFamily := range stream.GetTagFamilies() {
-		for tagIdx, tagSpec := range tagFamily.GetTags() {
-			s.registerField(tagFamily.GetName(), tagSpec.GetName(), tagFamilyIdx, tagIdx, tagSpec)
+		for tagIdx, spec := range tagFamily.GetTags() {
+			s.registerField(spec.GetName(), tagFamilyIdx, tagIdx, spec)
 		}
 	}
 
