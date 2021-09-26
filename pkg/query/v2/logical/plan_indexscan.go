@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
@@ -119,26 +120,44 @@ func (i *indexScan) Execute(ec executor.ExecutionContext) ([]*streamv2.Element, 
 	if err != nil {
 		return nil, err
 	}
-	var elements [][]*streamv2.Element
+	var iters []tsdb.Iterator
 	for _, shard := range shards {
-		elementsInShard, err := i.executeInShard(ec, shard)
+		itersInShard, err := i.executeInShard(shard)
 		if err != nil {
 			return nil, err
 		}
-		elements = append(elements, elementsInShard...)
+		iters = append(iters, itersInShard...)
 	}
 
 	var c comparator
 	if i.index == nil {
 		c = createTimestampComparator(i.sort)
 	} else {
-		c = createMultiTagsComparator(i.fieldRefs, i.sort)
+		c = createComparator(i.sort)
 	}
 
-	return mergeSort(elements, c), nil
+	var elems []*streamv2.Element
+	it := NewItemIter(iters, c)
+	for it.HasNext() {
+		nextItem := it.Next()
+		tagFamilies, innerErr := projectItem(ec, nextItem, i.projectionFieldRefs)
+		if innerErr != nil {
+			return nil, innerErr
+		}
+		elementID, innerErr := ec.ParseElementID(nextItem)
+		if innerErr != nil {
+			return nil, innerErr
+		}
+		elems = append(elems, &streamv2.Element{
+			ElementId:   elementID,
+			Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
+			TagFamilies: tagFamilies,
+		})
+	}
+	return elems, nil
 }
 
-func (i *indexScan) executeInShard(ec executor.ExecutionContext, shard tsdb.Shard) ([][]*streamv2.Element, error) {
+func (i *indexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
 	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
 	if err != nil {
 		return nil, err
@@ -164,7 +183,7 @@ func (i *indexScan) executeInShard(ec executor.ExecutionContext, shard tsdb.Shar
 		})
 	}
 
-	return executeForShard(ec, seriesList, i.timeRange, i.projectionFieldRefs, builders...)
+	return executeForShard(seriesList, i.timeRange, builders...)
 }
 
 func (i *indexScan) String() string {

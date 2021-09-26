@@ -19,41 +19,32 @@ package logical
 
 import (
 	"bytes"
-	"time"
-
-	"github.com/pkg/errors"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/v2/executor"
 )
 
 type (
 	seekerBuilder func(builder tsdb.SeekerBuilder)
-	comparator    func(a, b *streamv2.Element) bool
+	comparator    func(a, b tsdb.Item) bool
 )
 
-func createTimestampComparator(sort modelv2.QueryOrder_Sort) comparator {
-	if sort == modelv2.QueryOrder_SORT_ASC {
-		return func(a, b *streamv2.Element) bool {
-			return a.GetTimestamp().AsTime().Before(b.GetTimestamp().AsTime())
+func createTimestampComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
+	if sortDirection == modelv2.QueryOrder_SORT_ASC {
+		return func(a, b tsdb.Item) bool {
+			return a.Time() < b.Time()
 		}
 	}
 
-	return func(a, b *streamv2.Element) bool {
-		return a.GetTimestamp().AsTime().After(b.GetTimestamp().AsTime())
+	return func(a, b tsdb.Item) bool {
+		return a.Time() > b.Time()
 	}
 }
 
-func createMultiTagsComparator(fieldRefs []*FieldRef, sortDirection modelv2.QueryOrder_Sort) comparator {
-	tagFamilyIdx, tagIdx := fieldRefs[0].Spec.TagFamilyIdx, fieldRefs[0].Spec.TagIdx
-	return func(a, b *streamv2.Element) bool {
-		iTag, jTag := a.GetTagFamilies()[tagFamilyIdx].GetTags()[tagIdx], b.GetTagFamilies()[tagFamilyIdx].GetTags()[tagIdx]
-		lField, _ := getRawTagValue(iTag)
-		rField, _ := getRawTagValue(jTag)
-		comp := bytes.Compare(lField, rField)
+func createComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
+	return func(a, b tsdb.Item) bool {
+		comp := bytes.Compare(a.SortedField(), b.SortedField())
 		if sortDirection == modelv2.QueryOrder_SORT_ASC {
 			return comp == -1
 		}
@@ -91,11 +82,11 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
 // This method is used by the underlying tableScan and indexScan plans.
-func executeForShard(ec executor.ExecutionContext, series tsdb.SeriesList, timeRange tsdb.TimeRange,
-	projectionFieldRefs [][]*FieldRef, builders ...seekerBuilder) ([][]*streamv2.Element, error) {
-	var elementsInShard [][]*streamv2.Element
+func executeForShard(series tsdb.SeriesList, timeRange tsdb.TimeRange,
+	builders ...seekerBuilder) ([]tsdb.Iterator, error) {
+	var itersInShard []tsdb.Iterator
 	for _, seriesFound := range series {
-		elementsInSeries, err := func() ([]*streamv2.Element, error) {
+		itersInSeries, err := func() ([]tsdb.Iterator, error) {
 			sp, errInner := seriesFound.Span(timeRange)
 			defer func(sp tsdb.SeriesSpan) {
 				_ = sp.Close()
@@ -111,81 +102,18 @@ func executeForShard(ec executor.ExecutionContext, series tsdb.SeriesList, timeR
 			if errInner != nil {
 				return nil, errInner
 			}
-			iter, errInner := seeker.Seek()
+			iters, errInner := seeker.Seek()
 			if errInner != nil {
 				return nil, errInner
 			}
-			var elems []*streamv2.Element
-			for _, iterator := range iter {
-				for iterator.Next() {
-					item := iterator.Val()
-					tagFamilies, errInner := projectItem(ec, item, projectionFieldRefs)
-					if errInner != nil {
-						return nil, errors.WithStack(errInner)
-					}
-					elementID, errInner := ec.ParseElementID(item)
-					if errInner != nil {
-						return nil, errors.WithStack(errInner)
-					}
-					elems = append(elems, &streamv2.Element{
-						ElementId:   elementID,
-						Timestamp:   timestamppb.New(time.Unix(0, int64(item.Time()))),
-						TagFamilies: tagFamilies,
-					})
-				}
-				_ = iterator.Close()
-			}
-
-			return elems, nil
+			return iters, nil
 		}()
 		if err != nil {
 			return nil, err
 		}
-		if len(elementsInSeries) > 0 {
-			elementsInShard = append(elementsInShard, elementsInSeries)
+		if len(itersInSeries) > 0 {
+			itersInShard = append(itersInShard, itersInSeries...)
 		}
 	}
-	return elementsInShard, nil
-}
-
-func mergeSort(input [][]*streamv2.Element, c comparator) []*streamv2.Element {
-	// if input is nil, return empty list
-	if input == nil {
-		return []*streamv2.Element{}
-	}
-
-	var result = input[0]
-	// if only one list, return the first ordered list
-	if len(input) == 1 {
-		return result
-	}
-
-	for i := 1; i < len(input); i++ {
-		result = merge(result, input[i], c)
-	}
-
-	return result
-}
-
-func merge(left, right []*streamv2.Element, c comparator) []*streamv2.Element {
-	size, i, j := len(left)+len(right), 0, 0
-	slice := make([]*streamv2.Element, size)
-
-	for k := 0; k < size; k++ {
-		if i > len(left)-1 && j <= len(right)-1 {
-			slice[k] = right[j]
-			j++
-		} else if j > len(right)-1 && i <= len(left)-1 {
-			slice[k] = left[i]
-			i++
-		} else if c(left[i], right[j]) {
-			slice[k] = left[i]
-			i++
-		} else {
-			slice[k] = right[j]
-			j++
-		}
-	}
-
-	return slice
+	return itersInShard, nil
 }
