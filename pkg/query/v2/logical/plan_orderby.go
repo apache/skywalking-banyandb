@@ -39,7 +39,7 @@ func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
 	if u == nil {
 		// return a default orderBy sub-plan
 		return &orderBy{
-			sort: modelv2.QueryOrder_SORT_DESC,
+			sort: modelv2.QueryOrder_SORT_UNSPECIFIED,
 		}, nil
 	}
 

@@ -31,24 +31,24 @@ type (
 )
 
 func createTimestampComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
-	if sortDirection == modelv2.QueryOrder_SORT_ASC {
+	if sortDirection == modelv2.QueryOrder_SORT_DESC {
 		return func(a, b tsdb.Item) bool {
-			return a.Time() < b.Time()
+			return a.Time() > b.Time()
 		}
 	}
 
 	return func(a, b tsdb.Item) bool {
-		return a.Time() > b.Time()
+		return a.Time() < b.Time()
 	}
 }
 
 func createComparator(sortDirection modelv2.QueryOrder_Sort) comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())
-		if sortDirection == modelv2.QueryOrder_SORT_ASC {
-			return comp == -1
+		if sortDirection == modelv2.QueryOrder_SORT_DESC {
+			return comp == 1
 		}
-		return comp == 1
+		return comp == -1
 	}
 }
 
