@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -29,7 +30,7 @@ import (
 
 func TestStore_MatchTerm(t *testing.T) {
 	tester := assert.New(t)
-	path, fn := setUp(tester)
+	path, fn := setUp(require.New(t))
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -45,7 +46,7 @@ func TestStore_MatchTerm(t *testing.T) {
 
 func TestStore_Iterator(t *testing.T) {
 	tester := assert.New(t)
-	path, fn := setUp(tester)
+	path, fn := setUp(require.New(t))
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -59,7 +60,7 @@ func TestStore_Iterator(t *testing.T) {
 	testcases.RunDuration(t, data, s)
 }
 
-func setUp(t *assert.Assertions) (tempDir string, deferFunc func()) {
+func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",

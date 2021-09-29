@@ -50,3 +50,7 @@ message TagValue {
         bytes binary_data = 6;
     }
 }
+
+message TagFamilyForWrite {
+    repeated TagValue tags = 1;
+}

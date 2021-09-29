@@ -24,18 +24,12 @@ import (
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
-
-const strDelimiter = "\n"
-
-type tagIndex struct {
-	family int
-	tag    int
-}
 
 type indexRule struct {
 	rule       *databasev2.IndexRule
-	tagIndices []tagIndex
+	tagIndices []partition.TagLocator
 }
 
 type stream struct {
@@ -44,7 +38,7 @@ type stream struct {
 	l              *logger.Logger
 	schema         *databasev2.Stream
 	db             tsdb.Database
-	entityIndex    []tagIndex
+	entityLocator  partition.EntityLocator
 	indexRules     []*databasev2.IndexRule
 	indexRuleIndex []indexRule
 
@@ -63,15 +57,15 @@ func (s *stream) parseSchema() {
 	for _, tagInEntity := range sm.Entity.GetTagNames() {
 		fIndex, tIndex, tag := s.findTagByName(tagInEntity)
 		if tag != nil {
-			s.entityIndex = append(s.entityIndex, tagIndex{family: fIndex, tag: tIndex})
+			s.entityLocator = append(s.entityLocator, partition.TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
 		}
 	}
 	for _, rule := range s.indexRules {
-		tagIndices := make([]tagIndex, 0, len(rule.GetTags()))
+		tagIndices := make([]partition.TagLocator, 0, len(rule.GetTags()))
 		for _, tagInIndex := range rule.GetTags() {
 			fIndex, tIndex, tag := s.findTagByName(tagInIndex)
 			if tag != nil {
-				tagIndices = append(tagIndices, tagIndex{family: fIndex, tag: tIndex})
+				tagIndices = append(tagIndices, partition.TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
 			}
 		}
 		s.indexRuleIndex = append(s.indexRuleIndex, indexRule{rule: rule, tagIndices: tagIndices})

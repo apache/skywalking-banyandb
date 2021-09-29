@@ -19,26 +19,18 @@ package data
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-var StreamKindVersion = common.KindVersion{Version: "v2", Kind: "data-stream"}
-
-var StreamWriteEventKindVersion = common.KindVersion{
-	Version: "v2",
+var StreamWriteKindVersion = common.KindVersion{
+	Version: "v1",
 	Kind:    "stream-write",
 }
 
-var TopicStreamWriteEvent = bus.UniTopic(StreamWriteEventKindVersion.String())
+var TopicStreamWrite = bus.UniTopic(StreamWriteKindVersion.String())
 
-type Stream struct {
-	common.KindVersion
-	Entities []Entity
+var StreamQueryKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "stream-query",
 }
-
-type StreamWriteData struct {
-	ShardID      uint
-	SeriesID     uint64
-	WriteRequest *streamv2.WriteRequest
-}
+var TopicStreamQuery = bus.BiTopic(StreamQueryKindVersion.String())

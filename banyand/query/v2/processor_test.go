@@ -70,7 +70,7 @@ var (
 	}
 )
 
-func setupServices(tester *assert.Assertions) (stream.Service, queue.Queue, func()) {
+func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, func()) {
 	// Bootstrap logger system
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -92,7 +92,7 @@ func setupServices(tester *assert.Assertions) (stream.Service, queue.Queue, func
 	metadataSvc, err := metadata.NewService(context.TODO())
 	tester.NoError(err)
 
-	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, pipeline)
+	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
@@ -132,12 +132,12 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
-		searchTagFamily := &streamv2.ElementValue_TagFamily{}
+		searchTagFamily := &modelv2.TagFamilyForWrite{}
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
 		e := &streamv2.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
-			TagFamilies: []*streamv2.ElementValue_TagFamily{
+			TagFamilies: []*modelv2.TagFamilyForWrite{
 				{
 					Tags: []*modelv2.TagValue{
 						{
@@ -158,7 +158,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 
 func TestQueryProcessor(t *testing.T) {
 	assertT := assert.New(t)
-	streamSvc, pipeline, deferFunc := setupServices(assertT)
+	streamSvc, pipeline, deferFunc := setupServices(require.New(t))
 	stm, err := streamSvc.Stream(&commonv2.Metadata{Name: "sw", Group: "default"})
 	defer func() {
 		_ = stm.Close()
@@ -335,7 +335,7 @@ func TestQueryProcessor(t *testing.T) {
 			singleTester := require.New(t)
 			now := time.Now()
 			m := bus.NewMessage(bus.MessageID(now.UnixNano()), tt.queryGenerator(baseTs))
-			f, err := pipeline.Publish(data.TopicQueryEvent, m)
+			f, err := pipeline.Publish(data.TopicStreamQuery, m)
 			singleTester.NoError(err)
 			singleTester.NotNil(f)
 			msg, err := f.Get()

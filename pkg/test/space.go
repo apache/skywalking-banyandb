@@ -22,10 +22,10 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func Space(t *assert.Assertions) (tempDir string, deferFunc func()) {
+func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 	var tempDirErr error
 	tempDir, tempDirErr = ioutil.TempDir("", "banyandb-test-*")
 	t.Nil(tempDirErr)

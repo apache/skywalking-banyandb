@@ -56,7 +56,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
+	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -73,6 +73,7 @@ func newStandaloneCmd() *cobra.Command {
 	g.Register(
 		new(signal.Handler),
 		repo,
+		pipeline,
 		metaSvc,
 		streamSvc,
 		q,

@@ -19,7 +19,6 @@ package event
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
@@ -30,27 +29,9 @@ var (
 	}
 	TopicShardEvent = bus.UniTopic(ShardEventKindVersion.String())
 
-	SeriesEventKindVersion = common.KindVersion{
+	EntityEventKindVersion = common.KindVersion{
 		Version: "v1",
-		Kind:    "event-series",
+		Kind:    "event-entity",
 	}
-	TopicSeriesEvent = bus.UniTopic(SeriesEventKindVersion.String())
-
-	IndexRuleKindVersion = common.KindVersion{Version: "v1", Kind: "index-rule"}
-	TopicIndexRule       = bus.UniTopic(IndexRuleKindVersion.String())
+	TopicEntityEvent = bus.UniTopic(EntityEventKindVersion.String())
 )
-
-type Shard struct {
-	common.KindVersion
-	Payload v1.ShardEvent
-}
-
-type Series struct {
-	common.KindVersion
-	Payload v1.SeriesEvent
-}
-
-type IndexRule struct {
-	common.KindVersion
-	Payload *v1.IndexRuleEvent
-}

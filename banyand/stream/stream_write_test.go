@@ -20,13 +20,12 @@ package stream
 import (
 	"context"
 	"encoding/base64"
-	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
 	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
@@ -38,12 +37,11 @@ import (
 
 func Test_Stream_Write(t *testing.T) {
 	tester := assert.New(t)
-	s, deferFunc := setup(tester)
+	s, deferFunc := setup(t)
 	defer deferFunc()
 
 	type args struct {
-		shardID uint
-		ele     *streamv2.ElementValue
+		ele *streamv2.ElementValue
 	}
 	tests := []struct {
 		name    string
@@ -53,7 +51,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "golden path",
 			args: args{
-				shardID: 0,
 				ele: getEle(
 					"trace_id-xxfff.111323",
 					0,
@@ -68,7 +65,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "minimal",
 			args: args{
-				shardID: 1,
 				ele: getEle(
 					nil,
 					1,
@@ -80,7 +76,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "http",
 			args: args{
-				shardID: 0,
 				ele: getEle(
 					"trace_id-xxfff.111323",
 					0,
@@ -97,7 +92,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "database",
 			args: args{
-				shardID: 0,
 				ele: getEle(
 					"trace_id-xxfff.111323",
 					0,
@@ -116,7 +110,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "mq",
 			args: args{
-				shardID: 0,
 				ele: getEle(
 					"trace_id-xxfff.111323",
 					1,
@@ -138,7 +131,6 @@ func Test_Stream_Write(t *testing.T) {
 		{
 			name: "invalid trace id",
 			args: args{
-				shardID: 1,
 				ele: getEle(
 					1212323,
 					1,
@@ -154,25 +146,8 @@ func Test_Stream_Write(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid shard id",
-			args: args{
-				shardID: math.MaxUint64,
-				ele: getEle(
-					"trace_id-xxfff.111323",
-					0,
-					"webapp_id",
-					"10.0.0.1_id",
-					"/home_id",
-					300,
-					1622933202000000000,
-				),
-			},
-			wantErr: true,
-		},
-		{
 			name: "unknown tags",
 			args: args{
-				shardID: 0,
 				ele: getEle(
 					"trace_id-xxfff.111323",
 					1,
@@ -197,7 +172,7 @@ func Test_Stream_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.write(common.ShardID(tt.args.shardID), tt.args.ele, nil)
+			err := s.Write(tt.args.ele)
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -208,29 +183,30 @@ func Test_Stream_Write(t *testing.T) {
 
 }
 
-func setup(t *assert.Assertions) (*stream, func()) {
-	t.NoError(logger.Init(logger.Logging{
+func setup(t *testing.T) (*stream, func()) {
+	req := require.New(t)
+	req.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
 	}))
-	tempDir, deferFunc := test.Space(t)
+	tempDir, deferFunc := test.Space(req)
 	streamRepo, err := schema.NewStream()
-	t.NoError(err)
+	req.NoError(err)
 	sa, err := streamRepo.Get(context.TODO(), &commonv2.Metadata{
 		Name:  "sw",
 		Group: "default",
 	})
-	t.NoError(err)
+	req.NoError(err)
 	mService, err := metadata.NewService(context.TODO())
-	t.NoError(err)
+	req.NoError(err)
 	iRules, err := mService.IndexRules(context.TODO(), sa.Metadata)
-	t.NoError(err)
+	req.NoError(err)
 	sSpec := streamSpec{
 		schema:     sa,
 		indexRules: iRules,
 	}
 	s, err := openStream(tempDir, sSpec, logger.GetLogger("test"))
-	t.NoError(err)
+	req.NoError(err)
 	return s, func() {
 		_ = s.Close()
 		deferFunc()
@@ -246,7 +222,7 @@ func getEle(tags ...interface{}) *streamv2.ElementValue {
 	e := &streamv2.ElementValue{
 		ElementId: "1231.dfd.123123ssf",
 		Timestamp: timestamppb.Now(),
-		TagFamilies: []*streamv2.ElementValue_TagFamily{
+		TagFamilies: []*modelv2.TagFamilyForWrite{
 			{
 				Tags: []*modelv2.TagValue{
 					{

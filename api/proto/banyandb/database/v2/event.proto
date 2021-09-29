@@ -39,9 +39,13 @@ message ShardEvent {
     google.protobuf.Timestamp time = 3;
 }
 
-message SeriesEvent {
-    common.v2.Metadata series = 1;
-    repeated string tags_names_composite_series_id = 2;
+message EntityEvent {
+    common.v2.Metadata subject = 1; 
+    message TagLocator {
+        uint32 family_offset = 1;
+        uint32 tag_offset = 2;
+    }
+    repeated TagLocator entity_locator = 2;
     Action action = 3;
-    google.protobuf.Timestamp time = 4;
+    google.protobuf.Timestamp time = 4; 
 }

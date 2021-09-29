@@ -18,21 +18,16 @@
 package stream
 
 import (
-	"bytes"
-	"strings"
-
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
 	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv2 "github.com/apache/skywalking-banyandb/pkg/pb/v2"
 )
 
 var (
@@ -41,16 +36,12 @@ var (
 )
 
 func (s *stream) Write(value *streamv2.ElementValue) error {
-	entity, err := s.buildEntity(value)
-	if err != nil {
-		return err
-	}
-	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetShardNum())
+	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetShardNum())
 	if err != nil {
 		return err
 	}
 	waitCh := make(chan struct{})
-	err = s.write(common.ShardID(shardID), value, func() {
+	err = s.write(shardID, tsdb.HashEntity(entity), value, func() {
 		close(waitCh)
 	})
 	if err != nil {
@@ -61,7 +52,7 @@ func (s *stream) Write(value *streamv2.ElementValue) error {
 	return nil
 }
 
-func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue, cb callbackFn) error {
+func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv2.ElementValue, cb callbackFn) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -74,11 +65,7 @@ func (s *stream) write(shardID common.ShardID, value *streamv2.ElementValue, cb 
 	if err != nil {
 		return err
 	}
-	entity, err := s.buildEntity(value)
-	if err != nil {
-		return err
-	}
-	series, err := shard.Series().Get(entity)
+	series, err := shard.Series().GetByHashKey(seriesHashKey)
 	if err != nil {
 		return err
 	}
@@ -154,14 +141,14 @@ func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byt
 	val = make([]byte, 0, len(ruleIndex.tagIndices))
 	var existInt bool
 	for _, tIndex := range ruleIndex.tagIndices {
-		tag, err := getTagByOffset(value, tIndex.family, tIndex.tag)
+		tag, err := partition.GetTagByOffset(value.GetTagFamilies(), tIndex.FamilyOffset, tIndex.TagOffset)
 		if err != nil {
 			return nil, false, errors.WithMessagef(err, "index rule:%v", ruleIndex.rule.Metadata)
 		}
 		if tag.GetInt() != nil {
 			existInt = true
 		}
-		v, err := marshalIndexFieldValue(tag)
+		v, err := pbv2.MarshalIndexFieldValue(tag)
 		if err != nil {
 			return nil, false, err
 		}
@@ -171,53 +158,6 @@ func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byt
 		return val, true, nil
 	}
 	return val, false, nil
-}
-
-func marshalIndexFieldValue(tagValue *modelv2.TagValue) ([]byte, error) {
-	switch x := tagValue.GetValue().(type) {
-	case *modelv2.TagValue_Str:
-		return []byte(x.Str.GetValue()), nil
-	case *modelv2.TagValue_Int:
-		return convert.Int64ToBytes(x.Int.GetValue()), nil
-	case *modelv2.TagValue_StrArray:
-		return []byte(strings.Join(x.StrArray.GetValue(), strDelimiter)), nil
-	case *modelv2.TagValue_IntArray:
-		buf := bytes.NewBuffer(nil)
-		for _, i := range x.IntArray.GetValue() {
-			buf.Write(convert.Int64ToBytes(i))
-		}
-		return buf.Bytes(), nil
-	case *modelv2.TagValue_BinaryData:
-		return x.BinaryData, nil
-	}
-	return nil, ErrUnsupportedTagForIndexField
-}
-
-func (s *stream) buildEntity(value *streamv2.ElementValue) (tsdb.Entity, error) {
-	entity := make(tsdb.Entity, len(s.entityIndex))
-	for i, index := range s.entityIndex {
-		tag, err := getTagByOffset(value, index.family, index.tag)
-		if err != nil {
-			return nil, err
-		}
-		e, errMarshal := marshalIndexFieldValue(tag)
-		if errMarshal != nil {
-			return nil, errMarshal
-		}
-		entity[i] = e
-	}
-	return entity, nil
-}
-
-func getTagByOffset(value *streamv2.ElementValue, fIndex, tIndex int) (*modelv2.TagValue, error) {
-	if fIndex >= len(value.TagFamilies) {
-		return nil, errors.Wrap(ErrMalformedElement, "tag family offset is invalid")
-	}
-	family := value.GetTagFamilies()[fIndex]
-	if tIndex >= len(family.GetTags()) {
-		return nil, errors.Wrap(ErrMalformedElement, "tag offset is invalid")
-	}
-	return family.GetTags()[tIndex], nil
 }
 
 type writeCallback struct {
@@ -234,14 +174,14 @@ func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*stream) *writeCa
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(data.StreamWriteData)
+	writeEvent, ok := message.Data().(*streamv2.InternalWriteRequest)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
 		return
 	}
-	sm := writeEvent.WriteRequest.GetMetadata()
+	sm := writeEvent.GetRequest().GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].write(common.ShardID(writeEvent.ShardID), writeEvent.WriteRequest.GetElement(), nil)
+	err := w.schemaMap[id].write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
 	if err != nil {
 		w.l.Debug().Err(err)
 	}

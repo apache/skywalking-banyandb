@@ -95,5 +95,5 @@ func (q *queryProcessor) Name() string {
 
 func (q *queryProcessor) PreRun() error {
 	q.log = logger.GetLogger(moduleName)
-	return q.pipeline.Subscribe(data.TopicQueryEvent, q)
+	return q.pipeline.Subscribe(data.TopicStreamQuery, q)
 }

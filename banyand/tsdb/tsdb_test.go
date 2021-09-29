@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -32,7 +33,7 @@ import (
 
 func TestOpenDatabase(t *testing.T) {
 	tester := assert.New(t)
-	tempDir, deferFunc, _ := setUp(tester)
+	tempDir, deferFunc, _ := setUp(require.New(t))
 	defer deferFunc()
 	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
 	validateDirectory(tester, shardPath)
@@ -44,10 +45,10 @@ func TestOpenDatabase(t *testing.T) {
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
 }
 
-func setUp(t *assert.Assertions) (tempDir string, deferFunc func(), db Database) {
+func setUp(t *require.Assertions) (tempDir string, deferFunc func(), db Database) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "debug",
+		Level: "warn",
 	}))
 	tempDir, deferFunc = test.Space(t)
 	db, err := OpenDatabase(
