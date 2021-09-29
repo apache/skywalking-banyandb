@@ -89,6 +89,7 @@ type SeriesDatabase interface {
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
 	Get(entity Entity) (Series, error)
+	GetByHashKey(key []byte) (Series, error)
 	List(path Path) (SeriesList, error)
 }
 
@@ -110,20 +111,7 @@ type seriesDB struct {
 	sID            common.ShardID
 }
 
-func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
-	return newSeries(s.context(), id, s), nil
-}
-
-func (s *seriesDB) block(id GlobalItemID) blockDelegate {
-	return s.lst[id.segID].lst[id.blockID].delegate()
-}
-
-func (s *seriesDB) shardID() common.ShardID {
-	return s.sID
-}
-
-func (s *seriesDB) Get(entity Entity) (Series, error) {
-	key := hashEntity(entity)
+func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
 	seriesID, err := s.seriesMetadata.Get(key)
 	if err != nil && err != kv.ErrKeyNotFound {
 		return nil, err
@@ -139,6 +127,23 @@ func (s *seriesDB) Get(entity Entity) (Series, error) {
 		return nil, err
 	}
 	return newSeries(s.context(), bytesConvSeriesID(seriesID), s), nil
+}
+
+func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
+	return newSeries(s.context(), id, s), nil
+}
+
+func (s *seriesDB) block(id GlobalItemID) blockDelegate {
+	return s.lst[id.segID].lst[id.blockID].delegate()
+}
+
+func (s *seriesDB) shardID() common.ShardID {
+	return s.sID
+}
+
+func (s *seriesDB) Get(entity Entity) (Series, error) {
+	key := HashEntity(entity)
+	return s.GetByHashKey(key)
 }
 
 func (s *seriesDB) List(path Path) (SeriesList, error) {
@@ -226,7 +231,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 	return sdb, nil
 }
 
-func hashEntity(entity Entity) []byte {
+func HashEntity(entity Entity) []byte {
 	result := make(Entry, 0, len(entity)*8)
 	for _, entry := range entity {
 		result = append(result, hash(entry)...)

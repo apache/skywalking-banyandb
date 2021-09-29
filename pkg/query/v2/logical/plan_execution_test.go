@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
@@ -32,8 +31,7 @@ import (
 )
 
 func TestPlanExecution_TableScan_Limit(t *testing.T) {
-	assertT := assert.New(t)
-	streamT, deferFunc := setup(assertT)
+	streamT, deferFunc := setup(require.New(t))
 	defer deferFunc()
 	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
 
@@ -85,8 +83,7 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 }
 
 func TestPlanExecution_Offset(t *testing.T) {
-	assertT := assert.New(t)
-	streamT, deferFunc := setup(assertT)
+	streamT, deferFunc := setup(require.New(t))
 	defer deferFunc()
 	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
 
@@ -137,8 +134,7 @@ func TestPlanExecution_Offset(t *testing.T) {
 }
 
 func TestPlanExecution_TraceIDFetch(t *testing.T) {
-	assertT := assert.New(t)
-	streamT, deferFunc := setup(assertT)
+	streamT, deferFunc := setup(require.New(t))
 	defer deferFunc()
 	_ = setupQueryData(t, "multiple_shards.json", streamT)
 
@@ -193,8 +189,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 }
 
 func TestPlanExecution_IndexScan(t *testing.T) {
-	assertT := assert.New(t)
-	streamT, deferFunc := setup(assertT)
+	streamT, deferFunc := setup(require.New(t))
 	defer deferFunc()
 	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
 
@@ -282,8 +277,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 }
 
 func TestPlanExecution_OrderBy(t *testing.T) {
-	assertT := assert.New(t)
-	streamT, deferFunc := setup(assertT)
+	streamT, deferFunc := setup(require.New(t))
 	defer deferFunc()
 	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
 

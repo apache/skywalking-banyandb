@@ -15,36 +15,52 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logical
+package run
 
 import (
-	"strings"
+	"fmt"
+	"sync"
 )
 
-func Format(p Plan) string {
-	return formatWithIndent(p, 0)
+var _ Service = (*Tester)(nil)
+
+type Tester struct {
+	ID              string
+	startedNotifier chan struct{}
+	stopCh          chan struct{}
+	once            sync.Once
 }
 
-func formatWithIndent(p Plan, indent int) string {
-	res := ""
-	if indent > 1 {
-		res += strings.Repeat(" ", 5*(indent-1))
+func NewTester(ID string) *Tester {
+	return &Tester{
+		ID:              ID,
+		startedNotifier: make(chan struct{}),
+		stopCh:          make(chan struct{}),
+		once:            sync.Once{},
 	}
-	if indent > 0 {
-		res += "+"
-		res += strings.Repeat("-", 4)
-	}
-	res += p.String() + "\n"
-	for _, child := range p.Children() {
-		res += formatWithIndent(child, indent+1)
-	}
-	return res
 }
 
-func formatExpr(sep string, exprs ...*FieldRef) string {
-	var exprsStr []string
-	for i := 0; i < len(exprs); i++ {
-		exprsStr = append(exprsStr, exprs[i].String())
+func (t *Tester) WaitUntilStarted() error {
+	select {
+	case err := <-t.stopCh:
+		return fmt.Errorf("stoped: %v", err)
+	case <-t.startedNotifier:
+		return nil
 	}
-	return strings.Join(exprsStr, sep)
+}
+
+func (t *Tester) Name() string {
+	return t.ID
+}
+
+func (t *Tester) Serve() error {
+	close(t.startedNotifier)
+	<-t.stopCh
+	return nil
+}
+
+func (t *Tester) GracefulStop() {
+	t.once.Do(func() {
+		close(t.stopCh)
+	})
 }

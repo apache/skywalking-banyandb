@@ -15,31 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package v1
+package test
 
 import (
-	"context"
+	"fmt"
+	"time"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/index"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/series"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Executor interface {
-	run.PreRunner
-}
-
-func NewExecutor(_ context.Context, serviceRepo discovery.ServiceRepo, indexRepo index.Repo, uniModel series.UniModel,
-	schemaRepo series.SchemaRepo, pipeline queue.Queue) (Executor, error) {
-	return &queryProcessor{
-		Repo:        indexRepo,
-		UniModel:    uniModel,
-		schemaRepo:  schemaRepo,
-		serviceRepo: serviceRepo,
-		logger:      logger.GetLogger("query"),
-		pipeline:    pipeline,
-	}, nil
+func Retry(attempts int, sleep time.Duration, f func() error) (err error) {
+	l := logger.GetLogger("retry")
+	for i := 0; i < attempts; i++ {
+		l.Info().Int("attempt_number", i).Msg("This is attempt number")
+		if i > 0 {
+			l.Info().Err(err).Msg("retrying after error")
+			time.Sleep(sleep)
+			sleep *= 2
+		}
+		err = f()
+		if err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("after %d attempts, last error: %s", attempts, err)
 }

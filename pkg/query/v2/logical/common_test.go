@@ -28,6 +28,7 @@ import (
 
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
@@ -53,12 +54,12 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
-		searchTagFamily := &streamv2.ElementValue_TagFamily{}
+		searchTagFamily := &modelv2.TagFamilyForWrite{}
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
 		e := &streamv2.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
-			TagFamilies: []*streamv2.ElementValue_TagFamily{
+			TagFamilies: []*modelv2.TagFamilyForWrite{
 				{
 					Tags: []*modelv2.TagValue{
 						{
@@ -77,7 +78,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 	return baseTime
 }
 
-func setup(t *assert.Assertions) (stream.Stream, func()) {
+func setup(t *require.Assertions) (stream.Stream, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
@@ -87,7 +88,7 @@ func setup(t *assert.Assertions) (stream.Stream, func()) {
 
 	metadataSvc, err := metadata.NewService(context.TODO())
 	t.NoError(err)
-	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil)
+	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil, nil)
 	t.NoError(err)
 
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})

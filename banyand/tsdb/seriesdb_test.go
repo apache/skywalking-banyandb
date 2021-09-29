@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -142,7 +143,6 @@ func TestNewPath(t *testing.T) {
 }
 
 func Test_SeriesDatabase_Get(t *testing.T) {
-
 	tests := []struct {
 		name     string
 		entities []Entity
@@ -174,11 +174,11 @@ func Test_SeriesDatabase_Get(t *testing.T) {
 	tester := assert.New(t)
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "debug",
+		Level: "warn",
 	}))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir, deferFunc := test.Space(tester)
+			dir, deferFunc := test.Space(require.New(t))
 			defer deferFunc()
 			s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), 0, dir, nil)
 			tester.NoError(err)
@@ -195,9 +195,9 @@ func Test_SeriesDatabase_List(t *testing.T) {
 	tester := assert.New(t)
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "debug",
+		Level: "warn",
 	}))
-	dir, deferFunc := test.Space(tester)
+	dir, deferFunc := test.Space(require.New(t))
 	defer deferFunc()
 	s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), 0, dir, nil)
 	tester.NoError(err)
@@ -329,7 +329,7 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 		},
 	}
 	for _, d := range data {
-		d.id = common.SeriesID(convert.BytesToUint64(hash(hashEntity(d.entity))))
+		d.id = common.SeriesID(convert.BytesToUint64(hash(HashEntity(d.entity))))
 		series, err := db.Get(d.entity)
 		t.NoError(err)
 		t.Greater(uint(series.ID()), uint(0))

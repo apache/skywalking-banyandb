@@ -80,7 +80,7 @@ func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFami
 	if err != nil {
 		return nil, err
 	}
-	tagFamily := &streamv2.ElementValue_TagFamily{}
+	tagFamily := &modelv2.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)
 	if err != nil {
 		return nil, err

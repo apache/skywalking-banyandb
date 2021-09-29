@@ -55,7 +55,7 @@ type shardsForTest []shardStruct
 
 func Test_Stream_SelectShard(t *testing.T) {
 	tester := assert.New(t)
-	s, deferFunc := setup(tester)
+	s, deferFunc := setup(t)
 	defer deferFunc()
 	_ = setupQueryData(t, "multiple_shards.json", s)
 	tests := []struct {
@@ -95,8 +95,7 @@ func Test_Stream_SelectShard(t *testing.T) {
 }
 
 func Test_Stream_Series(t *testing.T) {
-	tester := assert.New(t)
-	s, deferFunc := setup(tester)
+	s, deferFunc := setup(t)
 	defer deferFunc()
 	baseTime := setupQueryData(t, "multiple_shards.json", s)
 	tests := []struct {
@@ -537,7 +536,7 @@ func Test_Stream_Series(t *testing.T) {
 
 func Test_Stream_Global_Index(t *testing.T) {
 	tester := assert.New(t)
-	s, deferFunc := setup(tester)
+	s, deferFunc := setup(t)
 	defer deferFunc()
 	_ = setupQueryData(t, "global_index.json", s)
 	tests := []struct {
@@ -720,12 +719,12 @@ func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTi
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
-		searchTagFamily := &streamv2.ElementValue_TagFamily{}
+		searchTagFamily := &modelv2.TagFamilyForWrite{}
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
 		e := &streamv2.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
-			TagFamilies: []*streamv2.ElementValue_TagFamily{
+			TagFamilies: []*modelv2.TagFamilyForWrite{
 				{
 					Tags: []*modelv2.TagValue{
 						{
