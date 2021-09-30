@@ -21,9 +21,9 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	pbv2 "github.com/apache/skywalking-banyandb/pkg/pb/v2"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var (
@@ -37,14 +37,14 @@ type TagLocator struct {
 	TagOffset    int
 }
 
-func (e EntityLocator) Find(value []*modelv2.TagFamilyForWrite) (tsdb.Entity, error) {
+func (e EntityLocator) Find(value []*modelv1.TagFamilyForWrite) (tsdb.Entity, error) {
 	entity := make(tsdb.Entity, len(e))
 	for i, index := range e {
 		tag, err := GetTagByOffset(value, index.FamilyOffset, index.TagOffset)
 		if err != nil {
 			return nil, err
 		}
-		entry, errMarshal := pbv2.MarshalIndexFieldValue(tag)
+		entry, errMarshal := pbv1.MarshalIndexFieldValue(tag)
 		if errMarshal != nil {
 			return nil, errMarshal
 		}
@@ -53,7 +53,7 @@ func (e EntityLocator) Find(value []*modelv2.TagFamilyForWrite) (tsdb.Entity, er
 	return entity, nil
 }
 
-func (e EntityLocator) Locate(value []*modelv2.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, common.ShardID, error) {
+func (e EntityLocator) Locate(value []*modelv1.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, common.ShardID, error) {
 	entity, err := e.Find(value)
 	if err != nil {
 		return nil, 0, err
@@ -65,7 +65,7 @@ func (e EntityLocator) Locate(value []*modelv2.TagFamilyForWrite, shardNum uint3
 	return entity, common.ShardID(id), nil
 }
 
-func GetTagByOffset(value []*modelv2.TagFamilyForWrite, fIndex, tIndex int) (*modelv2.TagValue, error) {
+func GetTagByOffset(value []*modelv1.TagFamilyForWrite, fIndex, tIndex int) (*modelv1.TagValue, error) {
 	if fIndex >= len(value) {
 		return nil, errors.Wrap(ErrMalformedElement, "tag family offset is invalid")
 	}

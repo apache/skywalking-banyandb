@@ -22,20 +22,19 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv2 "github.com/apache/skywalking-banyandb/pkg/pb/v2"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var (
-	ErrMalformedElement            = errors.New("element is malformed")
-	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
+	ErrMalformedElement = errors.New("element is malformed")
 )
 
-func (s *stream) Write(value *streamv2.ElementValue) error {
+func (s *stream) Write(value *streamv1.ElementValue) error {
 	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetShardNum())
 	if err != nil {
 		return err
@@ -52,7 +51,7 @@ func (s *stream) Write(value *streamv2.ElementValue) error {
 	return nil
 }
 
-func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv2.ElementValue, cb callbackFn) error {
+func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv1.ElementValue, cb callbackFn) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -137,7 +136,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 	return err
 }
 
-func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byte, isInt bool, err error) {
+func getIndexValue(ruleIndex indexRule, value *streamv1.ElementValue) (val []byte, isInt bool, err error) {
 	val = make([]byte, 0, len(ruleIndex.tagIndices))
 	var existInt bool
 	for _, tIndex := range ruleIndex.tagIndices {
@@ -148,7 +147,7 @@ func getIndexValue(ruleIndex indexRule, value *streamv2.ElementValue) (val []byt
 		if tag.GetInt() != nil {
 			existInt = true
 		}
-		v, err := pbv2.MarshalIndexFieldValue(tag)
+		v, err := pbv1.MarshalIndexFieldValue(tag)
 		if err != nil {
 			return nil, false, err
 		}
@@ -174,7 +173,7 @@ func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*stream) *writeCa
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*streamv2.InternalWriteRequest)
+	writeEvent, ok := message.Data().(*streamv1.InternalWriteRequest)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
 		return

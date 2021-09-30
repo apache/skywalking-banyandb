@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/event"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -53,7 +53,7 @@ type Server struct {
 	ser            *grpclib.Server
 	pipeline       queue.Queue
 	repo           discovery.ServiceRepo
-	streamv2.UnimplementedStreamServiceServer
+	streamv1.UnimplementedStreamServiceServer
 	creds      credentials.TransportCredentials
 	shardRepo  *shardRepo
 	entityRepo *entityRepo
@@ -128,7 +128,7 @@ func (s *Server) Serve() error {
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
-	streamv2.RegisterStreamServiceServer(s.ser, s)
+	streamv1.RegisterStreamServiceServer(s.ser, s)
 	s.log.Info().Str("addr", s.addr).Msg("Listening to")
 	return s.ser.Serve(lis)
 }

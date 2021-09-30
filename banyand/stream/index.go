@@ -23,8 +23,8 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -34,7 +34,7 @@ type callbackFn func()
 type indexMessage struct {
 	localWriter tsdb.Writer
 	blockCloser io.Closer
-	value       *streamv2.ElementValue
+	value       *streamv1.ElementValue
 	cb          callbackFn
 }
 
@@ -49,9 +49,9 @@ func (s *stream) bootIndexGenerator() {
 			for _, ruleIndex := range s.indexRuleIndex {
 				rule := ruleIndex.rule
 				switch rule.GetLocation() {
-				case databasev2.IndexRule_LOCATION_SERIES:
+				case databasev1.IndexRule_LOCATION_SERIES:
 					err = multierr.Append(err, writeLocalIndex(m.localWriter, ruleIndex, m.value))
-				case databasev2.IndexRule_LOCATION_GLOBAL:
+				case databasev1.IndexRule_LOCATION_GLOBAL:
 					err = multierr.Append(err, s.writeGlobalIndex(ruleIndex, m.localWriter.ItemID(), m.value))
 				}
 			}
@@ -67,7 +67,7 @@ func (s *stream) bootIndexGenerator() {
 }
 
 //TODO: should listen to pipeline in a distributed cluster
-func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, value *streamv2.ElementValue) error {
+func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, value *streamv1.ElementValue) error {
 	val, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
@@ -90,14 +90,14 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 	}
 	rule := ruleIndex.rule
 	switch rule.GetType() {
-	case databasev2.IndexRule_TYPE_INVERTED:
+	case databasev1.IndexRule_TYPE_INVERTED:
 		return indexWriter.WriteInvertedIndex(index.Field{
 			Key: index.FieldKey{
 				IndexRuleID: rule.GetMetadata().GetId(),
 			},
 			Term: val,
 		})
-	case databasev2.IndexRule_TYPE_TREE:
+	case databasev1.IndexRule_TYPE_TREE:
 		return indexWriter.WriteLSMIndex(index.Field{
 			Key: index.FieldKey{
 				IndexRuleID: rule.GetMetadata().GetId(),
@@ -108,21 +108,21 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 	return err
 }
 
-func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv2.ElementValue) (err error) {
+func writeLocalIndex(writer tsdb.Writer, ruleIndex indexRule, value *streamv1.ElementValue) (err error) {
 	val, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
 	}
 	rule := ruleIndex.rule
 	switch rule.GetType() {
-	case databasev2.IndexRule_TYPE_INVERTED:
+	case databasev1.IndexRule_TYPE_INVERTED:
 		return writer.WriteInvertedIndex(index.Field{
 			Key: index.FieldKey{
 				IndexRuleID: rule.GetMetadata().GetId(),
 			},
 			Term: val,
 		})
-	case databasev2.IndexRule_TYPE_TREE:
+	case databasev1.IndexRule_TYPE_TREE:
 		return writer.WriteLSMIndex(index.Field{
 			Key: index.FieldKey{
 				IndexRuleID: rule.GetMetadata().GetId(),

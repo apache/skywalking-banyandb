@@ -24,8 +24,8 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -35,13 +35,13 @@ import (
 
 var emptyFilters = make([]filterFn, 0)
 
-func (s *seekerBuilder) OrderByIndex(indexRule *databasev2.IndexRule, order modelv2.QueryOrder_Sort) SeekerBuilder {
+func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.QueryOrder_Sort) SeekerBuilder {
 	s.indexRuleForSorting = indexRule
 	s.order = order
 	return s
 }
 
-func (s *seekerBuilder) OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder {
+func (s *seekerBuilder) OrderByTime(order modelv1.QueryOrder_Sort) SeekerBuilder {
 	s.order = order
 	s.indexRuleForSorting = nil
 	return s
@@ -79,9 +79,9 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 			filters = append(filters, filter)
 		}
 		switch s.indexRuleForSorting.GetType() {
-		case databasev2.IndexRule_TYPE_TREE:
+		case databasev1.IndexRule_TYPE_TREE:
 			inner, err = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
-		case databasev2.IndexRule_TYPE_INVERTED:
+		case databasev1.IndexRule_TYPE_INVERTED:
 			inner, err = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
 		}
 		if err != nil {
@@ -97,12 +97,12 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
-	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
+	case modelv1.QueryOrder_SORT_ASC, modelv1.QueryOrder_SORT_UNSPECIFIED:
 		sort.SliceStable(bb, func(i, j int) bool {
 			return bb[i].startTime().Before(bb[j].startTime())
 		})
 
-	case modelv2.QueryOrder_SORT_DESC:
+	case modelv1.QueryOrder_SORT_DESC:
 		sort.SliceStable(bb, func(i, j int) bool {
 			return bb[i].startTime().After(bb[j].startTime())
 		})
@@ -141,7 +141,7 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 		}
 	}
 	s.seriesSpan.l.Debug().
-		Str("order", modelv2.QueryOrder_Sort_name[int32(s.order)]).
+		Str("order", modelv1.QueryOrder_Sort_name[int32(s.order)]).
 		Times("blocks", bTimes).
 		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
 		Int("shard_id", int(s.seriesSpan.shardID)).

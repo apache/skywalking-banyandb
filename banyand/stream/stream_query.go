@@ -24,10 +24,10 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
@@ -37,15 +37,15 @@ var (
 )
 
 type Query interface {
-	Stream(stream *commonv2.Metadata) (Stream, error)
+	Stream(stream *commonv1.Metadata) (Stream, error)
 }
 
 type Stream interface {
 	io.Closer
-	Write(value *streamv2.ElementValue) error
+	Write(value *streamv1.ElementValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
-	ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFamily, error)
+	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 	ParseElementID(item tsdb.Item) (string, error)
 }
 
@@ -75,18 +75,18 @@ func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
 	return s.db.Shard(id)
 }
 
-func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFamily, error) {
+func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
 	familyRawBytes, err := item.Family(family)
 	if err != nil {
 		return nil, err
 	}
-	tagFamily := &modelv2.TagFamilyForWrite{}
+	tagFamily := &modelv1.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)
 	if err != nil {
 		return nil, err
 	}
-	tags := make([]*modelv2.Tag, len(tagFamily.GetTags()))
-	var tagSpec []*databasev2.TagSpec
+	tags := make([]*modelv1.Tag, len(tagFamily.GetTags()))
+	var tagSpec []*databasev1.TagSpec
 	for _, tf := range s.schema.GetTagFamilies() {
 		if tf.GetName() == family {
 			tagSpec = tf.GetTags()
@@ -96,14 +96,14 @@ func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv2.TagFami
 		return nil, ErrTagFamilyNotExist
 	}
 	for i, tag := range tagFamily.GetTags() {
-		tags[i] = &modelv2.Tag{
+		tags[i] = &modelv1.Tag{
 			Key: tagSpec[i].GetName(),
-			Value: &modelv2.TagValue{
+			Value: &modelv1.TagValue{
 				Value: tag.GetValue(),
 			},
 		}
 	}
-	return &modelv2.TagFamily{
+	return &modelv1.TagFamily{
 		Name: family,
 		Tags: tags,
 	}, err

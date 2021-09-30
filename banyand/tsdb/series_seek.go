@@ -19,8 +19,8 @@ package tsdb
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
@@ -40,9 +40,9 @@ type Item interface {
 }
 
 type SeekerBuilder interface {
-	Filter(indexRule *databasev2.IndexRule, condition Condition) SeekerBuilder
-	OrderByIndex(indexRule *databasev2.IndexRule, order modelv2.QueryOrder_Sort) SeekerBuilder
-	OrderByTime(order modelv2.QueryOrder_Sort) SeekerBuilder
+	Filter(indexRule *databasev1.IndexRule, condition Condition) SeekerBuilder
+	OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.QueryOrder_Sort) SeekerBuilder
+	OrderByTime(order modelv1.QueryOrder_Sort) SeekerBuilder
 	Build() (Seeker, error)
 }
 
@@ -56,18 +56,18 @@ type seekerBuilder struct {
 	seriesSpan *seriesSpan
 
 	conditions []struct {
-		indexRuleType databasev2.IndexRule_Type
+		indexRuleType databasev1.IndexRule_Type
 		indexRuleID   uint32
 		condition     Condition
 	}
-	order               modelv2.QueryOrder_Sort
-	indexRuleForSorting *databasev2.IndexRule
+	order               modelv1.QueryOrder_Sort
+	indexRuleForSorting *databasev1.IndexRule
 	rangeOptsForSorting index.RangeOpts
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
-	if s.order == modelv2.QueryOrder_SORT_UNSPECIFIED {
-		s.order = modelv2.QueryOrder_SORT_ASC
+	if s.order == modelv1.QueryOrder_SORT_UNSPECIFIED {
+		s.order = modelv1.QueryOrder_SORT_ASC
 	}
 	conditions, err := s.buildConditions()
 	if err != nil {

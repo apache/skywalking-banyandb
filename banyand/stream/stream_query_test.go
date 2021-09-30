@@ -36,10 +36,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -200,19 +200,19 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					builder.Filter(&databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					builder.Filter(&databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "endpoint_id",
 							Group: "default",
 							Id:    4,
 						},
 						Tags:     []string{"endpoint_id"},
-						Type:     databasev2.IndexRule_TYPE_INVERTED,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_INVERTED,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}, tsdb.Condition{
 						"endpoint_id": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Op:     modelv1.Condition_BINARY_OP_EQ,
 								Values: [][]byte{[]byte("/home_id")},
 							},
 						},
@@ -246,16 +246,16 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					builder.OrderByIndex(&databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					builder.OrderByIndex(&databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "duration",
 							Group: "default",
 							Id:    3,
 						},
 						Tags:     []string{"duration"},
-						Type:     databasev2.IndexRule_TYPE_TREE,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
-					}, modelv2.QueryOrder_SORT_ASC)
+						Type:     databasev1.IndexRule_TYPE_TREE,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
+					}, modelv1.QueryOrder_SORT_ASC)
 				},
 			},
 			want: shardsForTest{
@@ -287,20 +287,20 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					rule := &databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "duration",
 							Group: "default",
 							Id:    3,
 						},
 						Tags:     []string{"duration"},
-						Type:     databasev2.IndexRule_TYPE_TREE,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_TREE,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}
 					builder.Filter(rule, tsdb.Condition{
 						"duration": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_LT,
+								Op:     modelv1.Condition_BINARY_OP_LT,
 								Values: [][]byte{convert.Int64ToBytes(500)},
 							},
 						},
@@ -334,25 +334,25 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					rule := &databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "duration",
 							Group: "default",
 							Id:    3,
 						},
 						Tags:     []string{"duration"},
-						Type:     databasev2.IndexRule_TYPE_TREE,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_TREE,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}
 					builder.Filter(rule, tsdb.Condition{
 						"duration": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_LT,
+								Op:     modelv1.Condition_BINARY_OP_LT,
 								Values: [][]byte{convert.Int64ToBytes(500)},
 							},
 						},
 					})
-					builder.OrderByIndex(rule, modelv2.QueryOrder_SORT_ASC)
+					builder.OrderByIndex(rule, modelv1.QueryOrder_SORT_ASC)
 				},
 			},
 			want: shardsForTest{
@@ -382,37 +382,37 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					rule := &databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "duration",
 							Group: "default",
 							Id:    3,
 						},
 						Tags:     []string{"duration"},
-						Type:     databasev2.IndexRule_TYPE_TREE,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_TREE,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}
 					builder.Filter(rule, tsdb.Condition{
 						"duration": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_LT,
+								Op:     modelv1.Condition_BINARY_OP_LT,
 								Values: [][]byte{convert.Int64ToBytes(500)},
 							},
 						},
 					})
-					builder.Filter(&databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					builder.Filter(&databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "endpoint_id",
 							Group: "default",
 							Id:    4,
 						},
 						Tags:     []string{"endpoint_id"},
-						Type:     databasev2.IndexRule_TYPE_INVERTED,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_INVERTED,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}, tsdb.Condition{
 						"endpoint_id": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Op:     modelv1.Condition_BINARY_OP_EQ,
 								Values: [][]byte{[]byte("/home_id")},
 							},
 						},
@@ -445,38 +445,38 @@ func Test_Stream_Series(t *testing.T) {
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					rule := &databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "duration",
 							Group: "default",
 							Id:    3,
 						},
 						Tags:     []string{"duration"},
-						Type:     databasev2.IndexRule_TYPE_TREE,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_TREE,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}
 					builder.Filter(rule, tsdb.Condition{
 						"duration": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_LT,
+								Op:     modelv1.Condition_BINARY_OP_LT,
 								Values: [][]byte{convert.Int64ToBytes(500)},
 							},
 						},
 					})
-					builder.OrderByIndex(rule, modelv2.QueryOrder_SORT_ASC)
-					builder.Filter(&databasev2.IndexRule{
-						Metadata: &commonv2.Metadata{
+					builder.OrderByIndex(rule, modelv1.QueryOrder_SORT_ASC)
+					builder.Filter(&databasev1.IndexRule{
+						Metadata: &commonv1.Metadata{
 							Name:  "endpoint_id",
 							Group: "default",
 							Id:    4,
 						},
 						Tags:     []string{"endpoint_id"},
-						Type:     databasev2.IndexRule_TYPE_INVERTED,
-						Location: databasev2.IndexRule_LOCATION_SERIES,
+						Type:     databasev1.IndexRule_TYPE_INVERTED,
+						Location: databasev1.IndexRule_LOCATION_SERIES,
 					}, tsdb.Condition{
 						"endpoint_id": []index.ConditionValue{
 							{
-								Op:     modelv2.Condition_BINARY_OP_EQ,
+								Op:     modelv1.Condition_BINARY_OP_EQ,
 								Values: [][]byte{[]byte("/home_id")},
 							},
 						},
@@ -719,16 +719,16 @@ func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTi
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
-		searchTagFamily := &modelv2.TagFamilyForWrite{}
+		searchTagFamily := &modelv1.TagFamilyForWrite{}
 		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
-		e := &streamv2.ElementValue{
+		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
-			TagFamilies: []*modelv2.TagFamilyForWrite{
+			TagFamilies: []*modelv1.TagFamilyForWrite{
 				{
-					Tags: []*modelv2.TagValue{
+					Tags: []*modelv1.TagValue{
 						{
-							Value: &modelv2.TagValue_BinaryData{
+							Value: &modelv1.TagValue_BinaryData{
 								BinaryData: bb,
 							},
 						},

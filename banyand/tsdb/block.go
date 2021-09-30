@@ -25,7 +25,7 @@ import (
 	"github.com/dgraph-io/ristretto/z"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -82,7 +82,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		return nil, err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
-	rules, ok := ctx.Value(indexRulesKey).([]*databasev2.IndexRule)
+	rules, ok := ctx.Value(indexRulesKey).([]*databasev1.IndexRule)
 	if !ok || len(rules) == 0 {
 		return b, nil
 	}

@@ -18,130 +18,117 @@
 package v1
 
 import (
+	"bytes"
+	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-type WriteRequestBuilder struct {
-	we *tracev1.WriteRequest
+const strDelimiter = "\n"
+
+var ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
+
+func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
+	switch x := tagValue.GetValue().(type) {
+	case *modelv1.TagValue_Str:
+		return []byte(x.Str.GetValue()), nil
+	case *modelv1.TagValue_Int:
+		return convert.Int64ToBytes(x.Int.GetValue()), nil
+	case *modelv1.TagValue_StrArray:
+		return []byte(strings.Join(x.StrArray.GetValue(), strDelimiter)), nil
+	case *modelv1.TagValue_IntArray:
+		buf := bytes.NewBuffer(nil)
+		for _, i := range x.IntArray.GetValue() {
+			buf.Write(convert.Int64ToBytes(i))
+		}
+		return buf.Bytes(), nil
+	case *modelv1.TagValue_BinaryData:
+		return x.BinaryData, nil
+	}
+	return nil, ErrUnsupportedTagForIndexField
 }
 
-func NewWriteEntityBuilder() *WriteRequestBuilder {
-	return &WriteRequestBuilder{we: &tracev1.WriteRequest{}}
+type StreamWriteRequestBuilder struct {
+	ec *streamv1.WriteRequest
 }
 
-func (web *WriteRequestBuilder) Metadata(group, name string) *WriteRequestBuilder {
-	web.we.Metadata = &commonv1.Metadata{
+func NewStreamWriteRequestBuilder() *StreamWriteRequestBuilder {
+	return &StreamWriteRequestBuilder{
+		ec: &streamv1.WriteRequest{
+			Element: &streamv1.ElementValue{
+				TagFamilies: make([]*modelv1.TagFamilyForWrite, 0),
+			},
+		},
+	}
+}
+
+func (b *StreamWriteRequestBuilder) Metadata(group, name string) *StreamWriteRequestBuilder {
+	b.ec.Metadata = &commonv1.Metadata{
 		Group: group,
 		Name:  name,
 	}
-	return web
+	return b
 }
 
-func (web *WriteRequestBuilder) EntityValue(ev *tracev1.EntityValue) *WriteRequestBuilder {
-	web.we.Entity = ev
-	return web
+func (b *StreamWriteRequestBuilder) ID(id string) *StreamWriteRequestBuilder {
+	b.ec.Element.ElementId = id
+	return b
 }
 
-func (web *WriteRequestBuilder) Build() *tracev1.WriteRequest {
-	return web.we
+func (b *StreamWriteRequestBuilder) Timestamp(t time.Time) *StreamWriteRequestBuilder {
+	b.ec.Element.Timestamp = timestamppb.New(t)
+	return b
 }
 
-type EntityValueBuilder struct {
-	ev *tracev1.EntityValue
-}
-
-func NewEntityValueBuilder() *EntityValueBuilder {
-	return &EntityValueBuilder{ev: &tracev1.EntityValue{}}
-}
-
-func (evb *EntityValueBuilder) EntityID(entityID string) *EntityValueBuilder {
-	evb.ev.EntityId = entityID
-	return evb
-}
-
-func (evb *EntityValueBuilder) Timestamp(time time.Time) *EntityValueBuilder {
-	evb.ev.Timestamp = timestamppb.New(time)
-	return evb
-}
-
-func (evb *EntityValueBuilder) DataBinary(data []byte) *EntityValueBuilder {
-	evb.ev.DataBinary = data
-	return evb
-}
-
-func (evb *EntityValueBuilder) Fields(items ...interface{}) *EntityValueBuilder {
-	evb.ev.Fields = make([]*modelv1.Field, len(items))
-	for idx, item := range items {
-		evb.ev.Fields[idx] = buildField(item)
+func (b *StreamWriteRequestBuilder) TagFamily(tags ...interface{}) *StreamWriteRequestBuilder {
+	tagFamily := &modelv1.TagFamilyForWrite{}
+	for _, tag := range tags {
+		tagFamily.Tags = append(tagFamily.Tags, getTag(tag))
 	}
-	return evb
+	b.ec.Element.TagFamilies = append(b.ec.Element.TagFamilies, tagFamily)
+	return b
 }
 
-func buildField(value interface{}) *modelv1.Field {
-	if value == nil {
-		return &modelv1.Field{ValueType: &modelv1.Field_Null{}}
+func (b *StreamWriteRequestBuilder) Build() *streamv1.WriteRequest {
+	return b.ec
+}
+
+func getTag(tag interface{}) *modelv1.TagValue {
+	if tag == nil {
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Null{},
+		}
 	}
-	switch v := value.(type) {
-	case string:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_Str{
-				Str: &modelv1.Str{
-					Value: v,
-				},
-			},
-		}
-	case []string:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_StrArray{
-				StrArray: &modelv1.StrArray{
-					Value: v,
-				},
-			},
-		}
+	switch t := tag.(type) {
 	case int:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_Int{
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{
 				Int: &modelv1.Int{
-					Value: int64(v),
+					Value: int64(t),
 				},
 			},
 		}
-	case []int:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_IntArray{
-				IntArray: &modelv1.IntArray{
-					Value: convert.IntToInt64(v...),
+	case string:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{
+					Value: t,
 				},
 			},
 		}
-	case int64:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_Int{
-				Int: &modelv1.Int{
-					Value: v,
-				},
+	case []byte:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_BinaryData{
+				BinaryData: t,
 			},
 		}
-	case []int64:
-		return &modelv1.Field{
-			ValueType: &modelv1.Field_IntArray{
-				IntArray: &modelv1.IntArray{
-					Value: v,
-				},
-			},
-		}
-	default:
-		panic("type not supported")
 	}
-}
-
-func (evb *EntityValueBuilder) Build() *tracev1.EntityValue {
-	return evb.ev
+	return nil
 }

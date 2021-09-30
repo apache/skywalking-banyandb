@@ -20,8 +20,8 @@ package grpc
 import (
 	"sync"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -39,26 +39,26 @@ type shardRepo struct {
 }
 
 func (s *shardRepo) Rev(message bus.Message) (resp bus.Message) {
-	e, ok := message.Data().(*databasev2.ShardEvent)
+	e, ok := message.Data().(*databasev1.ShardEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid e data type")
 		return
 	}
 	s.setShardNum(e)
 	s.log.Info().
-		Str("action", databasev2.Action_name[int32(e.Action)]).
+		Str("action", databasev1.Action_name[int32(e.Action)]).
 		Uint64("shardID", e.Shard.Id).
 		Msg("received a shard e")
 	return
 }
 
-func (s *shardRepo) setShardNum(eventVal *databasev2.ShardEvent) {
+func (s *shardRepo) setShardNum(eventVal *databasev1.ShardEvent) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	idx := getID(eventVal.GetShard().GetMetadata())
-	if eventVal.Action == databasev2.Action_ACTION_PUT {
+	if eventVal.Action == databasev1.Action_ACTION_PUT {
 		s.shardEventsMap[idx] = eventVal.Shard.Total
-	} else if eventVal.Action == databasev2.Action_ACTION_DELETE {
+	} else if eventVal.Action == databasev1.Action_ACTION_DELETE {
 		delete(s.shardEventsMap, idx)
 	}
 }
@@ -73,7 +73,7 @@ func (s *shardRepo) shardNum(idx identity) (uint32, bool) {
 	return sn, true
 }
 
-func getID(metadata *commonv2.Metadata) identity {
+func getID(metadata *commonv1.Metadata) identity {
 	return identity{
 		name:  metadata.GetName(),
 		group: metadata.GetGroup(),
@@ -87,20 +87,20 @@ type entityRepo struct {
 }
 
 func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
-	e, ok := message.Data().(*databasev2.EntityEvent)
+	e, ok := message.Data().(*databasev1.EntityEvent)
 	if !ok {
 		s.log.Warn().Msg("invalid e data type")
 		return
 	}
 	id := getID(e.GetSubject())
 	s.log.Info().
-		Str("action", databasev2.Action_name[int32(e.Action)]).
+		Str("action", databasev1.Action_name[int32(e.Action)]).
 		Interface("subject", id).
 		Msg("received an entity event")
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	switch e.Action {
-	case databasev2.Action_ACTION_PUT:
+	case databasev1.Action_ACTION_PUT:
 		en := make(partition.EntityLocator, 0, len(e.GetEntityLocator()))
 		for _, l := range e.GetEntityLocator() {
 			en = append(en, partition.TagLocator{
@@ -109,7 +109,7 @@ func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
 			})
 		}
 		s.entitiesMap[id] = en
-	case databasev2.Action_ACTION_DELETE:
+	case databasev1.Action_ACTION_DELETE:
 		delete(s.entitiesMap, id)
 	}
 	return

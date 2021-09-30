@@ -24,30 +24,32 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var (
-	binaryOpsMap = map[string]modelv1.PairQuery_BinaryOp{
-		"=":          modelv1.PairQuery_BINARY_OP_EQ,
-		"!=":         modelv1.PairQuery_BINARY_OP_NE,
-		">":          modelv1.PairQuery_BINARY_OP_GT,
-		">=":         modelv1.PairQuery_BINARY_OP_GE,
-		"<":          modelv1.PairQuery_BINARY_OP_LT,
-		"<=":         modelv1.PairQuery_BINARY_OP_LE,
-		"having":     modelv1.PairQuery_BINARY_OP_HAVING,
-		"not having": modelv1.PairQuery_BINARY_OP_NOT_HAVING,
+	binaryOpsMap = map[string]modelv1.Condition_BinaryOp{
+		"=":          modelv1.Condition_BINARY_OP_EQ,
+		"!=":         modelv1.Condition_BINARY_OP_NE,
+		">":          modelv1.Condition_BINARY_OP_GT,
+		">=":         modelv1.Condition_BINARY_OP_GE,
+		"<":          modelv1.Condition_BINARY_OP_LT,
+		"<=":         modelv1.Condition_BINARY_OP_LE,
+		"having":     modelv1.Condition_BINARY_OP_HAVING,
+		"not having": modelv1.Condition_BINARY_OP_NOT_HAVING,
 	}
 )
 
 type QueryRequestBuilder struct {
-	ec *tracev1.QueryRequest
+	ec *streamv1.QueryRequest
 }
 
 func NewQueryRequestBuilder() *QueryRequestBuilder {
 	return &QueryRequestBuilder{
-		ec: &tracev1.QueryRequest{},
+		ec: &streamv1.QueryRequest{
+			Projection: &modelv1.Projection{},
+		},
 	}
 }
 
@@ -69,118 +71,95 @@ func (b *QueryRequestBuilder) Offset(offset uint32) *QueryRequestBuilder {
 	return b
 }
 
-func (b *QueryRequestBuilder) Fields(items ...interface{}) *QueryRequestBuilder {
+func (b *QueryRequestBuilder) FieldsInTagFamily(tagFamilyName string, items ...interface{}) *QueryRequestBuilder {
 	if len(items)%3 != 0 {
-		panic("expect even number of arguments")
+		panic("expect 3 to be a factor of the length of items")
 	}
 
-	b.ec.Fields = make([]*modelv1.PairQuery, len(items)/3)
+	criteriaConditions := make([]*modelv1.Condition, len(items)/3)
 	for i := 0; i < len(items)/3; i++ {
 		key, op, values := items[i*3+0], items[i*3+1], items[i*3+2]
-		b.ec.Fields[i] = &modelv1.PairQuery{
-			Op:        binaryOpsMap[op.(string)],
-			Condition: buildPair(key.(string), values),
+		criteriaConditions[i] = &modelv1.Condition{
+			Name:  key.(string),
+			Op:    binaryOpsMap[op.(string)],
+			Value: buildTagValue(values),
 		}
 	}
+
+	b.ec.Criteria = append(b.ec.Criteria, &streamv1.QueryRequest_Criteria{
+		TagFamilyName: tagFamilyName,
+		Conditions:    criteriaConditions,
+	})
 
 	return b
 }
 
-func buildPair(key string, value interface{}) *modelv1.TypedPair {
-	result := &modelv1.TypedPair{
-		Key: key,
-	}
+func buildTagValue(value interface{}) *modelv1.TagValue {
 	switch v := value.(type) {
 	case int:
-		result.Typed = &modelv1.TypedPair_IntPair{
-			IntPair: &modelv1.Int{
-				Value: int64(v),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(v)}},
 		}
 	case []int:
-		result.Typed = &modelv1.TypedPair_IntArrayPair{
-			IntArrayPair: &modelv1.IntArray{
-				Value: convert.IntToInt64(v...),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: convert.IntToInt64(v...)}},
 		}
 	case int8:
-		result.Typed = &modelv1.TypedPair_IntPair{
-			IntPair: &modelv1.Int{
-				Value: int64(v),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(v)}},
 		}
 	case []int8:
-		result.Typed = &modelv1.TypedPair_IntArrayPair{
-			IntArrayPair: &modelv1.IntArray{
-				Value: convert.Int8ToInt64(v...),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: convert.Int8ToInt64(v...)}},
 		}
 	case int16:
-		result.Typed = &modelv1.TypedPair_IntPair{
-			IntPair: &modelv1.Int{
-				Value: int64(v),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(v)}},
 		}
 	case []int16:
-		result.Typed = &modelv1.TypedPair_IntArrayPair{
-			IntArrayPair: &modelv1.IntArray{
-				Value: convert.Int16ToInt64(v...),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: convert.Int16ToInt64(v...)}},
 		}
 	case int32:
-		result.Typed = &modelv1.TypedPair_IntPair{
-			IntPair: &modelv1.Int{
-				Value: int64(v),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(v)}},
 		}
 	case []int32:
-		result.Typed = &modelv1.TypedPair_IntArrayPair{
-			IntArrayPair: &modelv1.IntArray{
-				Value: convert.Int32ToInt64(v...),
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: convert.Int32ToInt64(v...)}},
 		}
 	case int64:
-		result.Typed = &modelv1.TypedPair_IntPair{
-			IntPair: &modelv1.Int{
-				Value: v,
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}},
 		}
 	case []int64:
-		result.Typed = &modelv1.TypedPair_IntArrayPair{
-			IntArrayPair: &modelv1.IntArray{
-				Value: v,
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: v}},
 		}
 	case string:
-		result.Typed = &modelv1.TypedPair_StrPair{
-			StrPair: &modelv1.Str{
-				Value: v,
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}},
 		}
 	case []string:
-		result.Typed = &modelv1.TypedPair_StrArrayPair{
-			StrArrayPair: &modelv1.StrArray{
-				Value: v,
-			},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}},
 		}
 	}
-	return result
+	panic("not supported")
 }
 
-func (b *QueryRequestBuilder) Projection(projections ...string) *QueryRequestBuilder {
-	b.ec.Projection = &modelv1.Projection{DataBinary: false, KeyNames: projections}
+func (b *QueryRequestBuilder) Projection(tagFamily string, projections ...string) *QueryRequestBuilder {
+	b.ec.Projection.TagFamilies = append(b.ec.Projection.GetTagFamilies(), &modelv1.Projection_TagFamily{
+		Name: tagFamily,
+		Tags: projections,
+	})
 	return b
 }
 
-func (b *QueryRequestBuilder) ProjectionWithDataBinary(projections ...string) *QueryRequestBuilder {
-	b.ec.Projection = &modelv1.Projection{DataBinary: true, KeyNames: projections}
-	return b
-}
-
-func (b *QueryRequestBuilder) OrderBy(fieldName string, sort modelv1.QueryOrder_Sort) *QueryRequestBuilder {
+func (b *QueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.QueryOrder_Sort) *QueryRequestBuilder {
 	b.ec.OrderBy = &modelv1.QueryOrder{
-		KeyName: fieldName,
-		Sort:    sort,
+		IndexRuleName: indexRuleName,
+		Sort:          sort,
 	}
 	return b
 }
@@ -193,44 +172,51 @@ func (b *QueryRequestBuilder) TimeRange(sT, eT time.Time) *QueryRequestBuilder {
 	return b
 }
 
-func (b *QueryRequestBuilder) Build() *tracev1.QueryRequest {
+func (b *QueryRequestBuilder) Build() *streamv1.QueryRequest {
 	return b.ec
 }
 
-type QueryEntityBuilder struct {
-	qe *tracev1.Entity
+type QueryResponseElementBuilder struct {
+	elem *streamv1.Element
 }
 
-func NewQueryEntityBuilder() *QueryEntityBuilder {
-	return &QueryEntityBuilder{qe: &tracev1.Entity{}}
+func NewQueryEntityBuilder() *QueryResponseElementBuilder {
+	return &QueryResponseElementBuilder{elem: &streamv1.Element{}}
 }
 
-func (qeb *QueryEntityBuilder) EntityID(entityID string) *QueryEntityBuilder {
-	qeb.qe.EntityId = entityID
+func (qeb *QueryResponseElementBuilder) EntityID(elementID string) *QueryResponseElementBuilder {
+	qeb.elem.ElementId = elementID
 	return qeb
 }
 
-func (qeb *QueryEntityBuilder) Timestamp(t time.Time) *QueryEntityBuilder {
-	qeb.qe.Timestamp = timestamppb.New(t)
+func (qeb *QueryResponseElementBuilder) Timestamp(t time.Time) *QueryResponseElementBuilder {
+	qeb.elem.Timestamp = timestamppb.New(t)
 	return qeb
 }
 
-func (qeb *QueryEntityBuilder) Fields(items ...interface{}) *QueryEntityBuilder {
+func (qeb *QueryResponseElementBuilder) FieldsInTagFamily(tagFamily string, items ...interface{}) *QueryResponseElementBuilder {
 	if len(items)%2 != 0 {
 		panic("invalid fields list")
 	}
 
 	l := len(items) / 2
-
-	qeb.qe.Fields = make([]*modelv1.TypedPair, l)
+	tags := make([]*modelv1.Tag, l)
 	for i := 0; i < l; i++ {
 		key, values := items[i*2+0], items[i*2+1]
-		qeb.qe.Fields[i] = buildPair(key.(string), values)
+		tags[i] = &modelv1.Tag{
+			Key:   key.(string),
+			Value: buildTagValue(values),
+		}
 	}
+
+	qeb.elem.TagFamilies = append(qeb.elem.GetTagFamilies(), &modelv1.TagFamily{
+		Name: tagFamily,
+		Tags: tags,
+	})
 
 	return qeb
 }
 
-func (qeb *QueryEntityBuilder) Build() *tracev1.Entity {
-	return qeb.qe
+func (qeb *QueryResponseElementBuilder) Build() *streamv1.Element {
+	return qeb.elem
 }

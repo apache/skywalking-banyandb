@@ -25,7 +25,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
@@ -132,7 +132,7 @@ func (s *store) MatchTerms(field index.Field) (posting.List, error) {
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv2.QueryOrder_SORT_ASC)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.QueryOrder_SORT_ASC)
 	if err != nil {
 		return roaring.EmptyPostingList, err
 	}
@@ -148,7 +148,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv2.QueryOrder_Sort) (index.FieldIterator, error) {
+	order modelv1.QueryOrder_Sort) (index.FieldIterator, error) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
 	tt := []*memTable{s.memTable, s.immutableMemTable}
@@ -211,11 +211,11 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 	}
 	var fn index.SwitchFn
 	switch order {
-	case modelv2.QueryOrder_SORT_ASC, modelv2.QueryOrder_SORT_UNSPECIFIED:
+	case modelv1.QueryOrder_SORT_ASC, modelv1.QueryOrder_SORT_UNSPECIFIED:
 		fn = func(a, b []byte) bool {
 			return bytes.Compare(a, b) > 0
 		}
-	case modelv2.QueryOrder_SORT_DESC:
+	case modelv1.QueryOrder_SORT_DESC:
 		fn = func(a, b []byte) bool {
 			return bytes.Compare(a, b) < 0
 		}

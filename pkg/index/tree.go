@@ -25,7 +25,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
@@ -47,7 +47,7 @@ type Condition map[FieldKey][]ConditionValue
 
 type ConditionValue struct {
 	Values [][]byte
-	Op     modelv2.Condition_BinaryOp
+	Op     modelv1.Condition_BinaryOp
 }
 
 func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
@@ -69,30 +69,30 @@ func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
 				}
 				opts := rangeLeaf.Opts
 				switch cond.Op {
-				case modelv2.Condition_BINARY_OP_GT:
+				case modelv1.Condition_BINARY_OP_GT:
 					opts.Lower = bytes.Join(cond.Values, nil)
-				case modelv2.Condition_BINARY_OP_GE:
+				case modelv1.Condition_BINARY_OP_GE:
 					opts.Lower = bytes.Join(cond.Values, nil)
 					opts.IncludesLower = true
-				case modelv2.Condition_BINARY_OP_LT:
+				case modelv1.Condition_BINARY_OP_LT:
 					opts.Upper = bytes.Join(cond.Values, nil)
-				case modelv2.Condition_BINARY_OP_LE:
+				case modelv1.Condition_BINARY_OP_LE:
 					opts.Upper = bytes.Join(cond.Values, nil)
 					opts.IncludesUpper = true
 				}
 				continue
 			}
 			switch cond.Op {
-			case modelv2.Condition_BINARY_OP_EQ:
+			case modelv1.Condition_BINARY_OP_EQ:
 				root.addEq(key, cond.Values)
-			case modelv2.Condition_BINARY_OP_NE:
+			case modelv1.Condition_BINARY_OP_NE:
 				root.addNot(key, root.newEq(key, cond.Values))
-			case modelv2.Condition_BINARY_OP_HAVING:
+			case modelv1.Condition_BINARY_OP_HAVING:
 				n := root.addOrNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
 				}
-			case modelv2.Condition_BINARY_OP_NOT_HAVING:
+			case modelv1.Condition_BINARY_OP_NOT_HAVING:
 				n := root.newOrNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
@@ -104,12 +104,12 @@ func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
 	return root, nil
 }
 
-func rangeOP(op modelv2.Condition_BinaryOp) bool {
+func rangeOP(op modelv1.Condition_BinaryOp) bool {
 	switch op {
-	case modelv2.Condition_BINARY_OP_GT,
-		modelv2.Condition_BINARY_OP_GE,
-		modelv2.Condition_BINARY_OP_LT,
-		modelv2.Condition_BINARY_OP_LE:
+	case modelv1.Condition_BINARY_OP_GT,
+		modelv1.Condition_BINARY_OP_GE,
+		modelv1.Condition_BINARY_OP_LT,
+		modelv1.Condition_BINARY_OP_LE:
 		return true
 	}
 	return false

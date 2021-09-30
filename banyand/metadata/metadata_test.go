@@ -23,20 +23,20 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
 	type args struct {
-		subject *commonv2.Metadata
+		subject *commonv1.Metadata
 	}
 	is := assert.New(t)
 	tests := []struct {
 		name    string
 		args    args
-		want    []*databasev2.IndexRule
+		want    []*databasev1.IndexRule
 		wantErr bool
 	}{
 		{
@@ -61,7 +61,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 			args: args{
 				subject: createSubject("invalid", "default"),
 			},
-			want: make([]*databasev2.IndexRule, 0),
+			want: make([]*databasev1.IndexRule, 0),
 		},
 	}
 	for _, tt := range tests {
@@ -82,11 +82,11 @@ func Test_service_RulesBySubject(t *testing.T) {
 	}
 }
 
-func getIndexRule(names ...string) []*databasev2.IndexRule {
+func getIndexRule(names ...string) []*databasev1.IndexRule {
 	ruleRepo, _ := schema.NewIndexRule()
-	result := make([]*databasev2.IndexRule, 0, len(names))
+	result := make([]*databasev1.IndexRule, 0, len(names))
 	for _, name := range names {
-		indexRule, _ := ruleRepo.Get(context.TODO(), &commonv2.Metadata{
+		indexRule, _ := ruleRepo.Get(context.TODO(), &commonv1.Metadata{
 			Group: "default",
 			Name:  name,
 		})
@@ -95,8 +95,8 @@ func getIndexRule(names ...string) []*databasev2.IndexRule {
 	return result
 }
 
-func createSubject(name, group string) *commonv2.Metadata {
-	return &commonv2.Metadata{
+func createSubject(name, group string) *commonv1.Metadata {
+	return &commonv1.Metadata{
 		Group: group,
 		Name:  name,
 	}

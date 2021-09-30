@@ -26,8 +26,8 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/api/event"
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -62,7 +62,7 @@ type service struct {
 	stopCh        chan struct{}
 }
 
-func (s *service) Stream(stream *commonv2.Metadata) (Stream, error) {
+func (s *service) Stream(stream *commonv1.Metadata) (Stream, error) {
 	sID := formatStreamID(stream.GetName(), stream.GetGroup())
 	sm, ok := s.schemaMap[sID]
 	if !ok {
@@ -121,35 +121,35 @@ func (s *service) Serve() error {
 	now := time.Now().UnixNano()
 	nowBp := timestamppb.New(t)
 	for _, sMeta := range s.schemaMap {
-		locator := make([]*databasev2.EntityEvent_TagLocator, 0, len(sMeta.entityLocator))
+		locator := make([]*databasev1.EntityEvent_TagLocator, 0, len(sMeta.entityLocator))
 		for _, tagLocator := range sMeta.entityLocator {
-			locator = append(locator, &databasev2.EntityEvent_TagLocator{
+			locator = append(locator, &databasev1.EntityEvent_TagLocator{
 				FamilyOffset: uint32(tagLocator.FamilyOffset),
 				TagOffset:    uint32(tagLocator.TagOffset),
 			})
 		}
-		_, err := s.repo.Publish(event.TopicEntityEvent, bus.NewMessage(bus.MessageID(now), &databasev2.EntityEvent{
-			Subject: &commonv2.Metadata{
+		_, err := s.repo.Publish(event.TopicEntityEvent, bus.NewMessage(bus.MessageID(now), &databasev1.EntityEvent{
+			Subject: &commonv1.Metadata{
 				Name:  sMeta.name,
 				Group: sMeta.group,
 			},
 			EntityLocator: locator,
 			Time:          nowBp,
-			Action:        databasev2.Action_ACTION_PUT,
+			Action:        databasev1.Action_ACTION_PUT,
 		}))
 		if err != nil {
 			return err
 		}
 		for i := 0; i < int(sMeta.schema.GetShardNum()); i++ {
-			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev2.ShardEvent{
-				Shard: &databasev2.Shard{
+			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev1.ShardEvent{
+				Shard: &databasev1.Shard{
 					Id:    uint64(i),
 					Total: sMeta.schema.GetShardNum(),
-					Metadata: &commonv2.Metadata{
+					Metadata: &commonv1.Metadata{
 						Name:  sMeta.name,
 						Group: sMeta.group,
 					},
-					Node: &databasev2.Node{
+					Node: &databasev1.Node{
 						Id:        s.repo.NodeID(),
 						CreatedAt: nowBp,
 						UpdatedAt: nowBp,
@@ -159,7 +159,7 @@ func (s *service) Serve() error {
 					CreatedAt: nowBp,
 				},
 				Time:   nowBp,
-				Action: databasev2.Action_ACTION_PUT,
+				Action: databasev1.Action_ACTION_PUT,
 			}))
 			if errShard != nil {
 				return errShard

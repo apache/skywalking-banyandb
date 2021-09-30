@@ -23,16 +23,16 @@ import (
 
 	"go.uber.org/multierr"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 //IndexFilter provides methods to find a specific index related objects
 type IndexFilter interface {
-	//IndexRules fetches v2.IndexRule by subject defined in IndexRuleBinding
-	IndexRules(ctx context.Context, subject *commonv2.Metadata) ([]*databasev2.IndexRule, error)
+	//IndexRules fetches v1.IndexRule by subject defined in IndexRuleBinding
+	IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error)
 }
 
 type Repo interface {
@@ -79,7 +79,7 @@ func (s *service) Name() string {
 	return "metadata"
 }
 
-func (s *service) IndexRules(ctx context.Context, subject *commonv2.Metadata) ([]*databasev2.IndexRule, error) {
+func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error) {
 	bindings, err := s.indexRuleBinding.List(ctx, schema.ListOpt{Group: subject.Group})
 	if err != nil {
 		return nil, err
@@ -97,10 +97,10 @@ func (s *service) IndexRules(ctx context.Context, subject *commonv2.Metadata) ([
 		}
 		foundRules = append(foundRules, binding.Rules...)
 	}
-	result := make([]*databasev2.IndexRule, 0, len(foundRules))
+	result := make([]*databasev1.IndexRule, 0, len(foundRules))
 	var indexRuleErr error
 	for _, rule := range foundRules {
-		r, getErr := s.indexRule.Get(ctx, &commonv2.Metadata{
+		r, getErr := s.indexRule.Get(ctx, &commonv1.Metadata{
 			Name:  rule,
 			Group: subject.Group,
 		})
