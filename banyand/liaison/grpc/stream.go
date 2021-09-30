@@ -23,12 +23,12 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-func (s *Server) Write(stream streamv2.StreamService_WriteServer) error {
+func (s *Server) Write(stream streamv1.StreamService_WriteServer) error {
 	for {
 		writeEntity, err := stream.Recv()
 		if err == io.EOF {
@@ -51,7 +51,7 @@ func (s *Server) Write(stream streamv2.StreamService_WriteServer) error {
 			s.log.Error().Err(err).Msg("failed to locate write target")
 			continue
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv2.InternalWriteRequest{
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
 			Request:    writeEntity,
 			ShardId:    uint32(shardID),
 			SeriesHash: tsdb.HashEntity(entity),
@@ -60,13 +60,13 @@ func (s *Server) Write(stream streamv2.StreamService_WriteServer) error {
 		if errWritePub != nil {
 			return errWritePub
 		}
-		if errSend := stream.Send(&streamv2.WriteResponse{}); errSend != nil {
+		if errSend := stream.Send(&streamv1.WriteResponse{}); errSend != nil {
 			return errSend
 		}
 	}
 }
 
-func (s *Server) Query(_ context.Context, entityCriteria *streamv2.QueryRequest) (*streamv2.QueryResponse, error) {
+func (s *Server) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
@@ -76,9 +76,9 @@ func (s *Server) Query(_ context.Context, entityCriteria *streamv2.QueryRequest)
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	queryMsg, ok := msg.Data().([]*streamv2.Element)
+	queryMsg, ok := msg.Data().([]*streamv1.Element)
 	if !ok {
 		return nil, ErrQueryMsg
 	}
-	return &streamv2.QueryResponse{Elements: queryMsg}, nil
+	return &streamv1.QueryResponse{Elements: queryMsg}, nil
 }

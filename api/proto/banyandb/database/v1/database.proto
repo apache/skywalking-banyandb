@@ -34,9 +34,10 @@ message Node {
 
 message Shard {
     uint64 id = 1;
-    common.v1.Metadata series = 2;
-    Node node = 3;
-    uint32 total = 4;
-    google.protobuf.Timestamp updated_at = 5;
-    google.protobuf.Timestamp created_at = 6;
+    common.v1.Metadata metadata = 2;
+    common.v1.Catalog catalog = 3;
+    Node node = 4;
+    uint32 total = 5;
+    google.protobuf.Timestamp updated_at = 6;
+    google.protobuf.Timestamp created_at = 7;
 }

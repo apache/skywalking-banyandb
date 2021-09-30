@@ -22,10 +22,17 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/co
 
 package banyandb.common.v1;
 
+enum Catalog {
+    CATALOG_UNSPECIFIED = 0;
+    CATALOG_STREAM = 1;
+    CATALOG_MEASURE = 2;
+}
+
 // Metadata is for multi-tenant, multi-model use
 message Metadata {
     // group contains a set of options, like retention policy, max
     string group = 1;
     // name of the entity
     string name = 2;
+    uint32 id = 3;
 }

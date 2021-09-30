@@ -20,15 +20,15 @@ package stream
 import (
 	"context"
 
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
 type indexRule struct {
-	rule       *databasev2.IndexRule
+	rule       *databasev1.IndexRule
 	tagIndices []partition.TagLocator
 }
 
@@ -36,10 +36,10 @@ type stream struct {
 	name           string
 	group          string
 	l              *logger.Logger
-	schema         *databasev2.Stream
+	schema         *databasev1.Stream
 	db             tsdb.Database
 	entityLocator  partition.EntityLocator
-	indexRules     []*databasev2.IndexRule
+	indexRules     []*databasev1.IndexRule
 	indexRuleIndex []indexRule
 
 	indexCh chan indexMessage
@@ -72,7 +72,7 @@ func (s *stream) parseSchema() {
 	}
 }
 
-func (s *stream) findTagByName(tagName string) (int, int, *databasev2.TagSpec) {
+func (s *stream) findTagByName(tagName string) (int, int, *databasev1.TagSpec) {
 	for fi, family := range s.schema.GetTagFamilies() {
 		for ti, tag := range family.Tags {
 			if tagName == tag.GetName() {
@@ -84,8 +84,8 @@ func (s *stream) findTagByName(tagName string) (int, int, *databasev2.TagSpec) {
 }
 
 type streamSpec struct {
-	schema     *databasev2.Stream
-	indexRules []*databasev2.IndexRule
+	schema     *databasev1.Stream
+	indexRules []*databasev1.IndexRule
 }
 
 func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error) {
@@ -115,20 +115,20 @@ func formatStreamID(name, group string) string {
 	return name + ":" + group
 }
 
-func tagValueTypeConv(tagValue *modelv2.TagValue) (tagType databasev2.TagType, isNull bool) {
+func tagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, isNull bool) {
 	switch tagValue.GetValue().(type) {
-	case *modelv2.TagValue_Int:
-		return databasev2.TagType_TAG_TYPE_INT, false
-	case *modelv2.TagValue_Str:
-		return databasev2.TagType_TAG_TYPE_STRING, false
-	case *modelv2.TagValue_IntArray:
-		return databasev2.TagType_TAG_TYPE_INT_ARRAY, false
-	case *modelv2.TagValue_StrArray:
-		return databasev2.TagType_TAG_TYPE_STRING_ARRAY, false
-	case *modelv2.TagValue_BinaryData:
-		return databasev2.TagType_TAG_TYPE_DATA_BINARY, false
-	case *modelv2.TagValue_Null:
-		return databasev2.TagType_TAG_TYPE_UNSPECIFIED, true
+	case *modelv1.TagValue_Int:
+		return databasev1.TagType_TAG_TYPE_INT, false
+	case *modelv1.TagValue_Str:
+		return databasev1.TagType_TAG_TYPE_STRING, false
+	case *modelv1.TagValue_IntArray:
+		return databasev1.TagType_TAG_TYPE_INT_ARRAY, false
+	case *modelv1.TagValue_StrArray:
+		return databasev1.TagType_TAG_TYPE_STRING_ARRAY, false
+	case *modelv1.TagValue_BinaryData:
+		return databasev1.TagType_TAG_TYPE_DATA_BINARY, false
+	case *modelv1.TagValue_Null:
+		return databasev1.TagType_TAG_TYPE_UNSPECIFIED, true
 	}
-	return databasev2.TagType_TAG_TYPE_UNSPECIFIED, false
+	return databasev1.TagType_TAG_TYPE_UNSPECIFIED, false
 }

@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 )
 
 func Test_IndexRule(t *testing.T) {
@@ -32,7 +32,7 @@ func Test_IndexRule(t *testing.T) {
 	is := require.New(t)
 	ir, err := NewIndexRule()
 	is.NoError(err)
-	r, err := ir.Get(context.Background(), &commonv2.Metadata{Name: "duration", Group: "default"})
+	r, err := ir.Get(context.Background(), &commonv1.Metadata{Name: "duration", Group: "default"})
 	is.NoError(err)
 	ast.NotNil(r)
 	ast.Equal("duration", r.Metadata.Name)
@@ -47,7 +47,7 @@ func Test_Stream(t *testing.T) {
 	is := require.New(t)
 	s, err := NewStream()
 	is.NoError(err)
-	r, err := s.Get(context.Background(), &commonv2.Metadata{Name: "sw", Group: "default"})
+	r, err := s.Get(context.Background(), &commonv1.Metadata{Name: "sw", Group: "default"})
 	is.NoError(err)
 	ast.NotNil(r)
 	ast.Equal("sw", r.Metadata.Name)
@@ -62,7 +62,7 @@ func Test_IndexRuleBinding(t *testing.T) {
 	is := require.New(t)
 	irb, err := NewIndexRuleBinding()
 	is.NoError(err)
-	r, err := irb.Get(context.Background(), &commonv2.Metadata{Name: "sw-index-rule-binding", Group: "default"})
+	r, err := irb.Get(context.Background(), &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"})
 	is.NoError(err)
 	ast.NotNil(r)
 	ast.Equal("sw-index-rule-binding", r.Metadata.Name)

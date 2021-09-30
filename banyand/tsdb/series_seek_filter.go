@@ -20,7 +20,7 @@ package tsdb
 import (
 	"github.com/pkg/errors"
 
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
@@ -29,9 +29,9 @@ var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
 
 type Condition map[string][]index.ConditionValue
 
-func (s *seekerBuilder) Filter(indexRule *databasev2.IndexRule, condition Condition) SeekerBuilder {
+func (s *seekerBuilder) Filter(indexRule *databasev1.IndexRule, condition Condition) SeekerBuilder {
 	s.conditions = append(s.conditions, struct {
-		indexRuleType databasev2.IndexRule_Type
+		indexRuleType databasev1.IndexRule_Type
 		indexRuleID   uint32
 		condition     Condition
 	}{
@@ -43,7 +43,7 @@ func (s *seekerBuilder) Filter(indexRule *databasev2.IndexRule, condition Condit
 }
 
 type condWithIRT struct {
-	indexRuleType databasev2.IndexRule_Type
+	indexRuleType databasev1.IndexRule_Type
 	condition     index.Condition
 }
 
@@ -107,9 +107,9 @@ func (s *seekerBuilder) buildIndexFilter(block blockDelegate, conditions []condW
 		var valid bool
 		var err error
 		switch condition.indexRuleType {
-		case databasev2.IndexRule_TYPE_INVERTED:
+		case databasev1.IndexRule_TYPE_INVERTED:
 			allItemIDs, valid, err = addIDs(allItemIDs, block.invertedIndexReader(), condition.condition)
-		case databasev2.IndexRule_TYPE_TREE:
+		case databasev1.IndexRule_TYPE_TREE:
 			allItemIDs, valid, err = addIDs(allItemIDs, block.lsmIndexReader(), condition.condition)
 		default:
 			return nil, ErrUnsupportedIndexRule

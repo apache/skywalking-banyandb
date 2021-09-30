@@ -20,8 +20,8 @@ package schema
 import (
 	"context"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 type ListOpt struct {
@@ -29,16 +29,16 @@ type ListOpt struct {
 }
 
 type Stream interface {
-	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.Stream, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev2.Stream, error)
+	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
 }
 
 type IndexRule interface {
-	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.IndexRule, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev2.IndexRule, error)
+	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
 }
 
 type IndexRuleBinding interface {
-	Get(ctx context.Context, metadata *commonv2.Metadata) (*databasev2.IndexRuleBinding, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev2.IndexRuleBinding, error)
+	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
+	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
 }

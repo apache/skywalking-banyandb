@@ -24,7 +24,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -161,7 +161,7 @@ type Writer interface {
 }
 
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv2.QueryOrder_Sort) (iter FieldIterator, err error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.QueryOrder_Sort) (iter FieldIterator, err error)
 }
 
 type Searcher interface {

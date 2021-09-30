@@ -26,9 +26,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	commonv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v2"
-	modelv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v2"
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -41,7 +41,7 @@ func Test_Stream_Write(t *testing.T) {
 	defer deferFunc()
 
 	type args struct {
-		ele *streamv2.ElementValue
+		ele *streamv1.ElementValue
 	}
 	tests := []struct {
 		name    string
@@ -192,7 +192,7 @@ func setup(t *testing.T) (*stream, func()) {
 	tempDir, deferFunc := test.Space(req)
 	streamRepo, err := schema.NewStream()
 	req.NoError(err)
-	sa, err := streamRepo.Get(context.TODO(), &commonv2.Metadata{
+	sa, err := streamRepo.Get(context.TODO(), &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",
 	})
@@ -213,20 +213,20 @@ func setup(t *testing.T) (*stream, func()) {
 	}
 }
 
-func getEle(tags ...interface{}) *streamv2.ElementValue {
-	searchableTags := make([]*modelv2.TagValue, 0)
+func getEle(tags ...interface{}) *streamv1.ElementValue {
+	searchableTags := make([]*modelv1.TagValue, 0)
 	for _, tag := range tags {
 		searchableTags = append(searchableTags, getTag(tag))
 	}
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
-	e := &streamv2.ElementValue{
+	e := &streamv1.ElementValue{
 		ElementId: "1231.dfd.123123ssf",
 		Timestamp: timestamppb.Now(),
-		TagFamilies: []*modelv2.TagFamilyForWrite{
+		TagFamilies: []*modelv1.TagFamilyForWrite{
 			{
-				Tags: []*modelv2.TagValue{
+				Tags: []*modelv1.TagValue{
 					{
-						Value: &modelv2.TagValue_BinaryData{
+						Value: &modelv1.TagValue_BinaryData{
 							BinaryData: bb,
 						},
 					},
@@ -240,25 +240,25 @@ func getEle(tags ...interface{}) *streamv2.ElementValue {
 	return e
 }
 
-func getTag(tag interface{}) *modelv2.TagValue {
+func getTag(tag interface{}) *modelv1.TagValue {
 	if tag == nil {
-		return &modelv2.TagValue{
-			Value: &modelv2.TagValue_Null{},
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Null{},
 		}
 	}
 	switch t := tag.(type) {
 	case int:
-		return &modelv2.TagValue{
-			Value: &modelv2.TagValue_Int{
-				Int: &modelv2.Int{
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{
+				Int: &modelv1.Int{
 					Value: int64(t),
 				},
 			},
 		}
 	case string:
-		return &modelv2.TagValue{
-			Value: &modelv2.TagValue_Str{
-				Str: &modelv2.Str{
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{
 					Value: t,
 				},
 			},

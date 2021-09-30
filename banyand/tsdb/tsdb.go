@@ -30,7 +30,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v2"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -70,7 +70,7 @@ var _ Database = (*database)(nil)
 type DatabaseOpts struct {
 	Location   string
 	ShardNum   uint32
-	IndexRules []*databasev2.IndexRule
+	IndexRules []*databasev1.IndexRule
 }
 
 type database struct {

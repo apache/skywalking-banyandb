@@ -39,20 +39,13 @@ message ShardEvent {
     google.protobuf.Timestamp time = 3;
 }
 
-message SeriesEvent {
-    common.v1.Metadata series = 1;
-    repeated string field_names_composite_series_id = 2;
-    Action action = 3;
-    google.protobuf.Timestamp time = 4;
-}
-
-message IndexRuleEvent {
-    common.v1.Metadata series = 1;
-    message ShardedIndexRule {
-        uint64 shard_id = 1;
-        repeated IndexRule rules  = 2;
+message EntityEvent {
+    common.v1.Metadata subject = 1; 
+    message TagLocator {
+        uint32 family_offset = 1;
+        uint32 tag_offset = 2;
     }
-    repeated ShardedIndexRule rules = 2;
-    Action action = 4;
-    google.protobuf.Timestamp time = 5;
+    repeated TagLocator entity_locator = 2;
+    Action action = 3;
+    google.protobuf.Timestamp time = 4; 
 }

@@ -32,14 +32,14 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	streamv2 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v2"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	query "github.com/apache/skywalking-banyandb/banyand/query/v2"
+	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	v2 "github.com/apache/skywalking-banyandb/pkg/pb/v2"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -116,8 +116,8 @@ func setup(req *require.Assertions, testData testData) func() {
 
 type caseData struct {
 	name           string
-	queryGenerator func(baseTs time.Time) *streamv2.QueryRequest
-	writeGenerator func() *streamv2.WriteRequest
+	queryGenerator func(baseTs time.Time) *streamv1.QueryRequest
+	writeGenerator func() *streamv1.WriteRequest
 	args           testData
 	wantLen        int
 }
@@ -171,9 +171,9 @@ func TestStreamService(t *testing.T) {
 	}
 }
 
-func writeData() *streamv2.WriteRequest {
+func writeData() *streamv1.WriteRequest {
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
-	return v2.NewStreamWriteRequestBuilder().
+	return pbv1.NewStreamWriteRequestBuilder().
 		ID("1").
 		Metadata("default", "sw").
 		Timestamp(time.Now()).
@@ -190,8 +190,8 @@ func writeData() *streamv2.WriteRequest {
 		Build()
 }
 
-func queryCriteria(baseTs time.Time) *streamv2.QueryRequest {
-	return v2.NewQueryRequestBuilder().
+func queryCriteria(baseTs time.Time) *streamv1.QueryRequest {
+	return pbv1.NewQueryRequestBuilder().
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").
@@ -219,7 +219,7 @@ func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
 }
 
 func streamWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
-	client := streamv2.NewStreamServiceClient(conn)
+	client := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	writeClient, errorWrite := client.Write(ctx)
 	if errorWrite != nil {
@@ -247,8 +247,8 @@ func streamWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
 	<-waitc
 }
 
-func streamQuery(tester *require.Assertions, conn *grpclib.ClientConn, request *streamv2.QueryRequest) *streamv2.QueryResponse {
-	client := streamv2.NewStreamServiceClient(conn)
+func streamQuery(tester *require.Assertions, conn *grpclib.ClientConn, request *streamv1.QueryRequest) *streamv1.QueryResponse {
+	client := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	queryResponse, errRev := client.Query(ctx, request)
 	if errRev != nil {
