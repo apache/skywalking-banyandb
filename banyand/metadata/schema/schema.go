@@ -28,17 +28,29 @@ type ListOpt struct {
 	Group string
 }
 
+type EntityRegistry interface {
+	Stream
+	IndexRule
+	IndexRuleBinding
+}
+
 type Stream interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
+	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
+	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
+	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
+	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
 type IndexRule interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
+	GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
+	ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
+	UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
+	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
 type IndexRuleBinding interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
+	GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
+	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
+	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
+	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }

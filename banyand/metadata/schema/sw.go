@@ -32,8 +32,9 @@ import (
 const indexRuleDir = "data/index_rules"
 
 var (
-	_ Stream    = (*streamRepo)(nil)
-	_ IndexRule = (*indexRuleRepo)(nil)
+	_ Stream           = (*streamRepo)(nil)
+	_ IndexRule        = (*indexRuleRepo)(nil)
+	_ IndexRuleBinding = (*indexRuleBindingRepo)(nil)
 
 	//go:embed data/index_rules/*.json
 	indexRuleStore embed.FS
@@ -57,16 +58,24 @@ func NewStream() (Stream, error) {
 	}, nil
 }
 
-func (l *streamRepo) Get(_ context.Context, _ *commonv1.Metadata) (*databasev1.Stream, error) {
+func (l *streamRepo) GetStream(_ context.Context, _ *commonv1.Metadata) (*databasev1.Stream, error) {
 	return l.data, nil
 }
 
-func (l *streamRepo) List(ctx context.Context, opts ListOpt) ([]*databasev1.Stream, error) {
-	s, err := l.Get(ctx, nil)
+func (l *streamRepo) ListStream(ctx context.Context, opts ListOpt) ([]*databasev1.Stream, error) {
+	s, err := l.GetStream(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	return []*databasev1.Stream{s}, nil
+}
+
+func (l *streamRepo) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
+	panic("implement me")
+}
+
+func (l *streamRepo) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	panic("implement me")
 }
 
 type indexRuleRepo struct {
@@ -79,7 +88,7 @@ func NewIndexRule() (IndexRule, error) {
 	}, nil
 }
 
-func (i *indexRuleRepo) Get(_ context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
+func (i *indexRuleRepo) GetIndexRule(_ context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
 	bb, err := i.store.ReadFile(indexRuleDir + "/" + metadata.Name + ".json")
 	if err != nil {
 		return nil, err
@@ -92,7 +101,7 @@ func (i *indexRuleRepo) Get(_ context.Context, metadata *commonv1.Metadata) (*da
 	return indexRule, nil
 }
 
-func (i *indexRuleRepo) List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
+func (i *indexRuleRepo) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
 	entries, err := i.store.ReadDir(indexRuleDir)
 	if err != nil {
 		return nil, err
@@ -100,7 +109,7 @@ func (i *indexRuleRepo) List(ctx context.Context, opt ListOpt) ([]*databasev1.In
 	rules := make([]*databasev1.IndexRule, 0, len(entries))
 	for _, entry := range entries {
 		name := strings.TrimSuffix(entry.Name(), ".json")
-		r, errInternal := i.Get(ctx, &commonv1.Metadata{
+		r, errInternal := i.GetIndexRule(ctx, &commonv1.Metadata{
 			Name:  name,
 			Group: opt.Group,
 		})
@@ -110,6 +119,14 @@ func (i *indexRuleRepo) List(ctx context.Context, opt ListOpt) ([]*databasev1.In
 		rules = append(rules, r)
 	}
 	return rules, nil
+}
+
+func (i *indexRuleRepo) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	panic("implement me")
+}
+
+func (i *indexRuleRepo) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	panic("implement me")
 }
 
 type indexRuleBindingRepo struct {
@@ -126,14 +143,22 @@ func NewIndexRuleBinding() (IndexRuleBinding, error) {
 	}, nil
 }
 
-func (i *indexRuleBindingRepo) Get(_ context.Context, _ *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
+func (i *indexRuleBindingRepo) GetIndexRuleBinding(_ context.Context, _ *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
 	return i.data, nil
 }
 
-func (i *indexRuleBindingRepo) List(ctx context.Context, _ ListOpt) ([]*databasev1.IndexRuleBinding, error) {
-	t, err := i.Get(ctx, nil)
+func (i *indexRuleBindingRepo) ListIndexRuleBinding(ctx context.Context, _ ListOpt) ([]*databasev1.IndexRuleBinding, error) {
+	t, err := i.GetIndexRuleBinding(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	return []*databasev1.IndexRuleBinding{t}, nil
+}
+
+func (i *indexRuleBindingRepo) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	panic("implement me")
+}
+
+func (i *indexRuleBindingRepo) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	panic("implement me")
 }
