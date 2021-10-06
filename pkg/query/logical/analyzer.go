@@ -26,7 +26,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	metadataSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
@@ -77,25 +76,39 @@ func (t *Tag) GetFamilyName() string {
 }
 
 type Analyzer struct {
-	indexRuleRepo        metadataSchema.IndexRule
-	indexRuleBindingRepo metadataSchema.IndexRuleBinding
-	metadataRepoImpl     metadata.Repo
+	metadataRepoImpl metadata.Repo
 }
 
-func DefaultAnalyzer() *Analyzer {
-	indexRule, _ := metadataSchema.NewIndexRule()
-	indexRuleBinding, _ := metadataSchema.NewIndexRuleBinding()
-	metadataService, _ := metadata.NewService(context.TODO())
+// DefaultAnalyzer creates a default analyzer for testing.
+// You have to close the underlying metadata after test
+func DefaultAnalyzer() (*Analyzer, func(), error) {
+	metadataService, err := metadata.NewService(context.TODO())
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
+	err = metadataService.PreRun()
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
 
 	return &Analyzer{
-		indexRule,
-		indexRuleBinding,
-		metadataService,
-	}
+			metadataService,
+		}, func() {
+			metadataService.GracefulStop()
+		}, nil
+}
+
+func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
+	return &Analyzer{
+		metaSvc,
+	}, nil
 }
 
 func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
-	stream, err := a.metadataRepoImpl.Stream().Get(ctx, metadata)
+	stream, err := a.metadataRepoImpl.StreamRegistry().GetStream(ctx, metadata)
 
 	if err != nil {
 		return nil, err

@@ -37,42 +37,50 @@ type IndexFilter interface {
 
 type Repo interface {
 	IndexFilter
-	Stream() schema.Stream
+	StreamRegistry() schema.Stream
+	IndexRuleRegistry() schema.IndexRule
+	IndexRuleBindingRegistry() schema.IndexRuleBinding
 }
 
 type Service interface {
 	Repo
-	run.Unit
+	run.PreRunner
+	run.Service
 }
 
 type service struct {
-	stream           schema.Stream
-	indexRule        schema.IndexRule
-	indexRuleBinding schema.IndexRuleBinding
+	schemaRegistry schema.Registry
+}
+
+func (s *service) PreRun() error {
+	var err error
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema())
+	return err
+}
+
+func (s *service) Serve() error {
+	// do nothing
+	return nil
+}
+
+func (s *service) GracefulStop() {
+	s.schemaRegistry.Close()
 }
 
 func NewService(_ context.Context) (Service, error) {
-	stream, err := schema.NewStream()
-	if err != nil {
-		return nil, err
-	}
-	indexRule, err := schema.NewIndexRule()
-	if err != nil {
-		return nil, err
-	}
-	indexRuleBinding, err := schema.NewIndexRuleBinding()
-	if err != nil {
-		return nil, err
-	}
-	return &service{
-		stream:           stream,
-		indexRule:        indexRule,
-		indexRuleBinding: indexRuleBinding,
-	}, nil
+	return &service{}, nil
 }
 
-func (s *service) Stream() schema.Stream {
-	return s.stream
+func (s *service) StreamRegistry() schema.Stream {
+	return s.schemaRegistry
+}
+
+func (s *service) IndexRuleRegistry() schema.IndexRule {
+	return s.schemaRegistry
+}
+
+func (s *service) IndexRuleBindingRegistry() schema.IndexRuleBinding {
+	return s.schemaRegistry
 }
 
 func (s *service) Name() string {
@@ -80,7 +88,7 @@ func (s *service) Name() string {
 }
 
 func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error) {
-	bindings, err := s.indexRuleBinding.List(ctx, schema.ListOpt{Group: subject.Group})
+	bindings, err := s.schemaRegistry.ListIndexRuleBinding(ctx, schema.ListOpt{Group: subject.Group})
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +108,7 @@ func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([
 	result := make([]*databasev1.IndexRule, 0, len(foundRules))
 	var indexRuleErr error
 	for _, rule := range foundRules {
-		r, getErr := s.indexRule.Get(ctx, &commonv1.Metadata{
+		r, getErr := s.schemaRegistry.GetIndexRule(ctx, &commonv1.Metadata{
 			Name:  rule,
 			Group: subject.Group,
 		})

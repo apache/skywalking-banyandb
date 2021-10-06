@@ -28,13 +28,16 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
@@ -53,9 +56,9 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical2.Limit(
-		logical2.Offset(
-			logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
+	correctPlan, err := logical.Limit(
+		logical.Offset(
+			logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			0),
 		20).
 		Analyze(schema)
@@ -67,7 +70,10 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
@@ -90,15 +96,15 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical2.Limit(
-		logical2.Offset(
-			logical2.IndexScan(sT, eT, metadata,
-				[]logical2.Expr{
-					logical2.Eq(logical2.NewSearchableFieldRef("mq.topic"), logical2.Str("event_topic")),
-					logical2.Eq(logical2.NewSearchableFieldRef("http.method"), logical2.Str("GET")),
+	correctPlan, err := logical.Limit(
+		logical.Offset(
+			logical.IndexScan(sT, eT, metadata,
+				[]logical.Expr{
+					logical.Eq(logical.NewSearchableFieldRef("mq.topic"), logical.Str("event_topic")),
+					logical.Eq(logical.NewSearchableFieldRef("http.method"), logical.Str("GET")),
 				}, tsdb.Entity{tsdb.Entry("my_app"), tsdb.AnyEntry, tsdb.AnyEntry},
-				logical2.OrderBy("duration", modelv1.QueryOrder_SORT_DESC),
-				logical2.NewTags("searchable", "http.method", "service_id", "duration")),
+				logical.OrderBy("duration", modelv1.QueryOrder_SORT_DESC),
+				logical.NewTags("searchable", "http.method", "service_id", "duration")),
 			10),
 		5).
 		Analyze(schema)
@@ -110,7 +116,10 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(100).
@@ -127,9 +136,9 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical2.Limit(
-		logical2.Offset(logical2.IndexScan(time.Now(), time.Now(), metadata, []logical2.Expr{
-			logical2.Eq(logical2.NewSearchableFieldRef("trace_id"), logical2.Str("123")),
+	correctPlan, err := logical.Limit(
+		logical.Offset(logical.IndexScan(time.Now(), time.Now(), metadata, []logical.Expr{
+			logical.Eq(logical.NewSearchableFieldRef("trace_id"), logical.Str("123")),
 		}, nil, nil),
 			0),
 		100).Analyze(schema)
@@ -141,7 +150,10 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
@@ -159,13 +171,16 @@ func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.ErrIndexNotDefined)
+	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
 func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
@@ -182,13 +197,16 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.ErrIndexNotDefined)
+	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
 func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
@@ -205,13 +223,16 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.ErrFieldNotDefined)
+	assert.ErrorIs(err, logical.ErrFieldNotDefined)
 }
 
 func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana := logical2.DefaultAnalyzer()
+	ana, stopFunc, err := logical.DefaultAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
 
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
@@ -228,5 +249,5 @@ func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical2.ErrIndexNotDefined)
+	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }

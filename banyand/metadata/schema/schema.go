@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"io"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -28,7 +29,8 @@ type ListOpt struct {
 	Group string
 }
 
-type EntityRegistry interface {
+type Registry interface {
+	io.Closer
 	Stream
 	IndexRule
 	IndexRuleBinding

@@ -78,7 +78,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 	return baseTime
 }
 
-func setup(t *require.Assertions) (stream.Stream, func()) {
+func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
@@ -91,9 +91,14 @@ func setup(t *require.Assertions) (stream.Stream, func()) {
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil, nil)
 	t.NoError(err)
 
+	// 1 - (MetadataService).PreRun
+	err = metadataSvc.PreRun()
+	t.NoError(err)
+
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})
 	t.NoError(err)
 
+	// 2 - (StreamService).PreRun
 	err = streamSvc.PreRun()
 	t.NoError(err)
 
@@ -102,9 +107,11 @@ func setup(t *require.Assertions) (stream.Stream, func()) {
 		Group: "default",
 	})
 	t.NoError(err)
+	t.NotNil(s)
 
-	return s, func() {
+	return s, metadataSvc, func() {
 		_ = s.Close()
 		deferFunc()
+		metadataSvc.GracefulStop()
 	}
 }

@@ -30,7 +30,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -190,14 +189,15 @@ func setup(t *testing.T) (*stream, func()) {
 		Level: "info",
 	}))
 	tempDir, deferFunc := test.Space(req)
-	streamRepo, err := schema.NewStream()
+
+	mService, err := metadata.NewService(context.TODO())
+	err = mService.PreRun()
 	req.NoError(err)
-	sa, err := streamRepo.Get(context.TODO(), &commonv1.Metadata{
+
+	sa, err := mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",
 	})
-	req.NoError(err)
-	mService, err := metadata.NewService(context.TODO())
 	req.NoError(err)
 	iRules, err := mService.IndexRules(context.TODO(), sa.Metadata)
 	req.NoError(err)
@@ -210,6 +210,7 @@ func setup(t *testing.T) (*stream, func()) {
 	return s, func() {
 		_ = s.Close()
 		deferFunc()
+		mService.GracefulStop()
 	}
 }
 

@@ -28,13 +28,10 @@ import (
 
 func Test_Etcd_Get_NotFound(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry()
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
 	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
-
-	err = registry.preload()
-	tester.NoError(err)
 
 	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "unknown", Group: "default"})
 	tester.Nil(stm)
@@ -43,13 +40,10 @@ func Test_Etcd_Get_NotFound(t *testing.T) {
 
 func Test_Etcd_Stream_Get_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry()
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
 	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
-
-	err = registry.preload()
-	tester.NoError(err)
 
 	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "sw", Group: "default"})
 	tester.NotNil(stm)
@@ -57,15 +51,25 @@ func Test_Etcd_Stream_Get_Found(t *testing.T) {
 	tester.Equal(stm.GetMetadata().GetName(), "sw")
 }
 
-func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
+func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry()
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
 	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
 
-	err = registry.preload()
+	streams, err := registry.ListStream(context.TODO(), ListOpt{})
+	tester.NotNil(streams)
 	tester.NoError(err)
+	tester.Len(streams, 1)
+}
+
+func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
+	tester := assert.New(t)
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	defer registry.Close()
+	tester.NoError(err)
+	tester.NotNil(registry)
 
 	entity, err := registry.GetIndexRuleBinding(context.TODO(), &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"})
 	tester.NotNil(entity)
@@ -73,31 +77,25 @@ func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
 	tester.Equal(entity.GetMetadata().GetName(), "sw-index-rule-binding")
 }
 
-func Test_Etcd_IndexRuleRule_Get_Found(t *testing.T) {
+func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry()
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
 	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
 
-	err = registry.preload()
+	entity, err := registry.GetIndexRule(context.TODO(), &commonv1.Metadata{Name: "db.instance", Group: "default"})
 	tester.NoError(err)
-
-	entity, err := registry.GetIndexRuleBinding(context.TODO(), &commonv1.Metadata{Name: "db.instance", Group: "default"})
 	tester.NotNil(entity)
-	tester.NoError(err)
 	tester.Equal(entity.GetMetadata().GetName(), "db.instance")
 }
 
-func Test_Etcd_IndexRuleRule_List_Found(t *testing.T) {
+func Test_Etcd_IndexRule_List_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry()
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
 	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
-
-	err = registry.preload()
-	tester.NoError(err)
 
 	entities, err := registry.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
 	tester.NoError(err)

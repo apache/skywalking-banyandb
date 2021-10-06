@@ -89,7 +89,7 @@ func (s *service) Name() string {
 }
 
 func (s *service) PreRun() error {
-	schemas, err := s.metadata.Stream().List(context.TODO(), schema.ListOpt{})
+	schemas, err := s.metadata.StreamRegistry().ListStream(context.TODO(), schema.ListOpt{})
 	if err != nil {
 		return err
 	}

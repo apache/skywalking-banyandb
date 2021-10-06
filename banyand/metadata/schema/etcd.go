@@ -34,9 +34,9 @@ import (
 )
 
 var (
-	_ Stream           = (*EtcdSchemaRegistry)(nil)
-	_ IndexRuleBinding = (*EtcdSchemaRegistry)(nil)
-	_ IndexRule        = (*EtcdSchemaRegistry)(nil)
+	_ Stream           = (*etcdSchemaRegistry)(nil)
+	_ IndexRuleBinding = (*etcdSchemaRegistry)(nil)
+	_ IndexRule        = (*etcdSchemaRegistry)(nil)
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
@@ -46,12 +46,27 @@ var (
 	IndexRuleKeyPrefix        = "/index-rule/"
 )
 
-type EtcdSchemaRegistry struct {
+type RegistryOption func(*etcdSchemaRegistryConfig)
+
+func PreloadSchema() RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.preload = true
+	}
+}
+
+type etcdSchemaRegistry struct {
 	server *embed.Etcd
 	kv     clientv3.KV
 }
 
-func (e *EtcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
+type etcdSchemaRegistryConfig struct {
+	// preload internal schema
+	preload bool
+	// rootDir is the root directory for etcd storage
+	rootDir string
+}
+
+func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
 	var streamEntity databasev1.Stream
 	if err := e.get(ctx, formatSteamKey(metadata), &streamEntity); err != nil {
 		return nil, err
@@ -59,7 +74,7 @@ func (e *EtcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.M
 	return &streamEntity, nil
 }
 
-func (e *EtcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
+func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
 	keyPrefix := StreamKeyPrefix
 	if opt.Group != "" {
 		keyPrefix += opt.Group + "/"
@@ -77,15 +92,15 @@ func (e *EtcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 	return entities, nil
 }
 
-func (e *EtcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
+func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
 	return e.update(ctx, formatSteamKey(stream.GetMetadata()), stream)
 }
 
-func (e *EtcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
 	return e.delete(ctx, formatSteamKey(metadata))
 }
 
-func (e *EtcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
+func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
 	var indexRuleBinding databasev1.IndexRuleBinding
 	if err := e.get(ctx, formatIndexRuleBindingKey(metadata), &indexRuleBinding); err != nil {
 		return nil, err
@@ -93,7 +108,7 @@ func (e *EtcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *
 	return &indexRuleBinding, nil
 }
 
-func (e *EtcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
+func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
 	keyPrefix := IndexRuleBindingKeyPrefix
 	if opt.Group != "" {
 		keyPrefix += opt.Group + "/"
@@ -111,15 +126,15 @@ func (e *EtcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 	return entities, nil
 }
 
-func (e *EtcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
 	return e.update(ctx, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
 }
 
-func (e *EtcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
 	return e.delete(ctx, formatIndexRuleBindingKey(metadata))
 }
 
-func (e *EtcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
+func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
 	var entity databasev1.IndexRule
 	if err := e.get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
 		return nil, err
@@ -127,7 +142,7 @@ func (e *EtcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 	return &entity, nil
 }
 
-func (e *EtcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
+func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
 	keyPrefix := IndexRuleKeyPrefix
 	if opt.Group != "" {
 		keyPrefix += opt.Group + "/"
@@ -145,15 +160,15 @@ func (e *EtcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	return entities, nil
 }
 
-func (e *EtcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
 	return e.update(ctx, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
 }
 
-func (e *EtcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
 	return e.delete(ctx, formatIndexRuleKey(metadata))
 }
 
-func (e *EtcdSchemaRegistry) preload() error {
+func (e *etcdSchemaRegistry) preload() error {
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
@@ -195,12 +210,16 @@ func (e *EtcdSchemaRegistry) preload() error {
 	return nil
 }
 
-func (e *EtcdSchemaRegistry) Close() error {
+func (e *etcdSchemaRegistry) Close() error {
 	e.server.Close()
 	return nil
 }
 
-func NewEtcdSchemaRegistry() (*EtcdSchemaRegistry, error) {
+func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
+	registryConfig := &etcdSchemaRegistryConfig{}
+	for _, opt := range options {
+		opt(registryConfig)
+	}
 	// TODO: allow use cluster setting
 	embedConfig := newStandaloneEtcdConfig()
 	e, err := embed.StartEtcd(embedConfig)
@@ -215,13 +234,20 @@ func NewEtcdSchemaRegistry() (*EtcdSchemaRegistry, error) {
 		return nil, err
 	}
 	kvClient := clientv3.NewKV(client)
-	return &EtcdSchemaRegistry{
+	reg := &etcdSchemaRegistry{
 		server: e,
 		kv:     kvClient,
-	}, nil
+	}
+	if registryConfig.preload {
+		err := reg.preload()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return reg, nil
 }
 
-func (e *EtcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
+func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
 	resp, err := e.kv.Get(ctx, key)
 	if err != nil {
 		return err
@@ -238,7 +264,7 @@ func (e *EtcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *EtcdSchemaRegistry) update(ctx context.Context, key string, message proto.Message) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, key string, message proto.Message) error {
 	val, err := proto.Marshal(message)
 	if err != nil {
 		return err
@@ -250,7 +276,7 @@ func (e *EtcdSchemaRegistry) update(ctx context.Context, key string, message pro
 	return nil
 }
 
-func (e *EtcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
+func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
 	resp, err := e.kv.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
 	if err != nil {
 		return nil, err
@@ -269,7 +295,7 @@ func (e *EtcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	return entities, nil
 }
 
-func (e *EtcdSchemaRegistry) delete(ctx context.Context, key string) (bool, error) {
+func (e *etcdSchemaRegistry) delete(ctx context.Context, key string) (bool, error) {
 	resp, err := e.kv.Delete(ctx, key)
 	if err != nil {
 		return false, err
@@ -301,7 +327,7 @@ func incrementLastByte(key string) string {
 
 func newStandaloneEtcdConfig() *embed.Config {
 	cfg := embed.NewConfig()
-	//TODO: allow user to set path
+	// TODO: allow user to set path
 	cfg.Dir = filepath.Join(os.TempDir(), fmt.Sprintf("embed-etcd"))
 	return cfg
 }
