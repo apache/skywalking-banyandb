@@ -24,6 +24,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,9 +68,11 @@ func setup(req *require.Assertions, testData testData) func() {
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	req.NoError(err)
+	// Init `Stream` module
 	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
 	req.NoError(err)
-	q, err := query.NewExecutor(context.TODO(), streamSvc, repo, pipeline)
+	// Init `Query` module
+	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
 	req.NoError(err)
 
 	tcp := NewServer(context.TODO(), pipeline, repo)
@@ -100,17 +103,22 @@ func setup(req *require.Assertions, testData testData) func() {
 	err = g.RegisterFlags().Parse(flags)
 	req.NoError(err)
 
+	wg := sync.WaitGroup{}
+	// we have to wait for this goroutine to safely shutdown
 	go func() {
+		wg.Add(1)
 		errRun := g.Run()
 		if errRun != nil {
 			startListener.GracefulStop()
 			req.NoError(errRun)
 		}
 		deferFunc()
+		wg.Done()
 	}()
 	req.NoError(startListener.WaitUntilStarted())
 	return func() {
 		closer.GracefulStop()
+		wg.Wait()
 	}
 }
 

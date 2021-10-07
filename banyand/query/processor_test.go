@@ -99,13 +99,17 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	tester.NoError(err)
 
 	// Init `Query` module
-	executor, err := NewExecutor(context.TODO(), streamSvc, repo, pipeline)
+	executor, err := NewExecutor(context.TODO(), streamSvc, metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
 	// :PreRun:
-	// 1) stream
-	// 2) query
-	// 3) liaison
+	// 1) metadata
+	// 2) stream
+	// 3) query
+	// 4) liaison
+	err = metadataSvc.PreRun()
+	tester.NoError(err)
+
 	err = streamSvc.PreRun()
 	tester.NoError(err)
 
@@ -114,6 +118,7 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 
 	return streamSvc, pipeline, func() {
 		deferFunc()
+		metadataSvc.GracefulStop()
 		_ = os.RemoveAll(rootPath)
 	}
 }

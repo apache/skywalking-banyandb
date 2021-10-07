@@ -50,6 +50,7 @@ type Service interface {
 
 type service struct {
 	schemaRegistry schema.Registry
+	stopCh         chan struct{}
 }
 
 func (s *service) PreRun() error {
@@ -59,12 +60,16 @@ func (s *service) PreRun() error {
 }
 
 func (s *service) Serve() error {
-	// do nothing
+	s.stopCh = make(chan struct{})
+	<-s.stopCh
 	return nil
 }
 
 func (s *service) GracefulStop() {
 	s.schemaRegistry.Close()
+	if s.stopCh != nil {
+		close(s.stopCh)
+	}
 }
 
 func NewService(_ context.Context) (Service, error) {
