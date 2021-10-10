@@ -134,6 +134,7 @@ func (s *Server) Serve() error {
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
 	streamv1.RegisterStreamServiceServer(s.ser, s)
+	databasev1.RegisterEntityRegistryServer(s.ser, s)
 	s.log.Info().Str("addr", s.addr).Msg("Listening to")
 	return s.ser.Serve(lis)
 }

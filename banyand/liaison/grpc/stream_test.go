@@ -75,7 +75,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
 	req.NoError(err)
 
-	tcp := NewServer(context.TODO(), pipeline, repo)
+	tcp := NewServer(context.TODO(), pipeline, repo, metaSvc)
 
 	closer := run.NewTester("closer")
 	startListener := run.NewTester("started-listener")
@@ -104,16 +104,17 @@ func setup(req *require.Assertions, testData testData) func() {
 	req.NoError(err)
 
 	wg := sync.WaitGroup{}
-	// we have to wait for this goroutine to safely shutdown
+
 	go func() {
 		wg.Add(1)
+		// we have to wait for this goroutine to safely shutdown
+		defer wg.Done()
 		errRun := g.Run()
 		if errRun != nil {
 			startListener.GracefulStop()
 			req.NoError(errRun)
 		}
 		deferFunc()
-		wg.Done()
 	}()
 	req.NoError(startListener.WaitUntilStarted())
 	return func() {
