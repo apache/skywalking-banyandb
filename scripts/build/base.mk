@@ -24,7 +24,7 @@ tool_include := "$(root_dir)/include"
 uname_os := $(shell uname -s)
 uname_arch := $(shell uname -m)
 
-protoc_version ?= 3.17.3
+protoc_version ?= 3.18.0
 
 # There are no protobuf releases for Darwin ARM so for
 # now we always use the x86_64 release through Rosetta.

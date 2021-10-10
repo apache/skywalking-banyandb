@@ -64,7 +64,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo)
+	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}

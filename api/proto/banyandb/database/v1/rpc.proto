@@ -1,0 +1,77 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+option java_package = "org.apache.skywalking.banyandb.database.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
+
+package banyandb.database.v1;
+
+import "banyandb/database/v1/schema.proto";
+import "banyandb/common/v1/common.proto";
+import "google/protobuf/struct.proto";
+
+// EntityType includes three kinds of entities (schema)
+// that can be create/delete/modified at runtime.
+enum EntityType {
+  ENTITY_TYPE_UNSPECIFIED = 0;
+  ENTITY_TYPE_STREAM = 1;
+  ENTITY_TYPE_INDEX_RULE_BINDING = 2;
+  ENTITY_TYPE_INDEX_RULE = 3;
+}
+
+// EntityCreateOrUpdateRequest is the request for creating
+// or updating entity.
+message EntityCreateOrUpdateRequest {
+  oneof entity {
+    banyandb.database.v1.Stream stream = 1;
+    banyandb.database.v1.IndexRuleBinding index_rule_binding = 2;
+    banyandb.database.v1.IndexRule index_rule = 3;
+  }
+}
+
+message EntityCreateOrUpdateResponse {
+}
+
+// GeneralEntityRequest can be used to delete, get entity
+// with the given entity_type and its metadata.
+message GeneralEntityRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+  EntityType entity_type = 2;
+}
+
+message EntityDeleteResponse {
+}
+
+// EntityGetResponse is the response for Get method.
+// It contains an entity which is possibly nullable which
+// means the entity cannot be found
+message EntityGetResponse {
+  oneof entity {
+    google.protobuf.NullValue null = 1;
+    banyandb.database.v1.Stream stream = 2;
+    banyandb.database.v1.IndexRuleBinding index_rule_binding = 3;
+    banyandb.database.v1.IndexRule index_rule = 4;
+  }
+}
+
+service EntityRegistry {
+  rpc CreateOrUpdate(EntityCreateOrUpdateRequest) returns (EntityCreateOrUpdateResponse);
+  rpc Delete(GeneralEntityRequest) returns (EntityDeleteResponse);
+  rpc Get(GeneralEntityRequest) returns (EntityGetResponse);
+}

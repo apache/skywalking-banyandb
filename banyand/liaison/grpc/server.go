@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"net"
 
 	"github.com/pkg/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/event"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -53,18 +55,21 @@ type Server struct {
 	ser            *grpclib.Server
 	pipeline       queue.Queue
 	repo           discovery.ServiceRepo
+	schemaRegistry metadata.Service
+	creds          credentials.TransportCredentials
+	shardRepo      *shardRepo
+	entityRepo     *entityRepo
 	streamv1.UnimplementedStreamServiceServer
-	creds      credentials.TransportCredentials
-	shardRepo  *shardRepo
-	entityRepo *entityRepo
+	databasev1.UnimplementedEntityRegistryServer
 }
 
-func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
+func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
 	return &Server{
-		pipeline:   pipeline,
-		repo:       repo,
-		shardRepo:  &shardRepo{shardEventsMap: make(map[identity]uint32)},
-		entityRepo: &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)},
+		pipeline:       pipeline,
+		repo:           repo,
+		schemaRegistry: schemaRegistry,
+		shardRepo:      &shardRepo{shardEventsMap: make(map[identity]uint32)},
+		entityRepo:     &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)},
 	}
 }
 
