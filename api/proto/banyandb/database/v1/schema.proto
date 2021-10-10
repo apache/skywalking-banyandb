@@ -77,6 +77,53 @@ message Entity {
     repeated string tag_names = 1;
 }
 
+enum DataType {
+    DATA_TYPE_UNSPECIFIED = 0;
+    DATA_TYPE_STRING = 1;
+    DATA_TYPE_INT = 2;
+    DATA_TYPE_DATA_BINARY = 3;
+}
+
+enum EncodingMethod {
+    ENCODING_METHOD_UNSPECIFIED = 0;
+    ENCODING_METHOD_GORILLA = 1;
+}
+
+enum CompressionMethod {
+    COMPRESSION_METHOD_UNSPECIFIED = 0;
+    COMPRESSION_METHOD_ZSTD = 1;
+}
+
+// FieldSpec is the specification of field
+message FieldSpec {
+    // name is the identity of a field
+    string name = 1;
+    // data_type denotes the type of field value
+    DataType data_type = 2;
+    // encoding_method indicates how to encode data during writing
+    EncodingMethod encoding_method = 3;
+    // compression_method indicates how to compress data during writing
+    CompressionMethod compression_method = 4;
+}
+
+// Measure intends to store data point
+message Measure {
+    // metadata is the identity of a measure
+    common.v1.Metadata metadata = 1;
+    // tag_families are for filter measures
+    repeated TagFamilySpec tag_families = 2;
+    // fields denote measure values
+    repeated FieldSpec fields = 3;
+    // entity indicates which tags will be to generate a series and shard a measure
+    Entity entity = 4;
+    // shard_num is the number of shards
+    uint32 shard_num = 5;
+    // ttl indicates time to live, how long the data will be cached
+    Duration ttl = 6;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 7;
+}
+
 // IndexRule defines how to generate indices based on tags and the index type
 // IndexRule should bind to a subject through an IndexRuleBinding to generate proper indices.
 message IndexRule {
