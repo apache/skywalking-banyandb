@@ -77,11 +77,11 @@ message Entity {
     repeated string tag_names = 1;
 }
 
-enum DataType {
-    DATA_TYPE_UNSPECIFIED = 0;
-    DATA_TYPE_STRING = 1;
-    DATA_TYPE_INT = 2;
-    DATA_TYPE_DATA_BINARY = 3;
+enum FieldType {
+    FIELD_TYPE_UNSPECIFIED = 0;
+    FIELD_TYPE_STRING = 1;
+    FIELD_TYPE_INT = 2;
+    FIELD_TYPE_DATA_BINARY = 3;
 }
 
 enum EncodingMethod {
@@ -98,8 +98,8 @@ enum CompressionMethod {
 message FieldSpec {
     // name is the identity of a field
     string name = 1;
-    // data_type denotes the type of field value
-    DataType data_type = 2;
+    // field_type denotes the type of field value
+    FieldType field_type = 2;
     // encoding_method indicates how to encode data during writing
     EncodingMethod encoding_method = 3;
     // compression_method indicates how to compress data during writing
