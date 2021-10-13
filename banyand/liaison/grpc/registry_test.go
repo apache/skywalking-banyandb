@@ -81,3 +81,107 @@ func TestStreamRegistry(t *testing.T) {
 	req.NoError(err)
 	req.NotNil(getResp)
 }
+
+func TestIndexRuleBindingRegistry(t *testing.T) {
+	req := require.New(t)
+	gracefulStop := setup(req, testData{
+		TLS:  false,
+		addr: "localhost:17912",
+	})
+	defer gracefulStop()
+
+	conn, err := grpc.Dial("localhost:17912", grpc.WithInsecure())
+	req.NoError(err)
+	req.NotNil(conn)
+
+	client := databasev1.NewIndexRuleBindingRegistryClient(conn)
+	req.NotNil(client)
+
+	meta := &commonv1.Metadata{
+		Group: "default",
+		Name:  "sw-index-rule-binding",
+	}
+
+	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{Metadata: meta})
+
+	req.NoError(err)
+	req.NotNil(getResp)
+
+	// 2 - DELETE
+	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingDeleteRequest{
+		Metadata: meta,
+	})
+	req.NoError(err)
+	req.NotNil(deleteResp)
+	req.True(deleteResp.GetDeleted())
+
+	// 3 - GET -> Nil
+	_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{
+		Metadata: meta,
+	})
+	errStatus, _ := status.FromError(err)
+	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
+
+	// 4 - CREATE
+	_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
+	req.NoError(err)
+
+	// 5 - GET - > Not Nil
+	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{
+		Metadata: meta,
+	})
+	req.NoError(err)
+	req.NotNil(getResp)
+}
+
+func TestIndexRuleRegistry(t *testing.T) {
+	req := require.New(t)
+	gracefulStop := setup(req, testData{
+		TLS:  false,
+		addr: "localhost:17912",
+	})
+	defer gracefulStop()
+
+	conn, err := grpc.Dial("localhost:17912", grpc.WithInsecure())
+	req.NoError(err)
+	req.NotNil(conn)
+
+	client := databasev1.NewIndexRuleRegistryClient(conn)
+	req.NotNil(client)
+
+	meta := &commonv1.Metadata{
+		Group: "default",
+		Name:  "sw-index-rule-binding",
+	}
+
+	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{Metadata: meta})
+
+	req.NoError(err)
+	req.NotNil(getResp)
+
+	// 2 - DELETE
+	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleDeleteRequest{
+		Metadata: meta,
+	})
+	req.NoError(err)
+	req.NotNil(deleteResp)
+	req.True(deleteResp.GetDeleted())
+
+	// 3 - GET -> Nil
+	_, err = client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{
+		Metadata: meta,
+	})
+	errStatus, _ := status.FromError(err)
+	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
+
+	// 4 - CREATE
+	_, err = client.Create(context.TODO(), &databasev1.IndexRuleCreateRequest{IndexRule: getResp.GetIndexRule()})
+	req.NoError(err)
+
+	// 5 - GET - > Not Nil
+	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{
+		Metadata: meta,
+	})
+	req.NoError(err)
+	req.NotNil(getResp)
+}
