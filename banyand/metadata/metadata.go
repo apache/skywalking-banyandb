@@ -40,6 +40,8 @@ type Repo interface {
 	StreamRegistry() schema.Stream
 	IndexRuleRegistry() schema.IndexRule
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
+	MeasureRegistry() schema.Measure
+	GroupRegistry() schema.Group
 }
 
 type Service interface {
@@ -85,6 +87,14 @@ func (s *service) IndexRuleRegistry() schema.IndexRule {
 }
 
 func (s *service) IndexRuleBindingRegistry() schema.IndexRuleBinding {
+	return s.schemaRegistry
+}
+
+func (s *service) MeasureRegistry() schema.Measure {
+	return s.schemaRegistry
+}
+
+func (s *service) GroupRegistry() schema.Group {
 	return s.schemaRegistry
 }
 

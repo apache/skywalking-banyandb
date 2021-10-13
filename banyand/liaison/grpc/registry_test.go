@@ -27,20 +27,18 @@ func TestRegistry(t *testing.T) {
 	req.NoError(err)
 	req.NotNil(conn)
 
-	client := databasev1.NewEntityRegistryClient(conn)
+	client := databasev1.NewStreamRegistryClient(conn)
 	req.NotNil(client)
 
 	testCases := []struct {
 		name               string
 		meta               *commonv1.Metadata
-		entityType         databasev1.EntityType
 		respExtractor      func(*databasev1.EntityGetResponse) proto.Message
 		createReqGenerator func(*databasev1.EntityGetResponse) *databasev1.EntityCreateOrUpdateRequest
 	}{
 		{
-			name:       "Stream Registry",
-			meta:       &commonv1.Metadata{Name: "sw", Group: "default"},
-			entityType: databasev1.EntityType_ENTITY_TYPE_STREAM,
+			name: "Stream Registry",
+			meta: &commonv1.Metadata{Name: "sw", Group: "default"},
 			respExtractor: func(response *databasev1.EntityGetResponse) proto.Message {
 				return response.GetStream()
 			},

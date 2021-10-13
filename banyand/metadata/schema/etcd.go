@@ -19,11 +19,11 @@ package schema
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -37,13 +37,18 @@ var (
 	_ Stream           = (*etcdSchemaRegistry)(nil)
 	_ IndexRuleBinding = (*etcdSchemaRegistry)(nil)
 	_ IndexRule        = (*etcdSchemaRegistry)(nil)
+	_ Measure          = (*etcdSchemaRegistry)(nil)
+	_ Group            = (*etcdSchemaRegistry)(nil)
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
+	ErrGroupNotDefined            = errors.New("group is not defined or has already been deleted")
 
 	StreamKeyPrefix           = "/stream/"
 	IndexRuleBindingKeyPrefix = "/index-rule-binding/"
 	IndexRuleKeyPrefix        = "/index-rule/"
+	MeasureKeyPrefix          = "/measure/"
+	GroupsKeyPrefix           = "/groups/"
 )
 
 type RegistryOption func(*etcdSchemaRegistryConfig)
@@ -66,12 +71,100 @@ type etcdSchemaRegistryConfig struct {
 	rootDir string
 }
 
-func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
-	var streamEntity databasev1.Stream
-	if err := e.get(ctx, formatSteamKey(metadata), &streamEntity); err != nil {
+func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool, error) {
+	var entity *commonv1.Group
+	err := e.get(ctx, formatGroupKey(group), entity)
+	if err != nil {
+		return false, err
+	}
+	return entity != nil && entity.Deleted == false, nil
+}
+
+func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
+	messages, err := e.listWithPrefix(ctx, GroupsKeyPrefix, func() proto.Message {
+		return &commonv1.Group{}
+	})
+	if err != nil {
 		return nil, err
 	}
-	return &streamEntity, nil
+	groups := make([]string, len(messages))
+	for i, message := range messages {
+		groups[i] = message.(*commonv1.Group).GetName()
+	}
+	return groups, nil
+}
+
+func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, error) {
+	exist, err := e.ExistGroup(ctx, group)
+	if err != nil {
+		return false, err
+	}
+	if !exist {
+		return false, errors.Wrap(ErrGroupNotDefined, group)
+	}
+	if err := e.update(ctx, formatGroupKey(group), &commonv1.Group{
+		Name:    group,
+		Deleted: true,
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) error {
+	exist, err := e.ExistGroup(ctx, group)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		return errors.Wrap(ErrGroupNotDefined, group)
+	}
+	return e.update(ctx, formatGroupKey(group), &commonv1.Group{
+		Name:    group,
+		Deleted: false,
+	})
+}
+
+func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
+	var entity databasev1.Measure
+	if err := e.get(ctx, formatMeasureKey(metadata), &entity); err != nil {
+		return nil, err
+	}
+	return &entity, nil
+}
+
+func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
+	keyPrefix := MeasureKeyPrefix
+	if opt.Group != "" {
+		keyPrefix += opt.Group + "/"
+	}
+	messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
+		return &databasev1.Measure{}
+	})
+	if err != nil {
+		return nil, err
+	}
+	entities := make([]*databasev1.Measure, len(messages))
+	for i, message := range messages {
+		entities[i] = message.(*databasev1.Measure)
+	}
+	return entities, nil
+}
+
+func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	return e.update(ctx, formatMeasureKey(measure.GetMetadata()), measure)
+}
+
+func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	return e.delete(ctx, formatMeasureKey(metadata))
+}
+
+func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
+	var entity databasev1.Stream
+	if err := e.get(ctx, formatSteamKey(metadata), &entity); err != nil {
+		return nil, err
+	}
+	return &entity, nil
 }
 
 func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
@@ -315,8 +408,16 @@ func formatSteamKey(metadata *commonv1.Metadata) string {
 	return formatKey(StreamKeyPrefix, metadata)
 }
 
+func formatMeasureKey(metadata *commonv1.Metadata) string {
+	return formatKey(MeasureKeyPrefix, metadata)
+}
+
 func formatKey(prefix string, metadata *commonv1.Metadata) string {
 	return prefix + metadata.GetGroup() + "/" + metadata.GetName()
+}
+
+func formatGroupKey(group string) string {
+	return GroupsKeyPrefix + group
 }
 
 func incrementLastByte(key string) string {

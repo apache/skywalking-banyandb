@@ -24,54 +24,225 @@ package banyandb.database.v1;
 
 import "banyandb/database/v1/schema.proto";
 import "banyandb/common/v1/common.proto";
-import "google/protobuf/struct.proto";
 
-// EntityType includes three kinds of entities (schema)
-// that can be create/delete/modified at runtime.
-enum EntityType {
-  ENTITY_TYPE_UNSPECIFIED = 0;
-  ENTITY_TYPE_STREAM = 1;
-  ENTITY_TYPE_INDEX_RULE_BINDING = 2;
-  ENTITY_TYPE_INDEX_RULE = 3;
+message StreamCreateRequest {
+  banyandb.database.v1.Stream stream = 1;
 }
 
-// EntityCreateOrUpdateRequest is the request for creating
-// or updating entity.
-message EntityCreateOrUpdateRequest {
-  oneof entity {
-    banyandb.database.v1.Stream stream = 1;
-    banyandb.database.v1.IndexRuleBinding index_rule_binding = 2;
-    banyandb.database.v1.IndexRule index_rule = 3;
-  }
+message StreamCreateResponse {
 }
 
-message EntityCreateOrUpdateResponse {
+message StreamUpdateRequest {
+  banyandb.database.v1.Stream stream = 1;
 }
 
-// GeneralEntityRequest can be used to delete, get entity
-// with the given entity_type and its metadata.
-message GeneralEntityRequest {
+message StreamUpdateResponse {
+}
+
+message StreamDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
-  EntityType entity_type = 2;
 }
 
-message EntityDeleteResponse {
+message StreamDeleteResponse {
+  bool deleted = 1;
 }
 
-// EntityGetResponse is the response for Get method.
-// It contains an entity which is possibly nullable which
-// means the entity cannot be found
-message EntityGetResponse {
-  oneof entity {
-    google.protobuf.NullValue null = 1;
-    banyandb.database.v1.Stream stream = 2;
-    banyandb.database.v1.IndexRuleBinding index_rule_binding = 3;
-    banyandb.database.v1.IndexRule index_rule = 4;
-  }
+message StreamGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
 }
 
-service EntityRegistry {
-  rpc CreateOrUpdate(EntityCreateOrUpdateRequest) returns (EntityCreateOrUpdateResponse);
-  rpc Delete(GeneralEntityRequest) returns (EntityDeleteResponse);
-  rpc Get(GeneralEntityRequest) returns (EntityGetResponse);
+message StreamGetResponse {
+  banyandb.database.v1.Stream stream = 1;
+}
+
+message StreamListRequest {
+  string group = 1;
+}
+
+message StreamListResponse {
+  repeated banyandb.database.v1.Stream stream = 1;
+}
+
+service StreamRegistry {
+  rpc Create(StreamCreateRequest) returns (StreamCreateResponse);
+  rpc Update(StreamUpdateRequest) returns (StreamUpdateResponse);
+  rpc Delete(StreamDeleteRequest) returns (StreamDeleteResponse);
+  rpc Get(StreamGetRequest) returns (StreamGetResponse);
+  rpc List(StreamListRequest) returns (StreamListResponse);
+}
+
+message IndexRuleBindingCreateRequest {
+  banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
+}
+
+message IndexRuleBindingCreateResponse {
+}
+
+message IndexRuleBindingUpdateRequest {
+  banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
+}
+
+message IndexRuleBindingUpdateResponse {
+}
+
+message IndexRuleBindingDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleBindingDeleteResponse {
+  bool deleted = 1;
+}
+
+message IndexRuleBindingGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleBindingGetResponse {
+  banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
+}
+
+message IndexRuleBindingListRequest {
+  string group = 1;
+}
+
+message IndexRuleBindingListResponse {
+  repeated banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
+}
+
+service IndexRuleBindingRegistry {
+  rpc Create(IndexRuleBindingCreateRequest) returns (IndexRuleBindingCreateResponse);
+  rpc Update(IndexRuleBindingUpdateRequest) returns (IndexRuleBindingUpdateResponse);
+  rpc Delete(IndexRuleBindingDeleteRequest) returns (IndexRuleBindingDeleteResponse);
+  rpc Get(IndexRuleBindingGetRequest) returns (IndexRuleBindingGetResponse);
+  rpc List(IndexRuleBindingListRequest) returns (IndexRuleBindingListResponse);
+}
+
+message IndexRuleCreateRequest {
+  banyandb.database.v1.IndexRule index_rule = 1;
+}
+
+message IndexRuleCreateResponse {
+}
+
+message IndexRuleUpdateRequest {
+  banyandb.database.v1.IndexRule index_rule = 1;
+}
+
+message IndexRuleUpdateResponse {
+}
+
+message IndexRuleDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleDeleteResponse {
+  bool deleted = 1;
+}
+
+message IndexRuleGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleGetResponse {
+  banyandb.database.v1.IndexRule index_rule = 1;
+}
+
+message IndexRuleListRequest {
+  string group = 1;
+}
+
+message IndexRuleListResponse {
+  repeated banyandb.database.v1.IndexRule index_rule = 1;
+}
+
+service IndexRuleRegistry {
+  rpc Create(IndexRuleCreateRequest) returns (IndexRuleCreateResponse);
+  rpc Update(IndexRuleUpdateRequest) returns (IndexRuleUpdateResponse);
+  rpc Delete(IndexRuleDeleteRequest) returns (IndexRuleDeleteResponse);
+  rpc Get(IndexRuleGetRequest) returns (IndexRuleGetResponse);
+  rpc List(IndexRuleListRequest) returns (IndexRuleListResponse);
+}
+
+message MeasureCreateRequest {
+  banyandb.database.v1.Measure measure = 1;
+}
+
+message MeasureCreateResponse {
+}
+
+message MeasureUpdateRequest {
+  banyandb.database.v1.Measure measure = 1;
+}
+
+message MeasureUpdateResponse {
+}
+
+message MeasureDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message MeasureDeleteResponse {
+  bool deleted = 1;
+}
+
+message MeasureGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message MeasureGetResponse {
+  banyandb.database.v1.Measure measure = 1;
+}
+
+message MeasureListRequest {
+  string group = 1;
+}
+
+message MeasureListResponse {
+  repeated banyandb.database.v1.Measure measure = 1;
+}
+
+service MeasureRegistry {
+  rpc Create(MeasureCreateRequest) returns (MeasureCreateResponse);
+  rpc Update(MeasureUpdateRequest) returns (MeasureUpdateResponse);
+  rpc Delete(MeasureDeleteRequest) returns (MeasureDeleteResponse);
+  rpc Get(MeasureGetRequest) returns (MeasureGetResponse);
+  rpc List(MeasureListRequest) returns (MeasureListResponse);
+}
+
+message GroupCreateRequest {
+  string group = 1;
+}
+
+message GroupCreateResponse {
+
+}
+
+message GroupDeleteRequest {
+  string group = 1;
+}
+
+message GroupDeleteResponse {
+  bool deleted = 1;
+}
+
+message GroupExistRequest {
+  string group = 1;
+}
+
+message GroupExistResponse {
+  bool existence = 1;
+}
+
+message GroupListRequest {
+}
+
+message GroupListResponse {
+  repeated string group = 1;
+}
+
+service GroupRegistry {
+  rpc Create(GroupCreateRequest) returns (GroupCreateResponse);
+  rpc Delete(GroupDeleteRequest) returns (GroupDeleteResponse);
+  rpc Exist(GroupExistRequest) returns (GroupExistResponse);
+  rpc List(GroupListRequest) returns (GroupListResponse);
 }

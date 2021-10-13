@@ -34,6 +34,8 @@ type Registry interface {
 	Stream
 	IndexRule
 	IndexRuleBinding
+	Measure
+	Group
 }
 
 type Stream interface {
@@ -55,4 +57,18 @@ type IndexRuleBinding interface {
 	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
 	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
 	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+}
+
+type Measure interface {
+	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
+	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
+	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
+	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+}
+
+type Group interface {
+	ExistGroup(ctx context.Context, group string) (bool, error)
+	ListGroup(ctx context.Context) ([]string, error)
+	DeleteGroup(ctx context.Context, group string) (bool, error)
+	CreateGroup(ctx context.Context, group string) error
 }
