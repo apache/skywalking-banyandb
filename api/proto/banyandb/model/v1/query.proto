@@ -82,13 +82,12 @@ message QueryOrder {
     Sort sort = 2;
 }
 
-// Projection is used to select the names of keys to be returned.
-message Projection {
+// TagProjection is used to select the names of keys to be returned.
+message TagProjection {
     message TagFamily {
         string name = 1;
         repeated string tags = 2;
     }
-    // The key_name refers to the key(s) of Pair(s).
     repeated TagFamily tag_families = 1;
 }
 

@@ -140,11 +140,11 @@ func (s *service) Serve() error {
 		if err != nil {
 			return err
 		}
-		for i := 0; i < int(sMeta.schema.GetShardNum()); i++ {
+		for i := 0; i < int(sMeta.schema.GetOpts().GetShardNum()); i++ {
 			_, errShard := s.repo.Publish(event.TopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev1.ShardEvent{
 				Shard: &databasev1.Shard{
 					Id:    uint64(i),
-					Total: sMeta.schema.GetShardNum(),
+					Total: sMeta.schema.GetOpts().GetShardNum(),
 					Metadata: &commonv1.Metadata{
 						Name:  sMeta.name,
 						Group: sMeta.group,

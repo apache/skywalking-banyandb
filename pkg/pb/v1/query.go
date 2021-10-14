@@ -48,7 +48,7 @@ type QueryRequestBuilder struct {
 func NewQueryRequestBuilder() *QueryRequestBuilder {
 	return &QueryRequestBuilder{
 		ec: &streamv1.QueryRequest{
-			Projection: &modelv1.Projection{},
+			Projection: &modelv1.TagProjection{},
 		},
 	}
 }
@@ -86,7 +86,7 @@ func (b *QueryRequestBuilder) FieldsInTagFamily(tagFamilyName string, items ...i
 		}
 	}
 
-	b.ec.Criteria = append(b.ec.Criteria, &streamv1.QueryRequest_Criteria{
+	b.ec.Criteria = append(b.ec.Criteria, &modelv1.Criteria{
 		TagFamilyName: tagFamilyName,
 		Conditions:    criteriaConditions,
 	})
@@ -149,14 +149,14 @@ func buildTagValue(value interface{}) *modelv1.TagValue {
 }
 
 func (b *QueryRequestBuilder) Projection(tagFamily string, projections ...string) *QueryRequestBuilder {
-	b.ec.Projection.TagFamilies = append(b.ec.Projection.GetTagFamilies(), &modelv1.Projection_TagFamily{
+	b.ec.Projection.TagFamilies = append(b.ec.Projection.GetTagFamilies(), &modelv1.TagProjection_TagFamily{
 		Name: tagFamily,
 		Tags: projections,
 	})
 	return b
 }
 
-func (b *QueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.QueryOrder_Sort) *QueryRequestBuilder {
+func (b *QueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *QueryRequestBuilder {
 	b.ec.OrderBy = &modelv1.QueryOrder{
 		IndexRuleName: indexRuleName,
 		Sort:          sort,

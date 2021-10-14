@@ -172,5 +172,5 @@ func (s *schema) Proj(refs ...[]*FieldRef) Schema {
 }
 
 func (s *schema) ShardNumber() uint32 {
-	return s.stream.ShardNum
+	return s.stream.GetOpts().GetShardNum()
 }

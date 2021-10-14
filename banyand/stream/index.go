@@ -72,7 +72,7 @@ func (s *stream) writeGlobalIndex(ruleIndex indexRule, ref tsdb.GlobalItemID, va
 	if err != nil {
 		return err
 	}
-	indexShardID, err := partition.ShardID(val, s.schema.ShardNum)
+	indexShardID, err := partition.ShardID(val, s.schema.GetOpts().GetShardNum())
 	if err != nil {
 		return err
 	}

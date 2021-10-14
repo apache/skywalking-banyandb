@@ -35,13 +35,13 @@ import (
 
 var emptyFilters = make([]filterFn, 0)
 
-func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.QueryOrder_Sort) SeekerBuilder {
+func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder {
 	s.indexRuleForSorting = indexRule
 	s.order = order
 	return s
 }
 
-func (s *seekerBuilder) OrderByTime(order modelv1.QueryOrder_Sort) SeekerBuilder {
+func (s *seekerBuilder) OrderByTime(order modelv1.Sort) SeekerBuilder {
 	s.order = order
 	s.indexRuleForSorting = nil
 	return s
@@ -97,12 +97,12 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
-	case modelv1.QueryOrder_SORT_ASC, modelv1.QueryOrder_SORT_UNSPECIFIED:
+	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
 		sort.SliceStable(bb, func(i, j int) bool {
 			return bb[i].startTime().Before(bb[j].startTime())
 		})
 
-	case modelv1.QueryOrder_SORT_DESC:
+	case modelv1.Sort_SORT_DESC:
 		sort.SliceStable(bb, func(i, j int) bool {
 			return bb[i].startTime().After(bb[j].startTime())
 		})
@@ -141,7 +141,7 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 		}
 	}
 	s.seriesSpan.l.Debug().
-		Str("order", modelv1.QueryOrder_Sort_name[int32(s.order)]).
+		Str("order", modelv1.Sort_name[int32(s.order)]).
 		Times("blocks", bTimes).
 		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
 		Int("shard_id", int(s.seriesSpan.shardID)).

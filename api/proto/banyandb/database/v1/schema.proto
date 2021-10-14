@@ -68,6 +68,8 @@ message Stream {
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
     ResourceOpts opts = 4;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 5;
 }
 
 message Entity {
@@ -93,11 +95,9 @@ enum CompressionMethod {
 
 message ResourceOpts {
     // shard_num is the number of shards
-    uint32 shard_num = 5;
+    uint32 shard_num = 1;
     // ttl indicates time to live, how long the data will be cached
-    Duration ttl = 6;
-    // updated_at_nanoseconds indicates when the measure is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 7; 
+    Duration ttl = 2;
 }
 
 // FieldSpec is the specification of field
@@ -123,17 +123,32 @@ message Measure {
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
     ResourceOpts opts = 5;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 6;
 }
 
+// TopNAggregation generates offline TopN statistics for a measure's TopN approximation
 message TopNAggregation {
-    // metadata is the identity of a measure
+    // metadata is the identity of an aggregation
     common.v1.Metadata metadata = 1;
+    // source_measure denotes the data source of this aggregation
     common.v1.Metadata source_measure = 2;
+    // field_name is the name of field used for ranking
     string field_name = 3;
+    // field_value_sort indicates how to sort fields
+    // ASC: bottomN
+    // DESC: topN
     model.v1.Sort field_value_sort = 4;
-    repeated string group_by = 5;
+    // group_by_tag_names groups data points into statistical counters
+    repeated string group_by_tag_names = 5;
+    // criteria select partial data points from measure
     repeated model.v1.Criteria criteria = 6;
-    ResourceOpts opts = 7;
+    // counters_number sets the number of counters to be tracked. The default value is 1000
+    int32 counters_number = 7;
+    // opts is basic resource management options
+    ResourceOpts opts = 8;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 9;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type

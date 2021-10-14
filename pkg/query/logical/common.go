@@ -30,10 +30,10 @@ type (
 	comparator    func(a, b tsdb.Item) bool
 )
 
-func createComparator(sortDirection modelv1.QueryOrder_Sort) comparator {
+func createComparator(sortDirection modelv1.Sort) comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())
-		if sortDirection == modelv1.QueryOrder_SORT_DESC {
+		if sortDirection == modelv1.Sort_SORT_DESC {
 			return comp == 1
 		}
 		return comp == -1

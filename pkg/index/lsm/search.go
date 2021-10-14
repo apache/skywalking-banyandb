@@ -53,7 +53,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.QueryOrder_SORT_ASC)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
 	if err != nil {
 		return roaring.EmptyPostingList, err
 	}
@@ -65,7 +65,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.QueryOrder_Sort) (index.FieldIterator, error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
 	return index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.lsm, s.termMetadata, func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 		pv := &index.PostingValue{
 			Term:  term,

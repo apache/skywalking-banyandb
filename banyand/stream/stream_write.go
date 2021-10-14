@@ -35,7 +35,7 @@ var (
 )
 
 func (s *stream) Write(value *streamv1.ElementValue) error {
-	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetShardNum())
+	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetOpts().GetShardNum())
 	if err != nil {
 		return err
 	}

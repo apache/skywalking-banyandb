@@ -161,7 +161,7 @@ type Writer interface {
 }
 
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.QueryOrder_Sort) (iter FieldIterator, err error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort) (iter FieldIterator, err error)
 }
 
 type Searcher interface {

@@ -60,7 +60,7 @@ func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 			return s.db.Shards(), nil
 		}
 	}
-	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetShardNum())
+	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetOpts().GetShardNum())
 	if err != nil {
 		return nil, err
 	}

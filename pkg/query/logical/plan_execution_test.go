@@ -77,7 +77,7 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 			entities, err := plan.Execute(streamT)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
-			tester.True(logical2.SortedByTimestamp(entities, modelv1.QueryOrder_SORT_ASC))
+			tester.True(logical2.SortedByTimestamp(entities, modelv1.Sort_SORT_ASC))
 		})
 	}
 }
@@ -291,7 +291,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 	tests := []struct {
 		name            string
 		targetIndexRule string
-		sortDirection   modelv1.QueryOrder_Sort
+		sortDirection   modelv1.Sort
 		// TODO: avoid hardcoded index?
 		targetFamilyIdx int
 		targetTagIdx    int
@@ -299,26 +299,26 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 		{
 			name:            "Sort By duration ASC",
 			targetIndexRule: "duration",
-			sortDirection:   modelv1.QueryOrder_SORT_ASC,
+			sortDirection:   modelv1.Sort_SORT_ASC,
 			targetFamilyIdx: 0,
 			targetTagIdx:    0,
 		},
 		{
 			name:            "Sort By duration DESC",
 			targetIndexRule: "duration",
-			sortDirection:   modelv1.QueryOrder_SORT_DESC,
+			sortDirection:   modelv1.Sort_SORT_DESC,
 			targetFamilyIdx: 0,
 			targetTagIdx:    0,
 		},
 		{
 			name:            "Sort By start_time DESC",
 			targetIndexRule: "",
-			sortDirection:   modelv1.QueryOrder_SORT_DESC,
+			sortDirection:   modelv1.Sort_SORT_DESC,
 		},
 		{
 			name:            "Sort By start_time ASC",
 			targetIndexRule: "",
-			sortDirection:   modelv1.QueryOrder_SORT_ASC,
+			sortDirection:   modelv1.Sort_SORT_ASC,
 		},
 	}
 
