@@ -19,8 +19,10 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -48,11 +50,30 @@ type Service interface {
 	Repo
 	run.PreRunner
 	run.Service
+	run.Config
 }
 
 type service struct {
-	schemaRegistry schema.Registry
-	stopCh         chan struct{}
+	schemaRegistry    schema.Registry
+	stopCh            chan struct{}
+	clientListenerUrl string
+	peerListenerUrl   string
+}
+
+func (s *service) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("metadata")
+	fs.StringVarP(&s.clientListenerUrl, "listener-client-url", "", embed.DefaultListenClientURLs,
+		"listener for client")
+	fs.StringVarP(&s.peerListenerUrl, "listener-peer-url", "", embed.DefaultListenPeerURLs,
+		"listener for peer")
+	return fs
+}
+
+func (s *service) Validate() error {
+	if s.clientListenerUrl == "" || s.peerListenerUrl == "" {
+		return errors.New("listener cannot be set to empty")
+	}
+	return nil
 }
 
 func (s *service) PreRun() error {

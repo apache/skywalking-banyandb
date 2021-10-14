@@ -28,7 +28,7 @@ import (
 
 func Test_Etcd_Get_NotFound(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -40,7 +40,7 @@ func Test_Etcd_Get_NotFound(t *testing.T) {
 
 func Test_Etcd_Stream_Get_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -53,7 +53,7 @@ func Test_Etcd_Stream_Get_Found(t *testing.T) {
 
 func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -66,7 +66,7 @@ func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
 
 func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -79,7 +79,7 @@ func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
 
 func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -92,7 +92,7 @@ func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
 
 func Test_Etcd_IndexRule_List_Found(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()

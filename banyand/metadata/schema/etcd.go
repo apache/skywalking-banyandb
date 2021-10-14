@@ -19,9 +19,14 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -58,6 +63,37 @@ func PreloadSchema() RegistryOption {
 	}
 }
 
+func RandomTempDir() RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		uuidDir, _ := uuid.NewUUID()
+		config.rootDir = path.Join(os.TempDir(), uuidDir.String())
+	}
+}
+
+func RootDir(rootDir string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.rootDir = rootDir
+	}
+}
+
+func UseListener(client, peer string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.listenerClientURL = client
+		config.listenerPeerURL = peer
+	}
+}
+
+func UseUnixDomain() RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.listenerClientURL, config.listenerPeerURL = RandomUnixDomainListener()
+	}
+}
+
+func RandomUnixDomainListener() (string, string) {
+	i := rand.Int()
+	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i), fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
+}
+
 type etcdSchemaRegistry struct {
 	server *embed.Etcd
 	kv     clientv3.KV
@@ -68,6 +104,10 @@ type etcdSchemaRegistryConfig struct {
 	preload bool
 	// rootDir is the root directory for etcd storage
 	rootDir string
+	// listenerClientURL is the listener for client
+	listenerClientURL string
+	// listenerPeerURL is the listener for peer
+	listenerPeerURL string
 }
 
 func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool, error) {
@@ -309,13 +349,15 @@ func (e *etcdSchemaRegistry) Close() error {
 
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	registryConfig := &etcdSchemaRegistryConfig{
-		rootDir: os.TempDir(),
+		rootDir:           os.TempDir(),
+		listenerClientURL: embed.DefaultListenClientURLs,
+		listenerPeerURL:   embed.DefaultListenPeerURLs,
 	}
 	for _, opt := range options {
 		opt(registryConfig)
 	}
 	// TODO: allow use cluster setting
-	embedConfig := newStandaloneEtcdConfig(registryConfig.rootDir)
+	embedConfig := newStandaloneEtcdConfig(registryConfig)
 	e, err := embed.StartEtcd(embedConfig)
 	if err != nil {
 		return nil, err
@@ -427,9 +469,13 @@ func incrementLastByte(key string) string {
 	return string(bb)
 }
 
-func newStandaloneEtcdConfig(rootDir string) *embed.Config {
+func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
 	cfg := embed.NewConfig()
 	// TODO: allow user to set path
-	cfg.Dir = filepath.Join(rootDir, "embed-etcd")
+	cfg.Dir = filepath.Join(config.rootDir, "embed-etcd")
+	cUrl, _ := url.Parse(config.listenerClientURL)
+	pUrl, _ := url.Parse(config.listenerPeerURL)
+	cfg.LCUrls, cfg.ACUrls = []url.URL{*cUrl}, []url.URL{*cUrl}
+	cfg.LPUrls, cfg.APUrls = []url.URL{*pUrl}, []url.URL{*pUrl}
 	return cfg
 }
