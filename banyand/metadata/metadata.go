@@ -20,6 +20,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
@@ -56,21 +57,21 @@ type Service interface {
 type service struct {
 	schemaRegistry    schema.Registry
 	stopCh            chan struct{}
-	clientListenerUrl string
-	peerListenerUrl   string
+	clientListenerURL string
+	peerListenerURL   string
 }
 
 func (s *service) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVarP(&s.clientListenerUrl, "listener-client-url", "", embed.DefaultListenClientURLs,
+	fs.StringVarP(&s.clientListenerURL, "listener-client-url", "", embed.DefaultListenClientURLs,
 		"listener for client")
-	fs.StringVarP(&s.peerListenerUrl, "listener-peer-url", "", embed.DefaultListenPeerURLs,
+	fs.StringVarP(&s.peerListenerURL, "listener-peer-url", "", embed.DefaultListenPeerURLs,
 		"listener for peer")
 	return fs
 }
 
 func (s *service) Validate() error {
-	if s.clientListenerUrl == "" || s.peerListenerUrl == "" {
+	if s.clientListenerURL == "" || s.peerListenerURL == "" {
 		return errors.New("listener cannot be set to empty")
 	}
 	return nil
@@ -78,7 +79,9 @@ func (s *service) Validate() error {
 
 func (s *service) PreRun() error {
 	var err error
-	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema())
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema(),
+		schema.UseListener(s.clientListenerURL, s.peerListenerURL),
+		schema.RootDir(os.TempDir()))
 	return err
 }
 

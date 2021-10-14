@@ -26,6 +26,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metaSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
@@ -83,6 +84,14 @@ type Analyzer struct {
 // You have to close the underlying metadata after test
 func DefaultAnalyzer() (*Analyzer, func(), error) {
 	metadataService, err := metadata.NewService(context.TODO())
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
+	lc, lp := metaSchema.RandomUnixDomainListener()
+	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+
 	if err != nil {
 		return nil, func() {
 		}, err

@@ -90,7 +90,7 @@ func UseUnixDomain() RegistryOption {
 }
 
 func RandomUnixDomainListener() (string, string) {
-	i := rand.Int()
+	i := rand.Uint64()
 	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i), fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }
 
@@ -473,9 +473,12 @@ func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
 	cfg := embed.NewConfig()
 	// TODO: allow user to set path
 	cfg.Dir = filepath.Join(config.rootDir, "embed-etcd")
-	cUrl, _ := url.Parse(config.listenerClientURL)
-	pUrl, _ := url.Parse(config.listenerPeerURL)
-	cfg.LCUrls, cfg.ACUrls = []url.URL{*cUrl}, []url.URL{*cUrl}
-	cfg.LPUrls, cfg.APUrls = []url.URL{*pUrl}, []url.URL{*pUrl}
+	cURL, _ := url.Parse(config.listenerClientURL)
+	pURL, _ := url.Parse(config.listenerPeerURL)
+
+	cfg.ClusterState = "new"
+	cfg.LCUrls, cfg.ACUrls = []url.URL{*cURL}, []url.URL{*cURL}
+	cfg.LPUrls, cfg.APUrls = []url.URL{*pURL}, []url.URL{*pURL}
+	cfg.InitialCluster = ",default=" + pURL.String()
 	return cfg
 }
