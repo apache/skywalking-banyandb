@@ -27,238 +27,268 @@ import (
 
 type streamRegistryServer struct {
 	schemaRegistry metadata.Service
-	databasev1.UnimplementedStreamRegistryServer
+	databasev1.UnimplementedStreamRegistryServiceServer
 }
 
-func (rs *streamRegistryServer) Create(ctx context.Context, req *databasev1.StreamCreateRequest) (*databasev1.StreamCreateResponse, error) {
+func (rs *streamRegistryServer) Create(ctx context.Context,
+	req *databasev1.StreamRegistryServiceCreateRequest) (*databasev1.StreamRegistryServiceCreateResponse, error) {
 	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream()); err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamCreateResponse{}, nil
+	return &databasev1.StreamRegistryServiceCreateResponse{}, nil
 }
 
-func (rs *streamRegistryServer) Update(ctx context.Context, req *databasev1.StreamUpdateRequest) (*databasev1.StreamUpdateResponse, error) {
+func (rs *streamRegistryServer) Update(ctx context.Context,
+	req *databasev1.StreamRegistryServiceUpdateRequest) (*databasev1.StreamRegistryServiceUpdateResponse, error) {
 	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream()); err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamUpdateResponse{}, nil
+	return &databasev1.StreamRegistryServiceUpdateResponse{}, nil
 }
 
-func (rs *streamRegistryServer) Delete(ctx context.Context, req *databasev1.StreamDeleteRequest) (*databasev1.StreamDeleteResponse, error) {
+func (rs *streamRegistryServer) Delete(ctx context.Context,
+	req *databasev1.StreamRegistryServiceDeleteRequest) (*databasev1.StreamRegistryServiceDeleteResponse, error) {
 	ok, err := rs.schemaRegistry.StreamRegistry().DeleteStream(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamDeleteResponse{
+	return &databasev1.StreamRegistryServiceDeleteResponse{
 		Deleted: ok,
 	}, nil
 }
 
-func (rs *streamRegistryServer) Get(ctx context.Context, req *databasev1.StreamGetRequest) (*databasev1.StreamGetResponse, error) {
+func (rs *streamRegistryServer) Get(ctx context.Context,
+	req *databasev1.StreamRegistryServiceGetRequest) (*databasev1.StreamRegistryServiceGetResponse, error) {
 	entity, err := rs.schemaRegistry.StreamRegistry().GetStream(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamGetResponse{
+	return &databasev1.StreamRegistryServiceGetResponse{
 		Stream: entity,
 	}, nil
 }
 
-func (rs *streamRegistryServer) List(ctx context.Context, req *databasev1.StreamListRequest) (*databasev1.StreamListResponse, error) {
+func (rs *streamRegistryServer) List(ctx context.Context,
+	req *databasev1.StreamRegistryServiceListRequest) (*databasev1.StreamRegistryServiceListResponse, error) {
 	entities, err := rs.schemaRegistry.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamListResponse{
+	return &databasev1.StreamRegistryServiceListResponse{
 		Stream: entities,
 	}, nil
 }
 
 type indexRuleBindingRegistryServer struct {
 	schemaRegistry metadata.Service
-	databasev1.UnimplementedIndexRuleBindingRegistryServer
+	databasev1.UnimplementedIndexRuleBindingRegistryServiceServer
 }
 
-func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleBindingCreateRequest) (*databasev1.IndexRuleBindingCreateResponse, error) {
+func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
+	req *databasev1.IndexRuleBindingRegistryServiceCreateRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceCreateResponse, error) {
 	if err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding()); err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleBindingCreateResponse{}, nil
+	return &databasev1.IndexRuleBindingRegistryServiceCreateResponse{}, nil
 }
 
-func (rs *indexRuleBindingRegistryServer) Update(ctx context.Context, req *databasev1.IndexRuleBindingUpdateRequest) (*databasev1.IndexRuleBindingUpdateResponse, error) {
+func (rs *indexRuleBindingRegistryServer) Update(ctx context.Context,
+	req *databasev1.IndexRuleBindingRegistryServiceUpdateRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceUpdateResponse, error) {
 	if err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding()); err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleBindingUpdateResponse{}, nil
+	return &databasev1.IndexRuleBindingRegistryServiceUpdateResponse{}, nil
 }
 
-func (rs *indexRuleBindingRegistryServer) Delete(ctx context.Context, req *databasev1.IndexRuleBindingDeleteRequest) (*databasev1.IndexRuleBindingDeleteResponse, error) {
+func (rs *indexRuleBindingRegistryServer) Delete(ctx context.Context,
+	req *databasev1.IndexRuleBindingRegistryServiceDeleteRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceDeleteResponse, error) {
 	ok, err := rs.schemaRegistry.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleBindingDeleteResponse{
+	return &databasev1.IndexRuleBindingRegistryServiceDeleteResponse{
 		Deleted: ok,
 	}, nil
 }
 
-func (rs *indexRuleBindingRegistryServer) Get(ctx context.Context, req *databasev1.IndexRuleBindingGetRequest) (*databasev1.IndexRuleBindingGetResponse, error) {
+func (rs *indexRuleBindingRegistryServer) Get(ctx context.Context,
+	req *databasev1.IndexRuleBindingRegistryServiceGetRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceGetResponse, error) {
 	entity, err := rs.schemaRegistry.IndexRuleBindingRegistry().GetIndexRuleBinding(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleBindingGetResponse{
+	return &databasev1.IndexRuleBindingRegistryServiceGetResponse{
 		IndexRuleBinding: entity,
 	}, nil
 }
 
-func (rs *indexRuleBindingRegistryServer) List(ctx context.Context, req *databasev1.IndexRuleBindingListRequest) (*databasev1.IndexRuleBindingListResponse, error) {
-	entities, err := rs.schemaRegistry.IndexRuleBindingRegistry().ListIndexRuleBinding(ctx, schema.ListOpt{Group: req.GetGroup()})
+func (rs *indexRuleBindingRegistryServer) List(ctx context.Context,
+	req *databasev1.IndexRuleBindingRegistryServiceListRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceListResponse, error) {
+	entities, err := rs.schemaRegistry.IndexRuleBindingRegistry().
+		ListIndexRuleBinding(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleBindingListResponse{
+	return &databasev1.IndexRuleBindingRegistryServiceListResponse{
 		IndexRuleBinding: entities,
 	}, nil
 }
 
 type indexRuleRegistryServer struct {
 	schemaRegistry metadata.Service
-	databasev1.UnimplementedIndexRuleRegistryServer
+	databasev1.UnimplementedIndexRuleRegistryServiceServer
 }
 
-func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleCreateRequest) (*databasev1.IndexRuleCreateResponse, error) {
+func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleRegistryServiceCreateRequest) (
+	*databasev1.IndexRuleRegistryServiceCreateResponse, error) {
 	if err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule()); err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleCreateResponse{}, nil
+	return &databasev1.IndexRuleRegistryServiceCreateResponse{}, nil
 }
 
-func (rs *indexRuleRegistryServer) Update(ctx context.Context, req *databasev1.IndexRuleUpdateRequest) (*databasev1.IndexRuleUpdateResponse, error) {
+func (rs *indexRuleRegistryServer) Update(ctx context.Context, req *databasev1.IndexRuleRegistryServiceUpdateRequest) (
+	*databasev1.IndexRuleRegistryServiceUpdateResponse, error) {
 	if err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule()); err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleUpdateResponse{}, nil
+	return &databasev1.IndexRuleRegistryServiceUpdateResponse{}, nil
 }
 
-func (rs *indexRuleRegistryServer) Delete(ctx context.Context, req *databasev1.IndexRuleDeleteRequest) (*databasev1.IndexRuleDeleteResponse, error) {
+func (rs *indexRuleRegistryServer) Delete(ctx context.Context, req *databasev1.IndexRuleRegistryServiceDeleteRequest) (
+	*databasev1.IndexRuleRegistryServiceDeleteResponse, error) {
 	ok, err := rs.schemaRegistry.IndexRuleRegistry().DeleteIndexRule(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleDeleteResponse{
+	return &databasev1.IndexRuleRegistryServiceDeleteResponse{
 		Deleted: ok,
 	}, nil
 }
 
-func (rs *indexRuleRegistryServer) Get(ctx context.Context, req *databasev1.IndexRuleGetRequest) (*databasev1.IndexRuleGetResponse, error) {
+func (rs *indexRuleRegistryServer) Get(ctx context.Context, req *databasev1.IndexRuleRegistryServiceGetRequest) (
+	*databasev1.IndexRuleRegistryServiceGetResponse, error) {
 	entity, err := rs.schemaRegistry.IndexRuleRegistry().GetIndexRule(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleGetResponse{
+	return &databasev1.IndexRuleRegistryServiceGetResponse{
 		IndexRule: entity,
 	}, nil
 }
 
-func (rs *indexRuleRegistryServer) List(ctx context.Context, req *databasev1.IndexRuleListRequest) (*databasev1.IndexRuleListResponse, error) {
+func (rs *indexRuleRegistryServer) List(ctx context.Context, req *databasev1.IndexRuleRegistryServiceListRequest) (
+	*databasev1.IndexRuleRegistryServiceListResponse, error) {
 	entities, err := rs.schemaRegistry.IndexRuleRegistry().ListIndexRule(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.IndexRuleListResponse{
+	return &databasev1.IndexRuleRegistryServiceListResponse{
 		IndexRule: entities,
 	}, nil
 }
 
 type measureRegistryServer struct {
 	schemaRegistry metadata.Service
-	databasev1.UnimplementedMeasureRegistryServer
+	databasev1.UnimplementedMeasureRegistryServiceServer
 }
 
-func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureCreateRequest) (*databasev1.MeasureCreateResponse, error) {
+func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureRegistryServiceCreateRequest) (
+	*databasev1.MeasureRegistryServiceCreateResponse, error) {
 	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure()); err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureCreateResponse{}, nil
+	return &databasev1.MeasureRegistryServiceCreateResponse{}, nil
 }
 
-func (rs *measureRegistryServer) Update(ctx context.Context, req *databasev1.MeasureUpdateRequest) (*databasev1.MeasureUpdateResponse, error) {
+func (rs *measureRegistryServer) Update(ctx context.Context, req *databasev1.MeasureRegistryServiceUpdateRequest) (
+	*databasev1.MeasureRegistryServiceUpdateResponse, error) {
 	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure()); err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureUpdateResponse{}, nil
+	return &databasev1.MeasureRegistryServiceUpdateResponse{}, nil
 }
 
-func (rs *measureRegistryServer) Delete(ctx context.Context, req *databasev1.MeasureDeleteRequest) (*databasev1.MeasureDeleteResponse, error) {
+func (rs *measureRegistryServer) Delete(ctx context.Context, req *databasev1.MeasureRegistryServiceDeleteRequest) (
+	*databasev1.MeasureRegistryServiceDeleteResponse, error) {
 	ok, err := rs.schemaRegistry.MeasureRegistry().DeleteMeasure(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureDeleteResponse{
+	return &databasev1.MeasureRegistryServiceDeleteResponse{
 		Deleted: ok,
 	}, nil
 }
 
-func (rs *measureRegistryServer) Get(ctx context.Context, req *databasev1.MeasureGetRequest) (*databasev1.MeasureGetResponse, error) {
+func (rs *measureRegistryServer) Get(ctx context.Context, req *databasev1.MeasureRegistryServiceGetRequest) (
+	*databasev1.MeasureRegistryServiceGetResponse, error) {
 	entity, err := rs.schemaRegistry.MeasureRegistry().GetMeasure(ctx, req.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureGetResponse{
+	return &databasev1.MeasureRegistryServiceGetResponse{
 		Measure: entity,
 	}, nil
 }
 
-func (rs *measureRegistryServer) List(ctx context.Context, req *databasev1.MeasureListRequest) (*databasev1.MeasureListResponse, error) {
+func (rs *measureRegistryServer) List(ctx context.Context, req *databasev1.MeasureRegistryServiceListRequest) (
+	*databasev1.MeasureRegistryServiceListResponse, error) {
 	entities, err := rs.schemaRegistry.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureListResponse{
+	return &databasev1.MeasureRegistryServiceListResponse{
 		Measure: entities,
 	}, nil
 }
 
 type groupRegistryServer struct {
 	schemaRegistry metadata.Service
-	databasev1.UnimplementedGroupRegistryServer
+	databasev1.UnimplementedGroupRegistryServiceServer
 }
 
-func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupCreateRequest) (*databasev1.GroupCreateResponse, error) {
+func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
+	*databasev1.GroupRegistryServiceCreateResponse, error) {
 	if err := rs.schemaRegistry.GroupRegistry().CreateGroup(ctx, req.GetGroup()); err != nil {
 		return nil, err
 	}
-	return &databasev1.GroupCreateResponse{}, nil
+	return &databasev1.GroupRegistryServiceCreateResponse{}, nil
 }
 
-func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.GroupDeleteRequest) (*databasev1.GroupDeleteResponse, error) {
+func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.GroupRegistryServiceDeleteRequest) (
+	*databasev1.GroupRegistryServiceDeleteResponse, error) {
 	deleted, err := rs.schemaRegistry.GroupRegistry().DeleteGroup(ctx, req.GetGroup())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.GroupDeleteResponse{
+	return &databasev1.GroupRegistryServiceDeleteResponse{
 		Deleted: deleted,
 	}, nil
 }
 
-func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupExistRequest) (*databasev1.GroupExistResponse, error) {
+func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupRegistryServiceExistRequest) (
+	*databasev1.GroupRegistryServiceExistResponse, error) {
 	exist, err := rs.schemaRegistry.GroupRegistry().ExistGroup(ctx, req.GetGroup())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.GroupExistResponse{
+	return &databasev1.GroupRegistryServiceExistResponse{
 		Existence: exist,
 	}, nil
 }
 
-func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupListRequest) (*databasev1.GroupListResponse, error) {
+func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupRegistryServiceListRequest) (
+	*databasev1.GroupRegistryServiceListResponse, error) {
 	groups, err := rs.schemaRegistry.GroupRegistry().ListGroup(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.GroupListResponse{
+	return &databasev1.GroupRegistryServiceListResponse{
 		Group: groups,
 	}, nil
 }

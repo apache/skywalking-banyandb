@@ -29,9 +29,9 @@ import (
 func Test_Etcd_Get_NotFound(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "unknown", Group: "default"})
 	tester.Nil(stm)
@@ -41,9 +41,9 @@ func Test_Etcd_Get_NotFound(t *testing.T) {
 func Test_Etcd_Stream_Get_Found(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "sw", Group: "default"})
 	tester.NotNil(stm)
@@ -54,9 +54,9 @@ func Test_Etcd_Stream_Get_Found(t *testing.T) {
 func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	streams, err := registry.ListStream(context.TODO(), ListOpt{})
 	tester.NotNil(streams)
@@ -67,9 +67,9 @@ func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
 func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	entity, err := registry.GetIndexRuleBinding(context.TODO(), &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"})
 	tester.NotNil(entity)
@@ -80,9 +80,9 @@ func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
 func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	entity, err := registry.GetIndexRule(context.TODO(), &commonv1.Metadata{Name: "db.instance", Group: "default"})
 	tester.NoError(err)
@@ -93,9 +93,9 @@ func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
 func Test_Etcd_IndexRule_List_Found(t *testing.T) {
 	tester := assert.New(t)
 	registry, err := NewEtcdSchemaRegistry(PreloadSchema())
-	defer registry.Close()
 	tester.NoError(err)
 	tester.NotNil(registry)
+	defer registry.Close()
 
 	entities, err := registry.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
 	tester.NoError(err)

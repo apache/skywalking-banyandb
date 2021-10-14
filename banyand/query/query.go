@@ -31,7 +31,8 @@ type Executor interface {
 	run.PreRunner
 }
 
-func NewExecutor(_ context.Context, streamService stream.Service, metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue) (Executor, error) {
+func NewExecutor(_ context.Context, streamService stream.Service, metaService metadata.Service,
+	serviceRepo discovery.ServiceRepo, pipeline queue.Queue) (Executor, error) {
 	return &queryProcessor{
 		metaService:   metaService,
 		streamService: streamService,

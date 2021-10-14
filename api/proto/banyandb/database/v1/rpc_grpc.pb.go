@@ -15,1115 +15,1117 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// StreamRegistryClient is the client API for StreamRegistry service.
+// StreamRegistryServiceClient is the client API for StreamRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type StreamRegistryClient interface {
-	Create(ctx context.Context, in *StreamCreateRequest, opts ...grpc.CallOption) (*StreamCreateResponse, error)
-	Update(ctx context.Context, in *StreamUpdateRequest, opts ...grpc.CallOption) (*StreamUpdateResponse, error)
-	Delete(ctx context.Context, in *StreamDeleteRequest, opts ...grpc.CallOption) (*StreamDeleteResponse, error)
-	Get(ctx context.Context, in *StreamGetRequest, opts ...grpc.CallOption) (*StreamGetResponse, error)
-	List(ctx context.Context, in *StreamListRequest, opts ...grpc.CallOption) (*StreamListResponse, error)
+type StreamRegistryServiceClient interface {
+	Create(ctx context.Context, in *StreamRegistryServiceCreateRequest, opts ...grpc.CallOption) (*StreamRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *StreamRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*StreamRegistryServiceUpdateResponse, error)
+	Delete(ctx context.Context, in *StreamRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*StreamRegistryServiceDeleteResponse, error)
+	Get(ctx context.Context, in *StreamRegistryServiceGetRequest, opts ...grpc.CallOption) (*StreamRegistryServiceGetResponse, error)
+	List(ctx context.Context, in *StreamRegistryServiceListRequest, opts ...grpc.CallOption) (*StreamRegistryServiceListResponse, error)
 }
 
-type streamRegistryClient struct {
+type streamRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewStreamRegistryClient(cc grpc.ClientConnInterface) StreamRegistryClient {
-	return &streamRegistryClient{cc}
+func NewStreamRegistryServiceClient(cc grpc.ClientConnInterface) StreamRegistryServiceClient {
+	return &streamRegistryServiceClient{cc}
 }
 
-func (c *streamRegistryClient) Create(ctx context.Context, in *StreamCreateRequest, opts ...grpc.CallOption) (*StreamCreateResponse, error) {
-	out := new(StreamCreateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistry/Create", in, out, opts...)
+func (c *streamRegistryServiceClient) Create(ctx context.Context, in *StreamRegistryServiceCreateRequest, opts ...grpc.CallOption) (*StreamRegistryServiceCreateResponse, error) {
+	out := new(StreamRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/Create", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *streamRegistryClient) Update(ctx context.Context, in *StreamUpdateRequest, opts ...grpc.CallOption) (*StreamUpdateResponse, error) {
-	out := new(StreamUpdateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistry/Update", in, out, opts...)
+func (c *streamRegistryServiceClient) Update(ctx context.Context, in *StreamRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*StreamRegistryServiceUpdateResponse, error) {
+	out := new(StreamRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/Update", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *streamRegistryClient) Delete(ctx context.Context, in *StreamDeleteRequest, opts ...grpc.CallOption) (*StreamDeleteResponse, error) {
-	out := new(StreamDeleteResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistry/Delete", in, out, opts...)
+func (c *streamRegistryServiceClient) Delete(ctx context.Context, in *StreamRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*StreamRegistryServiceDeleteResponse, error) {
+	out := new(StreamRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/Delete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *streamRegistryClient) Get(ctx context.Context, in *StreamGetRequest, opts ...grpc.CallOption) (*StreamGetResponse, error) {
-	out := new(StreamGetResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistry/Get", in, out, opts...)
+func (c *streamRegistryServiceClient) Get(ctx context.Context, in *StreamRegistryServiceGetRequest, opts ...grpc.CallOption) (*StreamRegistryServiceGetResponse, error) {
+	out := new(StreamRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/Get", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *streamRegistryClient) List(ctx context.Context, in *StreamListRequest, opts ...grpc.CallOption) (*StreamListResponse, error) {
-	out := new(StreamListResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistry/List", in, out, opts...)
+func (c *streamRegistryServiceClient) List(ctx context.Context, in *StreamRegistryServiceListRequest, opts ...grpc.CallOption) (*StreamRegistryServiceListResponse, error) {
+	out := new(StreamRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/List", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// StreamRegistryServer is the server API for StreamRegistry service.
-// All implementations must embed UnimplementedStreamRegistryServer
+// StreamRegistryServiceServer is the server API for StreamRegistryService service.
+// All implementations must embed UnimplementedStreamRegistryServiceServer
 // for forward compatibility
-type StreamRegistryServer interface {
-	Create(context.Context, *StreamCreateRequest) (*StreamCreateResponse, error)
-	Update(context.Context, *StreamUpdateRequest) (*StreamUpdateResponse, error)
-	Delete(context.Context, *StreamDeleteRequest) (*StreamDeleteResponse, error)
-	Get(context.Context, *StreamGetRequest) (*StreamGetResponse, error)
-	List(context.Context, *StreamListRequest) (*StreamListResponse, error)
-	mustEmbedUnimplementedStreamRegistryServer()
+type StreamRegistryServiceServer interface {
+	Create(context.Context, *StreamRegistryServiceCreateRequest) (*StreamRegistryServiceCreateResponse, error)
+	Update(context.Context, *StreamRegistryServiceUpdateRequest) (*StreamRegistryServiceUpdateResponse, error)
+	Delete(context.Context, *StreamRegistryServiceDeleteRequest) (*StreamRegistryServiceDeleteResponse, error)
+	Get(context.Context, *StreamRegistryServiceGetRequest) (*StreamRegistryServiceGetResponse, error)
+	List(context.Context, *StreamRegistryServiceListRequest) (*StreamRegistryServiceListResponse, error)
+	mustEmbedUnimplementedStreamRegistryServiceServer()
 }
 
-// UnimplementedStreamRegistryServer must be embedded to have forward compatible implementations.
-type UnimplementedStreamRegistryServer struct {
+// UnimplementedStreamRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedStreamRegistryServiceServer struct {
 }
 
-func (UnimplementedStreamRegistryServer) Create(context.Context, *StreamCreateRequest) (*StreamCreateResponse, error) {
+func (UnimplementedStreamRegistryServiceServer) Create(context.Context, *StreamRegistryServiceCreateRequest) (*StreamRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedStreamRegistryServer) Update(context.Context, *StreamUpdateRequest) (*StreamUpdateResponse, error) {
+func (UnimplementedStreamRegistryServiceServer) Update(context.Context, *StreamRegistryServiceUpdateRequest) (*StreamRegistryServiceUpdateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
 }
-func (UnimplementedStreamRegistryServer) Delete(context.Context, *StreamDeleteRequest) (*StreamDeleteResponse, error) {
+func (UnimplementedStreamRegistryServiceServer) Delete(context.Context, *StreamRegistryServiceDeleteRequest) (*StreamRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedStreamRegistryServer) Get(context.Context, *StreamGetRequest) (*StreamGetResponse, error) {
+func (UnimplementedStreamRegistryServiceServer) Get(context.Context, *StreamRegistryServiceGetRequest) (*StreamRegistryServiceGetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
-func (UnimplementedStreamRegistryServer) List(context.Context, *StreamListRequest) (*StreamListResponse, error) {
+func (UnimplementedStreamRegistryServiceServer) List(context.Context, *StreamRegistryServiceListRequest) (*StreamRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedStreamRegistryServer) mustEmbedUnimplementedStreamRegistryServer() {}
+func (UnimplementedStreamRegistryServiceServer) mustEmbedUnimplementedStreamRegistryServiceServer() {}
 
-// UnsafeStreamRegistryServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to StreamRegistryServer will
+// UnsafeStreamRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to StreamRegistryServiceServer will
 // result in compilation errors.
-type UnsafeStreamRegistryServer interface {
-	mustEmbedUnimplementedStreamRegistryServer()
+type UnsafeStreamRegistryServiceServer interface {
+	mustEmbedUnimplementedStreamRegistryServiceServer()
 }
 
-func RegisterStreamRegistryServer(s grpc.ServiceRegistrar, srv StreamRegistryServer) {
-	s.RegisterService(&StreamRegistry_ServiceDesc, srv)
+func RegisterStreamRegistryServiceServer(s grpc.ServiceRegistrar, srv StreamRegistryServiceServer) {
+	s.RegisterService(&StreamRegistryService_ServiceDesc, srv)
 }
 
-func _StreamRegistry_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StreamCreateRequest)
+func _StreamRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceCreateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StreamRegistryServer).Create(ctx, in)
+		return srv.(StreamRegistryServiceServer).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.StreamRegistry/Create",
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/Create",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamRegistryServer).Create(ctx, req.(*StreamCreateRequest))
+		return srv.(StreamRegistryServiceServer).Create(ctx, req.(*StreamRegistryServiceCreateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StreamRegistry_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StreamUpdateRequest)
+func _StreamRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StreamRegistryServer).Update(ctx, in)
+		return srv.(StreamRegistryServiceServer).Update(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.StreamRegistry/Update",
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/Update",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamRegistryServer).Update(ctx, req.(*StreamUpdateRequest))
+		return srv.(StreamRegistryServiceServer).Update(ctx, req.(*StreamRegistryServiceUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StreamRegistry_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StreamDeleteRequest)
+func _StreamRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StreamRegistryServer).Delete(ctx, in)
+		return srv.(StreamRegistryServiceServer).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.StreamRegistry/Delete",
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/Delete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamRegistryServer).Delete(ctx, req.(*StreamDeleteRequest))
+		return srv.(StreamRegistryServiceServer).Delete(ctx, req.(*StreamRegistryServiceDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StreamRegistry_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StreamGetRequest)
+func _StreamRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceGetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StreamRegistryServer).Get(ctx, in)
+		return srv.(StreamRegistryServiceServer).Get(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.StreamRegistry/Get",
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamRegistryServer).Get(ctx, req.(*StreamGetRequest))
+		return srv.(StreamRegistryServiceServer).Get(ctx, req.(*StreamRegistryServiceGetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StreamRegistry_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StreamListRequest)
+func _StreamRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceListRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StreamRegistryServer).List(ctx, in)
+		return srv.(StreamRegistryServiceServer).List(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.StreamRegistry/List",
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/List",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamRegistryServer).List(ctx, req.(*StreamListRequest))
+		return srv.(StreamRegistryServiceServer).List(ctx, req.(*StreamRegistryServiceListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// StreamRegistry_ServiceDesc is the grpc.ServiceDesc for StreamRegistry service.
+// StreamRegistryService_ServiceDesc is the grpc.ServiceDesc for StreamRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var StreamRegistry_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.database.v1.StreamRegistry",
-	HandlerType: (*StreamRegistryServer)(nil),
+var StreamRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.StreamRegistryService",
+	HandlerType: (*StreamRegistryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Create",
-			Handler:    _StreamRegistry_Create_Handler,
+			Handler:    _StreamRegistryService_Create_Handler,
 		},
 		{
 			MethodName: "Update",
-			Handler:    _StreamRegistry_Update_Handler,
+			Handler:    _StreamRegistryService_Update_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _StreamRegistry_Delete_Handler,
+			Handler:    _StreamRegistryService_Delete_Handler,
 		},
 		{
 			MethodName: "Get",
-			Handler:    _StreamRegistry_Get_Handler,
+			Handler:    _StreamRegistryService_Get_Handler,
 		},
 		{
 			MethodName: "List",
-			Handler:    _StreamRegistry_List_Handler,
+			Handler:    _StreamRegistryService_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
 }
 
-// IndexRuleBindingRegistryClient is the client API for IndexRuleBindingRegistry service.
+// IndexRuleBindingRegistryServiceClient is the client API for IndexRuleBindingRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type IndexRuleBindingRegistryClient interface {
-	Create(ctx context.Context, in *IndexRuleBindingCreateRequest, opts ...grpc.CallOption) (*IndexRuleBindingCreateResponse, error)
-	Update(ctx context.Context, in *IndexRuleBindingUpdateRequest, opts ...grpc.CallOption) (*IndexRuleBindingUpdateResponse, error)
-	Delete(ctx context.Context, in *IndexRuleBindingDeleteRequest, opts ...grpc.CallOption) (*IndexRuleBindingDeleteResponse, error)
-	Get(ctx context.Context, in *IndexRuleBindingGetRequest, opts ...grpc.CallOption) (*IndexRuleBindingGetResponse, error)
-	List(ctx context.Context, in *IndexRuleBindingListRequest, opts ...grpc.CallOption) (*IndexRuleBindingListResponse, error)
+type IndexRuleBindingRegistryServiceClient interface {
+	Create(ctx context.Context, in *IndexRuleBindingRegistryServiceCreateRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *IndexRuleBindingRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceUpdateResponse, error)
+	Delete(ctx context.Context, in *IndexRuleBindingRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceDeleteResponse, error)
+	Get(ctx context.Context, in *IndexRuleBindingRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceGetResponse, error)
+	List(ctx context.Context, in *IndexRuleBindingRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceListResponse, error)
 }
 
-type indexRuleBindingRegistryClient struct {
+type indexRuleBindingRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewIndexRuleBindingRegistryClient(cc grpc.ClientConnInterface) IndexRuleBindingRegistryClient {
-	return &indexRuleBindingRegistryClient{cc}
+func NewIndexRuleBindingRegistryServiceClient(cc grpc.ClientConnInterface) IndexRuleBindingRegistryServiceClient {
+	return &indexRuleBindingRegistryServiceClient{cc}
 }
 
-func (c *indexRuleBindingRegistryClient) Create(ctx context.Context, in *IndexRuleBindingCreateRequest, opts ...grpc.CallOption) (*IndexRuleBindingCreateResponse, error) {
-	out := new(IndexRuleBindingCreateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistry/Create", in, out, opts...)
+func (c *indexRuleBindingRegistryServiceClient) Create(ctx context.Context, in *IndexRuleBindingRegistryServiceCreateRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceCreateResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/Create", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleBindingRegistryClient) Update(ctx context.Context, in *IndexRuleBindingUpdateRequest, opts ...grpc.CallOption) (*IndexRuleBindingUpdateResponse, error) {
-	out := new(IndexRuleBindingUpdateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistry/Update", in, out, opts...)
+func (c *indexRuleBindingRegistryServiceClient) Update(ctx context.Context, in *IndexRuleBindingRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceUpdateResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/Update", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleBindingRegistryClient) Delete(ctx context.Context, in *IndexRuleBindingDeleteRequest, opts ...grpc.CallOption) (*IndexRuleBindingDeleteResponse, error) {
-	out := new(IndexRuleBindingDeleteResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistry/Delete", in, out, opts...)
+func (c *indexRuleBindingRegistryServiceClient) Delete(ctx context.Context, in *IndexRuleBindingRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceDeleteResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/Delete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleBindingRegistryClient) Get(ctx context.Context, in *IndexRuleBindingGetRequest, opts ...grpc.CallOption) (*IndexRuleBindingGetResponse, error) {
-	out := new(IndexRuleBindingGetResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistry/Get", in, out, opts...)
+func (c *indexRuleBindingRegistryServiceClient) Get(ctx context.Context, in *IndexRuleBindingRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceGetResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/Get", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleBindingRegistryClient) List(ctx context.Context, in *IndexRuleBindingListRequest, opts ...grpc.CallOption) (*IndexRuleBindingListResponse, error) {
-	out := new(IndexRuleBindingListResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistry/List", in, out, opts...)
+func (c *indexRuleBindingRegistryServiceClient) List(ctx context.Context, in *IndexRuleBindingRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceListResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/List", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// IndexRuleBindingRegistryServer is the server API for IndexRuleBindingRegistry service.
-// All implementations must embed UnimplementedIndexRuleBindingRegistryServer
+// IndexRuleBindingRegistryServiceServer is the server API for IndexRuleBindingRegistryService service.
+// All implementations must embed UnimplementedIndexRuleBindingRegistryServiceServer
 // for forward compatibility
-type IndexRuleBindingRegistryServer interface {
-	Create(context.Context, *IndexRuleBindingCreateRequest) (*IndexRuleBindingCreateResponse, error)
-	Update(context.Context, *IndexRuleBindingUpdateRequest) (*IndexRuleBindingUpdateResponse, error)
-	Delete(context.Context, *IndexRuleBindingDeleteRequest) (*IndexRuleBindingDeleteResponse, error)
-	Get(context.Context, *IndexRuleBindingGetRequest) (*IndexRuleBindingGetResponse, error)
-	List(context.Context, *IndexRuleBindingListRequest) (*IndexRuleBindingListResponse, error)
-	mustEmbedUnimplementedIndexRuleBindingRegistryServer()
+type IndexRuleBindingRegistryServiceServer interface {
+	Create(context.Context, *IndexRuleBindingRegistryServiceCreateRequest) (*IndexRuleBindingRegistryServiceCreateResponse, error)
+	Update(context.Context, *IndexRuleBindingRegistryServiceUpdateRequest) (*IndexRuleBindingRegistryServiceUpdateResponse, error)
+	Delete(context.Context, *IndexRuleBindingRegistryServiceDeleteRequest) (*IndexRuleBindingRegistryServiceDeleteResponse, error)
+	Get(context.Context, *IndexRuleBindingRegistryServiceGetRequest) (*IndexRuleBindingRegistryServiceGetResponse, error)
+	List(context.Context, *IndexRuleBindingRegistryServiceListRequest) (*IndexRuleBindingRegistryServiceListResponse, error)
+	mustEmbedUnimplementedIndexRuleBindingRegistryServiceServer()
 }
 
-// UnimplementedIndexRuleBindingRegistryServer must be embedded to have forward compatible implementations.
-type UnimplementedIndexRuleBindingRegistryServer struct {
+// UnimplementedIndexRuleBindingRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedIndexRuleBindingRegistryServiceServer struct {
 }
 
-func (UnimplementedIndexRuleBindingRegistryServer) Create(context.Context, *IndexRuleBindingCreateRequest) (*IndexRuleBindingCreateResponse, error) {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) Create(context.Context, *IndexRuleBindingRegistryServiceCreateRequest) (*IndexRuleBindingRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedIndexRuleBindingRegistryServer) Update(context.Context, *IndexRuleBindingUpdateRequest) (*IndexRuleBindingUpdateResponse, error) {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) Update(context.Context, *IndexRuleBindingRegistryServiceUpdateRequest) (*IndexRuleBindingRegistryServiceUpdateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
 }
-func (UnimplementedIndexRuleBindingRegistryServer) Delete(context.Context, *IndexRuleBindingDeleteRequest) (*IndexRuleBindingDeleteResponse, error) {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) Delete(context.Context, *IndexRuleBindingRegistryServiceDeleteRequest) (*IndexRuleBindingRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedIndexRuleBindingRegistryServer) Get(context.Context, *IndexRuleBindingGetRequest) (*IndexRuleBindingGetResponse, error) {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) Get(context.Context, *IndexRuleBindingRegistryServiceGetRequest) (*IndexRuleBindingRegistryServiceGetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
-func (UnimplementedIndexRuleBindingRegistryServer) List(context.Context, *IndexRuleBindingListRequest) (*IndexRuleBindingListResponse, error) {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) List(context.Context, *IndexRuleBindingRegistryServiceListRequest) (*IndexRuleBindingRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedIndexRuleBindingRegistryServer) mustEmbedUnimplementedIndexRuleBindingRegistryServer() {
+func (UnimplementedIndexRuleBindingRegistryServiceServer) mustEmbedUnimplementedIndexRuleBindingRegistryServiceServer() {
 }
 
-// UnsafeIndexRuleBindingRegistryServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to IndexRuleBindingRegistryServer will
+// UnsafeIndexRuleBindingRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to IndexRuleBindingRegistryServiceServer will
 // result in compilation errors.
-type UnsafeIndexRuleBindingRegistryServer interface {
-	mustEmbedUnimplementedIndexRuleBindingRegistryServer()
+type UnsafeIndexRuleBindingRegistryServiceServer interface {
+	mustEmbedUnimplementedIndexRuleBindingRegistryServiceServer()
 }
 
-func RegisterIndexRuleBindingRegistryServer(s grpc.ServiceRegistrar, srv IndexRuleBindingRegistryServer) {
-	s.RegisterService(&IndexRuleBindingRegistry_ServiceDesc, srv)
+func RegisterIndexRuleBindingRegistryServiceServer(s grpc.ServiceRegistrar, srv IndexRuleBindingRegistryServiceServer) {
+	s.RegisterService(&IndexRuleBindingRegistryService_ServiceDesc, srv)
 }
 
-func _IndexRuleBindingRegistry_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleBindingCreateRequest)
+func _IndexRuleBindingRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceCreateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleBindingRegistryServer).Create(ctx, in)
+		return srv.(IndexRuleBindingRegistryServiceServer).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistry/Create",
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/Create",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleBindingRegistryServer).Create(ctx, req.(*IndexRuleBindingCreateRequest))
+		return srv.(IndexRuleBindingRegistryServiceServer).Create(ctx, req.(*IndexRuleBindingRegistryServiceCreateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleBindingRegistry_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleBindingUpdateRequest)
+func _IndexRuleBindingRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleBindingRegistryServer).Update(ctx, in)
+		return srv.(IndexRuleBindingRegistryServiceServer).Update(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistry/Update",
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/Update",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleBindingRegistryServer).Update(ctx, req.(*IndexRuleBindingUpdateRequest))
+		return srv.(IndexRuleBindingRegistryServiceServer).Update(ctx, req.(*IndexRuleBindingRegistryServiceUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleBindingRegistry_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleBindingDeleteRequest)
+func _IndexRuleBindingRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleBindingRegistryServer).Delete(ctx, in)
+		return srv.(IndexRuleBindingRegistryServiceServer).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistry/Delete",
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/Delete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleBindingRegistryServer).Delete(ctx, req.(*IndexRuleBindingDeleteRequest))
+		return srv.(IndexRuleBindingRegistryServiceServer).Delete(ctx, req.(*IndexRuleBindingRegistryServiceDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleBindingRegistry_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleBindingGetRequest)
+func _IndexRuleBindingRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceGetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleBindingRegistryServer).Get(ctx, in)
+		return srv.(IndexRuleBindingRegistryServiceServer).Get(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistry/Get",
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleBindingRegistryServer).Get(ctx, req.(*IndexRuleBindingGetRequest))
+		return srv.(IndexRuleBindingRegistryServiceServer).Get(ctx, req.(*IndexRuleBindingRegistryServiceGetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleBindingRegistry_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleBindingListRequest)
+func _IndexRuleBindingRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceListRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleBindingRegistryServer).List(ctx, in)
+		return srv.(IndexRuleBindingRegistryServiceServer).List(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistry/List",
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/List",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleBindingRegistryServer).List(ctx, req.(*IndexRuleBindingListRequest))
+		return srv.(IndexRuleBindingRegistryServiceServer).List(ctx, req.(*IndexRuleBindingRegistryServiceListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// IndexRuleBindingRegistry_ServiceDesc is the grpc.ServiceDesc for IndexRuleBindingRegistry service.
+// IndexRuleBindingRegistryService_ServiceDesc is the grpc.ServiceDesc for IndexRuleBindingRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var IndexRuleBindingRegistry_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.database.v1.IndexRuleBindingRegistry",
-	HandlerType: (*IndexRuleBindingRegistryServer)(nil),
+var IndexRuleBindingRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.IndexRuleBindingRegistryService",
+	HandlerType: (*IndexRuleBindingRegistryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Create",
-			Handler:    _IndexRuleBindingRegistry_Create_Handler,
+			Handler:    _IndexRuleBindingRegistryService_Create_Handler,
 		},
 		{
 			MethodName: "Update",
-			Handler:    _IndexRuleBindingRegistry_Update_Handler,
+			Handler:    _IndexRuleBindingRegistryService_Update_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _IndexRuleBindingRegistry_Delete_Handler,
+			Handler:    _IndexRuleBindingRegistryService_Delete_Handler,
 		},
 		{
 			MethodName: "Get",
-			Handler:    _IndexRuleBindingRegistry_Get_Handler,
+			Handler:    _IndexRuleBindingRegistryService_Get_Handler,
 		},
 		{
 			MethodName: "List",
-			Handler:    _IndexRuleBindingRegistry_List_Handler,
+			Handler:    _IndexRuleBindingRegistryService_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
 }
 
-// IndexRuleRegistryClient is the client API for IndexRuleRegistry service.
+// IndexRuleRegistryServiceClient is the client API for IndexRuleRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type IndexRuleRegistryClient interface {
-	Create(ctx context.Context, in *IndexRuleCreateRequest, opts ...grpc.CallOption) (*IndexRuleCreateResponse, error)
-	Update(ctx context.Context, in *IndexRuleUpdateRequest, opts ...grpc.CallOption) (*IndexRuleUpdateResponse, error)
-	Delete(ctx context.Context, in *IndexRuleDeleteRequest, opts ...grpc.CallOption) (*IndexRuleDeleteResponse, error)
-	Get(ctx context.Context, in *IndexRuleGetRequest, opts ...grpc.CallOption) (*IndexRuleGetResponse, error)
-	List(ctx context.Context, in *IndexRuleListRequest, opts ...grpc.CallOption) (*IndexRuleListResponse, error)
+type IndexRuleRegistryServiceClient interface {
+	Create(ctx context.Context, in *IndexRuleRegistryServiceCreateRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *IndexRuleRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceUpdateResponse, error)
+	Delete(ctx context.Context, in *IndexRuleRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceDeleteResponse, error)
+	Get(ctx context.Context, in *IndexRuleRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceGetResponse, error)
+	List(ctx context.Context, in *IndexRuleRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceListResponse, error)
 }
 
-type indexRuleRegistryClient struct {
+type indexRuleRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewIndexRuleRegistryClient(cc grpc.ClientConnInterface) IndexRuleRegistryClient {
-	return &indexRuleRegistryClient{cc}
+func NewIndexRuleRegistryServiceClient(cc grpc.ClientConnInterface) IndexRuleRegistryServiceClient {
+	return &indexRuleRegistryServiceClient{cc}
 }
 
-func (c *indexRuleRegistryClient) Create(ctx context.Context, in *IndexRuleCreateRequest, opts ...grpc.CallOption) (*IndexRuleCreateResponse, error) {
-	out := new(IndexRuleCreateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistry/Create", in, out, opts...)
+func (c *indexRuleRegistryServiceClient) Create(ctx context.Context, in *IndexRuleRegistryServiceCreateRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceCreateResponse, error) {
+	out := new(IndexRuleRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/Create", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleRegistryClient) Update(ctx context.Context, in *IndexRuleUpdateRequest, opts ...grpc.CallOption) (*IndexRuleUpdateResponse, error) {
-	out := new(IndexRuleUpdateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistry/Update", in, out, opts...)
+func (c *indexRuleRegistryServiceClient) Update(ctx context.Context, in *IndexRuleRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceUpdateResponse, error) {
+	out := new(IndexRuleRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/Update", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleRegistryClient) Delete(ctx context.Context, in *IndexRuleDeleteRequest, opts ...grpc.CallOption) (*IndexRuleDeleteResponse, error) {
-	out := new(IndexRuleDeleteResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistry/Delete", in, out, opts...)
+func (c *indexRuleRegistryServiceClient) Delete(ctx context.Context, in *IndexRuleRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceDeleteResponse, error) {
+	out := new(IndexRuleRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/Delete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleRegistryClient) Get(ctx context.Context, in *IndexRuleGetRequest, opts ...grpc.CallOption) (*IndexRuleGetResponse, error) {
-	out := new(IndexRuleGetResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistry/Get", in, out, opts...)
+func (c *indexRuleRegistryServiceClient) Get(ctx context.Context, in *IndexRuleRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceGetResponse, error) {
+	out := new(IndexRuleRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/Get", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *indexRuleRegistryClient) List(ctx context.Context, in *IndexRuleListRequest, opts ...grpc.CallOption) (*IndexRuleListResponse, error) {
-	out := new(IndexRuleListResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistry/List", in, out, opts...)
+func (c *indexRuleRegistryServiceClient) List(ctx context.Context, in *IndexRuleRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceListResponse, error) {
+	out := new(IndexRuleRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/List", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// IndexRuleRegistryServer is the server API for IndexRuleRegistry service.
-// All implementations must embed UnimplementedIndexRuleRegistryServer
+// IndexRuleRegistryServiceServer is the server API for IndexRuleRegistryService service.
+// All implementations must embed UnimplementedIndexRuleRegistryServiceServer
 // for forward compatibility
-type IndexRuleRegistryServer interface {
-	Create(context.Context, *IndexRuleCreateRequest) (*IndexRuleCreateResponse, error)
-	Update(context.Context, *IndexRuleUpdateRequest) (*IndexRuleUpdateResponse, error)
-	Delete(context.Context, *IndexRuleDeleteRequest) (*IndexRuleDeleteResponse, error)
-	Get(context.Context, *IndexRuleGetRequest) (*IndexRuleGetResponse, error)
-	List(context.Context, *IndexRuleListRequest) (*IndexRuleListResponse, error)
-	mustEmbedUnimplementedIndexRuleRegistryServer()
+type IndexRuleRegistryServiceServer interface {
+	Create(context.Context, *IndexRuleRegistryServiceCreateRequest) (*IndexRuleRegistryServiceCreateResponse, error)
+	Update(context.Context, *IndexRuleRegistryServiceUpdateRequest) (*IndexRuleRegistryServiceUpdateResponse, error)
+	Delete(context.Context, *IndexRuleRegistryServiceDeleteRequest) (*IndexRuleRegistryServiceDeleteResponse, error)
+	Get(context.Context, *IndexRuleRegistryServiceGetRequest) (*IndexRuleRegistryServiceGetResponse, error)
+	List(context.Context, *IndexRuleRegistryServiceListRequest) (*IndexRuleRegistryServiceListResponse, error)
+	mustEmbedUnimplementedIndexRuleRegistryServiceServer()
 }
 
-// UnimplementedIndexRuleRegistryServer must be embedded to have forward compatible implementations.
-type UnimplementedIndexRuleRegistryServer struct {
+// UnimplementedIndexRuleRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedIndexRuleRegistryServiceServer struct {
 }
 
-func (UnimplementedIndexRuleRegistryServer) Create(context.Context, *IndexRuleCreateRequest) (*IndexRuleCreateResponse, error) {
+func (UnimplementedIndexRuleRegistryServiceServer) Create(context.Context, *IndexRuleRegistryServiceCreateRequest) (*IndexRuleRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedIndexRuleRegistryServer) Update(context.Context, *IndexRuleUpdateRequest) (*IndexRuleUpdateResponse, error) {
+func (UnimplementedIndexRuleRegistryServiceServer) Update(context.Context, *IndexRuleRegistryServiceUpdateRequest) (*IndexRuleRegistryServiceUpdateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
 }
-func (UnimplementedIndexRuleRegistryServer) Delete(context.Context, *IndexRuleDeleteRequest) (*IndexRuleDeleteResponse, error) {
+func (UnimplementedIndexRuleRegistryServiceServer) Delete(context.Context, *IndexRuleRegistryServiceDeleteRequest) (*IndexRuleRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedIndexRuleRegistryServer) Get(context.Context, *IndexRuleGetRequest) (*IndexRuleGetResponse, error) {
+func (UnimplementedIndexRuleRegistryServiceServer) Get(context.Context, *IndexRuleRegistryServiceGetRequest) (*IndexRuleRegistryServiceGetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
-func (UnimplementedIndexRuleRegistryServer) List(context.Context, *IndexRuleListRequest) (*IndexRuleListResponse, error) {
+func (UnimplementedIndexRuleRegistryServiceServer) List(context.Context, *IndexRuleRegistryServiceListRequest) (*IndexRuleRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedIndexRuleRegistryServer) mustEmbedUnimplementedIndexRuleRegistryServer() {}
+func (UnimplementedIndexRuleRegistryServiceServer) mustEmbedUnimplementedIndexRuleRegistryServiceServer() {
+}
 
-// UnsafeIndexRuleRegistryServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to IndexRuleRegistryServer will
+// UnsafeIndexRuleRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to IndexRuleRegistryServiceServer will
 // result in compilation errors.
-type UnsafeIndexRuleRegistryServer interface {
-	mustEmbedUnimplementedIndexRuleRegistryServer()
+type UnsafeIndexRuleRegistryServiceServer interface {
+	mustEmbedUnimplementedIndexRuleRegistryServiceServer()
 }
 
-func RegisterIndexRuleRegistryServer(s grpc.ServiceRegistrar, srv IndexRuleRegistryServer) {
-	s.RegisterService(&IndexRuleRegistry_ServiceDesc, srv)
+func RegisterIndexRuleRegistryServiceServer(s grpc.ServiceRegistrar, srv IndexRuleRegistryServiceServer) {
+	s.RegisterService(&IndexRuleRegistryService_ServiceDesc, srv)
 }
 
-func _IndexRuleRegistry_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleCreateRequest)
+func _IndexRuleRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceCreateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleRegistryServer).Create(ctx, in)
+		return srv.(IndexRuleRegistryServiceServer).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleRegistry/Create",
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/Create",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleRegistryServer).Create(ctx, req.(*IndexRuleCreateRequest))
+		return srv.(IndexRuleRegistryServiceServer).Create(ctx, req.(*IndexRuleRegistryServiceCreateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleRegistry_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleUpdateRequest)
+func _IndexRuleRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleRegistryServer).Update(ctx, in)
+		return srv.(IndexRuleRegistryServiceServer).Update(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleRegistry/Update",
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/Update",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleRegistryServer).Update(ctx, req.(*IndexRuleUpdateRequest))
+		return srv.(IndexRuleRegistryServiceServer).Update(ctx, req.(*IndexRuleRegistryServiceUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleRegistry_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleDeleteRequest)
+func _IndexRuleRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleRegistryServer).Delete(ctx, in)
+		return srv.(IndexRuleRegistryServiceServer).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleRegistry/Delete",
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/Delete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleRegistryServer).Delete(ctx, req.(*IndexRuleDeleteRequest))
+		return srv.(IndexRuleRegistryServiceServer).Delete(ctx, req.(*IndexRuleRegistryServiceDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleRegistry_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleGetRequest)
+func _IndexRuleRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceGetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleRegistryServer).Get(ctx, in)
+		return srv.(IndexRuleRegistryServiceServer).Get(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleRegistry/Get",
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleRegistryServer).Get(ctx, req.(*IndexRuleGetRequest))
+		return srv.(IndexRuleRegistryServiceServer).Get(ctx, req.(*IndexRuleRegistryServiceGetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexRuleRegistry_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IndexRuleListRequest)
+func _IndexRuleRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceListRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IndexRuleRegistryServer).List(ctx, in)
+		return srv.(IndexRuleRegistryServiceServer).List(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.IndexRuleRegistry/List",
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/List",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IndexRuleRegistryServer).List(ctx, req.(*IndexRuleListRequest))
+		return srv.(IndexRuleRegistryServiceServer).List(ctx, req.(*IndexRuleRegistryServiceListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// IndexRuleRegistry_ServiceDesc is the grpc.ServiceDesc for IndexRuleRegistry service.
+// IndexRuleRegistryService_ServiceDesc is the grpc.ServiceDesc for IndexRuleRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var IndexRuleRegistry_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.database.v1.IndexRuleRegistry",
-	HandlerType: (*IndexRuleRegistryServer)(nil),
+var IndexRuleRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.IndexRuleRegistryService",
+	HandlerType: (*IndexRuleRegistryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Create",
-			Handler:    _IndexRuleRegistry_Create_Handler,
+			Handler:    _IndexRuleRegistryService_Create_Handler,
 		},
 		{
 			MethodName: "Update",
-			Handler:    _IndexRuleRegistry_Update_Handler,
+			Handler:    _IndexRuleRegistryService_Update_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _IndexRuleRegistry_Delete_Handler,
+			Handler:    _IndexRuleRegistryService_Delete_Handler,
 		},
 		{
 			MethodName: "Get",
-			Handler:    _IndexRuleRegistry_Get_Handler,
+			Handler:    _IndexRuleRegistryService_Get_Handler,
 		},
 		{
 			MethodName: "List",
-			Handler:    _IndexRuleRegistry_List_Handler,
+			Handler:    _IndexRuleRegistryService_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
 }
 
-// MeasureRegistryClient is the client API for MeasureRegistry service.
+// MeasureRegistryServiceClient is the client API for MeasureRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type MeasureRegistryClient interface {
-	Create(ctx context.Context, in *MeasureCreateRequest, opts ...grpc.CallOption) (*MeasureCreateResponse, error)
-	Update(ctx context.Context, in *MeasureUpdateRequest, opts ...grpc.CallOption) (*MeasureUpdateResponse, error)
-	Delete(ctx context.Context, in *MeasureDeleteRequest, opts ...grpc.CallOption) (*MeasureDeleteResponse, error)
-	Get(ctx context.Context, in *MeasureGetRequest, opts ...grpc.CallOption) (*MeasureGetResponse, error)
-	List(ctx context.Context, in *MeasureListRequest, opts ...grpc.CallOption) (*MeasureListResponse, error)
+type MeasureRegistryServiceClient interface {
+	Create(ctx context.Context, in *MeasureRegistryServiceCreateRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *MeasureRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceUpdateResponse, error)
+	Delete(ctx context.Context, in *MeasureRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceDeleteResponse, error)
+	Get(ctx context.Context, in *MeasureRegistryServiceGetRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceGetResponse, error)
+	List(ctx context.Context, in *MeasureRegistryServiceListRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceListResponse, error)
 }
 
-type measureRegistryClient struct {
+type measureRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewMeasureRegistryClient(cc grpc.ClientConnInterface) MeasureRegistryClient {
-	return &measureRegistryClient{cc}
+func NewMeasureRegistryServiceClient(cc grpc.ClientConnInterface) MeasureRegistryServiceClient {
+	return &measureRegistryServiceClient{cc}
 }
 
-func (c *measureRegistryClient) Create(ctx context.Context, in *MeasureCreateRequest, opts ...grpc.CallOption) (*MeasureCreateResponse, error) {
-	out := new(MeasureCreateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistry/Create", in, out, opts...)
+func (c *measureRegistryServiceClient) Create(ctx context.Context, in *MeasureRegistryServiceCreateRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceCreateResponse, error) {
+	out := new(MeasureRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/Create", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *measureRegistryClient) Update(ctx context.Context, in *MeasureUpdateRequest, opts ...grpc.CallOption) (*MeasureUpdateResponse, error) {
-	out := new(MeasureUpdateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistry/Update", in, out, opts...)
+func (c *measureRegistryServiceClient) Update(ctx context.Context, in *MeasureRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceUpdateResponse, error) {
+	out := new(MeasureRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/Update", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *measureRegistryClient) Delete(ctx context.Context, in *MeasureDeleteRequest, opts ...grpc.CallOption) (*MeasureDeleteResponse, error) {
-	out := new(MeasureDeleteResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistry/Delete", in, out, opts...)
+func (c *measureRegistryServiceClient) Delete(ctx context.Context, in *MeasureRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceDeleteResponse, error) {
+	out := new(MeasureRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/Delete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *measureRegistryClient) Get(ctx context.Context, in *MeasureGetRequest, opts ...grpc.CallOption) (*MeasureGetResponse, error) {
-	out := new(MeasureGetResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistry/Get", in, out, opts...)
+func (c *measureRegistryServiceClient) Get(ctx context.Context, in *MeasureRegistryServiceGetRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceGetResponse, error) {
+	out := new(MeasureRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/Get", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *measureRegistryClient) List(ctx context.Context, in *MeasureListRequest, opts ...grpc.CallOption) (*MeasureListResponse, error) {
-	out := new(MeasureListResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistry/List", in, out, opts...)
+func (c *measureRegistryServiceClient) List(ctx context.Context, in *MeasureRegistryServiceListRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceListResponse, error) {
+	out := new(MeasureRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/List", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// MeasureRegistryServer is the server API for MeasureRegistry service.
-// All implementations must embed UnimplementedMeasureRegistryServer
+// MeasureRegistryServiceServer is the server API for MeasureRegistryService service.
+// All implementations must embed UnimplementedMeasureRegistryServiceServer
 // for forward compatibility
-type MeasureRegistryServer interface {
-	Create(context.Context, *MeasureCreateRequest) (*MeasureCreateResponse, error)
-	Update(context.Context, *MeasureUpdateRequest) (*MeasureUpdateResponse, error)
-	Delete(context.Context, *MeasureDeleteRequest) (*MeasureDeleteResponse, error)
-	Get(context.Context, *MeasureGetRequest) (*MeasureGetResponse, error)
-	List(context.Context, *MeasureListRequest) (*MeasureListResponse, error)
-	mustEmbedUnimplementedMeasureRegistryServer()
+type MeasureRegistryServiceServer interface {
+	Create(context.Context, *MeasureRegistryServiceCreateRequest) (*MeasureRegistryServiceCreateResponse, error)
+	Update(context.Context, *MeasureRegistryServiceUpdateRequest) (*MeasureRegistryServiceUpdateResponse, error)
+	Delete(context.Context, *MeasureRegistryServiceDeleteRequest) (*MeasureRegistryServiceDeleteResponse, error)
+	Get(context.Context, *MeasureRegistryServiceGetRequest) (*MeasureRegistryServiceGetResponse, error)
+	List(context.Context, *MeasureRegistryServiceListRequest) (*MeasureRegistryServiceListResponse, error)
+	mustEmbedUnimplementedMeasureRegistryServiceServer()
 }
 
-// UnimplementedMeasureRegistryServer must be embedded to have forward compatible implementations.
-type UnimplementedMeasureRegistryServer struct {
+// UnimplementedMeasureRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedMeasureRegistryServiceServer struct {
 }
 
-func (UnimplementedMeasureRegistryServer) Create(context.Context, *MeasureCreateRequest) (*MeasureCreateResponse, error) {
+func (UnimplementedMeasureRegistryServiceServer) Create(context.Context, *MeasureRegistryServiceCreateRequest) (*MeasureRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedMeasureRegistryServer) Update(context.Context, *MeasureUpdateRequest) (*MeasureUpdateResponse, error) {
+func (UnimplementedMeasureRegistryServiceServer) Update(context.Context, *MeasureRegistryServiceUpdateRequest) (*MeasureRegistryServiceUpdateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
 }
-func (UnimplementedMeasureRegistryServer) Delete(context.Context, *MeasureDeleteRequest) (*MeasureDeleteResponse, error) {
+func (UnimplementedMeasureRegistryServiceServer) Delete(context.Context, *MeasureRegistryServiceDeleteRequest) (*MeasureRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedMeasureRegistryServer) Get(context.Context, *MeasureGetRequest) (*MeasureGetResponse, error) {
+func (UnimplementedMeasureRegistryServiceServer) Get(context.Context, *MeasureRegistryServiceGetRequest) (*MeasureRegistryServiceGetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
-func (UnimplementedMeasureRegistryServer) List(context.Context, *MeasureListRequest) (*MeasureListResponse, error) {
+func (UnimplementedMeasureRegistryServiceServer) List(context.Context, *MeasureRegistryServiceListRequest) (*MeasureRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedMeasureRegistryServer) mustEmbedUnimplementedMeasureRegistryServer() {}
+func (UnimplementedMeasureRegistryServiceServer) mustEmbedUnimplementedMeasureRegistryServiceServer() {
+}
 
-// UnsafeMeasureRegistryServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to MeasureRegistryServer will
+// UnsafeMeasureRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MeasureRegistryServiceServer will
 // result in compilation errors.
-type UnsafeMeasureRegistryServer interface {
-	mustEmbedUnimplementedMeasureRegistryServer()
+type UnsafeMeasureRegistryServiceServer interface {
+	mustEmbedUnimplementedMeasureRegistryServiceServer()
 }
 
-func RegisterMeasureRegistryServer(s grpc.ServiceRegistrar, srv MeasureRegistryServer) {
-	s.RegisterService(&MeasureRegistry_ServiceDesc, srv)
+func RegisterMeasureRegistryServiceServer(s grpc.ServiceRegistrar, srv MeasureRegistryServiceServer) {
+	s.RegisterService(&MeasureRegistryService_ServiceDesc, srv)
 }
 
-func _MeasureRegistry_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MeasureCreateRequest)
+func _MeasureRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceCreateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeasureRegistryServer).Create(ctx, in)
+		return srv.(MeasureRegistryServiceServer).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.MeasureRegistry/Create",
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/Create",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeasureRegistryServer).Create(ctx, req.(*MeasureCreateRequest))
+		return srv.(MeasureRegistryServiceServer).Create(ctx, req.(*MeasureRegistryServiceCreateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MeasureRegistry_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MeasureUpdateRequest)
+func _MeasureRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeasureRegistryServer).Update(ctx, in)
+		return srv.(MeasureRegistryServiceServer).Update(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.MeasureRegistry/Update",
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/Update",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeasureRegistryServer).Update(ctx, req.(*MeasureUpdateRequest))
+		return srv.(MeasureRegistryServiceServer).Update(ctx, req.(*MeasureRegistryServiceUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MeasureRegistry_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MeasureDeleteRequest)
+func _MeasureRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeasureRegistryServer).Delete(ctx, in)
+		return srv.(MeasureRegistryServiceServer).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.MeasureRegistry/Delete",
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/Delete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeasureRegistryServer).Delete(ctx, req.(*MeasureDeleteRequest))
+		return srv.(MeasureRegistryServiceServer).Delete(ctx, req.(*MeasureRegistryServiceDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MeasureRegistry_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MeasureGetRequest)
+func _MeasureRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceGetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeasureRegistryServer).Get(ctx, in)
+		return srv.(MeasureRegistryServiceServer).Get(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.MeasureRegistry/Get",
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeasureRegistryServer).Get(ctx, req.(*MeasureGetRequest))
+		return srv.(MeasureRegistryServiceServer).Get(ctx, req.(*MeasureRegistryServiceGetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MeasureRegistry_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MeasureListRequest)
+func _MeasureRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceListRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeasureRegistryServer).List(ctx, in)
+		return srv.(MeasureRegistryServiceServer).List(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.MeasureRegistry/List",
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/List",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeasureRegistryServer).List(ctx, req.(*MeasureListRequest))
+		return srv.(MeasureRegistryServiceServer).List(ctx, req.(*MeasureRegistryServiceListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// MeasureRegistry_ServiceDesc is the grpc.ServiceDesc for MeasureRegistry service.
+// MeasureRegistryService_ServiceDesc is the grpc.ServiceDesc for MeasureRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var MeasureRegistry_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.database.v1.MeasureRegistry",
-	HandlerType: (*MeasureRegistryServer)(nil),
+var MeasureRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.MeasureRegistryService",
+	HandlerType: (*MeasureRegistryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Create",
-			Handler:    _MeasureRegistry_Create_Handler,
+			Handler:    _MeasureRegistryService_Create_Handler,
 		},
 		{
 			MethodName: "Update",
-			Handler:    _MeasureRegistry_Update_Handler,
+			Handler:    _MeasureRegistryService_Update_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _MeasureRegistry_Delete_Handler,
+			Handler:    _MeasureRegistryService_Delete_Handler,
 		},
 		{
 			MethodName: "Get",
-			Handler:    _MeasureRegistry_Get_Handler,
+			Handler:    _MeasureRegistryService_Get_Handler,
 		},
 		{
 			MethodName: "List",
-			Handler:    _MeasureRegistry_List_Handler,
+			Handler:    _MeasureRegistryService_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
 }
 
-// GroupRegistryClient is the client API for GroupRegistry service.
+// GroupRegistryServiceClient is the client API for GroupRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type GroupRegistryClient interface {
-	Create(ctx context.Context, in *GroupCreateRequest, opts ...grpc.CallOption) (*GroupCreateResponse, error)
-	Delete(ctx context.Context, in *GroupDeleteRequest, opts ...grpc.CallOption) (*GroupDeleteResponse, error)
-	Exist(ctx context.Context, in *GroupExistRequest, opts ...grpc.CallOption) (*GroupExistResponse, error)
-	List(ctx context.Context, in *GroupListRequest, opts ...grpc.CallOption) (*GroupListResponse, error)
+type GroupRegistryServiceClient interface {
+	Create(ctx context.Context, in *GroupRegistryServiceCreateRequest, opts ...grpc.CallOption) (*GroupRegistryServiceCreateResponse, error)
+	Delete(ctx context.Context, in *GroupRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*GroupRegistryServiceDeleteResponse, error)
+	Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error)
+	List(ctx context.Context, in *GroupRegistryServiceListRequest, opts ...grpc.CallOption) (*GroupRegistryServiceListResponse, error)
 }
 
-type groupRegistryClient struct {
+type groupRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewGroupRegistryClient(cc grpc.ClientConnInterface) GroupRegistryClient {
-	return &groupRegistryClient{cc}
+func NewGroupRegistryServiceClient(cc grpc.ClientConnInterface) GroupRegistryServiceClient {
+	return &groupRegistryServiceClient{cc}
 }
 
-func (c *groupRegistryClient) Create(ctx context.Context, in *GroupCreateRequest, opts ...grpc.CallOption) (*GroupCreateResponse, error) {
-	out := new(GroupCreateResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistry/Create", in, out, opts...)
+func (c *groupRegistryServiceClient) Create(ctx context.Context, in *GroupRegistryServiceCreateRequest, opts ...grpc.CallOption) (*GroupRegistryServiceCreateResponse, error) {
+	out := new(GroupRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Create", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *groupRegistryClient) Delete(ctx context.Context, in *GroupDeleteRequest, opts ...grpc.CallOption) (*GroupDeleteResponse, error) {
-	out := new(GroupDeleteResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistry/Delete", in, out, opts...)
+func (c *groupRegistryServiceClient) Delete(ctx context.Context, in *GroupRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*GroupRegistryServiceDeleteResponse, error) {
+	out := new(GroupRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Delete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *groupRegistryClient) Exist(ctx context.Context, in *GroupExistRequest, opts ...grpc.CallOption) (*GroupExistResponse, error) {
-	out := new(GroupExistResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistry/Exist", in, out, opts...)
+func (c *groupRegistryServiceClient) Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error) {
+	out := new(GroupRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Exist", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *groupRegistryClient) List(ctx context.Context, in *GroupListRequest, opts ...grpc.CallOption) (*GroupListResponse, error) {
-	out := new(GroupListResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistry/List", in, out, opts...)
+func (c *groupRegistryServiceClient) List(ctx context.Context, in *GroupRegistryServiceListRequest, opts ...grpc.CallOption) (*GroupRegistryServiceListResponse, error) {
+	out := new(GroupRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/List", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// GroupRegistryServer is the server API for GroupRegistry service.
-// All implementations must embed UnimplementedGroupRegistryServer
+// GroupRegistryServiceServer is the server API for GroupRegistryService service.
+// All implementations must embed UnimplementedGroupRegistryServiceServer
 // for forward compatibility
-type GroupRegistryServer interface {
-	Create(context.Context, *GroupCreateRequest) (*GroupCreateResponse, error)
-	Delete(context.Context, *GroupDeleteRequest) (*GroupDeleteResponse, error)
-	Exist(context.Context, *GroupExistRequest) (*GroupExistResponse, error)
-	List(context.Context, *GroupListRequest) (*GroupListResponse, error)
-	mustEmbedUnimplementedGroupRegistryServer()
+type GroupRegistryServiceServer interface {
+	Create(context.Context, *GroupRegistryServiceCreateRequest) (*GroupRegistryServiceCreateResponse, error)
+	Delete(context.Context, *GroupRegistryServiceDeleteRequest) (*GroupRegistryServiceDeleteResponse, error)
+	Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error)
+	List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error)
+	mustEmbedUnimplementedGroupRegistryServiceServer()
 }
 
-// UnimplementedGroupRegistryServer must be embedded to have forward compatible implementations.
-type UnimplementedGroupRegistryServer struct {
+// UnimplementedGroupRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedGroupRegistryServiceServer struct {
 }
 
-func (UnimplementedGroupRegistryServer) Create(context.Context, *GroupCreateRequest) (*GroupCreateResponse, error) {
+func (UnimplementedGroupRegistryServiceServer) Create(context.Context, *GroupRegistryServiceCreateRequest) (*GroupRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedGroupRegistryServer) Delete(context.Context, *GroupDeleteRequest) (*GroupDeleteResponse, error) {
+func (UnimplementedGroupRegistryServiceServer) Delete(context.Context, *GroupRegistryServiceDeleteRequest) (*GroupRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedGroupRegistryServer) Exist(context.Context, *GroupExistRequest) (*GroupExistResponse, error) {
+func (UnimplementedGroupRegistryServiceServer) Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
-func (UnimplementedGroupRegistryServer) List(context.Context, *GroupListRequest) (*GroupListResponse, error) {
+func (UnimplementedGroupRegistryServiceServer) List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedGroupRegistryServer) mustEmbedUnimplementedGroupRegistryServer() {}
+func (UnimplementedGroupRegistryServiceServer) mustEmbedUnimplementedGroupRegistryServiceServer() {}
 
-// UnsafeGroupRegistryServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to GroupRegistryServer will
+// UnsafeGroupRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to GroupRegistryServiceServer will
 // result in compilation errors.
-type UnsafeGroupRegistryServer interface {
-	mustEmbedUnimplementedGroupRegistryServer()
+type UnsafeGroupRegistryServiceServer interface {
+	mustEmbedUnimplementedGroupRegistryServiceServer()
 }
 
-func RegisterGroupRegistryServer(s grpc.ServiceRegistrar, srv GroupRegistryServer) {
-	s.RegisterService(&GroupRegistry_ServiceDesc, srv)
+func RegisterGroupRegistryServiceServer(s grpc.ServiceRegistrar, srv GroupRegistryServiceServer) {
+	s.RegisterService(&GroupRegistryService_ServiceDesc, srv)
 }
 
-func _GroupRegistry_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupCreateRequest)
+func _GroupRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceCreateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GroupRegistryServer).Create(ctx, in)
+		return srv.(GroupRegistryServiceServer).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.GroupRegistry/Create",
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Create",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroupRegistryServer).Create(ctx, req.(*GroupCreateRequest))
+		return srv.(GroupRegistryServiceServer).Create(ctx, req.(*GroupRegistryServiceCreateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GroupRegistry_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupDeleteRequest)
+func _GroupRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GroupRegistryServer).Delete(ctx, in)
+		return srv.(GroupRegistryServiceServer).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.GroupRegistry/Delete",
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Delete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroupRegistryServer).Delete(ctx, req.(*GroupDeleteRequest))
+		return srv.(GroupRegistryServiceServer).Delete(ctx, req.(*GroupRegistryServiceDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GroupRegistry_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupExistRequest)
+func _GroupRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceExistRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GroupRegistryServer).Exist(ctx, in)
+		return srv.(GroupRegistryServiceServer).Exist(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.GroupRegistry/Exist",
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Exist",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroupRegistryServer).Exist(ctx, req.(*GroupExistRequest))
+		return srv.(GroupRegistryServiceServer).Exist(ctx, req.(*GroupRegistryServiceExistRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GroupRegistry_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupListRequest)
+func _GroupRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceListRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GroupRegistryServer).List(ctx, in)
+		return srv.(GroupRegistryServiceServer).List(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.GroupRegistry/List",
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/List",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroupRegistryServer).List(ctx, req.(*GroupListRequest))
+		return srv.(GroupRegistryServiceServer).List(ctx, req.(*GroupRegistryServiceListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// GroupRegistry_ServiceDesc is the grpc.ServiceDesc for GroupRegistry service.
+// GroupRegistryService_ServiceDesc is the grpc.ServiceDesc for GroupRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var GroupRegistry_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "banyandb.database.v1.GroupRegistry",
-	HandlerType: (*GroupRegistryServer)(nil),
+var GroupRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.GroupRegistryService",
+	HandlerType: (*GroupRegistryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Create",
-			Handler:    _GroupRegistry_Create_Handler,
+			Handler:    _GroupRegistryService_Create_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _GroupRegistry_Delete_Handler,
+			Handler:    _GroupRegistryService_Delete_Handler,
 		},
 		{
 			MethodName: "Exist",
-			Handler:    _GroupRegistry_Exist_Handler,
+			Handler:    _GroupRegistryService_Exist_Handler,
 		},
 		{
 			MethodName: "List",
-			Handler:    _GroupRegistry_List_Handler,
+			Handler:    _GroupRegistryService_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

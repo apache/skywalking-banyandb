@@ -152,11 +152,11 @@ func (s *Server) Serve() error {
 	s.ser = grpclib.NewServer(opts...)
 	streamv1.RegisterStreamServiceServer(s.ser, s)
 	// register *Registry
-	databasev1.RegisterGroupRegistryServer(s.ser, s.groupRegistryServer)
-	databasev1.RegisterIndexRuleBindingRegistryServer(s.ser, s.indexRuleBindingRegistryServer)
-	databasev1.RegisterIndexRuleRegistryServer(s.ser, s.indexRuleRegistryServer)
-	databasev1.RegisterStreamRegistryServer(s.ser, s.streamRegistryServer)
-	databasev1.RegisterMeasureRegistryServer(s.ser, s.measureRegistryServer)
+	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
+	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
+	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
+	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
+	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
 
 	s.log.Info().Str("addr", s.addr).Msg("Listening to")
 	return s.ser.Serve(lis)

@@ -191,6 +191,7 @@ func setup(t *testing.T) (*stream, func()) {
 	tempDir, deferFunc := test.Space(req)
 
 	mService, err := metadata.NewService(context.TODO())
+	req.NoError(err)
 	err = mService.PreRun()
 	req.NoError(err)
 

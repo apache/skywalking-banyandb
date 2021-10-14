@@ -25,224 +25,224 @@ package banyandb.database.v1;
 import "banyandb/database/v1/schema.proto";
 import "banyandb/common/v1/common.proto";
 
-message StreamCreateRequest {
+message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamCreateResponse {
+message StreamRegistryServiceCreateResponse {
 }
 
-message StreamUpdateRequest {
+message StreamRegistryServiceUpdateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamUpdateResponse {
+message StreamRegistryServiceUpdateResponse {
 }
 
-message StreamDeleteRequest {
+message StreamRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message StreamDeleteResponse {
+message StreamRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message StreamGetRequest {
+message StreamRegistryServiceGetRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message StreamGetResponse {
+message StreamRegistryServiceGetResponse {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamListRequest {
+message StreamRegistryServiceListRequest {
   string group = 1;
 }
 
-message StreamListResponse {
+message StreamRegistryServiceListResponse {
   repeated banyandb.database.v1.Stream stream = 1;
 }
 
-service StreamRegistry {
-  rpc Create(StreamCreateRequest) returns (StreamCreateResponse);
-  rpc Update(StreamUpdateRequest) returns (StreamUpdateResponse);
-  rpc Delete(StreamDeleteRequest) returns (StreamDeleteResponse);
-  rpc Get(StreamGetRequest) returns (StreamGetResponse);
-  rpc List(StreamListRequest) returns (StreamListResponse);
+service StreamRegistryService {
+  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse);
+  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse);
+  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse);
+  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse);
+  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse);
 }
 
-message IndexRuleBindingCreateRequest {
+message IndexRuleBindingRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingCreateResponse {
+message IndexRuleBindingRegistryServiceCreateResponse {
 }
 
-message IndexRuleBindingUpdateRequest {
+message IndexRuleBindingRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingUpdateResponse {
+message IndexRuleBindingRegistryServiceUpdateResponse {
 }
 
-message IndexRuleBindingDeleteRequest {
+message IndexRuleBindingRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message IndexRuleBindingDeleteResponse {
+message IndexRuleBindingRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message IndexRuleBindingGetRequest {
+message IndexRuleBindingRegistryServiceGetRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message IndexRuleBindingGetResponse {
+message IndexRuleBindingRegistryServiceGetResponse {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingListRequest {
+message IndexRuleBindingRegistryServiceListRequest {
   string group = 1;
 }
 
-message IndexRuleBindingListResponse {
+message IndexRuleBindingRegistryServiceListResponse {
   repeated banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-service IndexRuleBindingRegistry {
-  rpc Create(IndexRuleBindingCreateRequest) returns (IndexRuleBindingCreateResponse);
-  rpc Update(IndexRuleBindingUpdateRequest) returns (IndexRuleBindingUpdateResponse);
-  rpc Delete(IndexRuleBindingDeleteRequest) returns (IndexRuleBindingDeleteResponse);
-  rpc Get(IndexRuleBindingGetRequest) returns (IndexRuleBindingGetResponse);
-  rpc List(IndexRuleBindingListRequest) returns (IndexRuleBindingListResponse);
+service IndexRuleBindingRegistryService {
+  rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse);
+  rpc Update(IndexRuleBindingRegistryServiceUpdateRequest) returns (IndexRuleBindingRegistryServiceUpdateResponse);
+  rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse);
+  rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse);
+  rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse);
 }
 
-message IndexRuleCreateRequest {
+message IndexRuleRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleCreateResponse {
+message IndexRuleRegistryServiceCreateResponse {
 }
 
-message IndexRuleUpdateRequest {
+message IndexRuleRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleUpdateResponse {
+message IndexRuleRegistryServiceUpdateResponse {
 }
 
-message IndexRuleDeleteRequest {
+message IndexRuleRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message IndexRuleDeleteResponse {
+message IndexRuleRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message IndexRuleGetRequest {
+message IndexRuleRegistryServiceGetRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message IndexRuleGetResponse {
+message IndexRuleRegistryServiceGetResponse {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleListRequest {
+message IndexRuleRegistryServiceListRequest {
   string group = 1;
 }
 
-message IndexRuleListResponse {
+message IndexRuleRegistryServiceListResponse {
   repeated banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-service IndexRuleRegistry {
-  rpc Create(IndexRuleCreateRequest) returns (IndexRuleCreateResponse);
-  rpc Update(IndexRuleUpdateRequest) returns (IndexRuleUpdateResponse);
-  rpc Delete(IndexRuleDeleteRequest) returns (IndexRuleDeleteResponse);
-  rpc Get(IndexRuleGetRequest) returns (IndexRuleGetResponse);
-  rpc List(IndexRuleListRequest) returns (IndexRuleListResponse);
+service IndexRuleRegistryService {
+  rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse);
+  rpc Update(IndexRuleRegistryServiceUpdateRequest) returns (IndexRuleRegistryServiceUpdateResponse);
+  rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse);
+  rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse);
+  rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse);
 }
 
-message MeasureCreateRequest {
+message MeasureRegistryServiceCreateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureCreateResponse {
+message MeasureRegistryServiceCreateResponse {
 }
 
-message MeasureUpdateRequest {
+message MeasureRegistryServiceUpdateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureUpdateResponse {
+message MeasureRegistryServiceUpdateResponse {
 }
 
-message MeasureDeleteRequest {
+message MeasureRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message MeasureDeleteResponse {
+message MeasureRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message MeasureGetRequest {
+message MeasureRegistryServiceGetRequest {
   banyandb.common.v1.Metadata metadata = 1;
 }
 
-message MeasureGetResponse {
+message MeasureRegistryServiceGetResponse {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureListRequest {
+message MeasureRegistryServiceListRequest {
   string group = 1;
 }
 
-message MeasureListResponse {
+message MeasureRegistryServiceListResponse {
   repeated banyandb.database.v1.Measure measure = 1;
 }
 
-service MeasureRegistry {
-  rpc Create(MeasureCreateRequest) returns (MeasureCreateResponse);
-  rpc Update(MeasureUpdateRequest) returns (MeasureUpdateResponse);
-  rpc Delete(MeasureDeleteRequest) returns (MeasureDeleteResponse);
-  rpc Get(MeasureGetRequest) returns (MeasureGetResponse);
-  rpc List(MeasureListRequest) returns (MeasureListResponse);
+service MeasureRegistryService {
+  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse);
+  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse);
+  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse);
+  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse);
+  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse);
 }
 
-message GroupCreateRequest {
+message GroupRegistryServiceCreateRequest {
   string group = 1;
 }
 
-message GroupCreateResponse {
+message GroupRegistryServiceCreateResponse {
 
 }
 
-message GroupDeleteRequest {
+message GroupRegistryServiceDeleteRequest {
   string group = 1;
 }
 
-message GroupDeleteResponse {
+message GroupRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message GroupExistRequest {
+message GroupRegistryServiceExistRequest {
   string group = 1;
 }
 
-message GroupExistResponse {
+message GroupRegistryServiceExistResponse {
   bool existence = 1;
 }
 
-message GroupListRequest {
+message GroupRegistryServiceListRequest {
 }
 
-message GroupListResponse {
+message GroupRegistryServiceListResponse {
   repeated string group = 1;
 }
 
-service GroupRegistry {
-  rpc Create(GroupCreateRequest) returns (GroupCreateResponse);
-  rpc Delete(GroupDeleteRequest) returns (GroupDeleteResponse);
-  rpc Exist(GroupExistRequest) returns (GroupExistResponse);
-  rpc List(GroupListRequest) returns (GroupListResponse);
+service GroupRegistryService {
+  rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse);
+  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse);
+  rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
+  rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse);
 }

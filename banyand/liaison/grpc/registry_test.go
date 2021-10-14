@@ -42,7 +42,7 @@ func TestStreamRegistry(t *testing.T) {
 	req.NoError(err)
 	req.NotNil(conn)
 
-	client := databasev1.NewStreamRegistryClient(conn)
+	client := databasev1.NewStreamRegistryServiceClient(conn)
 	req.NotNil(client)
 
 	meta := &commonv1.Metadata{
@@ -50,13 +50,13 @@ func TestStreamRegistry(t *testing.T) {
 		Name:  "sw",
 	}
 
-	getResp, err := client.Get(context.TODO(), &databasev1.StreamGetRequest{Metadata: meta})
+	getResp, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
 
 	req.NoError(err)
 	req.NotNil(getResp)
 
 	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.StreamDeleteRequest{
+	deleteResp, err := client.Delete(context.TODO(), &databasev1.StreamRegistryServiceDeleteRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)
@@ -64,18 +64,18 @@ func TestStreamRegistry(t *testing.T) {
 	req.True(deleteResp.GetDeleted())
 
 	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.StreamGetRequest{
+	_, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	errStatus, _ := status.FromError(err)
 	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
 
 	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.StreamCreateRequest{Stream: getResp.GetStream()})
+	_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
 	req.NoError(err)
 
 	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.StreamGetRequest{
+	getResp, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)
@@ -94,7 +94,7 @@ func TestIndexRuleBindingRegistry(t *testing.T) {
 	req.NoError(err)
 	req.NotNil(conn)
 
-	client := databasev1.NewIndexRuleBindingRegistryClient(conn)
+	client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
 	req.NotNil(client)
 
 	meta := &commonv1.Metadata{
@@ -102,13 +102,13 @@ func TestIndexRuleBindingRegistry(t *testing.T) {
 		Name:  "sw-index-rule-binding",
 	}
 
-	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{Metadata: meta})
+	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
 
 	req.NoError(err)
 	req.NotNil(getResp)
 
 	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingDeleteRequest{
+	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)
@@ -116,18 +116,18 @@ func TestIndexRuleBindingRegistry(t *testing.T) {
 	req.True(deleteResp.GetDeleted())
 
 	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{
+	_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	errStatus, _ := status.FromError(err)
 	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
 
 	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
+	_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
 	req.NoError(err)
 
 	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingGetRequest{
+	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)
@@ -146,7 +146,7 @@ func TestIndexRuleRegistry(t *testing.T) {
 	req.NoError(err)
 	req.NotNil(conn)
 
-	client := databasev1.NewIndexRuleRegistryClient(conn)
+	client := databasev1.NewIndexRuleRegistryServiceClient(conn)
 	req.NotNil(client)
 
 	meta := &commonv1.Metadata{
@@ -154,13 +154,13 @@ func TestIndexRuleRegistry(t *testing.T) {
 		Name:  "sw-index-rule-binding",
 	}
 
-	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{Metadata: meta})
+	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
 
 	req.NoError(err)
 	req.NotNil(getResp)
 
 	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleDeleteRequest{
+	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleRegistryServiceDeleteRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)
@@ -168,18 +168,18 @@ func TestIndexRuleRegistry(t *testing.T) {
 	req.True(deleteResp.GetDeleted())
 
 	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{
+	_, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	errStatus, _ := status.FromError(err)
 	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
 
 	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.IndexRuleCreateRequest{IndexRule: getResp.GetIndexRule()})
+	_, err = client.Create(context.TODO(), &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
 	req.NoError(err)
 
 	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleGetRequest{
+	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
 		Metadata: meta,
 	})
 	req.NoError(err)

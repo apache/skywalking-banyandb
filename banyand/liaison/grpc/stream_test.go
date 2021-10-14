@@ -105,8 +105,8 @@ func setup(req *require.Assertions, testData testData) func() {
 
 	wg := sync.WaitGroup{}
 
+	wg.Add(1)
 	go func() {
-		wg.Add(1)
 		// we have to wait for this goroutine to safely shutdown
 		defer wg.Done()
 		errRun := g.Run()

@@ -19,7 +19,6 @@ package schema
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -77,7 +76,7 @@ func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool
 	if err != nil {
 		return false, err
 	}
-	return entity != nil && entity.Deleted == false, nil
+	return entity != nil && !entity.Deleted, nil
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
@@ -272,7 +271,7 @@ func (e *etcdSchemaRegistry) preload() error {
 	}
 
 	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if err := protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
+	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
 		return err
 	}
 	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
@@ -309,12 +308,14 @@ func (e *etcdSchemaRegistry) Close() error {
 }
 
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
-	registryConfig := &etcdSchemaRegistryConfig{}
+	registryConfig := &etcdSchemaRegistryConfig{
+		rootDir: os.TempDir(),
+	}
 	for _, opt := range options {
 		opt(registryConfig)
 	}
 	// TODO: allow use cluster setting
-	embedConfig := newStandaloneEtcdConfig()
+	embedConfig := newStandaloneEtcdConfig(registryConfig.rootDir)
 	e, err := embed.StartEtcd(embedConfig)
 	if err != nil {
 		return nil, err
@@ -422,13 +423,13 @@ func formatGroupKey(group string) string {
 
 func incrementLastByte(key string) string {
 	bb := []byte(key)
-	bb[len(bb)-1] += 1
+	bb[len(bb)-1]++
 	return string(bb)
 }
 
-func newStandaloneEtcdConfig() *embed.Config {
+func newStandaloneEtcdConfig(rootDir string) *embed.Config {
 	cfg := embed.NewConfig()
 	// TODO: allow user to set path
-	cfg.Dir = filepath.Join(os.TempDir(), fmt.Sprintf("embed-etcd"))
+	cfg.Dir = filepath.Join(rootDir, "embed-etcd")
 	return cfg
 }
