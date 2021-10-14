@@ -59,7 +59,7 @@ message TopNRequest {
     model.v1.TimeRange time_range = 2;
     // top_n set the how many items should be returned in each list.
     int32 top_n = 3;
-    // agg aggregates lists in the time_range based on th
+    // agg aggregates lists grouped by field names in the time_range
     AggregationFunction agg = 4;
     // criteria select counters.
     repeated model.v1.Condition conditions = 5;

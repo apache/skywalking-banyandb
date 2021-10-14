@@ -208,7 +208,7 @@ type TopNRequest struct {
 	TimeRange *v11.TimeRange `protobuf:"bytes,2,opt,name=time_range,json=timeRange,proto3" json:"time_range,omitempty"`
 	// top_n set the how many items should be returned in each list.
 	TopN int32 `protobuf:"varint,3,opt,name=top_n,json=topN,proto3" json:"top_n,omitempty"`
-	// agg aggregates lists in the time_range based on th
+	// agg aggregates lists grouped by field names in the time_range
 	Agg AggregationFunction `protobuf:"varint,4,opt,name=agg,proto3,enum=banyandb.measure.v1.AggregationFunction" json:"agg,omitempty"`
 	// criteria select counters.
 	Conditions []*v11.Condition `protobuf:"bytes,5,rep,name=conditions,proto3" json:"conditions,omitempty"`
