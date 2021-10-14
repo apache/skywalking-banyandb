@@ -59,14 +59,8 @@ message TopNRequest {
     model.v1.TimeRange time_range = 2;
     // top_n set the how many items should be returned in each list.
     int32 top_n = 3;
-    message Aggregation {
-        // func set the aggregation function should be used
-        AggregationFunction func = 1;
-        // group_by_tag_names group counters based on tags
-        repeated string group_by_tag_names = 2;
-    }
     // agg aggregates lists in the time_range based on th
-    Aggregation agg = 4;
+    AggregationFunction agg = 4;
     // criteria select counters.
     repeated model.v1.Condition conditions = 5;
 }
