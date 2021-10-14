@@ -24,35 +24,11 @@ tool_include := "$(root_dir)/include"
 uname_os := $(shell uname -s)
 uname_arch := $(shell uname -m)
 
-protoc_version ?= 3.18.1
 buf_version ?= v1.0.0-rc5
 
-# There are no protobuf releases for Darwin ARM so for
-# now we always use the x86_64 release through Rosetta.
-ifeq ($(uname_os),Darwin)
-protoc_os := osx
-protoc_arch := x86_64
-endif
-ifeq ($(uname_os),Linux)
-protoc_os = linux
-protoc_arch := $(uname_arch)
-endif
-
-
 ## Tools
-
-PROTOC := $(tool_bin)/protoc
-$(PROTOC):
-	@echo "Install protoc..."
-	@if ! command -v curl >/dev/null 2>/dev/null; then echo "error: curl must be installed"  >&2; exit 1; fi
-	@if ! command -v unzip >/dev/null 2>/dev/null; then echo "error: unzip must be installed"  >&2; exit 1; fi
-	@rm -f $(tool_bin)/protoc
-	@rm -rf $(tool_include)/google
-	@mkdir -p $(tool_bin) $(tool_include)
-	$(eval protoc_tmp := $(shell mktemp -d))
-	cd $(protoc_tmp); curl -sSL https://github.com/protocolbuffers/protobuf/releases/download/v$(protoc_version)/protoc-$(protoc_version)-$(protoc_os)-$(protoc_arch).zip -o protoc.zip
-	cd $(protoc_tmp); unzip protoc.zip && mv bin/protoc $(tool_bin)/protoc && mv include/google $(tool_include)/google
-	@rm -rf $(protoc_tmp)
+BUF := $(tool_bin)/buf
+$(BUF):
 	@echo "Install proto plugins..."
 	@rm -f $(tool_bin)/protoc-gen-go
 	@rm -f $(tool_bin)/protoc-gen-go-grpc
