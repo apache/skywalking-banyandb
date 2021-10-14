@@ -32,6 +32,13 @@ func Test_service_RulesBySubject(t *testing.T) {
 		subject *commonv1.Metadata
 	}
 	is := assert.New(t)
+	ctx := context.TODO()
+	s, _ := NewService(ctx)
+	is.NotNil(s)
+	err := s.PreRun()
+	is.NoError(err)
+	defer s.GracefulStop()
+
 	tests := []struct {
 		name    string
 		args    args
@@ -66,14 +73,6 @@ func Test_service_RulesBySubject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.TODO()
-			s, _ := NewService(ctx)
-			err := s.PreRun()
-			if err != nil {
-				t.Errorf("Service.Serve() error = %v", err)
-				return
-			}
-			defer s.GracefulStop()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewService() error = %v, wantErr %v", err, tt.wantErr)
 				return

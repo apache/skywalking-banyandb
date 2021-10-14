@@ -151,7 +151,7 @@ func TestIndexRuleRegistry(t *testing.T) {
 
 	meta := &commonv1.Metadata{
 		Group: "default",
-		Name:  "sw-index-rule-binding",
+		Name:  "db.instance",
 	}
 
 	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
