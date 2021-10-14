@@ -24,6 +24,7 @@ package banyandb.database.v1;
 
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
+import "banyandb/model/v1/query.proto";
 
 // Duration represents the elapsed time between two instants
 message Duration {
@@ -66,11 +67,7 @@ message Stream {
     repeated TagFamilySpec tag_families = 2;
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
-    // duration determines how long a TraceSeries keeps its data
-    uint32 shard_num = 4;
-    Duration duration = 5;
-    // updated_at_nanoseconds indicates when the TraceSeries is updated
-    google.protobuf.Timestamp updated_at = 6;
+    ResourceOpts opts = 4;
 }
 
 message Entity {
@@ -92,6 +89,15 @@ enum EncodingMethod {
 enum CompressionMethod {
     COMPRESSION_METHOD_UNSPECIFIED = 0;
     COMPRESSION_METHOD_ZSTD = 1;
+}
+
+message ResourceOpts {
+    // shard_num is the number of shards
+    uint32 shard_num = 5;
+    // ttl indicates time to live, how long the data will be cached
+    Duration ttl = 6;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 7; 
 }
 
 // FieldSpec is the specification of field
@@ -116,12 +122,18 @@ message Measure {
     repeated FieldSpec fields = 3;
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
-    // shard_num is the number of shards
-    uint32 shard_num = 5;
-    // ttl indicates time to live, how long the data will be cached
-    Duration ttl = 6;
-    // updated_at_nanoseconds indicates when the measure is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 7;
+    ResourceOpts opts = 5;
+}
+
+message TopNAggregation {
+    // metadata is the identity of a measure
+    common.v1.Metadata metadata = 1;
+    common.v1.Metadata source_measure = 2;
+    string field_name = 3;
+    model.v1.Sort field_value_sort = 4;
+    repeated string group_by = 5;
+    repeated model.v1.Criteria criteria = 6;
+    ResourceOpts opts = 7;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type
