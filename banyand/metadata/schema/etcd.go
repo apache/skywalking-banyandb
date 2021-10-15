@@ -46,6 +46,7 @@ var (
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
+	ErrGroupAlreadyDefined        = errors.New("group is already defined")
 	ErrGroupNotDefined            = errors.New("group is not defined or has already been deleted")
 
 	StreamKeyPrefix           = "/stream/"
@@ -111,12 +112,12 @@ type etcdSchemaRegistryConfig struct {
 }
 
 func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool, error) {
-	var entity *commonv1.Group
-	err := e.get(ctx, formatGroupKey(group), entity)
-	if err != nil {
+	var entity commonv1.Group
+	err := e.get(ctx, formatGroupKey(group), &entity)
+	if err != nil && !errors.Is(err, ErrEntityNotFound) {
 		return false, err
 	}
-	return entity != nil && !entity.Deleted, nil
+	return entity.GetName() != "" && !entity.Deleted, nil
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
@@ -155,8 +156,8 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) erro
 	if err != nil {
 		return err
 	}
-	if !exist {
-		return errors.Wrap(ErrGroupNotDefined, group)
+	if exist {
+		return errors.Wrap(ErrGroupAlreadyDefined, group)
 	}
 	return e.update(ctx, formatGroupKey(group), &commonv1.Group{
 		Name:    group,
@@ -191,6 +192,13 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	groupExist, err := e.ExistGroup(ctx, measure.GetMetadata().GetGroup())
+	if err != nil {
+		return err
+	}
+	if !groupExist {
+		return errors.Wrap(ErrGroupNotDefined, measure.GetMetadata().GetGroup())
+	}
 	return e.update(ctx, formatMeasureKey(measure.GetMetadata()), measure)
 }
 
@@ -225,6 +233,13 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 }
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
+	groupExist, err := e.ExistGroup(ctx, stream.GetMetadata().GetGroup())
+	if err != nil {
+		return err
+	}
+	if !groupExist {
+		return errors.Wrap(ErrGroupNotDefined, stream.GetMetadata().GetGroup())
+	}
 	return e.update(ctx, formatSteamKey(stream.GetMetadata()), stream)
 }
 
@@ -259,6 +274,13 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	groupExist, err := e.ExistGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
+	if err != nil {
+		return err
+	}
+	if !groupExist {
+		return errors.Wrap(ErrGroupNotDefined, indexRuleBinding.GetMetadata().GetGroup())
+	}
 	return e.update(ctx, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
 }
 
@@ -293,6 +315,13 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	groupExist, err := e.ExistGroup(ctx, indexRule.GetMetadata().GetGroup())
+	if err != nil {
+		return err
+	}
+	if !groupExist {
+		return errors.Wrap(ErrGroupNotDefined, indexRule.GetMetadata().GetGroup())
+	}
 	return e.update(ctx, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
 }
 
@@ -301,6 +330,10 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 }
 
 func (e *etcdSchemaRegistry) preload() error {
+	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
+		return err
+	}
+
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
