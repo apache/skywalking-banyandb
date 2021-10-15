@@ -19,6 +19,7 @@ package logical
 
 import (
 	"context"
+	"os"
 
 	"github.com/pkg/errors"
 
@@ -90,7 +91,8 @@ func DefaultAnalyzer() (*Analyzer, func(), error) {
 	}
 
 	lc, lp := metaSchema.RandomUnixDomainListener()
-	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+	rootDir := metaSchema.RandomTempDir()
+	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + rootDir})
 
 	if err != nil {
 		return nil, func() {
@@ -107,6 +109,7 @@ func DefaultAnalyzer() (*Analyzer, func(), error) {
 			metadataService,
 		}, func() {
 			metadataService.GracefulStop()
+			os.RemoveAll(rootDir)
 		}, nil
 }
 

@@ -22,6 +22,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -91,7 +92,8 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	t.NoError(err)
 
 	lc, lp := schema.RandomUnixDomainListener()
-	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+	etcdRootDir := schema.RandomTempDir()
+	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + etcdRootDir})
 	t.NoError(err)
 
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil, nil)
@@ -117,7 +119,8 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 
 	return s, metadataSvc, func() {
 		_ = s.Close()
-		deferFunc()
 		metadataSvc.GracefulStop()
+		deferFunc()
+		_ = os.RemoveAll(etcdRootDir)
 	}
 }

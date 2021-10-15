@@ -26,7 +26,7 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/google/uuid"
+	googleUUID "github.com/google/uuid"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -64,11 +64,14 @@ func PreloadSchema() RegistryOption {
 	}
 }
 
-func RandomTempDir() RegistryOption {
+func UseRandomTempDir() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		uuidDir, _ := uuid.NewUUID()
-		config.rootDir = path.Join(os.TempDir(), uuidDir.String())
+		config.rootDir = RandomTempDir()
 	}
+}
+
+func RandomTempDir() string {
+	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", googleUUID.New().String()))
 }
 
 func RootDir(rootDir string) RegistryOption {

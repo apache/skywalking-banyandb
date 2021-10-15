@@ -97,7 +97,8 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	tester.NoError(err)
 
 	lc, lp := schema.RandomUnixDomainListener()
-	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+	etcdRootDir := schema.RandomTempDir()
+	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + etcdRootDir})
 	tester.NoError(err)
 
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
@@ -125,6 +126,7 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 		deferFunc()
 		metadataSvc.GracefulStop()
 		_ = os.RemoveAll(rootPath)
+		_ = os.RemoveAll(etcdRootDir)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"io"
 	"path/filepath"
 	"runtime"
@@ -91,7 +92,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	)
 	// Create a random directory
 	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath}
+	flags := []string{"--root-path=" + rootPath, "--etcd-root-path=" + schema.RandomTempDir()}
 	if testData.TLS {
 		flags = append(flags, "--tls=true")
 		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")

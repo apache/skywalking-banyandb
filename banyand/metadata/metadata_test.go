@@ -19,6 +19,7 @@ package metadata
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,11 +38,15 @@ func Test_service_RulesBySubject(t *testing.T) {
 	s, _ := NewService(ctx)
 	is.NotNil(s)
 	lc, lp := schema.RandomUnixDomainListener()
-	err := s.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+	rootDir := schema.RandomTempDir()
+	err := s.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + rootDir})
 	is.NoError(err)
 	err = s.PreRun()
 	is.NoError(err)
-	defer s.GracefulStop()
+	defer func() {
+		s.GracefulStop()
+		_ = os.RemoveAll(rootDir)
+	}()
 
 	tests := []struct {
 		name    string

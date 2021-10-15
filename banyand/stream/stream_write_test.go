@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"encoding/base64"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -195,7 +196,8 @@ func setup(t *testing.T) (*stream, func()) {
 	req.NoError(err)
 
 	lc, lp := schema.RandomUnixDomainListener()
-	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp})
+	etcdRootDir := schema.RandomTempDir()
+	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + etcdRootDir})
 	req.NoError(err)
 
 	err = mService.PreRun()
@@ -216,8 +218,9 @@ func setup(t *testing.T) (*stream, func()) {
 	req.NoError(err)
 	return s, func() {
 		_ = s.Close()
-		deferFunc()
 		mService.GracefulStop()
+		deferFunc()
+		_ = os.RemoveAll(etcdRootDir)
 	}
 }
 

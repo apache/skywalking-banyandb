@@ -20,7 +20,6 @@ package metadata
 import (
 	"context"
 	"errors"
-	"os"
 	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
@@ -59,6 +58,7 @@ type service struct {
 	stopCh            chan struct{}
 	clientListenerURL string
 	peerListenerURL   string
+	rootDir           string
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -67,12 +67,16 @@ func (s *service) FlagSet() *run.FlagSet {
 		"listener for client")
 	fs.StringVarP(&s.peerListenerURL, "listener-peer-url", "", embed.DefaultListenPeerURLs,
 		"listener for peer")
+	fs.StringVarP(&s.rootDir, "etcd-root-path", "", "/tmp", "the root path of database")
 	return fs
 }
 
 func (s *service) Validate() error {
 	if s.clientListenerURL == "" || s.peerListenerURL == "" {
 		return errors.New("listener cannot be set to empty")
+	}
+	if s.rootDir == "" {
+		return errors.New("rootDir is empty")
 	}
 	return nil
 }
@@ -81,7 +85,7 @@ func (s *service) PreRun() error {
 	var err error
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema(),
 		schema.UseListener(s.clientListenerURL, s.peerListenerURL),
-		schema.RootDir(os.TempDir()))
+		schema.RootDir(s.rootDir))
 	return err
 }
 
