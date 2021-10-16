@@ -937,6 +937,7 @@ type TopNAggregation struct {
 	// field_value_sort indicates how to sort fields
 	// ASC: bottomN
 	// DESC: topN
+	// UNSPECIFIED: topN + bottomN
 	FieldValueSort v11.Sort `protobuf:"varint,4,opt,name=field_value_sort,json=fieldValueSort,proto3,enum=banyandb.model.v1.Sort" json:"field_value_sort,omitempty"`
 	// group_by_tag_names groups data points into statistical counters
 	GroupByTagNames []string `protobuf:"bytes,5,rep,name=group_by_tag_names,json=groupByTagNames,proto3" json:"group_by_tag_names,omitempty"`

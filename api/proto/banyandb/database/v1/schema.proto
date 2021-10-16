@@ -138,6 +138,7 @@ message TopNAggregation {
     // field_value_sort indicates how to sort fields
     // ASC: bottomN
     // DESC: topN
+    // UNSPECIFIED: topN + bottomN
     model.v1.Sort field_value_sort = 4;
     // group_by_tag_names groups data points into statistical counters
     repeated string group_by_tag_names = 5;
