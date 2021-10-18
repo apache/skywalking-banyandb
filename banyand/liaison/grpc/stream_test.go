@@ -45,6 +45,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
+var _ run.PreRunner = (*preloadStreamService)(nil)
+
+type preloadStreamService struct {
+	metaSvc metadata.Service
+}
+
+func (p *preloadStreamService) Name() string {
+	return "preload-stream"
+}
+
+func (p *preloadStreamService) PreRun() error {
+	return test.PreloadSchema(p.metaSvc.SchemaRegistry())
+}
+
 type testData struct {
 	certFile           string
 	serverHostOverride string
@@ -79,11 +93,14 @@ func setup(req *require.Assertions, testData testData) func() {
 
 	closer := run.NewTester("closer")
 	startListener := run.NewTester("started-listener")
+
+	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	g.Register(
 		closer,
 		repo,
 		pipeline,
 		metaSvc,
+		preloadStreamSvc,
 		streamSvc,
 		q,
 		tcp,

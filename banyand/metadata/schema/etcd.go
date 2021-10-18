@@ -27,7 +27,6 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -55,12 +54,6 @@ var (
 
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
-func PreloadSchema() RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.preload = true
-	}
-}
-
 func RootDir(rootDir string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
 		config.rootDir = rootDir
@@ -80,8 +73,6 @@ type etcdSchemaRegistry struct {
 }
 
 type etcdSchemaRegistryConfig struct {
-	// preload internal schema
-	preload bool
 	// rootDir is the root directory for etcd storage
 	rootDir string
 	// listenerClientURL is the listener for client
@@ -336,52 +327,6 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 	return e.delete(ctx, g, formatIndexRuleKey(metadata))
 }
 
-func (e *etcdSchemaRegistry) preload() error {
-	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
-		return err
-	}
-
-	s := &databasev1.Stream{}
-	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
-		return err
-	}
-	err := e.UpdateStream(context.Background(), s)
-	if err != nil {
-		return err
-	}
-
-	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
-		return err
-	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
-	if err != nil {
-		return err
-	}
-
-	entries, err := indexRuleStore.ReadDir(indexRuleDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
-		if err != nil {
-			return err
-		}
-		var idxRule databasev1.IndexRule
-		err = protojson.Unmarshal(data, &idxRule)
-		if err != nil {
-			return err
-		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (e *etcdSchemaRegistry) ReadyNotify() <-chan struct{} {
 	return e.server.Server.ReadyNotify()
 }
@@ -425,12 +370,6 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	reg := &etcdSchemaRegistry{
 		server: e,
 		kv:     kvClient,
-	}
-	if registryConfig.preload {
-		err := reg.preload()
-		if err != nil {
-			return nil, err
-		}
 	}
 	return reg, nil
 }

@@ -202,6 +202,9 @@ func setup(t *testing.T) (*stream, func()) {
 	err = mService.PreRun()
 	req.NoError(err)
 
+	err = test.PreloadSchema(mService.SchemaRegistry())
+	req.NoError(err)
+
 	sa, err := mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",

@@ -58,6 +58,12 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
+	err = test.PreloadSchema(metadataService.SchemaRegistry())
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
 	ana, err := logical.CreateAnalyzerFromMetaService(metadataService)
 	if err != nil {
 		return nil, func() {

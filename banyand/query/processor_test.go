@@ -115,6 +115,9 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	err = metadataSvc.PreRun()
 	tester.NoError(err)
 
+	err = test.PreloadSchema(metadataSvc.SchemaRegistry())
+	tester.NoError(err)
+
 	err = streamSvc.PreRun()
 	tester.NoError(err)
 

@@ -102,6 +102,9 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	err = metadataSvc.PreRun()
 	t.NoError(err)
 
+	err = test.PreloadSchema(metadataSvc.SchemaRegistry())
+	t.NoError(err)
+
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})
 	t.NoError(err)
 

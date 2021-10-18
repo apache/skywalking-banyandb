@@ -19,37 +19,114 @@ package schema
 
 import (
 	"context"
+	"embed"
+	"fmt"
+	"math/rand"
+	"os"
+	"path"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
+
+const indexRuleDir = "testdata/index_rules"
+
+var (
+	//go:embed testdata/index_rules/*.json
+	indexRuleStore embed.FS
+	//go:embed testdata/index_rule_binding.json
+	indexRuleBindingJSON string
+	//go:embed testdata/stream.json
+	streamJSON string
+)
+
+func PreloadSchema(e Registry) error {
+	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
+		return err
+	}
+
+	s := &databasev1.Stream{}
+	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
+		return err
+	}
+	err := e.UpdateStream(context.Background(), s)
+	if err != nil {
+		return err
+	}
+
+	indexRuleBinding := &databasev1.IndexRuleBinding{}
+	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
+		return err
+	}
+	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
+	if err != nil {
+		return err
+	}
+
+	entries, err := indexRuleStore.ReadDir(indexRuleDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
+		if err != nil {
+			return err
+		}
+		var idxRule databasev1.IndexRule
+		err = protojson.Unmarshal(data, &idxRule)
+		if err != nil {
+			return err
+		}
+		err = e.UpdateIndexRule(context.Background(), &idxRule)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 type HasMetadata interface {
 	GetMetadata() *commonv1.Metadata
 }
 
+func randomTempDir() string {
+	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
+}
+
+func randomUnixDomainListener() (string, string) {
+	i := rand.Uint64()
+	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
+		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
+}
+
 func useRandomTempDir() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = test.RandomTempDir()
+		config.rootDir = randomTempDir()
 	}
 }
 
 func useUnixDomain() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL, config.listenerPeerURL = test.RandomUnixDomainListener()
+		config.listenerClientURL, config.listenerPeerURL = randomUnixDomainListener()
 	}
 }
 
 func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
+
+	err = PreloadSchema(registry)
+	tester.NoError(err)
 
 	tests := []struct {
 		name        string
@@ -122,10 +199,13 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 func Test_Etcd_Entity_List(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
+
+	err = PreloadSchema(registry)
+	tester.NoError(err)
 
 	tests := []struct {
 		name        string
@@ -234,10 +314,13 @@ func Test_Etcd_Entity_List(t *testing.T) {
 
 func Test_Etcd_Delete(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
+
+	err = PreloadSchema(registry)
+	tester.NoError(err)
 
 	tests := []struct {
 		name              string

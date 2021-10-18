@@ -51,6 +51,7 @@ type Service interface {
 	run.PreRunner
 	run.Service
 	run.Config
+	SchemaRegistry() schema.Registry
 }
 
 type service struct {
@@ -82,8 +83,7 @@ func (s *service) Validate() error {
 
 func (s *service) PreRun() error {
 	var err error
-	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema(),
-		schema.UseListener(s.clientListenerURL, s.peerListenerURL),
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.UseListener(s.clientListenerURL, s.peerListenerURL),
 		schema.RootDir(s.rootDir))
 	if err != nil {
 		return err
@@ -104,6 +104,10 @@ func (s *service) GracefulStop() {
 
 func NewService(_ context.Context) (Service, error) {
 	return &service{}, nil
+}
+
+func (s *service) SchemaRegistry() schema.Registry {
+	return s.schemaRegistry
 }
 
 func (s *service) StreamRegistry() schema.Stream {

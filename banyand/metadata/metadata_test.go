@@ -48,6 +48,9 @@ func Test_service_RulesBySubject(t *testing.T) {
 		_ = os.RemoveAll(rootDir)
 	}()
 
+	err = test.PreloadSchema(s.SchemaRegistry())
+	is.NoError(err)
+
 	tests := []struct {
 		name    string
 		args    args
