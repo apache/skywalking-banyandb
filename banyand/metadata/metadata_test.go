@@ -26,7 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
@@ -37,8 +37,8 @@ func Test_service_RulesBySubject(t *testing.T) {
 	ctx := context.TODO()
 	s, _ := NewService(ctx)
 	is.NotNil(s)
-	lc, lp := schema.RandomUnixDomainListener()
-	rootDir := schema.RandomTempDir()
+	lc, lp := test.RandomUnixDomainListener()
+	rootDir := test.RandomTempDir()
 	err := s.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + rootDir})
 	is.NoError(err)
 	err = s.PreRun()

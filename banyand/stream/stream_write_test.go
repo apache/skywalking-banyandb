@@ -31,7 +31,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -195,8 +194,8 @@ func setup(t *testing.T) (*stream, func()) {
 	mService, err := metadata.NewService(context.TODO())
 	req.NoError(err)
 
-	lc, lp := schema.RandomUnixDomainListener()
-	etcdRootDir := schema.RandomTempDir()
+	lc, lp := test.RandomUnixDomainListener()
+	etcdRootDir := test.RandomTempDir()
 	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
 	req.NoError(err)
 

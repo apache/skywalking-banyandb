@@ -38,7 +38,6 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -96,8 +95,8 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
-	lc, lp := schema.RandomUnixDomainListener()
-	etcdRootDir := schema.RandomTempDir()
+	lc, lp := test.RandomUnixDomainListener()
+	etcdRootDir := test.RandomTempDir()
 	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
 	tester.NoError(err)
 

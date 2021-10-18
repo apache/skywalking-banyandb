@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 type HasMetadata interface {
@@ -33,13 +34,13 @@ type HasMetadata interface {
 
 func useRandomTempDir() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = RandomTempDir()
+		config.rootDir = test.RandomTempDir()
 	}
 }
 
 func useUnixDomain() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL, config.listenerPeerURL = RandomUnixDomainListener()
+		config.listenerClientURL, config.listenerPeerURL = test.RandomUnixDomainListener()
 	}
 }
 

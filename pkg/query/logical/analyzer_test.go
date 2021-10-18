@@ -28,10 +28,10 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	metaSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 // setUpAnalyzer creates a default analyzer for testing.
@@ -43,8 +43,8 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
-	lc, lp := metaSchema.RandomUnixDomainListener()
-	rootDir := metaSchema.RandomTempDir()
+	lc, lp := test.RandomUnixDomainListener()
+	rootDir := test.RandomTempDir()
 	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + rootDir})
 
 	if err != nil {

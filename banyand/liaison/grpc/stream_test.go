@@ -36,7 +36,6 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -92,7 +91,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	)
 	// Create a random directory
 	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + schema.RandomTempDir()}
+	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + test.RandomTempDir()}
 	if testData.TLS {
 		flags = append(flags, "--tls=true")
 		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")

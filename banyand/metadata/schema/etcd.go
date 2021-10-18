@@ -19,15 +19,11 @@ package schema
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -58,16 +54,6 @@ var (
 )
 
 type RegistryOption func(*etcdSchemaRegistryConfig)
-
-func RandomTempDir() string {
-	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
-}
-
-func RandomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
-		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
-}
 
 func PreloadSchema() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
