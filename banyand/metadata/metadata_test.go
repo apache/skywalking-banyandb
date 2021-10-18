@@ -19,13 +19,14 @@ package metadata
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {
@@ -33,10 +34,26 @@ func Test_service_RulesBySubject(t *testing.T) {
 		subject *commonv1.Metadata
 	}
 	is := assert.New(t)
+	ctx := context.TODO()
+	s, _ := NewService(ctx)
+	is.NotNil(s)
+	rootDir := test.RandomTempDir()
+	err := s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
+	is.NoError(err)
+	err = s.PreRun()
+	is.NoError(err)
+	defer func() {
+		s.GracefulStop()
+		_ = os.RemoveAll(rootDir)
+	}()
+
+	err = test.PreloadSchema(s.SchemaRegistry())
+	is.NoError(err)
+
 	tests := []struct {
 		name    string
 		args    args
-		want    []*databasev1.IndexRule
+		want    []string
 		wantErr bool
 	}{
 		{
@@ -44,7 +61,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 			args: args{
 				subject: createSubject("sw", "default"),
 			},
-			want: getIndexRule(
+			want: []string{
 				"trace_id",
 				"duration",
 				"endpoint_id",
@@ -54,20 +71,19 @@ func Test_service_RulesBySubject(t *testing.T) {
 				"db.type",
 				"mq.broker",
 				"mq.queue",
-				"mq.topic"),
+				"mq.topic",
+			},
 		},
 		{
 			name: "got empty idWithShard",
 			args: args{
 				subject: createSubject("invalid", "default"),
 			},
-			want: make([]*databasev1.IndexRule, 0),
+			want: make([]string, 0),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.TODO()
-			s, err := NewService(ctx)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewService() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -77,16 +93,16 @@ func Test_service_RulesBySubject(t *testing.T) {
 				t.Errorf("RulesBySubject() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			is.Equal(tt.want, got)
+			is.Equal(getIndexRule(s, tt.want...), got)
 		})
 	}
 }
 
-func getIndexRule(names ...string) []*databasev1.IndexRule {
-	ruleRepo, _ := schema.NewIndexRule()
+func getIndexRule(s Service, names ...string) []*databasev1.IndexRule {
+	ruleRepo := s.IndexRuleRegistry()
 	result := make([]*databasev1.IndexRule, 0, len(names))
 	for _, name := range names {
-		indexRule, _ := ruleRepo.Get(context.TODO(), &commonv1.Metadata{
+		indexRule, _ := ruleRepo.GetIndexRule(context.TODO(), &commonv1.Metadata{
 			Group: "default",
 			Name:  name,
 		})

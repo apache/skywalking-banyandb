@@ -24,6 +24,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +44,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+var _ run.PreRunner = (*preloadStreamService)(nil)
+
+type preloadStreamService struct {
+	metaSvc metadata.Service
+}
+
+func (p *preloadStreamService) Name() string {
+	return "preload-stream"
+}
+
+func (p *preloadStreamService) PreRun() error {
+	return test.PreloadSchema(p.metaSvc.SchemaRegistry())
+}
 
 type testData struct {
 	certFile           string
@@ -67,20 +82,25 @@ func setup(req *require.Assertions, testData testData) func() {
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	req.NoError(err)
+	// Init `Stream` module
 	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
 	req.NoError(err)
-	q, err := query.NewExecutor(context.TODO(), streamSvc, repo, pipeline)
+	// Init `Query` module
+	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
 	req.NoError(err)
 
-	tcp := NewServer(context.TODO(), pipeline, repo)
+	tcp := NewServer(context.TODO(), pipeline, repo, metaSvc)
 
 	closer := run.NewTester("closer")
 	startListener := run.NewTester("started-listener")
+
+	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	g.Register(
 		closer,
 		repo,
 		pipeline,
 		metaSvc,
+		preloadStreamSvc,
 		streamSvc,
 		q,
 		tcp,
@@ -88,7 +108,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	)
 	// Create a random directory
 	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath}
+	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + test.RandomTempDir()}
 	if testData.TLS {
 		flags = append(flags, "--tls=true")
 		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")
@@ -100,7 +120,12 @@ func setup(req *require.Assertions, testData testData) func() {
 	err = g.RegisterFlags().Parse(flags)
 	req.NoError(err)
 
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
 	go func() {
+		// we have to wait for this goroutine to safely shutdown
+		defer wg.Done()
 		errRun := g.Run()
 		if errRun != nil {
 			startListener.GracefulStop()
@@ -111,6 +136,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	req.NoError(startListener.WaitUntilStarted())
 	return func() {
 		closer.GracefulStop()
+		wg.Wait()
 	}
 }
 

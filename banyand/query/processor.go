@@ -24,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -42,6 +43,7 @@ var (
 
 type queryProcessor struct {
 	streamService stream.Service
+	metaService   metadata.Service
 	logger        *logger.Logger
 	log           *logger.Logger
 	serviceRepo   discovery.ServiceRepo
@@ -57,21 +59,26 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	q.log.Info().
 		Msg("received a query event")
 
-	metadata := queryCriteria.GetMetadata()
-	ec, err := q.streamService.Stream(metadata)
+	meta := queryCriteria.GetMetadata()
+	ec, err := q.streamService.Stream(meta)
 	if err != nil {
 		q.logger.Error().Err(err).Msg("fail to get stream execution context")
 		return
 	}
 
-	analyzer := logical.DefaultAnalyzer()
-	s, err := analyzer.BuildStreamSchema(context.TODO(), metadata)
+	analyzer, err := logical.CreateAnalyzerFromMetaService(q.metaService)
+	if err != nil {
+		q.logger.Error().Err(err).Msg("fail to build analyzer")
+		return
+	}
+
+	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
 	if err != nil {
 		q.logger.Error().Err(err).Msg("fail to build trace schema")
 		return
 	}
 
-	p, err := analyzer.Analyze(context.TODO(), queryCriteria, metadata, s)
+	p, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
 		q.logger.Error().Err(err).Msg("fail to analyze the query request")
 		return

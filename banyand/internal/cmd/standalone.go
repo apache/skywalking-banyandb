@@ -60,11 +60,11 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	q, err := query.NewExecutor(ctx, streamSvc, repo, pipeline)
+	q, err := query.NewExecutor(ctx, streamSvc, metaSvc, repo, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace series")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo)
+	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}

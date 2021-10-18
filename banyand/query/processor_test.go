@@ -95,17 +95,28 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
+	etcdRootDir := test.RandomTempDir()
+	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
+	tester.NoError(err)
+
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
 	tester.NoError(err)
 
 	// Init `Query` module
-	executor, err := NewExecutor(context.TODO(), streamSvc, repo, pipeline)
+	executor, err := NewExecutor(context.TODO(), streamSvc, metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
 	// :PreRun:
-	// 1) stream
-	// 2) query
-	// 3) liaison
+	// 1) metadata
+	// 2) stream
+	// 3) query
+	// 4) liaison
+	err = metadataSvc.PreRun()
+	tester.NoError(err)
+
+	err = test.PreloadSchema(metadataSvc.SchemaRegistry())
+	tester.NoError(err)
+
 	err = streamSvc.PreRun()
 	tester.NoError(err)
 
@@ -114,7 +125,9 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 
 	return streamSvc, pipeline, func() {
 		deferFunc()
+		metadataSvc.GracefulStop()
 		_ = os.RemoveAll(rootPath)
+		_ = os.RemoveAll(etcdRootDir)
 	}
 }
 
