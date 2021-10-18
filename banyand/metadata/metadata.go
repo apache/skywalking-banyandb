@@ -55,7 +55,6 @@ type Service interface {
 
 type service struct {
 	schemaRegistry    schema.Registry
-	stopCh            chan struct{}
 	clientListenerURL string
 	peerListenerURL   string
 	rootDir           string
@@ -86,20 +85,21 @@ func (s *service) PreRun() error {
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.PreloadSchema(),
 		schema.UseListener(s.clientListenerURL, s.peerListenerURL),
 		schema.RootDir(s.rootDir))
-	return err
+	if err != nil {
+		return err
+	}
+	<-s.schemaRegistry.ReadyNotify()
+	return nil
 }
 
 func (s *service) Serve() error {
-	s.stopCh = make(chan struct{})
-	<-s.stopCh
+	<-s.schemaRegistry.StoppingNotify()
 	return nil
 }
 
 func (s *service) GracefulStop() {
-	s.schemaRegistry.Close()
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
+	_ = s.schemaRegistry.Close()
+	<-s.schemaRegistry.StopNotify()
 }
 
 func NewService(_ context.Context) (Service, error) {

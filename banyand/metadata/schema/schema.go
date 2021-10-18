@@ -31,6 +31,9 @@ type ListOpt struct {
 
 type Registry interface {
 	io.Closer
+	ReadyNotify() <-chan struct{}
+	StopNotify() <-chan struct{}
+	StoppingNotify() <-chan struct{}
 	Stream
 	IndexRule
 	IndexRuleBinding
@@ -67,8 +70,12 @@ type Measure interface {
 }
 
 type Group interface {
-	ExistGroup(ctx context.Context, group string) (bool, error)
+	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
 	ListGroup(ctx context.Context) ([]string, error)
+	// DeleteGroup delete all items belonging to the group
 	DeleteGroup(ctx context.Context, group string) (bool, error)
+	// CreateGroup works like `touch` in unix systems.
+	// 1. It will create the group if it does not exist.
+	// 2. It will update the updated_at timestamp to the current timestamp.
 	CreateGroup(ctx context.Context, group string) error
 }

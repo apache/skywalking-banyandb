@@ -29,6 +29,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -43,10 +44,9 @@ var (
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
-	ErrGroupAlreadyDefined        = errors.New("group is already defined")
-	ErrGroupNotDefined            = errors.New("group is not defined or has already been deleted")
 
 	GroupsKeyPrefix           = "/groups/"
+	GroupMetadataKey          = "/__meta_group__"
 	StreamKeyPrefix           = "/streams/"
 	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
 	IndexRuleKeyPrefix        = "/index-rules/"
@@ -90,13 +90,13 @@ type etcdSchemaRegistryConfig struct {
 	listenerPeerURL string
 }
 
-func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool, error) {
+func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
 	var entity commonv1.Group
 	err := e.get(ctx, formatGroupKey(group), &entity)
-	if err != nil && !errors.Is(err, ErrEntityNotFound) {
-		return false, err
+	if err != nil {
+		return nil, err
 	}
-	return entity.GetName() != "" && !entity.Deleted, nil
+	return &entity, nil
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
@@ -109,49 +109,39 @@ func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
 		return []string{}, nil
 	}
 
-	groupMap := make(map[string]struct{})
+	var groups []string
 	for _, kv := range messages.Kvs {
+		// kv.Key = "/groups/" + {group} + "/__meta_info__"
 		groupWithSuffix := strings.TrimPrefix(string(kv.Key), GroupsKeyPrefix)
-		idx := strings.Index(groupWithSuffix, "/")
-		if idx > 0 {
-			groupMap[groupWithSuffix[:idx]] = struct{}{}
+		if strings.HasSuffix(groupWithSuffix, GroupMetadataKey) {
+			groups = append(groups, strings.TrimSuffix(groupWithSuffix, GroupMetadataKey))
 		}
 	}
-	groups := make([]string, 0, len(groupMap))
-	for g := range groupMap {
-		groups = append(groups, g)
-	}
+
 	return groups, nil
 }
 
 func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, error) {
-	exist, err := e.ExistGroup(ctx, group)
+	g, err := e.GetGroup(ctx, group)
 	if err != nil {
-		return false, err
+		return false, errors.Wrap(err, group)
 	}
-	if !exist {
-		return false, errors.Wrap(ErrGroupNotDefined, group)
-	}
-	if err := e.update(ctx, formatGroupKey(group), &commonv1.Group{
-		Name:    group,
-		Deleted: true,
-	}); err != nil {
+	keyPrefix := GroupsKeyPrefix + g.GetName() + "/"
+	_, err = e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
+	if err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
 func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) error {
-	exist, err := e.ExistGroup(ctx, group)
-	if err != nil {
-		return err
-	}
-	if exist {
-		return errors.Wrap(ErrGroupAlreadyDefined, group)
+	_, err := e.GetGroup(ctx, group)
+	if err != nil && !errors.Is(err, ErrEntityNotFound) {
+		return errors.Wrap(err, group)
 	}
 	return e.update(ctx, formatGroupKey(group), &commonv1.Group{
-		Name:    group,
-		Deleted: false,
+		Name:      group,
+		UpdatedAt: timestamppb.Now(),
 	})
 }
 
@@ -185,12 +175,9 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
-	groupExist, err := e.ExistGroup(ctx, measure.GetMetadata().GetGroup())
+	_, err := e.GetGroup(ctx, measure.GetMetadata().GetGroup())
 	if err != nil {
-		return err
-	}
-	if !groupExist {
-		return errors.Wrap(ErrGroupNotDefined, measure.GetMetadata().GetGroup())
+		return errors.Wrap(err, measure.GetMetadata().GetGroup())
 	}
 	return e.update(ctx, formatMeasureKey(measure.GetMetadata()), measure)
 }
@@ -231,12 +218,9 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 }
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
-	groupExist, err := e.ExistGroup(ctx, stream.GetMetadata().GetGroup())
+	_, err := e.GetGroup(ctx, stream.GetMetadata().GetGroup())
 	if err != nil {
-		return err
-	}
-	if !groupExist {
-		return errors.Wrap(ErrGroupNotDefined, stream.GetMetadata().GetGroup())
+		return errors.Wrap(err, stream.GetMetadata().GetGroup())
 	}
 	return e.update(ctx, formatSteamKey(stream.GetMetadata()), stream)
 }
@@ -275,12 +259,9 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
-	groupExist, err := e.ExistGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
+	_, err := e.GetGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
 	if err != nil {
-		return err
-	}
-	if !groupExist {
-		return errors.Wrap(ErrGroupNotDefined, indexRuleBinding.GetMetadata().GetGroup())
+		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
 	return e.update(ctx, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
 }
@@ -319,12 +300,9 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
-	groupExist, err := e.ExistGroup(ctx, indexRule.GetMetadata().GetGroup())
+	_, err := e.GetGroup(ctx, indexRule.GetMetadata().GetGroup())
 	if err != nil {
-		return err
-	}
-	if !groupExist {
-		return errors.Wrap(ErrGroupNotDefined, indexRule.GetMetadata().GetGroup())
+		return errors.Wrap(err, indexRule.GetMetadata().GetGroup())
 	}
 	return e.update(ctx, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
 }
@@ -377,6 +355,18 @@ func (e *etcdSchemaRegistry) preload() error {
 	}
 
 	return nil
+}
+
+func (e *etcdSchemaRegistry) ReadyNotify() <-chan struct{} {
+	return e.server.Server.ReadyNotify()
+}
+
+func (e *etcdSchemaRegistry) StopNotify() <-chan struct{} {
+	return e.server.Server.StopNotify()
+}
+
+func (e *etcdSchemaRegistry) StoppingNotify() <-chan struct{} {
+	return e.server.Server.StoppingNotify()
 }
 
 func (e *etcdSchemaRegistry) Close() error {
@@ -512,7 +502,7 @@ func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 }
 
 func formatGroupKey(group string) string {
-	return GroupsKeyPrefix + group
+	return GroupsKeyPrefix + group + GroupMetadataKey
 }
 
 func incrementLastByte(key string) string {

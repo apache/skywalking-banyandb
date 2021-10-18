@@ -230,7 +230,7 @@ message GroupRegistryServiceExistRequest {
 }
 
 message GroupRegistryServiceExistResponse {
-  bool existence = 1;
+  banyandb.common.v1.Group group = 1;
 }
 
 message GroupRegistryServiceListRequest {

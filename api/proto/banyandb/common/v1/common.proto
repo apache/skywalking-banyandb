@@ -22,6 +22,8 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/co
 
 package banyandb.common.v1;
 
+import "google/protobuf/timestamp.proto";
+
 enum Catalog {
     CATALOG_UNSPECIFIED = 0;
     CATALOG_STREAM = 1;
@@ -41,6 +43,6 @@ message Metadata {
 message Group {
     // name of the group
     string name = 1;
-    // deleted marks whether this group has been deleted
-    bool deleted = 2;
+    // updated_at_nanoseconds indicates when resources of the group are updated
+    google.protobuf.Timestamp updated_at = 2;
 }

@@ -271,14 +271,14 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 	}, nil
 }
 
-func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupRegistryServiceExistRequest) (
+func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupRegistryServiceExistRequest) (
 	*databasev1.GroupRegistryServiceExistResponse, error) {
-	exist, err := rs.schemaRegistry.GroupRegistry().ExistGroup(ctx, req.GetGroup())
+	g, err := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, req.GetGroup())
 	if err != nil {
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceExistResponse{
-		Existence: exist,
+		Group: g,
 	}, nil
 }
 
