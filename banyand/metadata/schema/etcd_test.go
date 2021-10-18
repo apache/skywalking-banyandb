@@ -19,85 +19,228 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"os"
+	"path"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 )
 
-func Test_Etcd_Get_NotFound(t *testing.T) {
-	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "unknown", Group: "default"})
-	tester.Nil(stm)
-	tester.ErrorIs(err, ErrEntityNotFound)
+type HasMetadata interface {
+	GetMetadata() *commonv1.Metadata
 }
 
-func Test_Etcd_Stream_Get_Found(t *testing.T) {
-	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	stm, err := registry.GetStream(context.TODO(), &commonv1.Metadata{Name: "sw", Group: "default"})
-	tester.NotNil(stm)
-	tester.NoError(err)
-	tester.Equal(stm.GetMetadata().GetName(), "sw")
+func useRandomTempDir() RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.rootDir = randomTempDir()
+	}
 }
 
-func Test_Etcd_Stream_List_WithoutGroup_Found_One(t *testing.T) {
-	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	streams, err := registry.ListStream(context.TODO(), ListOpt{})
-	tester.NotNil(streams)
-	tester.NoError(err)
-	tester.Len(streams, 1)
+func randomTempDir() string {
+	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
 
-func Test_Etcd_IndexRuleBinding_Get_Found(t *testing.T) {
-	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	entity, err := registry.GetIndexRuleBinding(context.TODO(), &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"})
-	tester.NotNil(entity)
-	tester.NoError(err)
-	tester.Equal(entity.GetMetadata().GetName(), "sw-index-rule-binding")
+func useUnixDomain() RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.listenerClientURL, config.listenerPeerURL = randomUnixDomainListener()
+	}
 }
 
-func Test_Etcd_IndexRule_Get_Found(t *testing.T) {
-	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	entity, err := registry.GetIndexRule(context.TODO(), &commonv1.Metadata{Name: "db.instance", Group: "default"})
-	tester.NoError(err)
-	tester.NotNil(entity)
-	tester.Equal(entity.GetMetadata().GetName(), "db.instance")
+func randomUnixDomainListener() (string, string) {
+	i := rand.Uint64()
+	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i), fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }
 
-func Test_Etcd_IndexRule_List_Found(t *testing.T) {
+func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), UseUnixDomain(), UseRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), useUnixDomain(), useRandomTempDir())
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
 
-	entities, err := registry.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+	tests := []struct {
+		name        string
+		meta        *commonv1.Metadata
+		get         func(Registry, *commonv1.Metadata) (HasMetadata, error)
+		expectedErr bool
+	}{
+		{
+			name: "Get Stream",
+			meta: &commonv1.Metadata{Name: "sw", Group: "default"},
+			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+				stm, innerErr := registry.GetStream(context.TODO(), meta)
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				return HasMetadata(stm), nil
+			},
+		},
+		{
+			name: "Get IndexRuleBinding",
+			meta: &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"},
+			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+				e, innerErr := registry.GetIndexRuleBinding(context.TODO(), meta)
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				return HasMetadata(e), nil
+			},
+		},
+		{
+			name: "Get IndexRule",
+			meta: &commonv1.Metadata{Name: "db.instance", Group: "default"},
+			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+				e, innerErr := registry.GetIndexRule(context.TODO(), meta)
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				return HasMetadata(e), nil
+			},
+		},
+		{
+			name: "Get unknown Measure",
+			meta: &commonv1.Metadata{Name: "unknown-measure", Group: "default"},
+			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+				e, innerErr := registry.GetMeasure(context.TODO(), meta)
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				return HasMetadata(e), nil
+			},
+			expectedErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := require.New(t)
+			entity, err := tt.get(registry, tt.meta)
+			if !tt.expectedErr {
+				req.NoError(err)
+				req.NotNil(entity)
+				req.Equal(entity.GetMetadata().GetGroup(), tt.meta.GetGroup())
+				req.Equal(entity.GetMetadata().GetName(), tt.meta.GetName())
+			} else {
+				req.Error(err)
+			}
+		})
+	}
+}
+
+func Test_Etcd_Entity_List(t *testing.T) {
+	tester := assert.New(t)
+	registry, err := NewEtcdSchemaRegistry(PreloadSchema(), useUnixDomain(), useRandomTempDir())
 	tester.NoError(err)
-	tester.Len(entities, 10)
+	tester.NotNil(registry)
+	defer registry.Close()
+
+	tests := []struct {
+		name        string
+		list        func(Registry) (int, error)
+		expectedLen int
+	}{
+		{
+			name: "List Stream without Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListStream(context.TODO(), ListOpt{})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 1,
+		},
+		{
+			name: "List Stream with Group default",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListStream(context.TODO(), ListOpt{Group: "default"})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 1,
+		},
+		{
+			name: "List IndexRuleBinding without Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), ListOpt{})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 1,
+		},
+		{
+			name: "List IndexRuleBinding with Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), ListOpt{Group: "default"})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 1,
+		},
+		{
+			name: "List IndexRule without Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 10,
+		},
+		{
+			name: "List IndexRule with Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 10,
+		},
+		{
+			name: "List Measure without Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListMeasure(context.TODO(), ListOpt{})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 0,
+		},
+		{
+			name: "List Measure with Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListMeasure(context.TODO(), ListOpt{Group: "default"})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			expectedLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := require.New(t)
+			entitiesLen, listErr := tt.list(registry)
+			req.NoError(listErr)
+			req.Equal(entitiesLen, tt.expectedLen)
+		})
+	}
 }

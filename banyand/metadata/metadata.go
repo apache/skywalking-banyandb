@@ -67,7 +67,7 @@ func (s *service) FlagSet() *run.FlagSet {
 		"listener for client")
 	fs.StringVarP(&s.peerListenerURL, "listener-peer-url", "", embed.DefaultListenPeerURLs,
 		"listener for peer")
-	fs.StringVarP(&s.rootDir, "etcd-root-path", "", "/tmp", "the root path of database")
+	fs.StringVarP(&s.rootDir, "metadata-root-path", "", "/tmp", "the root path of metadata")
 	return fs
 }
 

@@ -19,14 +19,11 @@ package schema
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
+	"strings"
 
-	googleUUID "github.com/google/uuid"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -49,11 +46,11 @@ var (
 	ErrGroupAlreadyDefined        = errors.New("group is already defined")
 	ErrGroupNotDefined            = errors.New("group is not defined or has already been deleted")
 
-	StreamKeyPrefix           = "/stream/"
-	IndexRuleBindingKeyPrefix = "/index-rule-binding/"
-	IndexRuleKeyPrefix        = "/index-rule/"
-	MeasureKeyPrefix          = "/measure/"
 	GroupsKeyPrefix           = "/groups/"
+	StreamKeyPrefix           = "/streams/"
+	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
+	IndexRuleKeyPrefix        = "/index-rules/"
+	MeasureKeyPrefix          = "/measures/"
 )
 
 type RegistryOption func(*etcdSchemaRegistryConfig)
@@ -62,16 +59,6 @@ func PreloadSchema() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
 		config.preload = true
 	}
-}
-
-func UseRandomTempDir() RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = RandomTempDir()
-	}
-}
-
-func RandomTempDir() string {
-	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", googleUUID.New().String()))
 }
 
 func RootDir(rootDir string) RegistryOption {
@@ -85,17 +72,6 @@ func UseListener(client, peer string) RegistryOption {
 		config.listenerClientURL = client
 		config.listenerPeerURL = peer
 	}
-}
-
-func UseUnixDomain() RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL, config.listenerPeerURL = RandomUnixDomainListener()
-	}
-}
-
-func RandomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i), fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }
 
 type etcdSchemaRegistry struct {
@@ -124,15 +100,26 @@ func (e *etcdSchemaRegistry) ExistGroup(ctx context.Context, group string) (bool
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
-	messages, err := e.listWithPrefix(ctx, GroupsKeyPrefix, func() proto.Message {
-		return &commonv1.Group{}
-	})
+	messages, err := e.kv.Get(ctx, GroupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(GroupsKeyPrefix)))
 	if err != nil {
 		return nil, err
 	}
-	groups := make([]string, len(messages))
-	for i, message := range messages {
-		groups[i] = message.(*commonv1.Group).GetName()
+
+	if messages.Count == 0 {
+		return []string{}, nil
+	}
+
+	groupMap := make(map[string]struct{})
+	for _, kv := range messages.Kvs {
+		groupWithSuffix := strings.TrimPrefix(string(kv.Key), GroupsKeyPrefix)
+		idx := strings.Index(groupWithSuffix, "/")
+		if idx > 0 {
+			groupMap[groupWithSuffix[:idx]] = struct{}{}
+		}
+	}
+	groups := make([]string, 0, len(groupMap))
+	for g := range groupMap {
+		groups = append(groups, g)
 	}
 	return groups, nil
 }
@@ -177,19 +164,22 @@ func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.
 }
 
 func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
-	keyPrefix := MeasureKeyPrefix
-	if opt.Group != "" {
-		keyPrefix += opt.Group + "/"
-	}
-	messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-		return &databasev1.Measure{}
-	})
+	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, MeasureKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
-	entities := make([]*databasev1.Measure, len(messages))
-	for i, message := range messages {
-		entities[i] = message.(*databasev1.Measure)
+
+	var entities []*databasev1.Measure
+	for _, keyPrefix := range keyPrefixes {
+		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
+			return &databasev1.Measure{}
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, message := range messages {
+			entities = append(entities, message.(*databasev1.Measure))
+		}
 	}
 	return entities, nil
 }
@@ -218,20 +208,25 @@ func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.M
 }
 
 func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
-	keyPrefix := StreamKeyPrefix
-	if opt.Group != "" {
-		keyPrefix += opt.Group + "/"
-	}
-	messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-		return &databasev1.Stream{}
-	})
+	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, StreamKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
-	entities := make([]*databasev1.Stream, len(messages))
-	for i, message := range messages {
-		entities[i] = message.(*databasev1.Stream)
+
+	var entities []*databasev1.Stream
+	for _, keyPrefix := range keyPrefixes {
+		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
+			return &databasev1.Stream{}
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, message := range messages {
+			entities = append(entities, message.(*databasev1.Stream))
+		}
 	}
+
 	return entities, nil
 }
 
@@ -259,19 +254,22 @@ func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *
 }
 
 func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
-	keyPrefix := IndexRuleBindingKeyPrefix
-	if opt.Group != "" {
-		keyPrefix += opt.Group + "/"
-	}
-	messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-		return &databasev1.IndexRuleBinding{}
-	})
+	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, IndexRuleBindingKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
-	entities := make([]*databasev1.IndexRuleBinding, len(messages))
-	for i, message := range messages {
-		entities[i] = message.(*databasev1.IndexRuleBinding)
+
+	var entities []*databasev1.IndexRuleBinding
+	for _, keyPrefix := range keyPrefixes {
+		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
+			return &databasev1.IndexRuleBinding{}
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, message := range messages {
+			entities = append(entities, message.(*databasev1.IndexRuleBinding))
+		}
 	}
 	return entities, nil
 }
@@ -300,19 +298,22 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 }
 
 func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
-	keyPrefix := IndexRuleKeyPrefix
-	if opt.Group != "" {
-		keyPrefix += opt.Group + "/"
-	}
-	messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-		return &databasev1.IndexRule{}
-	})
+	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, IndexRuleKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
-	entities := make([]*databasev1.IndexRule, len(messages))
-	for i, message := range messages {
-		entities[i] = message.(*databasev1.IndexRule)
+
+	var entities []*databasev1.IndexRule
+	for _, keyPrefix := range keyPrefixes {
+		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
+			return &databasev1.IndexRule{}
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, message := range messages {
+			entities = append(entities, message.(*databasev1.IndexRule))
+		}
 	}
 	return entities, nil
 }
@@ -453,9 +454,6 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	if err != nil {
 		return nil, err
 	}
-	if resp.Count == 0 {
-		return nil, ErrEntityNotFound
-	}
 	entities := make([]proto.Message, resp.Count)
 	for i := int64(0); i < resp.Count; i++ {
 		message := factory()
@@ -465,6 +463,24 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 		entities[i] = message
 	}
 	return entities, nil
+}
+
+func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt ListOpt, entityPrefix string) ([]string, error) {
+	var keyPrefixes []string
+
+	if opt.Group != "" {
+		keyPrefixes = append(keyPrefixes, GroupsKeyPrefix+opt.Group+entityPrefix)
+	} else {
+		groups, err := e.ListGroup(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range groups {
+			keyPrefixes = append(keyPrefixes, GroupsKeyPrefix+g+entityPrefix)
+		}
+	}
+
+	return keyPrefixes, nil
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, key string) (bool, error) {
@@ -491,8 +507,8 @@ func formatMeasureKey(metadata *commonv1.Metadata) string {
 	return formatKey(MeasureKeyPrefix, metadata)
 }
 
-func formatKey(prefix string, metadata *commonv1.Metadata) string {
-	return prefix + metadata.GetGroup() + "/" + metadata.GetName()
+func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
+	return GroupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
 }
 
 func formatGroupKey(group string) string {
@@ -508,7 +524,7 @@ func incrementLastByte(key string) string {
 func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
 	cfg := embed.NewConfig()
 	// TODO: allow user to set path
-	cfg.Dir = filepath.Join(config.rootDir, "embed-etcd")
+	cfg.Dir = filepath.Join(config.rootDir, "metadata")
 	cURL, _ := url.Parse(config.listenerClientURL)
 	pURL, _ := url.Parse(config.listenerPeerURL)
 
