@@ -19,15 +19,12 @@ package logical
 
 import (
 	"context"
-	"os"
-
 	"github.com/pkg/errors"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	metaSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
@@ -79,38 +76,6 @@ func (t *Tag) GetFamilyName() string {
 
 type Analyzer struct {
 	metadataRepoImpl metadata.Repo
-}
-
-// DefaultAnalyzer creates a default analyzer for testing.
-// You have to close the underlying metadata after test
-func DefaultAnalyzer() (*Analyzer, func(), error) {
-	metadataService, err := metadata.NewService(context.TODO())
-	if err != nil {
-		return nil, func() {
-		}, err
-	}
-
-	lc, lp := metaSchema.RandomUnixDomainListener()
-	rootDir := metaSchema.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + rootDir})
-
-	if err != nil {
-		return nil, func() {
-		}, err
-	}
-
-	err = metadataService.PreRun()
-	if err != nil {
-		return nil, func() {
-		}, err
-	}
-
-	return &Analyzer{
-			metadataService,
-		}, func() {
-			metadataService.GracefulStop()
-			os.RemoveAll(rootDir)
-		}, nil
 }
 
 func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {

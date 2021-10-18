@@ -197,7 +197,7 @@ func setup(t *testing.T) (*stream, func()) {
 
 	lc, lp := schema.RandomUnixDomainListener()
 	etcdRootDir := schema.RandomTempDir()
-	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + etcdRootDir})
+	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
 	req.NoError(err)
 
 	err = mService.PreRun()

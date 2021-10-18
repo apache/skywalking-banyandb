@@ -92,7 +92,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	)
 	// Create a random directory
 	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath, "--etcd-root-path=" + schema.RandomTempDir()}
+	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + schema.RandomTempDir()}
 	if testData.TLS {
 		flags = append(flags, "--tls=true")
 		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")

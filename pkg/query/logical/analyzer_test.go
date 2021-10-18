@@ -19,6 +19,8 @@ package logical_test
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"os"
 	"testing"
 	"time"
 
@@ -26,15 +28,51 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	metaSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+// setUpAnalyzer creates a default analyzer for testing.
+// You have to close the underlying metadata after test
+func setUpAnalyzer() (*logical.Analyzer, func(), error) {
+	metadataService, err := metadata.NewService(context.TODO())
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
+	lc, lp := metaSchema.RandomUnixDomainListener()
+	rootDir := metaSchema.RandomTempDir()
+	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + rootDir})
+
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
+	err = metadataService.PreRun()
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+
+	ana, err := logical.CreateAnalyzerFromMetaService(metadataService)
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
+	return ana, func() {
+		metadataService.GracefulStop()
+		os.RemoveAll(rootDir)
+	}, nil
+}
+
 func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -70,7 +108,7 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -116,7 +154,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -150,7 +188,7 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -177,7 +215,7 @@ func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -203,7 +241,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
@@ -229,7 +267,7 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := logical.DefaultAnalyzer()
+	ana, stopFunc, err := setUpAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()

@@ -19,13 +19,8 @@ package schema
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
-	"os"
-	"path"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,23 +33,14 @@ type HasMetadata interface {
 
 func useRandomTempDir() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = randomTempDir()
+		config.rootDir = RandomTempDir()
 	}
-}
-
-func randomTempDir() string {
-	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
 
 func useUnixDomain() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL, config.listenerPeerURL = randomUnixDomainListener()
+		config.listenerClientURL, config.listenerPeerURL = RandomUnixDomainListener()
 	}
-}
-
-func randomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i), fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }
 
 func Test_Etcd_Entity_Get(t *testing.T) {

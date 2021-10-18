@@ -39,7 +39,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	is.NotNil(s)
 	lc, lp := schema.RandomUnixDomainListener()
 	rootDir := schema.RandomTempDir()
-	err := s.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + rootDir})
+	err := s.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + rootDir})
 	is.NoError(err)
 	err = s.PreRun()
 	is.NoError(err)
