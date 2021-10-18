@@ -19,7 +19,6 @@ package logical_test
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"os"
 	"testing"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	metaSchema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"

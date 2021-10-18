@@ -19,6 +19,7 @@ package logical
 
 import (
 	"context"
+
 	"github.com/pkg/errors"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"

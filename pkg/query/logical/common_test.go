@@ -93,7 +93,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 
 	lc, lp := schema.RandomUnixDomainListener()
 	etcdRootDir := schema.RandomTempDir()
-	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--etcd-root-path=" + etcdRootDir})
+	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
 	t.NoError(err)
 
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil, nil)
