@@ -135,16 +135,23 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 }
 
 func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) error {
-	g, err := e.GetGroup(ctx, group)
+	_, err := e.GetGroup(ctx, group)
 	if err != nil && !errors.Is(err, ErrEntityNotFound) {
 		return errors.Wrap(err, group)
 	}
-	return e.touchGroup(ctx, g)
+	return e.touchGroup(ctx, &commonv1.Group{
+		Name: group,
+	})
 }
 
 func (e *etcdSchemaRegistry) touchGroup(ctx context.Context, g *commonv1.Group) error {
+	groupBytes, err := proto.Marshal(g)
+	if err != nil {
+		return err
+	}
 	g.UpdatedAt = timestamppb.Now()
-	return e.update(ctx, formatGroupKey(g.GetName()), g)
+	_, err = e.kv.Put(ctx, formatGroupKey(g.GetName()), string(groupBytes))
+	return err
 }
 
 func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
@@ -177,15 +184,19 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
-	_, err := e.GetGroup(ctx, measure.GetMetadata().GetGroup())
+	g, err := e.GetGroup(ctx, measure.GetMetadata().GetGroup())
 	if err != nil {
 		return errors.Wrap(err, measure.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, formatMeasureKey(measure.GetMetadata()), measure)
+	return e.update(ctx, g, formatMeasureKey(measure.GetMetadata()), measure)
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, formatMeasureKey(metadata))
+	g, err := e.GetGroup(ctx, metadata.GetGroup())
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetGroup())
+	}
+	return e.delete(ctx, g, formatMeasureKey(metadata))
 }
 
 func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
@@ -220,15 +231,19 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 }
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
-	_, err := e.GetGroup(ctx, stream.GetMetadata().GetGroup())
+	g, err := e.GetGroup(ctx, stream.GetMetadata().GetGroup())
 	if err != nil {
 		return errors.Wrap(err, stream.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, formatSteamKey(stream.GetMetadata()), stream)
+	return e.update(ctx, g, formatSteamKey(stream.GetMetadata()), stream)
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, formatSteamKey(metadata))
+	g, err := e.GetGroup(ctx, metadata.GetGroup())
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetGroup())
+	}
+	return e.delete(ctx, g, formatSteamKey(metadata))
 }
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -261,15 +276,19 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
-	_, err := e.GetGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
+	g, err := e.GetGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
 	if err != nil {
 		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
+	return e.update(ctx, g, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, formatIndexRuleBindingKey(metadata))
+	g, err := e.GetGroup(ctx, metadata.GetGroup())
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetGroup())
+	}
+	return e.delete(ctx, g, formatIndexRuleBindingKey(metadata))
 }
 
 func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
@@ -302,15 +321,19 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
-	_, err := e.GetGroup(ctx, indexRule.GetMetadata().GetGroup())
+	g, err := e.GetGroup(ctx, indexRule.GetMetadata().GetGroup())
 	if err != nil {
 		return errors.Wrap(err, indexRule.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
+	return e.update(ctx, g, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, formatIndexRuleKey(metadata))
+	g, err := e.GetGroup(ctx, metadata.GetGroup())
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetGroup())
+	}
+	return e.delete(ctx, g, formatIndexRuleKey(metadata))
 }
 
 func (e *etcdSchemaRegistry) preload() error {
@@ -429,7 +452,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, key string, message proto.Message) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, key string, message proto.Message) error {
 	val, err := proto.Marshal(message)
 	if err != nil {
 		return err
@@ -438,7 +461,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, key string, message pro
 	if err != nil {
 		return err
 	}
-	return nil
+	return e.touchGroup(ctx, group)
 }
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
@@ -475,12 +498,15 @@ func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt List
 	return keyPrefixes, nil
 }
 
-func (e *etcdSchemaRegistry) delete(ctx context.Context, key string) (bool, error) {
+func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, key string) (bool, error) {
 	resp, err := e.kv.Delete(ctx, key)
 	if err != nil {
 		return false, err
 	}
-	return resp.Deleted > 0, nil
+	if resp.Deleted > 0 {
+		return true, e.touchGroup(ctx, g)
+	}
+	return false, nil
 }
 
 func formatIndexRuleKey(metadata *commonv1.Metadata) string {

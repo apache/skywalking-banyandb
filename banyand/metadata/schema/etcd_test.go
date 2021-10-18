@@ -265,6 +265,22 @@ func Test_Etcd_Delete(t *testing.T) {
 			expectedLenBefore: 10,
 			expectedLenAfter:  9,
 		},
+		{
+			name: "Delete Group",
+			list: func(r Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+				if innerErr != nil {
+					return 0, innerErr
+				}
+				return len(entities), nil
+			},
+			delete: func(r Registry) error {
+				_, innerErr := r.DeleteGroup(context.TODO(), "default")
+				return innerErr
+			},
+			expectedLenBefore: 9,
+			expectedLenAfter:  0,
+		},
 	}
 
 	for _, tt := range tests {
