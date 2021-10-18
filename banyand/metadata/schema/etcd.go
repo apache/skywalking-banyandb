@@ -135,14 +135,16 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 }
 
 func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) error {
-	_, err := e.GetGroup(ctx, group)
+	g, err := e.GetGroup(ctx, group)
 	if err != nil && !errors.Is(err, ErrEntityNotFound) {
 		return errors.Wrap(err, group)
 	}
-	return e.update(ctx, formatGroupKey(group), &commonv1.Group{
-		Name:      group,
-		UpdatedAt: timestamppb.Now(),
-	})
+	return e.touchGroup(ctx, g)
+}
+
+func (e *etcdSchemaRegistry) touchGroup(ctx context.Context, g *commonv1.Group) error {
+	g.UpdatedAt = timestamppb.Now()
+	return e.update(ctx, formatGroupKey(g.GetName()), g)
 }
 
 func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
