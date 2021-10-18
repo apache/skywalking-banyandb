@@ -95,9 +95,8 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
-	lc, lp := test.RandomUnixDomainListener()
 	etcdRootDir := test.RandomTempDir()
-	err = metadataSvc.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
+	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	tester.NoError(err)
 
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})

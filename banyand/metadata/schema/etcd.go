@@ -19,6 +19,8 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -60,10 +62,17 @@ func RootDir(rootDir string) RegistryOption {
 	}
 }
 
-func UseListener(client, peer string) RegistryOption {
+func randomUnixDomainListener() (string, string) {
+	i := rand.Uint64()
+	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
+		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
+}
+
+func UseRandomListener() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL = client
-		config.listenerPeerURL = peer
+		lc, lp := randomUnixDomainListener()
+		config.listenerClientURL = lc
+		config.listenerPeerURL = lp
 	}
 }
 

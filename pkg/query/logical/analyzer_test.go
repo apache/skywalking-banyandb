@@ -43,9 +43,8 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
-	lc, lp := test.RandomUnixDomainListener()
 	rootDir := test.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + rootDir})
+	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 
 	if err != nil {
 		return nil, func() {

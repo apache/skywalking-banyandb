@@ -194,9 +194,8 @@ func setup(t *testing.T) (*stream, func()) {
 	mService, err := metadata.NewService(context.TODO())
 	req.NoError(err)
 
-	lc, lp := test.RandomUnixDomainListener()
 	etcdRootDir := test.RandomTempDir()
-	err = mService.FlagSet().Parse([]string{"--listener-client-url=" + lc, "--listener-peer-url=" + lp, "--metadata-root-path=" + etcdRootDir})
+	err = mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	req.NoError(err)
 
 	err = mService.PreRun()
