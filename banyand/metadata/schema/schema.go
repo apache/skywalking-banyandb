@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"io"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -28,17 +29,53 @@ type ListOpt struct {
 	Group string
 }
 
+type Registry interface {
+	io.Closer
+	ReadyNotify() <-chan struct{}
+	StopNotify() <-chan struct{}
+	StoppingNotify() <-chan struct{}
+	Stream
+	IndexRule
+	IndexRuleBinding
+	Measure
+	Group
+}
+
 type Stream interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
+	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
+	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
+	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
+	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
 type IndexRule interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
+	GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
+	ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
+	UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
+	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
 type IndexRuleBinding interface {
-	Get(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
-	List(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
+	GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
+	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
+	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
+	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+}
+
+type Measure interface {
+	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
+	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
+	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
+	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+}
+
+type Group interface {
+	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
+	ListGroup(ctx context.Context) ([]string, error)
+	// DeleteGroup delete all items belonging to the group
+	DeleteGroup(ctx context.Context, group string) (bool, error)
+	// CreateGroup works like `touch` in unix systems.
+	// 1. It will create the group if it does not exist.
+	// 2. It will update the updated_at timestamp to the current timestamp.
+	CreateGroup(ctx context.Context, group string) error
 }

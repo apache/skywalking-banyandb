@@ -19,6 +19,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.uber.org/multierr"
@@ -37,42 +38,86 @@ type IndexFilter interface {
 
 type Repo interface {
 	IndexFilter
-	Stream() schema.Stream
+	StreamRegistry() schema.Stream
+	IndexRuleRegistry() schema.IndexRule
+	IndexRuleBindingRegistry() schema.IndexRuleBinding
+	MeasureRegistry() schema.Measure
+	GroupRegistry() schema.Group
 }
 
 type Service interface {
 	Repo
-	run.Unit
+	run.PreRunner
+	run.Service
+	run.Config
+	SchemaRegistry() schema.Registry
 }
 
 type service struct {
-	stream           schema.Stream
-	indexRule        schema.IndexRule
-	indexRuleBinding schema.IndexRuleBinding
+	schemaRegistry schema.Registry
+	rootDir        string
+}
+
+func (s *service) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("metadata")
+	fs.StringVarP(&s.rootDir, "metadata-root-path", "", "/tmp", "the root path of metadata")
+	return fs
+}
+
+func (s *service) Validate() error {
+	if s.rootDir == "" {
+		return errors.New("rootDir is empty")
+	}
+	return nil
+}
+
+func (s *service) PreRun() error {
+	var err error
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.UseRandomListener(),
+		schema.RootDir(s.rootDir))
+	if err != nil {
+		return err
+	}
+	<-s.schemaRegistry.ReadyNotify()
+	return nil
+}
+
+func (s *service) Serve() error {
+	<-s.schemaRegistry.StoppingNotify()
+	return nil
+}
+
+func (s *service) GracefulStop() {
+	_ = s.schemaRegistry.Close()
+	<-s.schemaRegistry.StopNotify()
 }
 
 func NewService(_ context.Context) (Service, error) {
-	stream, err := schema.NewStream()
-	if err != nil {
-		return nil, err
-	}
-	indexRule, err := schema.NewIndexRule()
-	if err != nil {
-		return nil, err
-	}
-	indexRuleBinding, err := schema.NewIndexRuleBinding()
-	if err != nil {
-		return nil, err
-	}
-	return &service{
-		stream:           stream,
-		indexRule:        indexRule,
-		indexRuleBinding: indexRuleBinding,
-	}, nil
+	return &service{}, nil
 }
 
-func (s *service) Stream() schema.Stream {
-	return s.stream
+func (s *service) SchemaRegistry() schema.Registry {
+	return s.schemaRegistry
+}
+
+func (s *service) StreamRegistry() schema.Stream {
+	return s.schemaRegistry
+}
+
+func (s *service) IndexRuleRegistry() schema.IndexRule {
+	return s.schemaRegistry
+}
+
+func (s *service) IndexRuleBindingRegistry() schema.IndexRuleBinding {
+	return s.schemaRegistry
+}
+
+func (s *service) MeasureRegistry() schema.Measure {
+	return s.schemaRegistry
+}
+
+func (s *service) GroupRegistry() schema.Group {
+	return s.schemaRegistry
 }
 
 func (s *service) Name() string {
@@ -80,7 +125,7 @@ func (s *service) Name() string {
 }
 
 func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error) {
-	bindings, err := s.indexRuleBinding.List(ctx, schema.ListOpt{Group: subject.Group})
+	bindings, err := s.schemaRegistry.ListIndexRuleBinding(ctx, schema.ListOpt{Group: subject.Group})
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +145,7 @@ func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([
 	result := make([]*databasev1.IndexRule, 0, len(foundRules))
 	var indexRuleErr error
 	for _, rule := range foundRules {
-		r, getErr := s.indexRule.Get(ctx, &commonv1.Metadata{
+		r, getErr := s.schemaRegistry.GetIndexRule(ctx, &commonv1.Metadata{
 			Name:  rule,
 			Group: subject.Group,
 		})

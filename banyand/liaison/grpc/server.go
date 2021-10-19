@@ -26,8 +26,10 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/api/event"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -53,18 +55,38 @@ type Server struct {
 	ser            *grpclib.Server
 	pipeline       queue.Queue
 	repo           discovery.ServiceRepo
+	creds          credentials.TransportCredentials
+	shardRepo      *shardRepo
+	entityRepo     *entityRepo
+	*streamRegistryServer
+	*indexRuleBindingRegistryServer
+	*indexRuleRegistryServer
+	*measureRegistryServer
+	*groupRegistryServer
 	streamv1.UnimplementedStreamServiceServer
-	creds      credentials.TransportCredentials
-	shardRepo  *shardRepo
-	entityRepo *entityRepo
 }
 
-func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) *Server {
+func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
 	return &Server{
 		pipeline:   pipeline,
 		repo:       repo,
 		shardRepo:  &shardRepo{shardEventsMap: make(map[identity]uint32)},
 		entityRepo: &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)},
+		streamRegistryServer: &streamRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		indexRuleBindingRegistryServer: &indexRuleBindingRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		indexRuleRegistryServer: &indexRuleRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		measureRegistryServer: &measureRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		groupRegistryServer: &groupRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
 	}
 }
 
@@ -129,6 +151,13 @@ func (s *Server) Serve() error {
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
 	streamv1.RegisterStreamServiceServer(s.ser, s)
+	// register *Registry
+	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
+	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
+	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
+	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
+	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
+
 	s.log.Info().Str("addr", s.addr).Msg("Listening to")
 	return s.ser.Serve(lis)
 }

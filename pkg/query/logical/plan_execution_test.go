@@ -27,13 +27,14 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	logical2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func TestPlanExecution_TableScan_Limit(t *testing.T) {
-	streamT, deferFunc := setup(require.New(t))
+	tester := require.New(t)
+	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
+	baseTs := setupQueryData(t, "multiple_shards.json", streamSvc)
 
 	metadata := &commonv1.Metadata{
 		Name:  "sw",
@@ -42,24 +43,28 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
+	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 	}{
 		{
 			name:           "Limit 1",
-			unresolvedPlan: logical2.Limit(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
 			wantLength:     1,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical2.Limit(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     5,
 		},
 		{
 			name:           "Limit 10",
-			unresolvedPlan: logical2.Limit(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
+			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
 			wantLength:     5,
 		},
 	}
@@ -67,25 +72,26 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
-			schema, err := logical2.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			schema, err := analyzer.BuildStreamSchema(context.TODO(), metadata)
 			tester.NoError(err)
 
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamT)
+			entities, err := plan.Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
-			tester.True(logical2.SortedByTimestamp(entities, modelv1.Sort_SORT_ASC))
+			tester.True(logical.SortedByTimestamp(entities, modelv1.Sort_SORT_ASC))
 		})
 	}
 }
 
 func TestPlanExecution_Offset(t *testing.T) {
-	streamT, deferFunc := setup(require.New(t))
+	tester := require.New(t)
+	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
+	baseTs := setupQueryData(t, "multiple_shards.json", streamSvc)
 
 	metadata := &commonv1.Metadata{
 		Name:  "sw",
@@ -94,24 +100,28 @@ func TestPlanExecution_Offset(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
+	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 	}{
 		{
 			name:           "Offset 0",
-			unresolvedPlan: logical2.Offset(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
 			wantLength:     5,
 		},
 		{
 			name:           "Offset 3",
-			unresolvedPlan: logical2.Offset(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
 			wantLength:     2,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical2.Offset(logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     0,
 		},
 	}
@@ -119,14 +129,14 @@ func TestPlanExecution_Offset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
-			schema, err := logical2.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			schema, err := analyzer.BuildStreamSchema(context.TODO(), metadata)
 			tester.NoError(err)
 
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamT)
+			entities, err := plan.Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
 		})
@@ -134,14 +144,19 @@ func TestPlanExecution_Offset(t *testing.T) {
 }
 
 func TestPlanExecution_TraceIDFetch(t *testing.T) {
-	streamT, deferFunc := setup(require.New(t))
+	tester := require.New(t)
+	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	_ = setupQueryData(t, "multiple_shards.json", streamT)
+	_ = setupQueryData(t, "multiple_shards.json", streamSvc)
 
 	m := &commonv1.Metadata{
 		Name:  "sw",
 		Group: "default",
 	}
+
+	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
 
 	tests := []struct {
 		name       string
@@ -168,15 +183,15 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
-			s, err := logical2.DefaultAnalyzer().BuildStreamSchema(context.TODO(), m)
+			s, err := analyzer.BuildStreamSchema(context.TODO(), m)
 			tester.NoError(err)
 
-			p, err := logical2.GlobalIndexScan(m, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "trace_id"), logical2.Str(tt.traceID)),
-			}, logical2.NewTags("searchable", "trace_id")).Analyze(s)
+			p, err := logical.GlobalIndexScan(m, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "trace_id"), logical.Str(tt.traceID)),
+			}, logical.NewTags("searchable", "trace_id")).Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
-			entities, err := p.Execute(streamT)
+			entities, err := p.Execute(streamSvc)
 			tester.NoError(err)
 			for _, entity := range entities {
 				tester.Len(entity.GetTagFamilies(), 1)
@@ -189,9 +204,10 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 }
 
 func TestPlanExecution_IndexScan(t *testing.T) {
-	streamT, deferFunc := setup(require.New(t))
+	tester := require.New(t)
+	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
+	baseTs := setupQueryData(t, "multiple_shards.json", streamSvc)
 
 	metadata := &commonv1.Metadata{
 		Name:  "sw",
@@ -200,60 +216,64 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
+	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
 	tests := []struct {
 		name           string
-		unresolvedPlan logical2.UnresolvedPlan
+		unresolvedPlan logical.UnresolvedPlan
 		wantLength     int
 	}{
 		{
 			name: "Single Index Search using POST without entity returns nothing",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "http.method"), logical2.Str("POST")),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("POST")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},
 		{
 			name: "Single Index Search using inverted index",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "http.method"), logical2.Str("GET")),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 3,
 		},
 		{
 			name: "Single Index Search using LSM tree index",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Lt(logical2.NewFieldRef("searchable", "duration"), logical2.Int(100)),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Lt(logical.NewFieldRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Single Index Search without entity returns results",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "endpoint_id"), logical2.Str("/home_id")),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Multiple Index Search",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "http.method"), logical2.Str("GET")),
-				logical2.Eq(logical2.NewFieldRef("searchable", "endpoint_id"), logical2.Str("/home_id")),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 1,
 		},
 		{
 			name: "Multiple Index Search with a combination of numerical index and textual index",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "http.method"), logical2.Str("GET")),
-				logical2.Lt(logical2.NewFieldRef("searchable", "duration"), logical2.Int(100)),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Lt(logical.NewFieldRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Multiple Index With One Empty Result(ChunkID)",
-			unresolvedPlan: logical2.IndexScan(sT, eT, metadata, []logical2.Expr{
-				logical2.Eq(logical2.NewFieldRef("searchable", "http.method"), logical2.Str("GET")),
-				logical2.Eq(logical2.NewFieldRef("searchable", "endpoint_id"), logical2.Str("/unknown")),
+			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/unknown")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},
@@ -262,14 +282,14 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
-			schema, err := logical2.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			schema, err := analyzer.BuildStreamSchema(context.TODO(), metadata)
 			tester.NoError(err)
 
 			plan, err := tt.unresolvedPlan.Analyze(schema)
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamT)
+			entities, err := plan.Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
 		})
@@ -277,9 +297,10 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 }
 
 func TestPlanExecution_OrderBy(t *testing.T) {
-	streamT, deferFunc := setup(require.New(t))
+	tester := require.New(t)
+	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	baseTs := setupQueryData(t, "multiple_shards.json", streamT)
+	baseTs := setupQueryData(t, "multiple_shards.json", streamSvc)
 
 	metadata := &commonv1.Metadata{
 		Name:  "sw",
@@ -287,6 +308,10 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 	}
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
+
+	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
 
 	tests := []struct {
 		name            string
@@ -325,34 +350,34 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := require.New(t)
-			schema, err := logical2.DefaultAnalyzer().BuildStreamSchema(context.TODO(), metadata)
+			schema, err := analyzer.BuildStreamSchema(context.TODO(), metadata)
 			tester.NoError(err)
 			tester.NotNil(schema)
 
 			if tt.targetIndexRule == "" {
-				p, err := logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-					logical2.OrderBy("", tt.sortDirection), logical2.NewTags("searchable", "start_time")).
+				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+					logical.OrderBy("", tt.sortDirection), logical.NewTags("searchable", "start_time")).
 					Analyze(schema)
 				tester.NoError(err)
 				tester.NotNil(p)
 
-				entities, err := p.Execute(streamT)
+				entities, err := p.Execute(streamSvc)
 				tester.NoError(err)
 				tester.NotNil(entities)
 
-				tester.True(logical2.SortedByTimestamp(entities, tt.sortDirection))
+				tester.True(logical.SortedByTimestamp(entities, tt.sortDirection))
 			} else {
-				p, err := logical2.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-					logical2.OrderBy(tt.targetIndexRule, tt.sortDirection), logical2.NewTags("searchable", tt.targetIndexRule)).
+				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+					logical.OrderBy(tt.targetIndexRule, tt.sortDirection), logical.NewTags("searchable", tt.targetIndexRule)).
 					Analyze(schema)
 				tester.NoError(err)
 				tester.NotNil(p)
 
-				entities, err := p.Execute(streamT)
+				entities, err := p.Execute(streamSvc)
 				tester.NoError(err)
 				tester.NotNil(entities)
 
-				tester.True(logical2.SortedByIndex(entities, tt.targetFamilyIdx, tt.targetTagIdx, tt.sortDirection))
+				tester.True(logical.SortedByIndex(entities, tt.targetFamilyIdx, tt.targetTagIdx, tt.sortDirection))
 			}
 		})
 	}

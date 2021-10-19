@@ -54,7 +54,6 @@ type shardStruct struct {
 type shardsForTest []shardStruct
 
 func Test_Stream_SelectShard(t *testing.T) {
-	tester := assert.New(t)
 	s, deferFunc := setup(t)
 	defer deferFunc()
 	_ = setupQueryData(t, "multiple_shards.json", s)
@@ -82,13 +81,13 @@ func Test_Stream_SelectShard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ast := assert.New(t)
 			shards, err := s.Shards(tt.entity)
 			if tt.wantErr {
-				tester.Error(err)
-				return
+				ast.Error(err)
 			}
-			tester.NoError(err)
-			tester.Equal(tt.wantShardNum, len(shards))
+			ast.NoError(err)
+			ast.Equal(tt.wantShardNum, len(shards))
 		})
 	}
 
@@ -531,7 +530,6 @@ func Test_Stream_Series(t *testing.T) {
 			ast.Equal(tt.want, got)
 		})
 	}
-
 }
 
 func Test_Stream_Global_Index(t *testing.T) {
@@ -627,7 +625,6 @@ func Test_Stream_Global_Index(t *testing.T) {
 			tester.NoError(err)
 		})
 	}
-
 }
 
 type queryOpts struct {

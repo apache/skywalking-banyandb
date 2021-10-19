@@ -23,7 +23,7 @@ proto_dir := $(root_dir)/api/proto
 include ../scripts/build/base.mk
 include ../scripts/build/help.mk
 
-generate: $(PROTOC)
+generate: $(BUF)
 	@PATH=$(PATH):$(tool_bin):$(proto_dir) buf generate
 
 lint: $(PROTOC)

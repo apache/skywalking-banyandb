@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -32,6 +33,6 @@ type Endpoint interface {
 	run.Service
 }
 
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo) (Endpoint, error) {
-	return grpc.NewServer(ctx, pipeline, repo), nil
+func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) (Endpoint, error) {
+	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
 }

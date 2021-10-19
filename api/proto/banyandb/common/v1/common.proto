@@ -22,6 +22,8 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/co
 
 package banyandb.common.v1;
 
+import "google/protobuf/timestamp.proto";
+
 enum Catalog {
     CATALOG_UNSPECIFIED = 0;
     CATALOG_STREAM = 1;
@@ -35,4 +37,12 @@ message Metadata {
     // name of the entity
     string name = 2;
     uint32 id = 3;
+}
+
+// Group is an internal object for Group management
+message Group {
+    // name of the group
+    string name = 1;
+    // updated_at_nanoseconds indicates when resources of the group are updated
+    google.protobuf.Timestamp updated_at = 2;
 }
