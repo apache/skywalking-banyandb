@@ -57,6 +57,8 @@ message Condition {
         BINARY_OP_GE = 6;
         BINARY_OP_HAVING = 7;
         BINARY_OP_NOT_HAVING = 8;
+        BINARY_OP_IN = 9;
+        BINARY_OP_NOT_IN = 10;
     }
     string name = 1;
     BinaryOp op = 2;
