@@ -59,7 +59,7 @@ message FieldValue {
     oneof value {
         google.protobuf.NullValue null = 1;
         model.v1.Str str = 2;
-        model.v1.Int int = 4;
-        bytes binary_data = 6;
+        model.v1.Int int = 3;
+        bytes binary_data = 4;
     }
 }

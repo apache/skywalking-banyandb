@@ -112,6 +112,19 @@ message FieldSpec {
     CompressionMethod compression_method = 4;
 }
 
+// IntervalRule indicates how to get the interval of a measure series.
+message IntervalRule {
+    // tag_name is for matching a tag
+    string tag_name = 1;
+    // tag_value is used by a equality matcher to match a tag
+    oneof tag_value {
+        string str = 2;
+        int64 int = 3;
+    }
+    // interval indicates how frequently to send a data point
+    string interval = 4;
+}
+
 // Measure intends to store data point
 message Measure {
     // metadata is the identity of a measure
@@ -122,9 +135,12 @@ message Measure {
     repeated FieldSpec fields = 3;
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
-    ResourceOpts opts = 5;
+    // interval_rules define data points writing interval
+    repeated IntervalRule interval_rules = 5;
+    // opts is basic resource management options
+    ResourceOpts opts = 6;
     // updated_at_nanoseconds indicates when the measure is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 6;
+    google.protobuf.Timestamp updated_at_nanoseconds = 7;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation
