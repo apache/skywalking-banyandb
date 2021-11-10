@@ -45,7 +45,7 @@ var (
 	streamJSON string
 )
 
-func PreloadSchema(e Registry) error {
+func preloadSchema(e Registry) error {
 	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 	tester.NotNil(registry)
 	defer registry.Close()
 
-	err = PreloadSchema(registry)
+	err = preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
@@ -197,7 +197,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 	tester.NotNil(registry)
 	defer registry.Close()
 
-	err = PreloadSchema(registry)
+	err = preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
@@ -312,7 +312,7 @@ func Test_Etcd_Delete(t *testing.T) {
 	tester.NotNil(registry)
 	defer registry.Close()
 
-	err = PreloadSchema(registry)
+	err = preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {

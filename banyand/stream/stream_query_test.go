@@ -254,7 +254,7 @@ func Test_Stream_Series(t *testing.T) {
 						Tags:     []string{"duration"},
 						Type:     databasev1.IndexRule_TYPE_TREE,
 						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}, modelv1.QueryOrder_SORT_ASC)
+					}, modelv1.Sort_SORT_ASC)
 				},
 			},
 			want: shardsForTest{
@@ -351,7 +351,7 @@ func Test_Stream_Series(t *testing.T) {
 							},
 						},
 					})
-					builder.OrderByIndex(rule, modelv1.QueryOrder_SORT_ASC)
+					builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
 				},
 			},
 			want: shardsForTest{
@@ -462,7 +462,7 @@ func Test_Stream_Series(t *testing.T) {
 							},
 						},
 					})
-					builder.OrderByIndex(rule, modelv1.QueryOrder_SORT_ASC)
+					builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
 					builder.Filter(&databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
 							Name:  "endpoint_id",

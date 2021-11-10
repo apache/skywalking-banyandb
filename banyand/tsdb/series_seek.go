@@ -41,8 +41,8 @@ type Item interface {
 
 type SeekerBuilder interface {
 	Filter(indexRule *databasev1.IndexRule, condition Condition) SeekerBuilder
-	OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.QueryOrder_Sort) SeekerBuilder
-	OrderByTime(order modelv1.QueryOrder_Sort) SeekerBuilder
+	OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder
+	OrderByTime(order modelv1.Sort) SeekerBuilder
 	Build() (Seeker, error)
 }
 
@@ -60,14 +60,14 @@ type seekerBuilder struct {
 		indexRuleID   uint32
 		condition     Condition
 	}
-	order               modelv1.QueryOrder_Sort
+	order               modelv1.Sort
 	indexRuleForSorting *databasev1.IndexRule
 	rangeOptsForSorting index.RangeOpts
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
-	if s.order == modelv1.QueryOrder_SORT_UNSPECIFIED {
-		s.order = modelv1.QueryOrder_SORT_ASC
+	if s.order == modelv1.Sort_SORT_UNSPECIFIED {
+		s.order = modelv1.Sort_SORT_ASC
 	}
 	conditions, err := s.buildConditions()
 	if err != nil {

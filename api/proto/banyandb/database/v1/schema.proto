@@ -24,6 +24,7 @@ package banyandb.database.v1;
 
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
+import "banyandb/model/v1/query.proto";
 
 // Duration represents the elapsed time between two instants
 message Duration {
@@ -66,11 +67,9 @@ message Stream {
     repeated TagFamilySpec tag_families = 2;
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
-    // duration determines how long a TraceSeries keeps its data
-    uint32 shard_num = 4;
-    Duration duration = 5;
-    // updated_at_nanoseconds indicates when the TraceSeries is updated
-    google.protobuf.Timestamp updated_at = 6;
+    ResourceOpts opts = 4;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 5;
 }
 
 message Entity {
@@ -94,6 +93,13 @@ enum CompressionMethod {
     COMPRESSION_METHOD_ZSTD = 1;
 }
 
+message ResourceOpts {
+    // shard_num is the number of shards
+    uint32 shard_num = 1;
+    // ttl indicates time to live, how long the data will be cached
+    Duration ttl = 2;
+}
+
 // FieldSpec is the specification of field
 message FieldSpec {
     // name is the identity of a field
@@ -106,6 +112,19 @@ message FieldSpec {
     CompressionMethod compression_method = 4;
 }
 
+// IntervalRule indicates how to get the interval of a measure series.
+message IntervalRule {
+    // tag_name is for matching a tag
+    string tag_name = 1;
+    // tag_value is used by a equality matcher to match a tag
+    oneof tag_value {
+        string str = 2;
+        int64 int = 3;
+    }
+    // interval indicates how frequently to send a data point
+    string interval = 4;
+}
+
 // Measure intends to store data point
 message Measure {
     // metadata is the identity of a measure
@@ -116,12 +135,37 @@ message Measure {
     repeated FieldSpec fields = 3;
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
-    // shard_num is the number of shards
-    uint32 shard_num = 5;
-    // ttl indicates time to live, how long the data will be cached
-    Duration ttl = 6;
+    // interval_rules define data points writing interval
+    repeated IntervalRule interval_rules = 5;
+    // opts is basic resource management options
+    ResourceOpts opts = 6;
     // updated_at_nanoseconds indicates when the measure is updated
     google.protobuf.Timestamp updated_at_nanoseconds = 7;
+}
+
+// TopNAggregation generates offline TopN statistics for a measure's TopN approximation
+message TopNAggregation {
+    // metadata is the identity of an aggregation
+    common.v1.Metadata metadata = 1;
+    // source_measure denotes the data source of this aggregation
+    common.v1.Metadata source_measure = 2;
+    // field_name is the name of field used for ranking
+    string field_name = 3;
+    // field_value_sort indicates how to sort fields
+    // ASC: bottomN
+    // DESC: topN
+    // UNSPECIFIED: topN + bottomN
+    model.v1.Sort field_value_sort = 4;
+    // group_by_tag_names groups data points into statistical counters
+    repeated string group_by_tag_names = 5;
+    // criteria select partial data points from measure
+    repeated model.v1.Criteria criteria = 6;
+    // counters_number sets the number of counters to be tracked. The default value is 1000
+    int32 counters_number = 7;
+    // opts is basic resource management options
+    ResourceOpts opts = 8;
+    // updated_at_nanoseconds indicates when the measure is updated
+    google.protobuf.Timestamp updated_at_nanoseconds = 9;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type

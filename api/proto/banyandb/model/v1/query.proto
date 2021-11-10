@@ -57,31 +57,39 @@ message Condition {
         BINARY_OP_GE = 6;
         BINARY_OP_HAVING = 7;
         BINARY_OP_NOT_HAVING = 8;
+        BINARY_OP_IN = 9;
+        BINARY_OP_NOT_IN = 10;
     }
     string name = 1;
     BinaryOp op = 2;
     TagValue value = 3;
 }
 
+// tag_families are indexed.
+message Criteria {
+    string tag_family_name = 1;
+    repeated model.v1.Condition conditions = 2;
+}
+
+enum Sort {
+    SORT_UNSPECIFIED = 0;
+    SORT_DESC = 1;
+    SORT_ASC = 2;
+}
+
 // QueryOrder means a Sort operation to be done for a given index rule.
 // The index_rule_name refers to the name of a index rule bound to the subject.
 message QueryOrder {
     string index_rule_name = 1;
-    enum Sort {
-        SORT_UNSPECIFIED = 0;
-        SORT_DESC = 1;
-        SORT_ASC = 2;
-    }
     Sort sort = 2;
 }
 
-// Projection is used to select the names of keys to be returned.
-message Projection {
+// TagProjection is used to select the names of keys to be returned.
+message TagProjection {
     message TagFamily {
         string name = 1;
         repeated string tags = 2;
     }
-    // The key_name refers to the key(s) of Pair(s).
     repeated TagFamily tag_families = 1;
 }
 

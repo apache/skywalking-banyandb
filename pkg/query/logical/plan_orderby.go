@@ -31,7 +31,7 @@ import (
 )
 
 type UnresolvedOrderBy struct {
-	sort                modelv1.QueryOrder_Sort
+	sort                modelv1.Sort
 	targetIndexRuleName string
 }
 
@@ -39,7 +39,7 @@ func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
 	if u == nil {
 		// return a default orderBy sub-plan
 		return &orderBy{
-			sort: modelv1.QueryOrder_SORT_UNSPECIFIED,
+			sort: modelv1.Sort_SORT_UNSPECIFIED,
 		}, nil
 	}
 
@@ -72,7 +72,7 @@ type orderBy struct {
 	// It can be null since by default we may sort by created-time.
 	index *databasev1.IndexRule
 	// while orderBySort describes the sort direction
-	sort modelv1.QueryOrder_Sort
+	sort modelv1.Sort
 	// TODO: support multiple tags. Currently only the first member will be used for sorting.
 	fieldRefs []*FieldRef
 }
@@ -96,7 +96,7 @@ func (o *orderBy) String() string {
 	return fmt.Sprintf("OrderBy: %v, sort=%s", o.index.GetTags(), o.sort.String())
 }
 
-func OrderBy(indexRuleName string, sort modelv1.QueryOrder_Sort) *UnresolvedOrderBy {
+func OrderBy(indexRuleName string, sort modelv1.Sort) *UnresolvedOrderBy {
 	return &UnresolvedOrderBy{
 		sort:                sort,
 		targetIndexRuleName: indexRuleName,
@@ -116,9 +116,9 @@ func getRawTagValue(typedPair *modelv1.Tag) ([]byte, error) {
 
 // SortedByIndex is used to test whether the given entities are sorted by the sortDirection
 // The given entities MUST satisfy both the positive check and the negative check for the reversed direction
-func SortedByIndex(elements []*streamv1.Element, tagFamilyIdx, tagIdx int, sortDirection modelv1.QueryOrder_Sort) bool {
-	if modelv1.QueryOrder_SORT_UNSPECIFIED == sortDirection {
-		sortDirection = modelv1.QueryOrder_SORT_ASC
+func SortedByIndex(elements []*streamv1.Element, tagFamilyIdx, tagIdx int, sortDirection modelv1.Sort) bool {
+	if modelv1.Sort_SORT_UNSPECIFIED == sortDirection {
+		sortDirection = modelv1.Sort_SORT_ASC
 	}
 	if len(elements) == 1 {
 		return true
@@ -127,9 +127,9 @@ func SortedByIndex(elements []*streamv1.Element, tagFamilyIdx, tagIdx int, sortD
 		!sort.SliceIsSorted(elements, sortByIndex(elements, tagFamilyIdx, tagIdx, reverseSortDirection(sortDirection)))
 }
 
-func SortedByTimestamp(elements []*streamv1.Element, sortDirection modelv1.QueryOrder_Sort) bool {
-	if modelv1.QueryOrder_SORT_UNSPECIFIED == sortDirection {
-		sortDirection = modelv1.QueryOrder_SORT_ASC
+func SortedByTimestamp(elements []*streamv1.Element, sortDirection modelv1.Sort) bool {
+	if modelv1.Sort_SORT_UNSPECIFIED == sortDirection {
+		sortDirection = modelv1.Sort_SORT_ASC
 	}
 	if len(elements) == 1 {
 		return true
@@ -138,32 +138,32 @@ func SortedByTimestamp(elements []*streamv1.Element, sortDirection modelv1.Query
 		!sort.SliceIsSorted(elements, sortByTimestamp(elements, reverseSortDirection(sortDirection)))
 }
 
-func reverseSortDirection(sort modelv1.QueryOrder_Sort) modelv1.QueryOrder_Sort {
-	if sort == modelv1.QueryOrder_SORT_DESC {
-		return modelv1.QueryOrder_SORT_ASC
+func reverseSortDirection(sort modelv1.Sort) modelv1.Sort {
+	if sort == modelv1.Sort_SORT_DESC {
+		return modelv1.Sort_SORT_ASC
 	}
-	return modelv1.QueryOrder_SORT_DESC
+	return modelv1.Sort_SORT_DESC
 }
 
-func sortByIndex(entities []*streamv1.Element, tagFamilyIdx, tagIdx int, sortDirection modelv1.QueryOrder_Sort) func(i, j int) bool {
+func sortByIndex(entities []*streamv1.Element, tagFamilyIdx, tagIdx int, sortDirection modelv1.Sort) func(i, j int) bool {
 	return func(i, j int) bool {
 		iPair := entities[i].GetTagFamilies()[tagFamilyIdx].GetTags()[tagIdx]
 		jPair := entities[j].GetTagFamilies()[tagFamilyIdx].GetTags()[tagIdx]
 		lField, _ := getRawTagValue(iPair)
 		rField, _ := getRawTagValue(jPair)
 		comp := bytes.Compare(lField, rField)
-		if sortDirection == modelv1.QueryOrder_SORT_ASC {
+		if sortDirection == modelv1.Sort_SORT_ASC {
 			return comp == -1
 		}
 		return comp == 1
 	}
 }
 
-func sortByTimestamp(entities []*streamv1.Element, sortDirection modelv1.QueryOrder_Sort) func(i, j int) bool {
+func sortByTimestamp(entities []*streamv1.Element, sortDirection modelv1.Sort) func(i, j int) bool {
 	return func(i, j int) bool {
 		iPair := entities[i].GetTimestamp().AsTime().UnixNano()
 		jPair := entities[j].GetTimestamp().AsTime().UnixNano()
-		if sortDirection == modelv1.QueryOrder_SORT_DESC {
+		if sortDirection == modelv1.Sort_SORT_DESC {
 			return iPair > jPair
 		}
 		return iPair < jPair

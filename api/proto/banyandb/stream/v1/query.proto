@@ -67,11 +67,7 @@ message QueryRequest {
   // order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported
   model.v1.QueryOrder order_by = 5;
   // tag_families are indexed.
-  message Criteria {
-    string tag_family_name = 1;
-    repeated model.v1.Condition conditions = 2;
-  }
-  repeated Criteria criteria = 6;
+  repeated model.v1.Criteria criteria = 6;
   // projection can be used to select the key names of the element in the response
-  model.v1.Projection projection = 7;
+  model.v1.TagProjection projection = 7;
 }

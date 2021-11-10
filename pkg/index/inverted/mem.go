@@ -94,7 +94,7 @@ func newFieldIterator(keys [][]byte, fValue *termMap) index.FieldIterator {
 }
 
 func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
-	order modelv1.QueryOrder_Sort) (iter index.FieldIterator, err error) {
+	order modelv1.Sort) (iter index.FieldIterator, err error) {
 	fieldsValues, ok := m.fields.get(fieldKey)
 	if !ok {
 		return nil, nil
@@ -114,11 +114,11 @@ func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
 		return nil, nil
 	}
 	switch order {
-	case modelv1.QueryOrder_SORT_ASC, modelv1.QueryOrder_SORT_UNSPECIFIED:
+	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
 		sort.SliceStable(terms, func(i, j int) bool {
 			return bytes.Compare(terms[i], terms[j]) < 0
 		})
-	case modelv1.QueryOrder_SORT_DESC:
+	case modelv1.Sort_SORT_DESC:
 		sort.SliceStable(terms, func(i, j int) bool {
 			return bytes.Compare(terms[i], terms[j]) > 0
 		})

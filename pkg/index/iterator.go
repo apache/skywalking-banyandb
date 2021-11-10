@@ -95,7 +95,7 @@ func (f *FieldIteratorTemplate) Close() error {
 	return multierr.Append(f.err, f.delegated.Close())
 }
 
-func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order modelv1.QueryOrder_Sort, iterable kv.Iterable,
+func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
 	metadata metadata.Term, fn CompositePostingValueFn) (*FieldIteratorTemplate, error) {
 	if termRange.Upper == nil {
 		termRange.Upper = DefaultUpper
@@ -106,14 +106,14 @@ func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order mode
 	var reverse bool
 	var term []byte
 	switch order {
-	case modelv1.QueryOrder_SORT_ASC, modelv1.QueryOrder_SORT_UNSPECIFIED:
+	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
 		term = termRange.Lower
 		reverse = false
-	case modelv1.QueryOrder_SORT_DESC:
+	case modelv1.Sort_SORT_DESC:
 		term = termRange.Upper
 		reverse = true
 	}
-	if order == modelv1.QueryOrder_SORT_DESC {
+	if order == modelv1.Sort_SORT_DESC {
 		reverse = true
 	}
 	iter := iterable.NewIterator(kv.ScanOpts{

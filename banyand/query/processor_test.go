@@ -228,13 +228,13 @@ func TestQueryProcessor(t *testing.T) {
 					Offset(0).
 					Metadata("default", "sw").
 					TimeRange(sT, eT).
-					OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
+					OrderBy("duration", modelv1.Sort_SORT_DESC).
 					Projection("searchable", "trace_id", "duration").
 					Build()
 			},
 			wantLen: 5,
 			checker: func(elements []*streamv1.Element) bool {
-				return logical.SortedByIndex(elements, 0, 1, modelv1.QueryOrder_SORT_DESC)
+				return logical.SortedByIndex(elements, 0, 1, modelv1.Sort_SORT_DESC)
 			},
 		},
 		{

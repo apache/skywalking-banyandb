@@ -100,7 +100,7 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 		context.WithValue(context.Background(), logger.ContextKey, l),
 		tsdb.DatabaseOpts{
 			Location:   root,
-			ShardNum:   sm.schema.GetShardNum(),
+			ShardNum:   sm.schema.GetOpts().GetShardNum(),
 			IndexRules: spec.indexRules,
 		})
 	if err != nil {

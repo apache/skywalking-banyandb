@@ -123,7 +123,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
+		OrderBy("duration", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "http.method", "service_id", "duration").
 		FieldsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "=", "GET", "mq.topic", "=", "event_topic").
@@ -146,7 +146,7 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 					logical.Eq(logical.NewSearchableFieldRef("mq.topic"), logical.Str("event_topic")),
 					logical.Eq(logical.NewSearchableFieldRef("http.method"), logical.Str("GET")),
 				}, tsdb.Entity{tsdb.Entry("my_app"), tsdb.AnyEntry, tsdb.AnyEntry},
-				logical.OrderBy("duration", modelv1.QueryOrder_SORT_DESC),
+				logical.OrderBy("duration", modelv1.Sort_SORT_DESC),
 				logical.NewTags("searchable", "http.method", "service_id", "duration")),
 			10),
 		5).
@@ -201,7 +201,7 @@ func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("service_instance_id", modelv1.QueryOrder_SORT_DESC).
+		OrderBy("service_instance_id", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "trace_id", "service_id").
 		FieldsInTagFamily("searchable", "duration", ">", 500).
@@ -228,7 +228,7 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("duration2", modelv1.QueryOrder_SORT_DESC).
+		OrderBy("duration2", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "trace_id", "service_id").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
@@ -254,7 +254,7 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	criteria := pb.NewQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
-		OrderBy("duration", modelv1.QueryOrder_SORT_DESC).
+		OrderBy("duration", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "duration", "service_id", "unknown").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
