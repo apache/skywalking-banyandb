@@ -71,8 +71,8 @@ format: ## Format all Go code
 	@goimports -w -local github.com/apache/skywalking-banyandb .
 
 # Enforce go version matches what's in go.mod when running `make check` assuming the following:
-# * 'go version' returns output like "go version go1.16 darwin/amd64"
-# * go.mod contains a line like "go 1.16"
+# * 'go version' returns output like "go version go1.17 darwin/amd64"
+# * go.mod contains a line like "go 1.17"
 CONFIGURED_GO_VERSION := $(shell sed -ne '/^go /s/.* //gp' go.mod)
 EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
 GO_VERSION := $(shell go version)

@@ -29,7 +29,7 @@ ifeq (true,$(CI))
 	BUILD_ARGS := --no-cache --load
 endif
 
-BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.16
+BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.17
 
 .PHONY: docker
 docker:
