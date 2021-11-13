@@ -23,9 +23,13 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
+
+// a chunk is 1MB
+const chunkSize = 1 << 20
 
 type indexRule struct {
 	rule       *databasev1.IndexRule
@@ -102,6 +106,14 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 			Location:   root,
 			ShardNum:   sm.schema.GetOpts().GetShardNum(),
 			IndexRules: spec.indexRules,
+			EncodingMethod: tsdb.EncodingMethod{
+				EncoderFactory: func() encoding.SeriesEncoder {
+					return encoding.NewStreamChunkEncoder(chunkSize)
+				},
+				DecoderFactory: func() encoding.SeriesDecoder {
+					return encoding.NewStreamChunkDecoder(chunkSize)
+				},
+			},
 		})
 	if err != nil {
 		return nil, err

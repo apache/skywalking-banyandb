@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -56,6 +57,14 @@ func setUp(t *require.Assertions) (tempDir string, deferFunc func(), db Database
 		DatabaseOpts{
 			Location: tempDir,
 			ShardNum: 1,
+			EncodingMethod: EncodingMethod{
+				EncoderFactory: func() encoding.SeriesEncoder {
+					return nil
+				},
+				DecoderFactory: func() encoding.SeriesDecoder {
+					return nil
+				},
+			},
 		})
 	t.NoError(err)
 	t.NotNil(db)

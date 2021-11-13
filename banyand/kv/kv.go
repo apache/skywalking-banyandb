@@ -23,8 +23,10 @@ import (
 	"math"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3/bydb"
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -101,6 +103,20 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 	}
 }
 
+func TSSWithEncoding(encoderFactory encoding.SeriesEncoderFactory, decoderFactory encoding.SeriesDecoderFactory) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.dbOpts = btss.dbOpts.WithExternalCompactor(func() bydb.TSetEncoder {
+				return encoderFactory()
+			}, func() bydb.TSetDecoder {
+				return &decoderDelegate{
+					SeriesDecoder: decoderFactory(),
+				}
+			})
+		}
+	}
+}
+
 type Iterator interface {
 	Next()
 	Rewind()
@@ -125,7 +141,7 @@ type IndexStore interface {
 }
 
 // OpenTimeSeriesStore creates a new TimeSeriesStore
-func OpenTimeSeriesStore(shardID int, path string, compressLevel int, valueSize int, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
+func OpenTimeSeriesStore(shardID int, path string, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
 	btss := new(badgerTSS)
 	btss.shardID = shardID
 	btss.dbOpts = badger.DefaultOptions(path)
@@ -139,7 +155,7 @@ func OpenTimeSeriesStore(shardID int, path string, compressLevel int, valueSize 
 	if err != nil {
 		return nil, fmt.Errorf("failed to open time series store: %v", err)
 	}
-	btss.TSet = *badger.NewTSet(btss.db, compressLevel, valueSize)
+	btss.TSet = *badger.NewTSet(btss.db)
 	return btss, nil
 }
 
@@ -157,26 +173,6 @@ func StoreWithNamedLogger(name string, l *logger.Logger) StoreOptions {
 			bdb.dbOpts = bdb.dbOpts.WithLogger(&badgerLog{
 				delegated: l.Named(name),
 			})
-		}
-	}
-}
-
-// StoreWithBufferSize sets a external logger into underlying Store
-func StoreWithBufferSize(size int64) StoreOptions {
-	return func(store Store) {
-		if bdb, ok := store.(*badgerDB); ok {
-			bdb.dbOpts = bdb.dbOpts.WithMemTableSize(size)
-		}
-	}
-}
-
-type FlushCallback func()
-
-// StoreWithFlushCallback sets a callback function
-func StoreWithFlushCallback(callback FlushCallback) StoreOptions {
-	return func(store Store) {
-		if bdb, ok := store.(*badgerDB); ok {
-			bdb.dbOpts.FlushCallBack = callback
 		}
 	}
 }
