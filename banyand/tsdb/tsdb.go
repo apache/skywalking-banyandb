@@ -31,6 +31,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -47,10 +48,16 @@ const (
 	dirPerm = 0700
 )
 
-var ErrInvalidShardID = errors.New("invalid shard id")
-var indexRulesKey = contextIndexRulesKey{}
+var (
+	ErrInvalidShardID       = errors.New("invalid shard id")
+	ErrEncodingMethodAbsent = errors.New("encoding method is absent")
+
+	indexRulesKey     = contextIndexRulesKey{}
+	encodingMethodKey = contextEncodingMethodKey{}
+)
 
 type contextIndexRulesKey struct{}
+type contextEncodingMethodKey struct{}
 
 type Database interface {
 	io.Closer
@@ -68,9 +75,15 @@ type Shard interface {
 var _ Database = (*database)(nil)
 
 type DatabaseOpts struct {
-	Location   string
-	ShardNum   uint32
-	IndexRules []*databasev1.IndexRule
+	Location       string
+	ShardNum       uint32
+	IndexRules     []*databasev1.IndexRule
+	EncodingMethod EncodingMethod
+}
+
+type EncodingMethod struct {
+	EncoderFactory encoding.SeriesEncoderFactory
+	DecoderFactory encoding.SeriesDecoderFactory
 }
 
 type database struct {
@@ -111,6 +124,9 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 			db.logger = pl.Named("tsdb")
 		}
 	}
+	if opts.EncodingMethod.EncoderFactory == nil || opts.EncodingMethod.DecoderFactory == nil {
+		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to open database")
+	}
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}
@@ -122,6 +138,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
 	thisContext = context.WithValue(thisContext, indexRulesKey, opts.IndexRules)
+	thisContext = context.WithValue(thisContext, encodingMethodKey, opts.EncodingMethod)
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)
 	}

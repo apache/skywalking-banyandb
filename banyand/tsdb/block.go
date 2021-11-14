@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -50,11 +51,9 @@ type block struct {
 }
 
 type blockOpts struct {
-	segID         uint16
-	blockID       uint16
-	path          string
-	compressLevel int
-	valueSize     int
+	segID   uint16
+	blockID uint16
+	path    string
 }
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
@@ -71,8 +70,17 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 			b.l = pl.Named("block")
 		}
 	}
-	if b.store, err = kv.OpenTimeSeriesStore(0, b.path+"/store", opts.compressLevel, opts.valueSize,
-		kv.TSSWithLogger(b.l)); err != nil {
+	encodingMethodObject := ctx.Value(encodingMethodKey)
+	if encodingMethodObject == nil {
+		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to create a block")
+	}
+	encodingMethod := encodingMethodObject.(EncodingMethod)
+	if b.store, err = kv.OpenTimeSeriesStore(
+		0,
+		b.path+"/store",
+		kv.TSSWithEncoding(encodingMethod.EncoderFactory, encodingMethod.DecoderFactory),
+		kv.TSSWithLogger(b.l),
+	); err != nil {
 		return nil, err
 	}
 	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{

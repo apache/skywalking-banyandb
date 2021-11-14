@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3/bydb"
 	"github.com/dgraph-io/badger/v3/y"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -255,4 +257,22 @@ func (l *badgerLog) Infof(f string, v ...interface{}) {
 
 func (l *badgerLog) Debugf(f string, v ...interface{}) {
 	l.delegated.Debug().Msgf(f, v...)
+}
+
+var _ bydb.TSetDecoder = (*decoderDelegate)(nil)
+
+type decoderDelegate struct {
+	encoding.SeriesDecoder
+}
+
+func (d *decoderDelegate) Iterator() bydb.TSetIterator {
+	return &iterDelegate{
+		SeriesIterator: d.SeriesDecoder.Iterator(),
+	}
+}
+
+var _ bydb.TSetDecoder = (*decoderDelegate)(nil)
+
+type iterDelegate struct {
+	encoding.SeriesIterator
 }
