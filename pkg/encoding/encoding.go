@@ -21,7 +21,10 @@ import "github.com/pkg/errors"
 
 var ErrEncodeEmpty = errors.New("encode an empty value")
 
-type SeriesEncoderFactory func() SeriesEncoder
+type SeriesEncoderPool interface {
+	Get(metadata []byte) SeriesEncoder
+	Put(encoder SeriesEncoder)
+}
 
 // SeriesEncoder encodes time series data point
 type SeriesEncoder interface {
@@ -30,19 +33,22 @@ type SeriesEncoder interface {
 	// IsFull returns whether the encoded data reached its capacity
 	IsFull() bool
 	// Reset the underlying buffer
-	Reset()
+	Reset(key []byte)
 	// Encode the time series data point to a binary
 	Encode() ([]byte, error)
 	// StartTime indicates the first entry's time
 	StartTime() uint64
 }
 
-type SeriesDecoderFactory func() SeriesDecoder
+type SeriesDecoderPool interface {
+	Get(metadata []byte) SeriesDecoder
+	Put(encoder SeriesDecoder)
+}
 
 // SeriesDecoder decodes encoded time series data
 type SeriesDecoder interface {
 	// Decode the time series data
-	Decode(data []byte) error
+	Decode(key, data []byte) error
 	// Len denotes the size of iterator
 	Len() int
 	// IsFull returns whether the encoded data reached its capacity

@@ -15,17 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package bytes
+package bit
 
-func Join(s ...[]byte) []byte {
-	n := 0
-	for _, v := range s {
-		n += len(v)
-	}
+import (
+	"bytes"
+	"testing"
 
-	b, i := make([]byte, n), 0
-	for _, v := range s {
-		i += copy(b[i:], v)
+	"github.com/stretchr/testify/assert"
+)
+
+func TestReader(t *testing.T) {
+	data := []byte{3, 255, 0xcc, 0x1a, 0xbc, 0xde, 0x80}
+
+	r := NewReader(bytes.NewBuffer(data))
+	a := assert.New(t)
+
+	eq(a, byte(3))(r.ReadByte())
+	eq(a, uint64(255))(r.ReadBits(8))
+
+	eq(a, uint64(0xc))(r.ReadBits(4))
+
+	eq(a, uint64(0xc1))(r.ReadBits(8))
+
+	eq(a, uint64(0xabcde))(r.ReadBits(20))
+
+	eq(a, true)(r.ReadBool())
+	eq(a, false)(r.ReadBool())
+
+}
+
+func eq(a *assert.Assertions, expected interface{}) func(interface{}, error) {
+	return func(actual interface{}, err error) {
+		a.NoError(err)
+		a.Equal(expected, actual)
 	}
-	return b
 }

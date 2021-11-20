@@ -58,12 +58,8 @@ func setUp(t *require.Assertions) (tempDir string, deferFunc func(), db Database
 			Location: tempDir,
 			ShardNum: 1,
 			EncodingMethod: EncodingMethod{
-				EncoderFactory: func() encoding.SeriesEncoder {
-					return nil
-				},
-				DecoderFactory: func() encoding.SeriesDecoder {
-					return nil
-				},
+				EncoderPool: encoding.NewPlainEncoderPool(0),
+				DecoderPool: encoding.NewPlainDecoderPool(0),
 			},
 		})
 	t.NoError(err)

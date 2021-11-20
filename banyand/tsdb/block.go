@@ -78,7 +78,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		b.path+"/store",
-		kv.TSSWithEncoding(encodingMethod.EncoderFactory, encodingMethod.DecoderFactory),
+		kv.TSSWithEncoding(encodingMethod.EncoderPool, encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l),
 	); err != nil {
 		return nil, err
