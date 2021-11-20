@@ -82,8 +82,8 @@ type DatabaseOpts struct {
 }
 
 type EncodingMethod struct {
-	EncoderFactory encoding.SeriesEncoderFactory
-	DecoderFactory encoding.SeriesDecoderFactory
+	EncoderPool encoding.SeriesEncoderPool
+	DecoderPool encoding.SeriesDecoderPool
 }
 
 type database struct {
@@ -124,7 +124,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 			db.logger = pl.Named("tsdb")
 		}
 	}
-	if opts.EncodingMethod.EncoderFactory == nil || opts.EncodingMethod.DecoderFactory == nil {
+	if opts.EncodingMethod.EncoderPool == nil || opts.EncodingMethod.DecoderPool == nil {
 		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to open database")
 	}
 	if _, err := mkdir(opts.Location); err != nil {

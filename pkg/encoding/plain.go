@@ -22,104 +22,145 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
+
+	"github.com/apache/skywalking-banyandb/pkg/buffer"
 )
 
 var (
-	decoder, _               = zstd.NewReader(nil)
-	encoder, _               = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
-	_          SeriesEncoder = (*streamChunkEncoder)(nil)
-	_          SeriesDecoder = (*StreamChunkDecoder)(nil)
+	encoderPool = sync.Pool{
+		New: newPlainEncoder,
+	}
+	decoderPool = sync.Pool{
+		New: func() interface{} {
+			return &plainDecoder{}
+		},
+	}
 )
 
-//streamChunkEncoder backport to reduced value
-type streamChunkEncoder struct {
-	tsBuff    bytes.Buffer
-	valBuff   bytes.Buffer
-	scratch   [binary.MaxVarintLen64]byte
+type plainEncoderPool struct {
+	pool *sync.Pool
+	size int
+}
+
+func NewPlainEncoderPool(size int) SeriesEncoderPool {
+	return &plainEncoderPool{
+		pool: &encoderPool,
+		size: size,
+	}
+}
+
+func (b *plainEncoderPool) Get(metadata []byte) SeriesEncoder {
+	encoder := b.pool.Get().(*plainEncoder)
+	encoder.Reset(metadata)
+	encoder.valueSize = b.size
+	return encoder
+}
+
+func (b *plainEncoderPool) Put(encoder SeriesEncoder) {
+	b.pool.Put(encoder)
+}
+
+type plainDecoderPool struct {
+	pool *sync.Pool
+	size int
+}
+
+func NewPlainDecoderPool(size int) SeriesDecoderPool {
+	return &plainDecoderPool{
+		pool: &decoderPool,
+		size: size,
+	}
+}
+
+func (b *plainDecoderPool) Get(_ []byte) SeriesDecoder {
+	decoder := b.pool.Get().(*plainDecoder)
+	decoder.valueSize = b.size
+	return decoder
+}
+
+func (b *plainDecoderPool) Put(decoder SeriesDecoder) {
+	b.pool.Put(decoder)
+}
+
+var (
+	zstdDecoder, _               = zstd.NewReader(nil)
+	zstdEncoder, _               = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
+	_              SeriesEncoder = (*plainEncoder)(nil)
+	_              SeriesDecoder = (*plainDecoder)(nil)
+)
+
+//plainEncoder backport to reduced value
+type plainEncoder struct {
+	tsBuff    *buffer.Writer
+	valBuff   *buffer.Writer
 	len       uint32
 	num       uint32
 	startTime uint64
 	valueSize int
 }
 
-func NewStreamChunkEncoder(size int) SeriesEncoder {
-	return &streamChunkEncoder{
-		valueSize: size,
+func newPlainEncoder() interface{} {
+	return &plainEncoder{
+		tsBuff:  buffer.NewBufferWriter(&bytes.Buffer{}),
+		valBuff: buffer.NewBufferWriter(&bytes.Buffer{}),
 	}
 }
 
-func (t *streamChunkEncoder) Append(ts uint64, value []byte) {
+func (t *plainEncoder) Append(ts uint64, value []byte) {
 	if t.startTime == 0 {
 		t.startTime = ts
 	} else if t.startTime > ts {
 		t.startTime = ts
 	}
 	vLen := len(value)
-	offset := uint32(len(t.valBuff.Bytes()))
-	t.valBuff.Write(t.putUint32(uint32(vLen)))
+	offset := uint32(t.valBuff.Len())
+	t.valBuff.PutUint32(uint32(vLen))
 	t.valBuff.Write(value)
-	t.tsBuff.Write(t.putUint64(ts))
-	t.tsBuff.Write(t.putUint32(offset))
-	t.num = t.num + 1
+	t.tsBuff.PutUint64(ts)
+	t.tsBuff.PutUint32(offset)
+	t.num++
 }
 
-func (t *streamChunkEncoder) IsFull() bool {
+func (t *plainEncoder) IsFull() bool {
 	return t.valBuff.Len() >= t.valueSize
 }
 
-func (t *streamChunkEncoder) Reset() {
+func (t *plainEncoder) Reset(_ []byte) {
 	t.tsBuff.Reset()
 	t.valBuff.Reset()
 	t.num = 0
 	t.startTime = 0
 }
 
-func (t *streamChunkEncoder) Encode() ([]byte, error) {
+func (t *plainEncoder) Encode() ([]byte, error) {
 	if t.tsBuff.Len() < 1 {
 		return nil, ErrEncodeEmpty
 	}
 	val := t.valBuff.Bytes()
 	t.len = uint32(len(val))
-	_, err := t.tsBuff.WriteTo(&t.valBuff)
-	if err != nil {
-		return nil, err
-	}
-	t.valBuff.Write(t.putUint32(t.num))
-	t.valBuff.Write(t.putUint32(t.len))
+	t.tsBuff.WriteTo(t.valBuff)
+	t.valBuff.PutUint32(t.num)
+	t.valBuff.PutUint32(t.len)
 	data := t.valBuff.Bytes()
 	l := len(data)
 	dst := make([]byte, 0, compressBound(l))
-	dst = encoder.EncodeAll(data, dst)
-	result := make([]byte, len(dst)+2)
-	copy(result, dst)
-	copy(result[len(dst):], t.putUint16(uint16(l)))
-	return result, nil
+	dst = zstdEncoder.EncodeAll(data, dst)
+	result := buffer.NewBufferWriter(bytes.NewBuffer(make([]byte, len(dst)+2)))
+	result.Write(dst)
+	result.PutUint16(uint16(l))
+	return result.Bytes(), nil
 }
 
 func compressBound(srcSize int) int {
 	return srcSize + (srcSize >> 8)
 }
 
-func (t *streamChunkEncoder) StartTime() uint64 {
+func (t *plainEncoder) StartTime() uint64 {
 	return t.startTime
-}
-
-func (t *streamChunkEncoder) putUint16(v uint16) []byte {
-	binary.LittleEndian.PutUint16(t.scratch[:], v)
-	return t.scratch[:2]
-}
-
-func (t *streamChunkEncoder) putUint32(v uint32) []byte {
-	binary.LittleEndian.PutUint32(t.scratch[:], v)
-	return t.scratch[:4]
-}
-
-func (t *streamChunkEncoder) putUint64(v uint64) []byte {
-	binary.LittleEndian.PutUint64(t.scratch[:], v)
-	return t.scratch[:8]
 }
 
 const (
@@ -129,8 +170,8 @@ const (
 
 var ErrInvalidValue = errors.New("invalid encoded value")
 
-//StreamChunkDecoder decodes encoded time index
-type StreamChunkDecoder struct {
+//plainDecoder decodes encoded time index
+type plainDecoder struct {
 	ts        []byte
 	val       []byte
 	len       uint32
@@ -138,20 +179,14 @@ type StreamChunkDecoder struct {
 	valueSize int
 }
 
-func NewStreamChunkDecoder(size int) SeriesDecoder {
-	return &StreamChunkDecoder{
-		valueSize: size,
-	}
-}
-
-func (t *StreamChunkDecoder) Len() int {
+func (t *plainDecoder) Len() int {
 	return int(t.num)
 }
 
-func (t *StreamChunkDecoder) Decode(rawData []byte) (err error) {
+func (t *plainDecoder) Decode(_, rawData []byte) (err error) {
 	var data []byte
 	size := binary.LittleEndian.Uint16(rawData[len(rawData)-2:])
-	if data, err = decoder.DecodeAll(rawData[:len(rawData)-2], make([]byte, 0, size)); err != nil {
+	if data, err = zstdDecoder.DecodeAll(rawData[:len(rawData)-2], make([]byte, 0, size)); err != nil {
 		return err
 	}
 	l := uint32(len(data))
@@ -170,11 +205,11 @@ func (t *StreamChunkDecoder) Decode(rawData []byte) (err error) {
 	return nil
 }
 
-func (t *StreamChunkDecoder) IsFull() bool {
+func (t *plainDecoder) IsFull() bool {
 	return int(t.len) >= t.valueSize
 }
 
-func (t *StreamChunkDecoder) Get(ts uint64) ([]byte, error) {
+func (t *plainDecoder) Get(ts uint64) ([]byte, error) {
 	i := sort.Search(int(t.num), func(i int) bool {
 		slot := getTSSlot(t.ts, i)
 		return parseTS(slot) <= ts
@@ -189,7 +224,7 @@ func (t *StreamChunkDecoder) Get(ts uint64) ([]byte, error) {
 	return getVal(t.val, parseOffset(slot))
 }
 
-func (t *StreamChunkDecoder) Iterator() SeriesIterator {
+func (t *plainDecoder) Iterator() SeriesIterator {
 	return newBlockItemIterator(t)
 }
 
@@ -213,17 +248,17 @@ func parseOffset(tsSlot []byte) uint32 {
 	return binary.LittleEndian.Uint32(tsSlot[8:])
 }
 
-var _ SeriesIterator = (*chunkIterator)(nil)
+var _ SeriesIterator = (*plainIterator)(nil)
 
-type chunkIterator struct {
+type plainIterator struct {
 	index []byte
 	data  []byte
 	idx   int
 	num   int
 }
 
-func newBlockItemIterator(decoder *StreamChunkDecoder) SeriesIterator {
-	return &chunkIterator{
+func newBlockItemIterator(decoder *plainDecoder) SeriesIterator {
+	return &plainIterator{
 		idx:   -1,
 		index: decoder.ts,
 		data:  decoder.val,
@@ -231,20 +266,20 @@ func newBlockItemIterator(decoder *StreamChunkDecoder) SeriesIterator {
 	}
 }
 
-func (b *chunkIterator) Next() bool {
+func (b *plainIterator) Next() bool {
 	b.idx++
 	return b.idx >= 0 && b.idx < b.num
 }
 
-func (b *chunkIterator) Val() []byte {
+func (b *plainIterator) Val() []byte {
 	v, _ := getVal(b.data, parseOffset(getTSSlot(b.index, b.idx)))
 	return v
 }
 
-func (b *chunkIterator) Time() uint64 {
+func (b *plainIterator) Time() uint64 {
 	return parseTS(getTSSlot(b.index, b.idx))
 }
 
-func (b *chunkIterator) Error() error {
+func (b *plainIterator) Error() error {
 	return nil
 }

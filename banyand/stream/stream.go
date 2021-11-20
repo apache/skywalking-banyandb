@@ -107,12 +107,8 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 			ShardNum:   sm.schema.GetOpts().GetShardNum(),
 			IndexRules: spec.indexRules,
 			EncodingMethod: tsdb.EncodingMethod{
-				EncoderFactory: func() encoding.SeriesEncoder {
-					return encoding.NewStreamChunkEncoder(chunkSize)
-				},
-				DecoderFactory: func() encoding.SeriesDecoder {
-					return encoding.NewStreamChunkDecoder(chunkSize)
-				},
+				EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
+				DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
 			},
 		})
 	if err != nil {

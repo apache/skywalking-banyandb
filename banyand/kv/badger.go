@@ -259,6 +259,37 @@ func (l *badgerLog) Debugf(f string, v ...interface{}) {
 	l.delegated.Debug().Msgf(f, v...)
 }
 
+var _ bydb.TSetEncoderPool = (*encoderPoolDelegate)(nil)
+
+type encoderPoolDelegate struct {
+	encoding.SeriesEncoderPool
+}
+
+func (e *encoderPoolDelegate) Get(metadata []byte) bydb.TSetEncoder {
+	return e.SeriesEncoderPool.Get(metadata)
+}
+
+func (e *encoderPoolDelegate) Put(encoder bydb.TSetEncoder) {
+	e.SeriesEncoderPool.Put(encoder)
+}
+
+var _ bydb.TSetDecoderPool = (*decoderPoolDelegate)(nil)
+
+type decoderPoolDelegate struct {
+	encoding.SeriesDecoderPool
+}
+
+func (e *decoderPoolDelegate) Get(metadata []byte) bydb.TSetDecoder {
+	return &decoderDelegate{
+		e.SeriesDecoderPool.Get(metadata),
+	}
+}
+
+func (e *decoderPoolDelegate) Put(decoder bydb.TSetDecoder) {
+	dd := decoder.(*decoderDelegate)
+	e.SeriesDecoderPool.Put(dd.SeriesDecoder)
+}
+
 var _ bydb.TSetDecoder = (*decoderDelegate)(nil)
 
 type decoderDelegate struct {

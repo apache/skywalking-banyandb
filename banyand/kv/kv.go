@@ -23,7 +23,6 @@ import (
 	"math"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/dgraph-io/badger/v3/bydb"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -103,16 +102,15 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 	}
 }
 
-func TSSWithEncoding(encoderFactory encoding.SeriesEncoderFactory, decoderFactory encoding.SeriesDecoderFactory) TimeSeriesOptions {
+func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
 		if btss, ok := store.(*badgerTSS); ok {
-			btss.dbOpts = btss.dbOpts.WithExternalCompactor(func() bydb.TSetEncoder {
-				return encoderFactory()
-			}, func() bydb.TSetDecoder {
-				return &decoderDelegate{
-					SeriesDecoder: decoderFactory(),
-				}
-			})
+			btss.dbOpts = btss.dbOpts.WithExternalCompactor(
+				&encoderPoolDelegate{
+					encoderPool,
+				}, &decoderPoolDelegate{
+					decoderPool,
+				})
 		}
 	}
 }
