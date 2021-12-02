@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -35,6 +36,17 @@ type EntityLocator []TagLocator
 type TagLocator struct {
 	FamilyOffset int
 	TagOffset    int
+}
+
+func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.Entity) EntityLocator {
+	locator := make(EntityLocator, 0, len(entity.GetTagNames()))
+	for _, tagInEntity := range entity.GetTagNames() {
+		fIndex, tIndex, tag := pbv1.FindTagByName(families, tagInEntity)
+		if tag != nil {
+			locator = append(locator, TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
+		}
+	}
+	return locator
 }
 
 func (e EntityLocator) Find(value []*modelv1.TagFamilyForWrite) (tsdb.Entity, error) {

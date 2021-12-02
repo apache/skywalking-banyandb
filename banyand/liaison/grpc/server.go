@@ -94,11 +94,11 @@ func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.shardRepo.log = s.log
 	s.entityRepo.log = s.log
-	err := s.repo.Subscribe(event.TopicShardEvent, s.shardRepo)
+	err := s.repo.Subscribe(event.StreamTopicShardEvent, s.shardRepo)
 	if err != nil {
 		return err
 	}
-	return s.repo.Subscribe(event.TopicEntityEvent, s.entityRepo)
+	return s.repo.Subscribe(event.StreamTopicEntityEvent, s.entityRepo)
 }
 
 func (s *Server) Name() string {

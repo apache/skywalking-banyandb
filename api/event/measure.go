@@ -23,15 +23,15 @@ import (
 )
 
 var (
-	ShardEventKindVersion = common.KindVersion{
+	MeasureShardEventKindVersion = common.KindVersion{
 		Version: "v1",
-		Kind:    "event-shard",
+		Kind:    "measure-event-shard",
 	}
-	TopicShardEvent = bus.UniTopic(ShardEventKindVersion.String())
+	MeasureTopicShardEvent = bus.UniTopic(MeasureShardEventKindVersion.String())
 
-	EntityEventKindVersion = common.KindVersion{
+	MeasureEntityEventKindVersion = common.KindVersion{
 		Version: "v1",
-		Kind:    "event-entity",
+		Kind:    "measure-event-entity",
 	}
-	TopicEntityEvent = bus.UniTopic(EntityEventKindVersion.String())
+	MeasureTopicEntityEvent = bus.UniTopic(MeasureEntityEventKindVersion.String())
 )

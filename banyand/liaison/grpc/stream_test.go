@@ -43,6 +43,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 var _ run.PreRunner = (*preloadStreamService)(nil)
@@ -52,11 +53,11 @@ type preloadStreamService struct {
 }
 
 func (p *preloadStreamService) Name() string {
-	return "preload-stream"
+	return "preload-measure"
 }
 
 func (p *preloadStreamService) PreRun() error {
-	return test.PreloadSchema(p.metaSvc.SchemaRegistry())
+	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
 type testData struct {
@@ -108,7 +109,7 @@ func setup(req *require.Assertions, testData testData) func() {
 	)
 	// Create a random directory
 	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + test.RandomTempDir()}
+	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + teststream.RandomTempDir()}
 	if testData.TLS {
 		flags = append(flags, "--tls=true")
 		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")

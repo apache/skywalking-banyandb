@@ -68,7 +68,7 @@ message Stream {
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
     ResourceOpts opts = 4;
-    // updated_at_nanoseconds indicates when the measure is updated
+    // updated_at_nanoseconds indicates when the stream is updated
     google.protobuf.Timestamp updated_at_nanoseconds = 5;
 }
 

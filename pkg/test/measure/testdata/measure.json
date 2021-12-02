@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "name": "cpm",
+    "group": "default"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "entity_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "scope",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "summation",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    },
+    {
+      "name": "count",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    },
+    {
+      "name": "value",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "entity_id"
+    ]
+  },
+  "interval_rules": [
+    {
+      "tag_name": "scope",
+      "str": "minute",
+      "interval": "1m"
+    },
+    {
+      "tag_name": "scope",
+      "str": "hour",
+      "interval": "1h"
+    },
+    {
+      "tag_name": "scope",
+      "str": "day",
+      "interval": "1d"
+    }
+  ],
+  "opts": {
+    "shard_num": 2,
+    "ttl": {
+      "val": 7,
+      "unit": "DURATION_UNIT_DAY"
+    }
+  },
+  "updated_at_nanoseconds": "2021-04-15T01:30:15.01Z"
+}

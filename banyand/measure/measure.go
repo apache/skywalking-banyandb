@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"context"
@@ -31,42 +31,43 @@ import (
 // a chunk is 1MB
 const chunkSize = 1 << 20
 
-type stream struct {
+type measure struct {
 	name          string
 	group         string
 	l             *logger.Logger
-	schema        *databasev1.Stream
+	schema        *databasev1.Measure
 	db            tsdb.Database
 	entityLocator partition.EntityLocator
 	indexRules    []*databasev1.IndexRule
 	indexWriter   *index.Writer
 }
 
-func (s *stream) Close() error {
+func (s *measure) Close() error {
 	_ = s.indexWriter.Close()
 	return s.db.Close()
 }
 
-func (s *stream) parseSchema() {
+func (s *measure) parseSchema() {
 	sm := s.schema
 	meta := sm.GetMetadata()
 	s.name, s.group = meta.GetName(), meta.GetGroup()
 	s.entityLocator = partition.NewEntityLocator(sm.TagFamilies, sm.Entity)
 }
 
-type streamSpec struct {
-	schema     *databasev1.Stream
+type measureSpec struct {
+	schema     *databasev1.Measure
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error) {
-	sm := &stream{
+func openMeasure(root string, spec measureSpec, l *logger.Logger) (*measure, error) {
+	sm := &measure{
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
 	}
 	sm.parseSchema()
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
+
 	db, err := tsdb.OpenDatabase(
 		ctx,
 		tsdb.DatabaseOpts{
@@ -89,8 +90,4 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 		IndexRules: spec.indexRules,
 	})
 	return sm, nil
-}
-
-func formatStreamID(name, group string) string {
-	return name + ":" + group
 }

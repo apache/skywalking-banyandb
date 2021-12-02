@@ -46,3 +46,9 @@ message WriteRequest {
 
 // WriteResponse is the response contract for write
 message WriteResponse {}
+
+message InternalWriteRequest {
+  uint32 shard_id = 1;
+  bytes series_hash = 2;
+  WriteRequest request = 3;
+}

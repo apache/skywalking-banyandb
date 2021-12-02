@@ -72,7 +72,7 @@ func (ie *intEncoder) Append(ts uint64, value []byte) {
 		ie.bw.WriteBool(false)
 		ie.num++
 	}
-	ie.bw.WriteBool(true)
+	ie.bw.WriteBool(len(value) > 0)
 	ie.values.Write(binary.LittleEndian.Uint64(value))
 	ie.num++
 }

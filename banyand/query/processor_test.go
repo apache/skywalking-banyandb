@@ -45,6 +45,7 @@ import (
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 var (
@@ -95,7 +96,7 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	tester.NoError(err)
 
-	etcdRootDir := test.RandomTempDir()
+	etcdRootDir := teststream.RandomTempDir()
 	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	tester.NoError(err)
 
@@ -108,13 +109,13 @@ func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, fun
 
 	// :PreRun:
 	// 1) metadata
-	// 2) stream
+	// 2) measure
 	// 3) query
 	// 4) liaison
 	err = metadataSvc.PreRun()
 	tester.NoError(err)
 
-	err = test.PreloadSchema(metadataSvc.SchemaRegistry())
+	err = teststream.PreloadSchema(metadataSvc.SchemaRegistry())
 	tester.NoError(err)
 
 	err = streamSvc.PreRun()
