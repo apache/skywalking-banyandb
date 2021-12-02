@@ -162,7 +162,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		},
 		{
 			name: "Get unknown Measure",
-			meta: &commonv1.Metadata{Name: "unknown-measure", Group: "default"},
+			meta: &commonv1.Metadata{Name: "unknown-stream", Group: "default"},
 			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				e, innerErr := registry.GetMeasure(context.TODO(), meta)
 				if innerErr != nil {

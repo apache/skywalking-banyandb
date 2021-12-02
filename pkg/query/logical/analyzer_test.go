@@ -31,11 +31,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	"github.com/apache/skywalking-banyandb/pkg/test"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 // setUpAnalyzer creates a default analyzer for testing.
-// You have to close the underlying metadata after test
+// You have to close the underlying metadata after teststream
 func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 	metadataService, err := metadata.NewService(context.TODO())
 	if err != nil {
@@ -43,7 +43,7 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
-	rootDir := test.RandomTempDir()
+	rootDir := teststream.RandomTempDir()
 	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 
 	if err != nil {
@@ -57,7 +57,7 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
-	err = test.PreloadSchema(metadataService.SchemaRegistry())
+	err = teststream.PreloadSchema(metadataService.SchemaRegistry())
 	if err != nil {
 		return nil, func() {
 		}, err

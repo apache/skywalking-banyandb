@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 //go:embed testdata/*.json
@@ -90,7 +91,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	metadataSvc, err := metadata.NewService(context.TODO())
 	t.NoError(err)
 
-	etcdRootDir := test.RandomTempDir()
+	etcdRootDir := teststream.RandomTempDir()
 	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	t.NoError(err)
 
@@ -101,7 +102,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	err = metadataSvc.PreRun()
 	t.NoError(err)
 
-	err = test.PreloadSchema(metadataSvc.SchemaRegistry())
+	err = teststream.PreloadSchema(metadataSvc.SchemaRegistry())
 	t.NoError(err)
 
 	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})

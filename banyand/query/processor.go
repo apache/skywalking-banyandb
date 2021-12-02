@@ -62,7 +62,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	meta := queryCriteria.GetMetadata()
 	ec, err := q.streamService.Stream(meta)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to get stream execution context")
+		q.logger.Error().Err(err).Msg("fail to get measure execution context")
 		return
 	}
 

@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 func Test_Stream_Write(t *testing.T) {
@@ -194,14 +195,14 @@ func setup(t *testing.T) (*stream, func()) {
 	mService, err := metadata.NewService(context.TODO())
 	req.NoError(err)
 
-	etcdRootDir := test.RandomTempDir()
+	etcdRootDir := teststream.RandomTempDir()
 	err = mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	req.NoError(err)
 
 	err = mService.PreRun()
 	req.NoError(err)
 
-	err = test.PreloadSchema(mService.SchemaRegistry())
+	err = teststream.PreloadSchema(mService.SchemaRegistry())
 	req.NoError(err)
 
 	sa, err := mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{

@@ -26,7 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test"
+	test "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 func Test_service_RulesBySubject(t *testing.T) {

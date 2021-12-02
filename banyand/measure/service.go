@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"context"
@@ -38,8 +38,8 @@ import (
 )
 
 var (
-	ErrEmptyRootPath  = errors.New("root path is empty")
-	ErrStreamNotExist = errors.New("stream doesn't exist")
+	ErrEmptyRootPath   = errors.New("root path is empty")
+	ErrMeasureNotExist = errors.New("stream doesn't exist")
 )
 
 type Service interface {
@@ -52,7 +52,7 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaMap     map[string]*stream
+	schemaMap     map[string]*measure
 	writeListener *writeCallback
 	l             *logger.Logger
 	metadata      metadata.Repo
@@ -62,11 +62,11 @@ type service struct {
 	stopCh        chan struct{}
 }
 
-func (s *service) Stream(stream *commonv1.Metadata) (Stream, error) {
-	sID := formatStreamID(stream.GetName(), stream.GetGroup())
+func (s *service) Measure(measure *commonv1.Metadata) (Measure, error) {
+	sID := formatMeasureID(measure.GetName(), measure.GetGroup())
 	sm, ok := s.schemaMap[sID]
 	if !ok {
-		return nil, errors.WithStack(ErrStreamNotExist)
+		return nil, errors.WithStack(ErrMeasureNotExist)
 	}
 	return sm, nil
 }
@@ -89,26 +89,26 @@ func (s *service) Name() string {
 }
 
 func (s *service) PreRun() error {
-	schemas, err := s.metadata.StreamRegistry().ListStream(context.TODO(), schema.ListOpt{})
+	schemas, err := s.metadata.MeasureRegistry().ListMeasure(context.TODO(), schema.ListOpt{})
 	if err != nil {
 		return err
 	}
 
-	s.schemaMap = make(map[string]*stream, len(schemas))
+	s.schemaMap = make(map[string]*measure, len(schemas))
 	s.l = logger.GetLogger(s.Name())
 	for _, sa := range schemas {
 		iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.Metadata)
 		if errIndexRules != nil {
 			return errIndexRules
 		}
-		sm, errTS := openStream(s.root, streamSpec{
+		sm, errTS := openMeasure(s.root, measureSpec{
 			schema:     sa,
 			indexRules: iRules,
 		}, s.l)
 		if errTS != nil {
 			return errTS
 		}
-		id := formatStreamID(sm.name, sm.group)
+		id := formatMeasureID(sm.name, sm.group)
 		s.schemaMap[id] = sm
 		s.l.Info().Str("id", id).Msg("initialize stream")
 	}
@@ -128,7 +128,7 @@ func (s *service) Serve() error {
 				TagOffset:    uint32(tagLocator.TagOffset),
 			})
 		}
-		_, err := s.repo.Publish(event.StreamTopicEntityEvent, bus.NewMessage(bus.MessageID(now), &databasev1.EntityEvent{
+		_, err := s.repo.Publish(event.MeasureTopicEntityEvent, bus.NewMessage(bus.MessageID(now), &databasev1.EntityEvent{
 			Subject: &commonv1.Metadata{
 				Name:  sMeta.name,
 				Group: sMeta.group,
@@ -141,7 +141,7 @@ func (s *service) Serve() error {
 			return err
 		}
 		for i := 0; i < int(sMeta.schema.GetOpts().GetShardNum()); i++ {
-			_, errShard := s.repo.Publish(event.StreamTopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev1.ShardEvent{
+			_, errShard := s.repo.Publish(event.MeasureTopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev1.ShardEvent{
 				Shard: &databasev1.Shard{
 					Id:    uint64(i),
 					Total: sMeta.schema.GetOpts().GetShardNum(),
@@ -166,7 +166,7 @@ func (s *service) Serve() error {
 			}
 		}
 	}
-	errWrite := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
+	errWrite := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 	if errWrite != nil {
 		return errWrite
 	}
@@ -191,4 +191,8 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		repo:     repo,
 		pipeline: pipeline,
 	}, nil
+}
+
+func formatMeasureID(name, group string) string {
+	return name + ":" + group
 }

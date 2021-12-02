@@ -1,0 +1,47 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str":{"value": "1"}},
+          {"str":{"value": "minute"}}
+        ]
+      }
+    ],
+    "fields": [
+      {"int":{"value": 100}},
+      {"int":{"value": 100}},
+      {"int":{"value": 1}}
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str":{"value": "1"}},
+          {"str":{"value": "minute"}}
+        ]
+      }
+    ],
+    "fields": [
+      {"int":{"value": 200}},
+      {"int":{"value": 50}},
+      {"int":{"value": 4}}
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str":{"value": "1"}},
+          {"str":{"value": "minute"}}
+        ]
+      }
+    ],
+    "fields": [
+      {"int":{"value": 150}},
+      {"int":{"value": 300}},
+      {"int":{"value": 5}}
+    ]
+  }
+]

@@ -29,7 +29,7 @@ import (
 )
 
 type WriterBuilder interface {
-	Family(name string, val []byte) WriterBuilder
+	Family(name []byte, val []byte) WriterBuilder
 	Time(ts time.Time) WriterBuilder
 	Val(val []byte) WriterBuilder
 	Build() (Writer, error)
@@ -54,11 +54,11 @@ type writerBuilder struct {
 	seriesIDBytes []byte
 }
 
-func (w *writerBuilder) Family(name string, val []byte) WriterBuilder {
+func (w *writerBuilder) Family(name []byte, val []byte) WriterBuilder {
 	w.values = append(w.values, struct {
 		family []byte
 		val    []byte
-	}{family: []byte(name), val: val})
+	}{family: name, val: val})
 	return w
 }
 

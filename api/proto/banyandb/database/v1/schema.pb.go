@@ -578,7 +578,7 @@ type Stream struct {
 	// entity indicates how to generate a series and shard a stream
 	Entity *Entity       `protobuf:"bytes,3,opt,name=entity,proto3" json:"entity,omitempty"`
 	Opts   *ResourceOpts `protobuf:"bytes,4,opt,name=opts,proto3" json:"opts,omitempty"`
-	// updated_at_nanoseconds indicates when the measure is updated
+	// updated_at_nanoseconds indicates when the stream is updated
 	UpdatedAtNanoseconds *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=updated_at_nanoseconds,json=updatedAtNanoseconds,proto3" json:"updated_at_nanoseconds,omitempty"`
 }
 

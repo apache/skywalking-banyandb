@@ -15,17 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
+	"bytes"
+
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -34,7 +39,11 @@ var (
 	ErrMalformedElement = errors.New("element is malformed")
 )
 
-func (s *stream) Write(value *streamv1.ElementValue) error {
+const (
+	TagFlag byte = iota
+)
+
+func (s *measure) Write(value *measurev1.DataPointValue) error {
 	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetOpts().GetShardNum())
 	if err != nil {
 		return err
@@ -51,7 +60,7 @@ func (s *stream) Write(value *streamv1.ElementValue) error {
 	return nil
 }
 
-func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv1.ElementValue, cb index.CallbackFn) error {
+func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue, cb index.CallbackFn) error {
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -97,9 +106,26 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
-			builder.Family([]byte(sm.GetTagFamilies()[fi].GetName()), bb)
+			builder.Family(familyIdentity(sm.GetTagFamilies()[fi].GetName(), TagFlag), bb)
 		}
-		builder.Val([]byte(value.GetElementId()))
+		if len(value.GetFields()) > len(sm.GetFields()) {
+			return nil, errors.Wrap(ErrMalformedElement, "fields number is more than expected")
+		}
+		for fi, fieldValue := range value.GetFields() {
+			fieldSpec := sm.GetFields()[fi]
+			fType, isNull := pbv1.FieldValueTypeConv(fieldValue)
+			if isNull {
+				continue
+			}
+			if fType != fieldSpec.GetFieldType() {
+				return nil, errors.Wrapf(ErrMalformedElement, "field %s type is unexpected", fieldSpec.GetName())
+			}
+			data := encodeFieldValue(fieldValue)
+			if data == nil {
+				continue
+			}
+			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), encoderFieldFlag(fieldSpec)), data)
+		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
@@ -111,7 +137,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			Interface("data", value).
 			Uint64("series_id", uint64(series.ID())).
 			Int("shard_id", int(shardID)).
-			Msg("write measure")
+			Msg("write stream")
 		return writer, errWrite
 	}
 	writer, err := writeFn()
@@ -134,10 +160,10 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 
 type writeCallback struct {
 	l         *logger.Logger
-	schemaMap map[string]*stream
+	schemaMap map[string]*measure
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*stream) *writeCallback {
+func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*measure) *writeCallback {
 	wcb := &writeCallback{
 		l:         l,
 		schemaMap: schemaMap,
@@ -146,16 +172,50 @@ func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*stream) *writeCa
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*streamv1.InternalWriteRequest)
+	writeEvent, ok := message.Data().(*measurev1.InternalWriteRequest)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
 		return
 	}
 	sm := writeEvent.GetRequest().GetMetadata()
-	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
+	id := formatMeasureID(sm.GetName(), sm.GetGroup())
+	err := w.schemaMap[id].write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetDataPoint(), nil)
 	if err != nil {
 		w.l.Debug().Err(err)
 	}
 	return
+}
+
+func familyIdentity(name string, flag byte) []byte {
+	return bytes.Join([][]byte{[]byte(name), {flag}}, nil)
+}
+
+func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
+	switch fieldValue.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return convert.Int64ToBytes(fieldValue.GetInt().GetValue())
+	case *modelv1.FieldValue_Str:
+		return []byte(fieldValue.GetStr().Value)
+	case *modelv1.FieldValue_BinaryData:
+		return fieldValue.GetBinaryData()
+	}
+	return nil
+}
+
+func decodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
+	switch fieldSpec.GetFieldType() {
+	case databasev1.FieldType_FIELD_TYPE_STRING:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}
+	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}
+	}
+	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+}
+
+func encoderFieldFlag(fieldSpec *databasev1.FieldSpec) byte {
+	encodingMethod := byte(fieldSpec.GetEncodingMethod().Number())
+	compressionMethod := byte(fieldSpec.GetCompressionMethod().Number())
+	return encodingMethod<<4 | compressionMethod
 }
