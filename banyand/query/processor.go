@@ -44,7 +44,6 @@ var (
 type queryProcessor struct {
 	streamService stream.Service
 	metaService   metadata.Service
-	logger        *logger.Logger
 	log           *logger.Logger
 	serviceRepo   discovery.ServiceRepo
 	pipeline      queue.Queue
@@ -62,31 +61,31 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	meta := queryCriteria.GetMetadata()
 	ec, err := q.streamService.Stream(meta)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to get measure execution context")
+		q.log.Error().Err(err).Msg("fail to get measure execution context")
 		return
 	}
 
 	analyzer, err := logical.CreateAnalyzerFromMetaService(q.metaService)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to build analyzer")
+		q.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
 	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to build trace schema")
+		q.log.Error().Err(err).Msg("fail to build trace schema")
 		return
 	}
 
 	p, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to analyze the query request")
+		q.log.Error().Err(err).Msg("fail to analyze the query request")
 		return
 	}
 
 	entities, err := p.Execute(ec)
 	if err != nil {
-		q.logger.Error().Err(err).Msg("fail to execute the query plan")
+		q.log.Error().Err(err).Msg("fail to execute the query plan")
 		return
 	}
 

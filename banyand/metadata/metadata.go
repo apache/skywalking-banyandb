@@ -79,7 +79,12 @@ func (s *service) PreRun() error {
 		return err
 	}
 	<-s.schemaRegistry.ReadyNotify()
-	return nil
+	return s.initializeStorage()
+}
+
+// initializeStorage creates "default" group after the storage layer is ready
+func (s *service) initializeStorage() error {
+	return s.schemaRegistry.CreateGroup(context.TODO(), "default")
 }
 
 func (s *service) Serve() error {
