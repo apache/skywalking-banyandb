@@ -79,7 +79,12 @@ func (s *service) PreRun() error {
 		return err
 	}
 	<-s.schemaRegistry.ReadyNotify()
-	return nil
+	return s.initializeMetadata()
+}
+
+// initializeMetadata creates "default" group after the metadata storage layer is ready
+func (s *service) initializeMetadata() error {
+	return s.schemaRegistry.CreateGroup(context.TODO(), "default")
 }
 
 func (s *service) Serve() error {

@@ -44,10 +44,6 @@ var (
 )
 
 func PreloadSchema(e schema.Registry) error {
-	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
-		return err
-	}
-
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err

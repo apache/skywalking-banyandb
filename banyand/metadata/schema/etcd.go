@@ -420,7 +420,7 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	entities := make([]proto.Message, resp.Count)
 	for i := int64(0); i < resp.Count; i++ {
 		message := factory()
-		if err := proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
+		if err := proto.Unmarshal(resp.Kvs[i].Value, message); err != nil {
 			return nil, err
 		}
 		entities[i] = message
