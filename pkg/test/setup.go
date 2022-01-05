@@ -19,7 +19,6 @@ package test
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
@@ -92,16 +91,15 @@ func (tf *testFlow) Run(ctx context.Context, startFunc StartFunc, stopFunc StopF
 	}()
 
 	donec := make(chan struct{})
+	// start a new goroutine in order to recover from panic
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Println("====== recover ======")
 				errCh <- errors.Errorf("panic found %v", r)
+				close(donec)
 			}
 		}()
-		fmt.Println("======== start run in loop =======")
 		err := startFunc()
-		fmt.Println("======== end run in loop =======")
 
 		if err != nil {
 			errCh <- err
