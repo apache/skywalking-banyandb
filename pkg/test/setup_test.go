@@ -39,7 +39,7 @@ func Test_Setup_Single_Error(t *testing.T) {
 
 	wg.Wait()
 
-	require.Error(flow.ErrorOrNil())
+	require.Error(flow.Error())
 }
 
 func Test_Setup_Multiple_ErrorHandlers(t *testing.T) {
@@ -61,7 +61,7 @@ func Test_Setup_Multiple_ErrorHandlers(t *testing.T) {
 
 	wg.Wait()
 
-	require.Error(flow.ErrorOrNil())
+	require.Error(flow.Error())
 }
 
 func Test_Setup_Panic(t *testing.T) {
@@ -77,7 +77,7 @@ func Test_Setup_Panic(t *testing.T) {
 
 	wg.Wait()
 
-	require.Error(flow.ErrorOrNil())
+	require.Error(flow.Error())
 }
 
 func Test_Setup_Shutdown(t *testing.T) {
@@ -103,5 +103,5 @@ func Test_Setup_Shutdown(t *testing.T) {
 
 	wg.Wait()
 
-	require.NoError(flow.ErrorOrNil())
+	require.NoError(flow.Error())
 }

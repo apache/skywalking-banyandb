@@ -250,7 +250,7 @@ func setup(t *testing.T) (*stream, test.StopFunc) {
 			}
 		})
 
-	req.NoError(flow.ErrorOrNil())
+	req.NoError(flow.Error())
 
 	return s, flow.Shutdown()
 }

@@ -20,8 +20,8 @@ package test
 import (
 	"context"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 )
 
 type StartFunc func() error
@@ -46,18 +46,19 @@ type Flow interface {
 	// The timing to do the real shutdown can be determined by users.
 	Shutdown() StopFunc
 
-	ErrorOrNil() error
+	// Error returns all errors returned from startFunc(s)
+	// Nil error imply a successful flow.
+	Error() error
 }
 
 type testFlow struct {
-	err       *multierror.Error
+	err       error
 	stopFuncs []StopFunc
 }
 
 // NewTestFlow creates a flow ready to prepare services/components to be used for testing.
 func NewTestFlow() Flow {
 	return &testFlow{
-		err:       &multierror.Error{},
 		stopFuncs: make([]StopFunc, 0),
 	}
 }
@@ -77,7 +78,7 @@ func (tf *testFlow) RunWithoutSideEffect(ctx context.Context, startFunc StartFun
 }
 
 func (tf *testFlow) Run(ctx context.Context, startFunc StartFunc, stopFunc StopFunc) Flow {
-	if tf.err.ErrorOrNil() != nil {
+	if tf.err != nil {
 		return tf
 	}
 
@@ -109,7 +110,7 @@ func (tf *testFlow) Run(ctx context.Context, startFunc StartFunc, stopFunc StopF
 	select {
 	case <-donec:
 	case err := <-errCh:
-		tf.err = multierror.Append(tf.err, err)
+		tf.err = multierr.Append(tf.err, err)
 		tf.Shutdown()()
 		return tf
 	}
@@ -122,6 +123,6 @@ func (tf *testFlow) PushErrorHandler(stopFunc StopFunc) Flow {
 	return tf
 }
 
-func (tf *testFlow) ErrorOrNil() error {
-	return tf.err.ErrorOrNil()
+func (tf *testFlow) Error() error {
+	return tf.err
 }
