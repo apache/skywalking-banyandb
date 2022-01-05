@@ -21,7 +21,6 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"math/rand"
 	"os"
 	"path"
 
@@ -87,10 +86,4 @@ func PreloadSchema(e schema.Registry) error {
 
 func RandomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
-}
-
-func RandomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
-		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }

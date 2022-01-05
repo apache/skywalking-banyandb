@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -184,7 +185,8 @@ func Test_Stream_Write(t *testing.T) {
 
 }
 
-func setup(t *testing.T) (*stream, func()) {
+func setup(t *testing.T) (*stream, test.StopFunc) {
+	flow := test.NewTestFlow()
 	req := require.New(t)
 	req.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -192,38 +194,65 @@ func setup(t *testing.T) (*stream, func()) {
 	}))
 	tempDir, deferFunc := test.Space(req)
 
-	mService, err := metadata.NewService(context.TODO())
-	req.NoError(err)
+	var mService metadata.Service
+	var etcdRootDir string
+	var defaultStream *databasev1.Stream
+	var rules []*databasev1.IndexRule
+	var s *stream
 
-	etcdRootDir := teststream.RandomTempDir()
-	err = mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
-	req.NoError(err)
+	flow.
+		PushErrorHandler(func() {
+			deferFunc()
+		}).
+		Run(context.TODO(), func() (err error) {
+			mService, err = metadata.NewService(context.TODO())
+			return
+		}, func() {
+			if mService != nil {
+				mService.GracefulStop()
+			}
+		}).
+		RunWithoutSideEffect(context.TODO(), func() error {
+			etcdRootDir = teststream.RandomTempDir()
+			return mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
+		}).
+		Run(context.TODO(), func() error {
+			return mService.PreRun()
+		}, func() {
+			if len(etcdRootDir) > 0 {
+				_ = os.RemoveAll(etcdRootDir)
+			}
+		}).
+		RunWithoutSideEffect(context.TODO(), func() error {
+			return teststream.PreloadSchema(mService.SchemaRegistry())
+		}).
+		RunWithoutSideEffect(context.TODO(), func() (err error) {
+			defaultStream, err = mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			})
+			return
+		}).
+		RunWithoutSideEffect(context.TODO(), func() (err error) {
+			rules, err = mService.IndexRules(context.TODO(), defaultStream.GetMetadata())
+			return
+		}).
+		Run(context.TODO(), func() (err error) {
+			sSpec := streamSpec{
+				schema:     defaultStream,
+				indexRules: rules,
+			}
+			s, err = openStream(tempDir, sSpec, logger.GetLogger("test"))
+			return
+		}, func() {
+			if s != nil {
+				_ = s.Close()
+			}
+		})
 
-	err = mService.PreRun()
-	req.NoError(err)
+	req.NoError(flow.ErrorOrNil())
 
-	err = teststream.PreloadSchema(mService.SchemaRegistry())
-	req.NoError(err)
-
-	sa, err := mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
-		Name:  "sw",
-		Group: "default",
-	})
-	req.NoError(err)
-	iRules, err := mService.IndexRules(context.TODO(), sa.Metadata)
-	req.NoError(err)
-	sSpec := streamSpec{
-		schema:     sa,
-		indexRules: iRules,
-	}
-	s, err := openStream(tempDir, sSpec, logger.GetLogger("test"))
-	req.NoError(err)
-	return s, func() {
-		_ = s.Close()
-		mService.GracefulStop()
-		deferFunc()
-		_ = os.RemoveAll(etcdRootDir)
-	}
+	return s, flow.Shutdown()
 }
 
 func getEle(tags ...interface{}) *streamv1.ElementValue {
