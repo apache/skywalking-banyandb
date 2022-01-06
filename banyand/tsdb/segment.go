@@ -63,20 +63,35 @@ func newSegment(ctx context.Context, path string) (s *segment, err error) {
 	if s.globalIndex, err = kv.OpenStore(0, indexPath, kv.StoreWithLogger(s.l)); err != nil {
 		return nil, err
 	}
-	blockPath, err := mkdir(blockTemplate, path, time.Now().Format(blockFormat))
+	loadBlock := func(path string) error {
+		var b *block
+		if b, err = newBlock(context.WithValue(ctx, logger.ContextKey, s.l), blockOpts{
+			path: path,
+		}); err != nil {
+			return err
+		}
+		{
+			s.Lock()
+			defer s.Unlock()
+			s.lst = append(s.lst, b)
+		}
+		return nil
+	}
+	err = walkDir(path, blockPathPrefix, func(name, absolutePath string) error {
+		return loadBlock(absolutePath)
+	})
 	if err != nil {
 		return nil, err
 	}
-	var b *block
-	if b, err = newBlock(context.WithValue(ctx, logger.ContextKey, s.l), blockOpts{
-		path: blockPath,
-	}); err != nil {
-		return nil, err
-	}
-	{
-		s.Lock()
-		defer s.Unlock()
-		s.lst = append(s.lst, b)
+	if len(s.lst) < 1 {
+		blockPath, err := mkdir(blockTemplate, path, time.Now().Format(blockFormat))
+		if err != nil {
+			return nil, err
+		}
+		err = loadBlock(blockPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
