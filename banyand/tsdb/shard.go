@@ -73,7 +73,8 @@ func openShard(ctx context.Context, id common.ShardID, location string) (*shard,
 		return nil, err
 	}
 	if len(s.lst) < 1 {
-		segPath, err := mkdir(segTemplate, location, time.Now().Format(segFormat))
+		var segPath string
+		segPath, err = mkdir(segTemplate, location, time.Now().Format(segFormat))
 		if err != nil {
 			return nil, err
 		}
