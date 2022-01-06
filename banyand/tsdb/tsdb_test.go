@@ -34,8 +34,27 @@ import (
 
 func TestOpenDatabase(t *testing.T) {
 	tester := assert.New(t)
-	tempDir, deferFunc, _ := setUp(require.New(t))
+	req := require.New(t)
+	tempDir, deferFunc := test.Space(req)
+	openDatabase(req, tempDir)
 	defer deferFunc()
+	verifyDatabaseStructure(tester, tempDir)
+}
+
+func TestReOpenDatabase(t *testing.T) {
+	tester := assert.New(t)
+	req := require.New(t)
+	tempDir, deferFunc := test.Space(req)
+	defer deferFunc()
+	db := openDatabase(req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir)
+	db = openDatabase(req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir)
+}
+
+func verifyDatabaseStructure(tester *assert.Assertions, tempDir string) {
 	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
 	validateDirectory(tester, shardPath)
 	seriesPath := fmt.Sprintf(seriesTemplate, shardPath)
@@ -46,16 +65,15 @@ func TestOpenDatabase(t *testing.T) {
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
 }
 
-func setUp(t *require.Assertions) (tempDir string, deferFunc func(), db Database) {
+func openDatabase(t *require.Assertions, path string) (db Database) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
 	}))
-	tempDir, deferFunc = test.Space(t)
 	db, err := OpenDatabase(
 		context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")),
 		DatabaseOpts{
-			Location: tempDir,
+			Location: path,
 			ShardNum: 1,
 			EncodingMethod: EncodingMethod{
 				EncoderPool: encoding.NewPlainEncoderPool(0),
@@ -64,7 +82,7 @@ func setUp(t *require.Assertions) (tempDir string, deferFunc func(), db Database
 		})
 	t.NoError(err)
 	t.NotNil(db)
-	return tempDir, deferFunc, db
+	return db
 }
 
 func validateDirectory(t *assert.Assertions, dir string) {

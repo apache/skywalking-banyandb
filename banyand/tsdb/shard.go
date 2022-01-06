@@ -49,23 +49,39 @@ func (s *shard) Index() IndexDatabase {
 	return s.indexDatabase
 }
 
-func newShard(ctx context.Context, id common.ShardID, location string) (*shard, error) {
+func openShard(ctx context.Context, id common.ShardID, location string) (*shard, error) {
 	s := &shard{
 		id:       id,
 		location: location,
 	}
-	segPath, err := mkdir(segTemplate, location, time.Now().Format(segFormat))
+	loadSeg := func(path string) error {
+		seg, err := newSegment(ctx, path)
+		if err != nil {
+			return err
+		}
+		{
+			s.Lock()
+			defer s.Unlock()
+			s.lst = append(s.lst, seg)
+		}
+		return nil
+	}
+	err := walkDir(location, segPathPrefix, func(_, absolutePath string) error {
+		return loadSeg(absolutePath)
+	})
 	if err != nil {
 		return nil, err
 	}
-	seg, err := newSegment(ctx, segPath)
-	if err != nil {
-		return nil, err
-	}
-	{
-		s.Lock()
-		defer s.Unlock()
-		s.lst = append(s.lst, seg)
+	if len(s.lst) < 1 {
+		var segPath string
+		segPath, err = mkdir(segTemplate, location, time.Now().Format(segFormat))
+		if err != nil {
+			return nil, err
+		}
+		err = loadSeg(segPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	seriesPath, err := mkdir(seriesTemplate, s.location)
 	if err != nil {
