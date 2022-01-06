@@ -46,6 +46,8 @@ var (
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 
+	unixDomainSockScheme = "unix"
+
 	GroupsKeyPrefix           = "/groups/"
 	GroupMetadataKey          = "/__meta_group__"
 	StreamKeyPrefix           = "/streams/"
@@ -64,8 +66,8 @@ func RootDir(rootDir string) RegistryOption {
 
 func randomUnixDomainListener() (string, string) {
 	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
-		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
+	return fmt.Sprintf("%s://localhost:%d%06d", unixDomainSockScheme, os.Getpid(), i),
+		fmt.Sprintf("%s://localhost:%d%06d", unixDomainSockScheme, os.Getpid(), i+1)
 }
 
 func UseRandomListener() RegistryOption {
