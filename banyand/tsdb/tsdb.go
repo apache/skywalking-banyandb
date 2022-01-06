@@ -24,6 +24,8 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -36,11 +38,16 @@ import (
 )
 
 const (
-	shardTemplate       = "%s/shard-%d"
-	seriesTemplate      = "%s/series"
-	segTemplate         = "%s/seg-%s"
-	blockTemplate       = "%s/block-%s"
-	globalIndexTemplate = "%s/index"
+	shardPathPrefix     = "shard"
+	pathSeparator       = string(os.PathSeparator)
+	rootPrefix          = "%s" + pathSeparator
+	shardTemplate       = rootPrefix + shardPathPrefix + "-%d"
+	seriesTemplate      = rootPrefix + "series"
+	segPathPrefix       = "seg"
+	segTemplate         = rootPrefix + segPathPrefix + "-%s"
+	blockPathPrefix     = "block"
+	blockTemplate       = rootPrefix + blockPathPrefix + "-%s"
+	globalIndexTemplate = rootPrefix + "index"
 
 	segFormat   = "20060102"
 	blockFormat = "1504"
@@ -155,7 +162,7 @@ func createDatabase(ctx context.Context, db *database) (Database, error) {
 			err = multierr.Append(err, errInternal)
 			continue
 		}
-		so, errNewShard := newShard(ctx, common.ShardID(i), shardLocation)
+		so, errNewShard := openShard(ctx, common.ShardID(i), shardLocation)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -166,8 +173,48 @@ func createDatabase(ctx context.Context, db *database) (Database, error) {
 }
 
 func loadDatabase(ctx context.Context, db *database) (Database, error) {
-	//TODO: load the existing database
+	//TODO: open the lock file
+	//TODO: open the manifest file
+	db.Lock()
+	defer db.Unlock()
+	err := walkDir(db.location, shardPathPrefix, func(name, absolutePath string) error {
+		shardSegs := strings.Split(name, "-")
+		shardID, err := strconv.Atoi(shardSegs[1])
+		if err != nil {
+			return err
+		}
+		if shardID >= int(db.shardNum) {
+			return nil
+		}
+		so, errOpenShard := openShard(ctx, common.ShardID(shardID), absolutePath)
+		if errOpenShard != nil {
+			return errOpenShard
+		}
+		db.sLst = append(db.sLst, so)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.WithMessage(err, "load the database failed")
+	}
 	return db, nil
+}
+
+type walkFn func(name, absolutePath string) error
+
+func walkDir(root, prefix string, walkFn walkFn) error {
+	files, err := ioutil.ReadDir(root)
+	if err != nil {
+		return errors.Wrapf(err, "failed to walk the database path: %s", root)
+	}
+	for _, f := range files {
+		if !f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
+			continue
+		}
+		if walkFn(f.Name(), fmt.Sprintf(rootPrefix, root)+f.Name()) != nil {
+			return errors.WithMessagef(err, "failed to load: %s", f.Name())
+		}
+	}
+	return nil
 }
 
 func mkdir(format string, a ...interface{}) (path string, err error) {
