@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -79,8 +80,10 @@ func UseRandomListener() RegistryOption {
 }
 
 type etcdSchemaRegistry struct {
-	server *embed.Etcd
-	kv     clientv3.KV
+	server  *embed.Etcd
+	kv      clientv3.KV
+	mux     sync.RWMutex
+	handler map[commonv1.Catalog]EventHandler
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -90,6 +93,12 @@ type etcdSchemaRegistryConfig struct {
 	listenerClientURL string
 	// listenerPeerURL is the listener for peer
 	listenerPeerURL string
+}
+
+func (e *etcdSchemaRegistry) RegisterEventHandler(catalog commonv1.Catalog, handler EventHandler) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.handler[catalog] = handler
 }
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
@@ -130,6 +139,7 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	}
 	keyPrefix := GroupsKeyPrefix + g.GetName() + "/"
 	_, err = e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
+	// TODO: which resources are deleted?
 	if err != nil {
 		return false, err
 	}
@@ -190,7 +200,10 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if err != nil {
 		return errors.Wrap(err, measure.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatMeasureKey(measure.GetMetadata()), measure)
+	return e.update(ctx, g, &resource{
+		Message: measure,
+		typ:     ResourceMeasure,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -198,7 +211,14 @@ func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *common
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatMeasureKey(metadata))
+	irb, err := e.GetMeasure(ctx, metadata)
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetName())
+	}
+	return e.delete(ctx, g, &resource{
+		Message: irb,
+		typ:     ResourceMeasure,
+	})
 }
 
 func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
@@ -237,7 +257,10 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if err != nil {
 		return errors.Wrap(err, stream.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatSteamKey(stream.GetMetadata()), stream)
+	return e.update(ctx, g, &resource{
+		Message: stream,
+		typ:     ResourceStream,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -245,7 +268,15 @@ func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatSteamKey(metadata))
+
+	irb, err := e.GetStream(ctx, metadata)
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetName())
+	}
+	return e.delete(ctx, g, &resource{
+		Message: irb,
+		typ:     ResourceStream,
+	})
 }
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -282,7 +313,10 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	if err != nil {
 		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
+	return e.update(ctx, g, &resource{
+		Message: indexRuleBinding,
+		typ:     ResourceIndexRuleBinding,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -290,7 +324,14 @@ func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadat
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatIndexRuleBindingKey(metadata))
+	irb, err := e.GetIndexRuleBinding(ctx, metadata)
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetName())
+	}
+	return e.delete(ctx, g, &resource{
+		Message: irb,
+		typ:     ResourceIndexRuleBinding,
+	})
 }
 
 func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
@@ -327,7 +368,10 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 	if err != nil {
 		return errors.Wrap(err, indexRule.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
+	return e.update(ctx, g, &resource{
+		Message: indexRule,
+		typ:     ResourceIndexRule,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -335,7 +379,14 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatIndexRuleKey(metadata))
+	ir, err := e.GetIndexRule(ctx, metadata)
+	if err != nil {
+		return false, errors.Wrap(err, metadata.GetName())
+	}
+	return e.delete(ctx, g, &resource{
+		Message: ir,
+		typ:     ResourceIndexRule,
+	})
 }
 
 func (e *etcdSchemaRegistry) ReadyNotify() <-chan struct{} {
@@ -379,8 +430,9 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	}
 	kvClient := clientv3.NewKV(client)
 	reg := &etcdSchemaRegistry{
-		server: e,
-		kv:     kvClient,
+		server:  e,
+		kv:      kvClient,
+		handler: make(map[commonv1.Catalog]EventHandler),
 	}
 	return reg, nil
 }
@@ -402,15 +454,31 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, key string, message proto.Message) error {
-	val, err := proto.Marshal(message)
+func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, res *resource) error {
+	val, err := proto.Marshal(res.Message)
 	if err != nil {
 		return err
 	}
-	_, err = e.kv.Put(ctx, key, string(val))
+	_, err = e.kv.Put(ctx, res.Key(), string(val))
 	if err != nil {
 		return err
 	}
+
+	switch res.typ {
+	case ResourceStream:
+		e.onEntityUpdate(commonv1.Catalog_CATALOG_STREAM, res.GetMetadata())
+	case ResourceMeasure:
+		e.onEntityUpdate(commonv1.Catalog_CATALOG_MEASURE, res.GetMetadata())
+	case ResourceIndexRuleBinding:
+		rb := res.Message.(*databasev1.IndexRuleBinding)
+		e.onEntityUpdate(rb.GetSubject().GetCatalog(), &commonv1.Metadata{
+			Name:  rb.GetSubject().GetName(),
+			Group: group.GetName(),
+		})
+	case ResourceIndexRule:
+		// TODO: use ownerReferences to get indexRuleBinding
+	}
+
 	return e.touchGroup(ctx, group)
 }
 
@@ -448,15 +516,45 @@ func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt List
 	return keyPrefixes, nil
 }
 
-func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, key string) (bool, error) {
-	resp, err := e.kv.Delete(ctx, key)
+func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, res *resource) (bool, error) {
+	resp, err := e.kv.Delete(ctx, res.Key())
 	if err != nil {
 		return false, err
 	}
 	if resp.Deleted > 0 {
+		switch res.typ {
+		case ResourceStream:
+			e.onEntityDelete(commonv1.Catalog_CATALOG_STREAM, res.GetMetadata())
+		case ResourceMeasure:
+			e.onEntityDelete(commonv1.Catalog_CATALOG_MEASURE, res.GetMetadata())
+		case ResourceIndexRuleBinding:
+			rb := res.Message.(*databasev1.IndexRuleBinding)
+			e.onEntityDelete(rb.GetSubject().GetCatalog(), &commonv1.Metadata{
+				Name:  rb.GetSubject().GetName(),
+				Group: g.GetName(),
+			})
+		case ResourceIndexRule:
+			// TODO: use ownerReferences to get indexRuleBinding
+		}
 		return true, e.touchGroup(ctx, g)
 	}
 	return false, nil
+}
+
+func (e *etcdSchemaRegistry) onEntityUpdate(catalog commonv1.Catalog, metadata *commonv1.Metadata) {
+	e.mux.RLock()
+	if handler, ok := e.handler[catalog]; ok {
+		handler.OnAddOrUpdate(metadata)
+	}
+	defer e.mux.RUnlock()
+}
+
+func (e *etcdSchemaRegistry) onEntityDelete(catalog commonv1.Catalog, metadata *commonv1.Metadata) {
+	e.mux.RLock()
+	if handler, ok := e.handler[catalog]; ok {
+		handler.OnDelete(metadata)
+	}
+	defer e.mux.RUnlock()
 }
 
 func formatIndexRuleKey(metadata *commonv1.Metadata) string {

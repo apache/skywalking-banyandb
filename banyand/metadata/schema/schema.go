@@ -21,9 +21,55 @@ import (
 	"context"
 	"io"
 
+	"google.golang.org/protobuf/proto"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
+
+type ResourceType uint8
+
+const (
+	ResourceStream ResourceType = iota
+	ResourceMeasure
+	ResourceIndexRuleBinding
+	ResourceIndexRule
+)
+
+type resource struct {
+	typ ResourceType
+	proto.Message
+}
+
+func (r *resource) GetMetadata() *commonv1.Metadata {
+	switch r.typ {
+	case ResourceStream:
+		return r.Message.(*databasev1.Stream).GetMetadata()
+	case ResourceMeasure:
+		return r.Message.(*databasev1.Measure).GetMetadata()
+	case ResourceIndexRuleBinding:
+		return r.Message.(*databasev1.IndexRuleBinding).GetMetadata()
+	case ResourceIndexRule:
+		return r.Message.(*databasev1.IndexRule).GetMetadata()
+	default:
+		return nil
+	}
+}
+
+func (r *resource) Key() string {
+	switch r.typ {
+	case ResourceStream:
+		return formatSteamKey(r.Message.(*databasev1.Stream).GetMetadata())
+	case ResourceMeasure:
+		return formatMeasureKey(r.Message.(*databasev1.Measure).GetMetadata())
+	case ResourceIndexRuleBinding:
+		return formatIndexRuleBindingKey(r.Message.(*databasev1.IndexRuleBinding).GetMetadata())
+	case ResourceIndexRule:
+		return formatIndexRuleKey(r.Message.(*databasev1.IndexRule).GetMetadata())
+	default:
+		return ""
+	}
+}
 
 type ListOpt struct {
 	Group string
@@ -39,6 +85,14 @@ type Registry interface {
 	IndexRuleBinding
 	Measure
 	Group
+	RegisterEventHandler(commonv1.Catalog, EventHandler)
+}
+
+// EventHandler is called when resources (e.g. stream, measure) change or resources belonging to them change.
+// Currently, it may not be necessary to distinguish Add or Update since the involved object will be reloaded completely.
+type EventHandler interface {
+	OnAddOrUpdate(*commonv1.Metadata)
+	OnDelete(*commonv1.Metadata)
 }
 
 type Stream interface {

@@ -205,7 +205,7 @@ message Subject {
 }
 
 // IndexRuleBinding is a bridge to connect severalIndexRules to a subject
-// This binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies
+// This binding is valid between begin_at and expire_at, that provides flexible strategies
 // to control how to generate time series indices.
 message IndexRuleBinding {
     // metadata is the identity of this binding

@@ -37,6 +37,20 @@ message Metadata {
     // name of the entity
     string name = 2;
     uint32 id = 3;
+    // list of objects depended by this object.
+    // This field is maintained by the metadata module and only for internal usage.
+    // The referent should be reconciled after the current object is deleted.
+    repeated OwnerReference owner_references = 4;
+}
+
+// OwnerReference contains enough information to let you identify an owning object.
+// The group is omitted since an owning object must be in the same group as the dependent.
+// The kind of the owning object depends implicitly on the kind of the dependent.
+// Currently,
+// IndexRule --(owner_references)--> IndexRuleBinding --(explicitly with subject)--> stream/measure
+message OwnerReference {
+    // Name of the referent.
+    string name = 1;
 }
 
 // Group is an internal object for Group management

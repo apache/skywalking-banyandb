@@ -184,7 +184,7 @@ func (s *service) GracefulStop() {
 	}
 }
 
-//NewService returns a new service
+// NewService returns a new service
 func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,
