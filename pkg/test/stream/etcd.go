@@ -52,15 +52,7 @@ func PreloadSchema(e schema.Registry) error {
 		return err
 	}
 
-	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
-		return err
-	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
-	if err != nil {
-		return err
-	}
-
+	// first create index rules
 	entries, err := indexRuleStore.ReadDir(indexRuleDir)
 	if err != nil {
 		return err
@@ -79,6 +71,16 @@ func PreloadSchema(e schema.Registry) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// then bind index rules
+	indexRuleBinding := &databasev1.IndexRuleBinding{}
+	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
+		return err
+	}
+	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
+	if err != nil {
+		return err
 	}
 
 	return nil
