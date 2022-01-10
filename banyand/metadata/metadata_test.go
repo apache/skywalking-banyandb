@@ -20,6 +20,7 @@ package metadata
 import (
 	"context"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,6 +94,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 				t.Errorf("RulesBySubject() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			sort.Strings(tt.want)
 			is.Equal(getIndexRule(s, tt.want...), got)
 		})
 	}

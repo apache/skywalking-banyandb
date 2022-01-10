@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -203,7 +204,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	return e.update(ctx, g, &resource{
 		Message: measure,
 		typ:     ResourceMeasure,
-	})
+	}, true)
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -260,7 +261,7 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	return e.update(ctx, g, &resource{
 		Message: stream,
 		typ:     ResourceStream,
-	})
+	}, true)
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -313,24 +314,39 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	if err != nil {
 		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
-	var irs []*databasev1.IndexRule
+
+	irs := make(map[string]*databasev1.IndexRule)
 	// ensure the existence of referencing indexRule(s)
 	for _, irName := range indexRuleBinding.GetRules() {
-		ir, err := e.GetIndexRule(ctx, &commonv1.Metadata{
+		ir, innerErr := e.GetIndexRule(ctx, &commonv1.Metadata{
 			Name:  irName,
 			Group: g.GetName(),
 		})
-		if err != nil {
-			return errors.Wrap(err, "index rule does not exist")
+		if innerErr != nil {
+			return errors.Wrap(innerErr, "index rule does not exist")
 		}
 
-		irs = append(irs, ir)
+		irs[irName] = ir
+	}
+
+	// sort rules in ASC order
+	sort.Strings(indexRuleBinding.GetRules())
+
+	// try to find the existing instance
+	// save a copy of rule refs if exists
+	var oldRuleRefs []string
+	old, err := e.GetIndexRuleBinding(ctx, &commonv1.Metadata{
+		Name: indexRuleBinding.GetMetadata().GetName(),
+	})
+
+	if err == nil && old != nil {
+		oldRuleRefs = old.GetRules()
 	}
 
 	err = e.update(ctx, g, &resource{
 		Message: indexRuleBinding,
 		typ:     ResourceIndexRuleBinding,
-	})
+	}, true)
 
 	if err != nil {
 		return err
@@ -341,8 +357,42 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 			Name: indexRuleBinding.GetMetadata().GetName(),
 		})
 
-		if updateErr := e.UpdateIndexRule(ctx, ir); updateErr != nil {
-			return updateErr
+		_ = e.update(ctx, g, &resource{
+			Message: ir,
+			typ:     ResourceIndexRule,
+		}, false)
+	}
+
+	for _, oldRuleName := range oldRuleRefs {
+		if _, ok := irs[oldRuleName]; !ok {
+			// remove reference
+			ir, innerErr := e.GetIndexRule(ctx, &commonv1.Metadata{
+				Name:  oldRuleName,
+				Group: g.GetName(),
+			})
+
+			if innerErr != nil {
+				continue
+			}
+
+			// remove ref on the indexRule
+			idx := -1
+			for i, owner := range ir.GetMetadata().GetOwnerReferences() {
+				if owner.GetName() == oldRuleName {
+					idx = i
+					break
+				}
+			}
+
+			if idx > -1 {
+				ir.GetMetadata().OwnerReferences = append(ir.GetMetadata().GetOwnerReferences()[:idx], ir.GetMetadata().GetOwnerReferences()[idx+1:]...)
+			}
+
+			// and direct update without notification
+			_ = e.update(ctx, g, &resource{
+				Message: ir,
+				typ:     ResourceIndexRule,
+			}, false)
 		}
 	}
 
@@ -401,7 +451,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 	return e.update(ctx, g, &resource{
 		Message: indexRule,
 		typ:     ResourceIndexRule,
-	})
+	}, true)
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -484,7 +534,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, res *resource) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, res *resource, notification bool) error {
 	val, err := proto.Marshal(res.Message)
 	if err != nil {
 		return err
@@ -494,19 +544,37 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, 
 		return err
 	}
 
-	switch res.typ {
-	case ResourceStream:
-		e.onEntityUpdate(commonv1.Catalog_CATALOG_STREAM, res.GetMetadata())
-	case ResourceMeasure:
-		e.onEntityUpdate(commonv1.Catalog_CATALOG_MEASURE, res.GetMetadata())
-	case ResourceIndexRuleBinding:
-		rb := res.Message.(*databasev1.IndexRuleBinding)
-		e.onEntityUpdate(rb.GetSubject().GetCatalog(), &commonv1.Metadata{
-			Name:  rb.GetSubject().GetName(),
-			Group: group.GetName(),
-		})
-	case ResourceIndexRule:
-		// TODO: use ownerReferences to get indexRuleBinding
+	if notification {
+		switch res.typ {
+		case ResourceStream:
+			e.onEntityUpdate(commonv1.Catalog_CATALOG_STREAM, res.GetMetadata())
+		case ResourceMeasure:
+			e.onEntityUpdate(commonv1.Catalog_CATALOG_MEASURE, res.GetMetadata())
+		case ResourceIndexRuleBinding:
+			rb := res.Message.(*databasev1.IndexRuleBinding)
+			e.onEntityUpdate(rb.GetSubject().GetCatalog(), &commonv1.Metadata{
+				Name:  rb.GetSubject().GetName(),
+				Group: group.GetName(),
+			})
+		case ResourceIndexRule:
+			for _, ownerRef := range res.GetMetadata().GetOwnerReferences() {
+				rb, innerErr := e.GetIndexRuleBinding(ctx, &commonv1.Metadata{
+					Name:  ownerRef.GetName(),
+					Group: group.GetName(),
+				})
+
+				if innerErr != nil {
+					// TODO: possible inconsistent state?
+					continue
+				}
+
+				// notify Entity update
+				e.onEntityUpdate(rb.GetSubject().GetCatalog(), &commonv1.Metadata{
+					Name:  rb.GetSubject().GetName(),
+					Group: group.GetName(),
+				})
+			}
+		}
 	}
 
 	return e.touchGroup(ctx, group)
@@ -563,8 +631,28 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, res 
 				Name:  rb.GetSubject().GetName(),
 				Group: g.GetName(),
 			})
+			// TODO: garbage collection?
 		case ResourceIndexRule:
-			// TODO: use ownerReferences to get indexRuleBinding
+			for _, ownerRef := range res.GetMetadata().GetOwnerReferences() {
+				rb, innerErr := e.GetIndexRuleBinding(ctx, &commonv1.Metadata{
+					Name:  ownerRef.GetName(),
+					Group: g.GetName(),
+				})
+
+				if innerErr != nil {
+					// TODO: possible inconsistent state?
+					continue
+				}
+
+				// reconcile indexRuleBinding: remove entry to the rule
+				// it will let the `UpdateIndexRuleBinding` function to send notifications
+				idx := sort.SearchStrings(rb.GetRules(), res.GetMetadata().GetName())
+				if idx != len(rb.GetRules()) {
+					rb.Rules = append(rb.Rules[:idx], rb.Rules[idx+1:]...)
+					// TODO: log error?
+					_ = e.UpdateIndexRuleBinding(ctx, rb)
+				}
+			}
 		}
 		return true, e.touchGroup(ctx, g)
 	}
