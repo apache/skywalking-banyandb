@@ -313,10 +313,40 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	if err != nil {
 		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, &resource{
+	var irs []*databasev1.IndexRule
+	// ensure the existence of referencing indexRule(s)
+	for _, irName := range indexRuleBinding.GetRules() {
+		ir, err := e.GetIndexRule(ctx, &commonv1.Metadata{
+			Name:  irName,
+			Group: g.GetName(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "index rule does not exist")
+		}
+
+		irs = append(irs, ir)
+	}
+
+	err = e.update(ctx, g, &resource{
 		Message: indexRuleBinding,
 		typ:     ResourceIndexRuleBinding,
 	})
+
+	if err != nil {
+		return err
+	}
+
+	for _, ir := range irs {
+		ir.GetMetadata().OwnerReferences = append(ir.GetMetadata().OwnerReferences, &commonv1.OwnerReference{
+			Name: indexRuleBinding.GetMetadata().GetName(),
+		})
+
+		if updateErr := e.UpdateIndexRule(ctx, ir); updateErr != nil {
+			return updateErr
+		}
+	}
+
+	return nil
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
