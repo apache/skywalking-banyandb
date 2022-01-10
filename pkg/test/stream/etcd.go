@@ -58,18 +58,18 @@ func PreloadSchema(e schema.Registry) error {
 		return err
 	}
 	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
-		if err != nil {
-			return err
+		data, innerErr := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
+		if innerErr != nil {
+			return innerErr
 		}
 		var idxRule databasev1.IndexRule
-		err = protojson.Unmarshal(data, &idxRule)
-		if err != nil {
-			return err
+		innerErr = protojson.Unmarshal(data, &idxRule)
+		if innerErr != nil {
+			return innerErr
 		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule)
-		if err != nil {
-			return err
+		innerErr = e.UpdateIndexRule(context.Background(), &idxRule)
+		if innerErr != nil {
+			return innerErr
 		}
 	}
 
