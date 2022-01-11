@@ -31,11 +31,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 func Test_Measure_Write(t *testing.T) {
@@ -45,45 +47,67 @@ func Test_Measure_Write(t *testing.T) {
 }
 
 func setup(t *testing.T) (*measure, func()) {
-	req := require.New(t)
-	req.NoError(logger.Init(logger.Logging{
+	require := require.New(t)
+	require.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
 	}))
-	tempDir, deferFunc := test.Space(req)
 
-	mService, err := metadata.NewService(context.TODO())
-	req.NoError(err)
+	tempDir, deferFunc := test.Space(require)
 
-	etcdRootDir := testmeasure.RandomTempDir()
-	err = mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
-	req.NoError(err)
+	var mService metadata.Service
+	var etcdRootDir string
+	var sa *databasev1.Measure
+	var iRules []*databasev1.IndexRule
+	var m *measure
 
-	err = mService.PreRun()
-	req.NoError(err)
-
-	err = testmeasure.PreloadSchema(mService.SchemaRegistry())
-	req.NoError(err)
-
-	sa, err := mService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
-		Name:  "cpm",
-		Group: "default",
-	})
-	req.NoError(err)
-	iRules, err := mService.IndexRules(context.TODO(), sa.Metadata)
-	req.NoError(err)
-	sSpec := measureSpec{
-		schema:     sa,
-		indexRules: iRules,
-	}
-	s, err := openMeasure(tempDir, sSpec, logger.GetLogger("test"))
-	req.NoError(err)
-	return s, func() {
-		_ = s.Close()
-		mService.GracefulStop()
+	flow := test.NewTestFlow().PushErrorHandler(func() {
 		deferFunc()
-		_ = os.RemoveAll(etcdRootDir)
-	}
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		mService, err = metadata.NewService(context.TODO())
+		return err
+	}).Run(context.TODO(), func() error {
+		etcdRootDir = teststream.RandomTempDir()
+		return mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
+	}, func() {
+		if len(etcdRootDir) > 0 {
+			_ = os.RemoveAll(etcdRootDir)
+		}
+	}).Run(context.TODO(), func() error {
+		return mService.PreRun()
+	}, func() {
+		if mService != nil {
+			mService.GracefulStop()
+		}
+	}).RunWithoutSideEffect(context.TODO(), func() error {
+		return testmeasure.PreloadSchema(mService.SchemaRegistry())
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		sa, err = mService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
+			Name:  "cpm",
+			Group: "default",
+		})
+		if err != nil {
+			return
+		}
+
+		iRules, err = mService.IndexRules(context.TODO(), sa.Metadata)
+		return
+	}).Run(context.TODO(), func() (err error) {
+		m, err = openMeasure(tempDir, measureSpec{
+			schema:     sa,
+			indexRules: iRules,
+		}, logger.GetLogger("test"))
+
+		return
+	}, func() {
+		if m != nil {
+			_ = m.Close()
+		}
+	})
+
+	require.NoError(flow.Error())
+
+	return m, flow.Shutdown()
 }
 
 //go:embed testdata/*.json

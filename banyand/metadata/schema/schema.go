@@ -25,6 +25,17 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
+type Kind int
+
+type MetadataEvent func(Metadata) error
+
+const (
+	KindStream Kind = 1 << iota
+	KindMeasure
+	KindIndexRuleBinding
+	KindIndexRule
+)
+
 type ListOpt struct {
 	Group string
 }
@@ -39,6 +50,46 @@ type Registry interface {
 	IndexRuleBinding
 	Measure
 	Group
+	RegisterHandler(Kind, MetadataEvent)
+}
+
+type TypeMeta struct {
+	Kind Kind
+}
+
+type Metadata struct {
+	TypeMeta
+
+	// Spec holds the configuration object as a protobuf message
+	// Or a metadataHolder as a container
+	Spec Spec
+}
+
+type Spec interface {
+	GetMetadata() *commonv1.Metadata
+}
+
+func (m Metadata) Key() string {
+	switch m.Kind {
+	case KindMeasure:
+		return formatMeasureKey(m.Spec.GetMetadata())
+	case KindStream:
+		return formatStreamKey(m.Spec.GetMetadata())
+	case KindIndexRule:
+		return formatIndexRuleKey(m.Spec.GetMetadata())
+	case KindIndexRuleBinding:
+		return formatIndexRuleBindingKey(m.Spec.GetMetadata())
+	default:
+		panic("unsupported Kind")
+	}
+}
+
+type metadataHolder struct {
+	*commonv1.Metadata
+}
+
+func (h metadataHolder) GetMetadata() *commonv1.Metadata {
+	return h.Metadata
 }
 
 type Stream interface {
