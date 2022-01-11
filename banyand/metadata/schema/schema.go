@@ -27,7 +27,7 @@ import (
 
 type Kind int
 
-type MetadataEvent func(Metadata) error
+type EventHandler func(Metadata) error
 
 const (
 	KindStream Kind = 1 << iota
@@ -35,6 +35,8 @@ const (
 	KindIndexRuleBinding
 	KindIndexRule
 )
+
+const KindMask = KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule
 
 type ListOpt struct {
 	Group string
@@ -50,11 +52,13 @@ type Registry interface {
 	IndexRuleBinding
 	Measure
 	Group
-	RegisterHandler(Kind, MetadataEvent)
+	RegisterHandler(Kind, EventHandler)
 }
 
 type TypeMeta struct {
-	Kind Kind
+	Kind  Kind
+	Name  string
+	Group string
 }
 
 type Metadata struct {
@@ -66,30 +70,33 @@ type Metadata struct {
 }
 
 type Spec interface {
-	GetMetadata() *commonv1.Metadata
 }
 
 func (m Metadata) Key() string {
 	switch m.Kind {
 	case KindMeasure:
-		return formatMeasureKey(m.Spec.GetMetadata())
+		return formatMeasureKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
 	case KindStream:
-		return formatStreamKey(m.Spec.GetMetadata())
+		return formatStreamKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
 	case KindIndexRule:
-		return formatIndexRuleKey(m.Spec.GetMetadata())
+		return formatIndexRuleKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
 	case KindIndexRuleBinding:
-		return formatIndexRuleBindingKey(m.Spec.GetMetadata())
+		return formatIndexRuleBindingKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
 	default:
 		panic("unsupported Kind")
 	}
-}
-
-type metadataHolder struct {
-	*commonv1.Metadata
-}
-
-func (h metadataHolder) GetMetadata() *commonv1.Metadata {
-	return h.Metadata
 }
 
 type Stream interface {

@@ -78,9 +78,19 @@ func UseRandomListener() RegistryOption {
 	}
 }
 
+type eventHandler struct {
+	interestKeys Kind
+	handler      EventHandler
+}
+
+func (eh *eventHandler) InterestOf(kind Kind) bool {
+	return KindMask&kind&eh.interestKeys != 0
+}
+
 type etcdSchemaRegistry struct {
-	server *embed.Etcd
-	kv     clientv3.KV
+	server   *embed.Etcd
+	kv       clientv3.KV
+	handlers []*eventHandler
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -92,8 +102,19 @@ type etcdSchemaRegistryConfig struct {
 	listenerPeerURL string
 }
 
-func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, event MetadataEvent) {
+func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
+	e.handlers = append(e.handlers, &eventHandler{
+		interestKeys: kind,
+		handler:      handler,
+	})
+}
 
+func (e *etcdSchemaRegistry) notify(metadata Metadata) {
+	for _, h := range e.handlers {
+		if h.InterestOf(metadata.Kind) {
+
+		}
+	}
 }
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
@@ -196,7 +217,9 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	}
 	return e.update(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindMeasure,
+			Kind:  KindMeasure,
+			Group: g.GetName(),
+			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
 	})
@@ -209,9 +232,10 @@ func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *common
 	}
 	return e.delete(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindMeasure,
+			Kind:  KindMeasure,
+			Group: g.GetName(),
+			Name:  metadata.GetName(),
 		},
-		Spec: metadataHolder{metadata},
 	})
 }
 
@@ -253,7 +277,9 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	}
 	return e.update(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindStream,
+			Kind:  KindStream,
+			Group: g.GetName(),
+			Name:  stream.GetMetadata().GetName(),
 		},
 		Spec: stream,
 	})
@@ -266,9 +292,10 @@ func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv
 	}
 	return e.delete(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindStream,
+			Kind:  KindStream,
+			Group: g.GetName(),
+			Name:  metadata.GetName(),
 		},
-		Spec: metadataHolder{metadata},
 	})
 }
 
@@ -308,7 +335,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	}
 	return e.update(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindIndexRuleBinding,
+			Kind:  KindIndexRuleBinding,
+			Name:  indexRuleBinding.GetMetadata().GetName(),
+			Group: g.GetName(),
 		},
 		Spec: indexRuleBinding,
 	})
@@ -321,10 +350,9 @@ func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadat
 	}
 	return e.delete(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindIndexRuleBinding,
-		},
-		Spec: metadataHolder{
-			metadata,
+			Kind:  KindIndexRuleBinding,
+			Name:  metadata.GetName(),
+			Group: g.GetName(),
 		},
 	})
 }
@@ -365,7 +393,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 	}
 	return e.update(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindIndexRule,
+			Kind:  KindIndexRule,
+			Name:  indexRule.GetMetadata().GetName(),
+			Group: g.GetName(),
 		},
 		Spec: indexRule,
 	})
@@ -378,10 +408,9 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 	}
 	return e.delete(ctx, g, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindIndexRule,
-		},
-		Spec: metadataHolder{
-			metadata,
+			Kind:  KindIndexRule,
+			Name:  metadata.GetName(),
+			Group: g.GetName(),
 		},
 	})
 }
@@ -459,6 +488,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, 
 	if err != nil {
 		return err
 	}
+	e.notify(metadata)
 	return e.touchGroup(ctx, group)
 }
 
@@ -502,6 +532,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, meta
 		return false, err
 	}
 	if resp.Deleted > 0 {
+		e.notify(metadata)
 		return true, e.touchGroup(ctx, g)
 	}
 	return false, nil
