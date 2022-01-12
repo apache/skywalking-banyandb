@@ -18,9 +18,10 @@
 package stream
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
