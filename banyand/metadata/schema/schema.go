@@ -27,7 +27,10 @@ import (
 
 type Kind int
 
-type EventHandler func(Metadata) error
+type EventHandler interface {
+	OnAddOrUpdate(Metadata)
+	OnDelete(Metadata)
+}
 
 const (
 	KindStream Kind = 1 << iota

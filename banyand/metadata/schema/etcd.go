@@ -109,10 +109,18 @@ func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
 	})
 }
 
-func (e *etcdSchemaRegistry) notify(metadata Metadata) {
+func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
 	for _, h := range e.handlers {
 		if h.InterestOf(metadata.Kind) {
+			h.handler.OnAddOrUpdate(metadata)
+		}
+	}
+}
 
+func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
+	for _, h := range e.handlers {
+		if h.InterestOf(metadata.Kind) {
+			h.handler.OnDelete(metadata)
 		}
 	}
 }
@@ -488,7 +496,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, 
 	if err != nil {
 		return err
 	}
-	e.notify(metadata)
+	e.notifyUpdate(metadata)
 	return e.touchGroup(ctx, group)
 }
 
@@ -532,7 +540,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, meta
 		return false, err
 	}
 	if resp.Deleted > 0 {
-		e.notify(metadata)
+		e.notifyDelete(metadata)
 		return true, e.touchGroup(ctx, g)
 	}
 	return false, nil

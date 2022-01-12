@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -43,7 +45,21 @@ var (
 	indexRuleBindingJSON string
 	//go:embed testdata/stream.json
 	streamJSON string
+
+	_ EventHandler = (*mockedEventHandler)(nil)
 )
+
+type mockedEventHandler struct {
+	mock.Mock
+}
+
+func (m *mockedEventHandler) OnAddOrUpdate(metadata Metadata) {
+	m.Called(metadata)
+}
+
+func (m *mockedEventHandler) OnDelete(metadata Metadata) {
+	m.Called(metadata)
+}
 
 func preloadSchema(e Registry) error {
 	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
@@ -370,6 +386,115 @@ func Test_Etcd_Delete(t *testing.T) {
 			num, err = tt.list(registry)
 			ast.NoError(err)
 			ast.Equal(num, tt.expectedLenAfter)
+		})
+	}
+}
+
+func Test_Notify(t *testing.T) {
+	req := require.New(t)
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	req.NoError(err)
+	req.NotNil(registry)
+	defer registry.Close()
+
+	err = preloadSchema(registry)
+	req.NoError(err)
+
+	tests := []struct {
+		name           string
+		testFunc       func(context.Context, Registry) error
+		validationFunc func(*mockedEventHandler) bool
+	}{
+		{
+			name: "modify indexRule",
+			testFunc: func(ctx context.Context, r Registry) error {
+				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
+					Name:  "db.instance",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+
+				ir.Type = databasev1.IndexRule_TYPE_TREE
+				return r.UpdateIndexRule(ctx, ir)
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+			},
+		},
+		{
+			name: "delete indexRule",
+			testFunc: func(ctx context.Context, r Registry) error {
+				deleted, err := r.DeleteIndexRule(ctx, &commonv1.Metadata{
+					Name:  "db.instance",
+					Group: "default",
+				})
+
+				if !deleted {
+					return errors.New("fail to delete object")
+				}
+
+				return err
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+			},
+		},
+		{
+			name: "update indexRuleBinding",
+			testFunc: func(ctx context.Context, r Registry) error {
+				irb, err := r.GetIndexRuleBinding(ctx, &commonv1.Metadata{
+					Name:  "sw-index-rule-binding",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+
+				irb.Rules = []string{"trace_id", "duration"}
+				return r.UpdateIndexRuleBinding(ctx, irb)
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 1) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+			},
+		},
+		{
+			name: "delete indexRuleBinding",
+			testFunc: func(ctx context.Context, r Registry) error {
+				_, err := r.DeleteIndexRuleBinding(ctx, &commonv1.Metadata{
+					Name:  "sw-index-rule-binding",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+
+				return nil
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := require.New(t)
+
+			mockedObj := new(mockedEventHandler)
+			mockedObj.On("OnAddOrUpdate", mock.Anything).Return()
+			mockedObj.On("OnDelete", mock.Anything).Return()
+			registry.RegisterHandler(KindStream|KindIndexRuleBinding, mockedObj)
+
+			err := tt.testFunc(context.TODO(), registry)
+			req.NoError(err)
+
+			req.True(tt.validationFunc(mockedObj))
 		})
 	}
 }
