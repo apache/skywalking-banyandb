@@ -60,7 +60,13 @@ type service struct {
 	root          string
 	pipeline      queue.Queue
 	repo          discovery.ServiceRepo
-	stopCh        chan struct{}
+	// stop channel for the service
+	stopCh chan struct{}
+	// stop channel for the inner worker
+	stopCh2 chan struct{}
+
+	updateCh chan *databasev1.Stream
+	deleteCh chan *commonv1.Metadata
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -118,17 +124,35 @@ func (s *service) Serve() error {
 		return errWrite
 	}
 
-	s.metadata.StreamRegistry().RegisterHandler(schema.KindStream|schema.KindIndexRuleBinding, s)
+	s.stopCh2 = make(chan struct{})
+	// run a serial reconciler
+	go s.reconcile()
+
+	s.metadata.StreamRegistry().RegisterHandler(schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule, s)
 
 	s.stopCh = make(chan struct{})
 	<-s.stopCh
+
 	return nil
+}
+
+func (s *service) reconcile() {
+	for {
+		select {
+		case streamEntity := <-s.updateCh:
+			s.reloadStream(streamEntity)
+		case metadataEntity := <-s.deleteCh:
+			s.removeStream(metadataEntity)
+		case <-s.stopCh2:
+			return
+		}
+	}
 }
 
 func (s *service) OnAddOrUpdate(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
-		s.reloadStream(m.Spec.(*databasev1.Stream))
+		s.updateCh <- m.Spec.(*databasev1.Stream)
 	case schema.KindIndexRuleBinding:
 		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 			stm, err := s.metadata.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
@@ -139,24 +163,32 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 				s.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
-			s.reloadStream(stm)
+			s.updateCh <- stm
+		}
+	case schema.KindIndexRule:
+		subjects, err := s.metadata.Subjects(context.TODO(), m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
+		if err != nil {
+			s.l.Error().Err(err).Msg("fail to get subjects(stream)")
+			return
+		}
+		for _, sub := range subjects {
+			s.updateCh <- sub.(*databasev1.Stream)
 		}
 	default:
-		panic("we are not interested in this kind")
 	}
 }
 
 func (s *service) OnDelete(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
-		s.removeStream(&commonv1.Metadata{
+		s.deleteCh <- &commonv1.Metadata{
 			Name:  m.Name,
 			Group: m.Group,
-		})
+		}
 	case schema.KindIndexRuleBinding:
 		// TODO: we only have metadata(group and name) here, what shall we remove?
+	case schema.KindIndexRule:
 	default:
-		panic("we are not interested in this kind")
 	}
 }
 
@@ -312,16 +344,23 @@ func (s *service) GracefulStop() {
 
 		return true
 	})
+
+	if s.stopCh2 != nil {
+		close(s.stopCh2)
+	}
+
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}
 }
 
-//NewService returns a new service
+// NewService returns a new service
 func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,
 		repo:     repo,
 		pipeline: pipeline,
+		updateCh: make(chan *databasev1.Stream),
+		deleteCh: make(chan *commonv1.Metadata),
 	}, nil
 }
