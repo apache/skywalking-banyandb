@@ -55,7 +55,6 @@ type Registry interface {
 	IndexRuleBinding
 	Measure
 	Group
-	RegisterHandler(Kind, EventHandler)
 }
 
 type TypeMeta struct {
@@ -107,6 +106,7 @@ type Stream interface {
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
 	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	RegisterHandler(Kind, EventHandler)
 }
 
 type IndexRule interface {
@@ -128,6 +128,7 @@ type Measure interface {
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	RegisterHandler(Kind, EventHandler)
 }
 
 type Group interface {

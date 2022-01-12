@@ -118,9 +118,46 @@ func (s *service) Serve() error {
 		return errWrite
 	}
 
+	s.metadata.StreamRegistry().RegisterHandler(schema.KindStream|schema.KindIndexRuleBinding, s)
+
 	s.stopCh = make(chan struct{})
 	<-s.stopCh
 	return nil
+}
+
+func (s *service) OnAddOrUpdate(m schema.Metadata) {
+	switch m.Kind {
+	case schema.KindStream:
+		s.reloadStream(m.Spec.(*databasev1.Stream))
+	case schema.KindIndexRuleBinding:
+		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+			stm, err := s.metadata.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
+				Name:  m.Name,
+				Group: m.Group,
+			})
+			if err != nil {
+				s.l.Error().Err(err).Msg("fail to get subject")
+				return
+			}
+			s.reloadStream(stm)
+		}
+	default:
+		panic("we are not interested in this kind")
+	}
+}
+
+func (s *service) OnDelete(m schema.Metadata) {
+	switch m.Kind {
+	case schema.KindStream:
+		s.removeStream(&commonv1.Metadata{
+			Name:  m.Name,
+			Group: m.Group,
+		})
+	case schema.KindIndexRuleBinding:
+		// TODO: we only have metadata(group and name) here, what shall we remove?
+	default:
+		panic("we are not interested in this kind")
+	}
 }
 
 // initStream initializes the given Stream definition
@@ -195,9 +232,8 @@ func (s *service) serveStream(sMeta *stream) {
 	}
 }
 
-func (s *service) reloadStream(streamSchema *databasev1.Stream) {
-	// first find existing *stream in the schemaMap
-	streamID := formatStreamID(streamSchema.GetMetadata().Name, streamSchema.GetMetadata().Group)
+func (s *service) removeStream(metadata *commonv1.Metadata) {
+	streamID := formatStreamID(metadata.GetName(), metadata.GetGroup())
 	if oldStm, deleted := s.schemaMap.LoadAndDelete(streamID); deleted {
 		now := time.Now()
 		nowPb := timestamppb.New(now)
@@ -253,6 +289,11 @@ func (s *service) reloadStream(streamSchema *databasev1.Stream) {
 			s.l.Error().Err(err).Msg("fail to close the old stream")
 		}
 	}
+}
+
+func (s *service) reloadStream(streamSchema *databasev1.Stream) {
+	// first find existing *stream in the schemaMap
+	s.removeStream(streamSchema.GetMetadata())
 
 	stm, err := s.initStream(streamSchema)
 	if err != nil {
