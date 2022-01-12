@@ -20,6 +20,7 @@ package stream
 import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
+	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -134,10 +135,10 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 
 type writeCallback struct {
 	l         *logger.Logger
-	schemaMap map[string]*stream
+	schemaMap *sync.Map
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaMap map[string]*stream) *writeCallback {
+func setUpWriteCallback(l *logger.Logger, schemaMap *sync.Map) *writeCallback {
 	wcb := &writeCallback{
 		l:         l,
 		schemaMap: schemaMap,
@@ -153,9 +154,18 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	sm := writeEvent.GetRequest().GetMetadata()
 	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	err := w.schemaMap[id].write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
-	if err != nil {
-		w.l.Debug().Err(err)
+	val, ok := w.schemaMap.Load(id)
+	if !ok {
+		w.l.Warn().Msg("cannot find stream definition")
+		return
 	}
+
+	if stm, ok := val.(*stream); ok {
+		err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
+		if err != nil {
+			w.l.Debug().Err(err).Msg("fail to write entity")
+		}
+	}
+
 	return
 }

@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -52,7 +53,7 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaMap     map[string]*stream
+	schemaMap     sync.Map
 	writeListener *writeCallback
 	l             *logger.Logger
 	metadata      metadata.Repo
@@ -62,13 +63,13 @@ type service struct {
 	stopCh        chan struct{}
 }
 
-func (s *service) Stream(stream *commonv1.Metadata) (Stream, error) {
-	sID := formatStreamID(stream.GetName(), stream.GetGroup())
-	sm, ok := s.schemaMap[sID]
+func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
+	sID := formatStreamID(metadata.GetName(), metadata.GetGroup())
+	sm, ok := s.schemaMap.Load(sID)
 	if !ok {
 		return nil, errors.WithStack(ErrStreamNotExist)
 	}
-	return sm, nil
+	return sm.(*stream), nil
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -94,91 +95,182 @@ func (s *service) PreRun() error {
 		return err
 	}
 
-	s.schemaMap = make(map[string]*stream, len(schemas))
+	s.schemaMap = sync.Map{}
 	s.l = logger.GetLogger(s.Name())
 	for _, sa := range schemas {
-		iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.Metadata)
-		if errIndexRules != nil {
-			return errIndexRules
+		if _, innerErr := s.initStream(sa); innerErr != nil {
+			s.l.Error().Err(innerErr).Msg("fail to initialize stream")
 		}
-		sm, errTS := openStream(s.root, streamSpec{
-			schema:     sa,
-			indexRules: iRules,
-		}, s.l)
-		if errTS != nil {
-			return errTS
-		}
-		id := formatStreamID(sm.name, sm.group)
-		s.schemaMap[id] = sm
-		s.l.Info().Str("id", id).Msg("initialize stream")
 	}
-	s.writeListener = setUpWriteCallback(s.l, s.schemaMap)
+	s.writeListener = setUpWriteCallback(s.l, &s.schemaMap)
 	return err
 }
 
 func (s *service) Serve() error {
-	t := time.Now()
-	now := time.Now().UnixNano()
-	nowBp := timestamppb.New(t)
-	for _, sMeta := range s.schemaMap {
-		locator := make([]*databasev1.EntityEvent_TagLocator, 0, len(sMeta.entityLocator))
-		for _, tagLocator := range sMeta.entityLocator {
-			locator = append(locator, &databasev1.EntityEvent_TagLocator{
-				FamilyOffset: uint32(tagLocator.FamilyOffset),
-				TagOffset:    uint32(tagLocator.TagOffset),
-			})
-		}
-		_, err := s.repo.Publish(event.StreamTopicEntityEvent, bus.NewMessage(bus.MessageID(now), &databasev1.EntityEvent{
-			Subject: &commonv1.Metadata{
-				Name:  sMeta.name,
-				Group: sMeta.group,
-			},
-			EntityLocator: locator,
-			Time:          nowBp,
-			Action:        databasev1.Action_ACTION_PUT,
-		}))
-		if err != nil {
-			return err
-		}
-		for i := 0; i < int(sMeta.schema.GetOpts().GetShardNum()); i++ {
-			_, errShard := s.repo.Publish(event.StreamTopicShardEvent, bus.NewMessage(bus.MessageID(now), &databasev1.ShardEvent{
-				Shard: &databasev1.Shard{
-					Id:    uint64(i),
-					Total: sMeta.schema.GetOpts().GetShardNum(),
-					Metadata: &commonv1.Metadata{
-						Name:  sMeta.name,
-						Group: sMeta.group,
-					},
-					Node: &databasev1.Node{
-						Id:        s.repo.NodeID(),
-						CreatedAt: nowBp,
-						UpdatedAt: nowBp,
-						Addr:      "localhost",
-					},
-					UpdatedAt: nowBp,
-					CreatedAt: nowBp,
-				},
-				Time:   nowBp,
-				Action: databasev1.Action_ACTION_PUT,
-			}))
-			if errShard != nil {
-				return errShard
-			}
-		}
-	}
+	s.schemaMap.Range(func(key, value interface{}) bool {
+		s.l.Debug().Str("streamID", key.(string)).Msg("serve stream")
+		s.serveStream(value.(*stream))
+		return true
+	})
+
 	errWrite := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 	if errWrite != nil {
 		return errWrite
 	}
+
 	s.stopCh = make(chan struct{})
 	<-s.stopCh
 	return nil
 }
 
-func (s *service) GracefulStop() {
-	for _, sm := range s.schemaMap {
-		_ = sm.Close()
+// initStream initializes the given Stream definition
+// 1. Prepare underlying storage layer with all belonging indexRules
+// 2. Save the storage object into the cache
+func (s *service) initStream(sa *databasev1.Stream) (*stream, error) {
+	iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.Metadata)
+	if errIndexRules != nil {
+		return nil, errIndexRules
 	}
+	sm, errTS := openStream(s.root, streamSpec{
+		schema:     sa,
+		indexRules: iRules,
+	}, s.l)
+	if errTS != nil {
+		return nil, errTS
+	}
+	id := formatStreamID(sm.name, sm.group)
+	s.schemaMap.Store(id, sm)
+	s.l.Info().Str("id", id).Msg("initialize stream")
+	return sm, nil
+}
+
+func (s *service) serveStream(sMeta *stream) {
+	now := time.Now()
+	nowPb := timestamppb.New(now)
+	locator := make([]*databasev1.EntityEvent_TagLocator, 0, len(sMeta.entityLocator))
+	for _, tagLocator := range sMeta.entityLocator {
+		locator = append(locator, &databasev1.EntityEvent_TagLocator{
+			FamilyOffset: uint32(tagLocator.FamilyOffset),
+			TagOffset:    uint32(tagLocator.TagOffset),
+		})
+	}
+	_, err := s.repo.Publish(event.StreamTopicEntityEvent, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.EntityEvent{
+		Subject: &commonv1.Metadata{
+			Name:  sMeta.name,
+			Group: sMeta.group,
+		},
+		EntityLocator: locator,
+		Time:          nowPb,
+		Action:        databasev1.Action_ACTION_PUT,
+	}))
+	if err != nil {
+		s.l.Error().Err(err).Msg("fail to publish stream topic")
+		return
+	}
+	for i := 0; i < int(sMeta.schema.GetOpts().GetShardNum()); i++ {
+		_, errShard := s.repo.Publish(event.StreamTopicShardEvent, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.ShardEvent{
+			Shard: &databasev1.Shard{
+				Id:    uint64(i),
+				Total: sMeta.schema.GetOpts().GetShardNum(),
+				Metadata: &commonv1.Metadata{
+					Name:  sMeta.name,
+					Group: sMeta.group,
+				},
+				Node: &databasev1.Node{
+					Id:        s.repo.NodeID(),
+					CreatedAt: nowPb,
+					UpdatedAt: nowPb,
+					Addr:      "localhost",
+				},
+				UpdatedAt: nowPb,
+				CreatedAt: nowPb,
+			},
+			Time:   nowPb,
+			Action: databasev1.Action_ACTION_PUT,
+		}))
+		if errShard != nil {
+			s.l.Error().Err(err).Msg("fail to publish shard")
+			return
+		}
+	}
+}
+
+func (s *service) reloadStream(streamSchema *databasev1.Stream) {
+	// first find existing *stream in the schemaMap
+	streamID := formatStreamID(streamSchema.GetMetadata().Name, streamSchema.GetMetadata().Group)
+	if oldStm, deleted := s.schemaMap.LoadAndDelete(streamID); deleted {
+		now := time.Now()
+		nowPb := timestamppb.New(now)
+		// first withdraw registration from discovery
+		for i := 0; i < int(oldStm.(*stream).schema.GetOpts().GetShardNum()); i++ {
+			f, shardErr := s.repo.Publish(event.StreamTopicShardEvent, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.ShardEvent{
+				Shard: &databasev1.Shard{
+					Id:    uint64(i),
+					Total: oldStm.(*stream).schema.GetOpts().GetShardNum(),
+					Metadata: &commonv1.Metadata{
+						Name:  oldStm.(*stream).name,
+						Group: oldStm.(*stream).group,
+					},
+					Node: &databasev1.Node{
+						Id:        s.repo.NodeID(),
+						CreatedAt: nowPb,
+						UpdatedAt: nowPb,
+						Addr:      "localhost",
+					},
+					UpdatedAt: nowPb,
+					CreatedAt: nowPb,
+				},
+				Time:   nowPb,
+				Action: databasev1.Action_ACTION_DELETE,
+			}))
+
+			if shardErr != nil {
+				s.l.Error().Err(shardErr).Int("shard", i).Msg("fail to withdraw shard")
+				continue
+			}
+
+			// await result
+			_, _ = f.Get()
+		}
+
+		f, err := s.repo.Publish(event.StreamTopicEntityEvent, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.EntityEvent{
+			Subject: &commonv1.Metadata{
+				Name:  oldStm.(*stream).name,
+				Group: oldStm.(*stream).group,
+			},
+			Time:   nowPb,
+			Action: databasev1.Action_ACTION_DELETE,
+		}))
+
+		if err != nil {
+			s.l.Error().Err(err).Msg("fail to withdraw stream topic")
+		} else {
+			_, _ = f.Get()
+		}
+
+		// then close the underlying storage
+		if err := oldStm.(*stream).Close(); err != nil {
+			s.l.Error().Err(err).Msg("fail to close the old stream")
+		}
+	}
+
+	stm, err := s.initStream(streamSchema)
+	if err != nil {
+		s.l.Error().Err(err).Msg("fail to init stream")
+	}
+
+	// incremental serve the changed stream
+	s.serveStream(stm)
+}
+
+func (s *service) GracefulStop() {
+	s.schemaMap.Range(func(key, value interface{}) bool {
+		if sMeta, ok := value.(*stream); ok {
+			_ = sMeta.Close()
+		}
+
+		return true
+	})
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}
