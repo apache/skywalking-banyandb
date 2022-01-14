@@ -35,3 +35,12 @@ func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 		}
 	}
 }
+
+func NewSpace() (tempDir string, deferFunc func(), err error) {
+	tempDir, err = ioutil.TempDir("", "banyandb-test-*")
+	return tempDir, func() {
+		if err = os.RemoveAll(tempDir); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Error while removing dir: %v\n", err)
+		}
+	}, err
+}

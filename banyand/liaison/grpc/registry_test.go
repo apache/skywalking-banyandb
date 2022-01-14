@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package grpc
+package grpc_test
 
 import (
 	"context"
-	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
@@ -30,158 +30,110 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-func TestStreamRegistry(t *testing.T) {
-	req := require.New(t)
-	gracefulStop := setup(req, testData{
-		TLS:  false,
-		addr: "localhost:17912",
-	})
-	defer gracefulStop()
-
-	conn, err := grpc.Dial("localhost:17912", grpc.WithInsecure())
-	req.NoError(err)
-	req.NotNil(conn)
-
-	client := databasev1.NewStreamRegistryServiceClient(conn)
-	req.NotNil(client)
-
+var _ = Describe("Registry", func() {
+	var gracefulStop func()
+	var conn *grpc.ClientConn
 	meta := &commonv1.Metadata{
 		Group: "default",
-		Name:  "sw",
 	}
-
-	getResp, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
-
-	req.NoError(err)
-	req.NotNil(getResp)
-
-	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.StreamRegistryServiceDeleteRequest{
-		Metadata: meta,
+	BeforeEach(func() {
+		gracefulStop = setup(nil)
+		var err error
+		conn, err = grpc.Dial("localhost:17912", grpc.WithInsecure())
+		Expect(err).NotTo(HaveOccurred())
 	})
-	req.NoError(err)
-	req.NotNil(deleteResp)
-	req.True(deleteResp.GetDeleted())
-
-	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
-		Metadata: meta,
+	It("manages the stream", func() {
+		client := databasev1.NewStreamRegistryServiceClient(conn)
+		Expect(client).NotTo(BeNil())
+		meta.Name = "sw"
+		getResp, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
+		By("Cleanup the registry")
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.StreamRegistryServiceDeleteRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(deleteResp).NotTo(BeNil())
+		Expect(deleteResp.GetDeleted()).To(BeTrue())
+		By("Verifying the registry empty")
+		_, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		errStatus, _ := status.FromError(err)
+		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		By("Creating a new stream")
+		_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
+		Expect(err).ShouldNot(HaveOccurred())
+		By("Verifying the new stream")
+		getResp, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
 	})
-	errStatus, _ := status.FromError(err)
-	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
-
-	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
-	req.NoError(err)
-
-	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
-		Metadata: meta,
+	It("manages the index-rule-binding", func() {
+		client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
+		Expect(client).NotTo(BeNil())
+		meta.Name = "sw-index-rule-binding"
+		getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
+		By("Cleanup the registry")
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(deleteResp).NotTo(BeNil())
+		Expect(deleteResp.GetDeleted()).To(BeTrue())
+		By("Verifying the registry empty")
+		_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		errStatus, _ := status.FromError(err)
+		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		By("Creating a new index-rule-binding")
+		_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
+		Expect(err).ShouldNot(HaveOccurred())
+		By("Verifying the new index-rule-binding")
+		getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
 	})
-	req.NoError(err)
-	req.NotNil(getResp)
-}
-
-func TestIndexRuleBindingRegistry(t *testing.T) {
-	req := require.New(t)
-	gracefulStop := setup(req, testData{
-		TLS:  false,
-		addr: "localhost:17912",
+	It("manages the index-rule", func() {
+		client := databasev1.NewIndexRuleRegistryServiceClient(conn)
+		Expect(client).NotTo(BeNil())
+		meta.Name = "db.instance"
+		getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
+		By("Cleanup the registry")
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleRegistryServiceDeleteRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(deleteResp).NotTo(BeNil())
+		Expect(deleteResp.GetDeleted()).To(BeTrue())
+		By("Verifying the registry empty")
+		_, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		errStatus, _ := status.FromError(err)
+		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		By("Creating a new index-rule")
+		_, err = client.Create(context.TODO(), &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
+		Expect(err).ShouldNot(HaveOccurred())
+		By("Verifying the new index-rule")
+		getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(getResp).NotTo(BeNil())
 	})
-	defer gracefulStop()
-
-	conn, err := grpc.Dial("localhost:17912", grpc.WithInsecure())
-	req.NoError(err)
-	req.NotNil(conn)
-
-	client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
-	req.NotNil(client)
-
-	meta := &commonv1.Metadata{
-		Group: "default",
-		Name:  "sw-index-rule-binding",
-	}
-
-	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
-
-	req.NoError(err)
-	req.NotNil(getResp)
-
-	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{
-		Metadata: meta,
+	AfterEach(func() {
+		_ = conn.Close()
+		gracefulStop()
 	})
-	req.NoError(err)
-	req.NotNil(deleteResp)
-	req.True(deleteResp.GetDeleted())
-
-	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
-		Metadata: meta,
-	})
-	errStatus, _ := status.FromError(err)
-	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
-
-	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
-	req.NoError(err)
-
-	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
-		Metadata: meta,
-	})
-	req.NoError(err)
-	req.NotNil(getResp)
-}
-
-func TestIndexRuleRegistry(t *testing.T) {
-	req := require.New(t)
-	gracefulStop := setup(req, testData{
-		TLS:  false,
-		addr: "localhost:17912",
-	})
-	defer gracefulStop()
-
-	conn, err := grpc.Dial("localhost:17912", grpc.WithInsecure())
-	req.NoError(err)
-	req.NotNil(conn)
-
-	client := databasev1.NewIndexRuleRegistryServiceClient(conn)
-	req.NotNil(client)
-
-	meta := &commonv1.Metadata{
-		Group: "default",
-		Name:  "db.instance",
-	}
-
-	getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
-
-	req.NoError(err)
-	req.NotNil(getResp)
-
-	// 2 - DELETE
-	deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleRegistryServiceDeleteRequest{
-		Metadata: meta,
-	})
-	req.NoError(err)
-	req.NotNil(deleteResp)
-	req.True(deleteResp.GetDeleted())
-
-	// 3 - GET -> Nil
-	_, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
-		Metadata: meta,
-	})
-	errStatus, _ := status.FromError(err)
-	req.Equal(errStatus.Message(), schema.ErrEntityNotFound.Error())
-
-	// 4 - CREATE
-	_, err = client.Create(context.TODO(), &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
-	req.NoError(err)
-
-	// 5 - GET - > Not Nil
-	getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
-		Metadata: meta,
-	})
-	req.NoError(err)
-	req.NotNil(getResp)
-}
+})
