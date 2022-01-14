@@ -15,39 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logger
+package grpc_test
 
 import (
-	"strings"
+	"testing"
 
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
-
-type contextKey struct{}
-
-// Logging is the config info
-type Logging struct {
-	Env   string
-	Level string
-}
-
-// Logger is wrapper for rs/zerolog logger with module, it is singleton.
-type Logger struct {
-	module string
-	*zerolog.Logger
-}
-
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
-}
-
-// Loggable indicates the implement supports logging
-type Loggable interface {
-	SetLogger(*Logger)
+func TestGrpc(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Grpc Suite")
 }

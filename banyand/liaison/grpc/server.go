@@ -27,12 +27,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -56,22 +57,26 @@ type Server struct {
 	pipeline       queue.Queue
 	repo           discovery.ServiceRepo
 	creds          credentials.TransportCredentials
-	shardRepo      *shardRepo
-	entityRepo     *entityRepo
+
+	streamSVC  *streamService
+	measureSVC *measureService
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	*groupRegistryServer
-	streamv1.UnimplementedStreamServiceServer
 }
 
 func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
 	return &Server{
-		pipeline:   pipeline,
-		repo:       repo,
-		shardRepo:  &shardRepo{shardEventsMap: make(map[identity]uint32)},
-		entityRepo: &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)},
+		pipeline: pipeline,
+		repo:     repo,
+		streamSVC: &streamService{
+			discoveryService: newDiscoveryService(pipeline),
+		},
+		measureSVC: &measureService{
+			discoveryService: newDiscoveryService(pipeline),
+		},
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -92,13 +97,34 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 
 func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
-	s.shardRepo.log = s.log
-	s.entityRepo.log = s.log
-	err := s.repo.Subscribe(event.StreamTopicShardEvent, s.shardRepo)
-	if err != nil {
-		return err
+	components := []struct {
+		shardEvent   bus.Topic
+		entityEvent  bus.Topic
+		discoverySVC *discoveryService
+	}{
+		{
+			shardEvent:   event.StreamTopicShardEvent,
+			entityEvent:  event.StreamTopicEntityEvent,
+			discoverySVC: s.streamSVC.discoveryService,
+		},
+		{
+			shardEvent:   event.MeasureTopicShardEvent,
+			entityEvent:  event.MeasureTopicEntityEvent,
+			discoverySVC: s.measureSVC.discoveryService,
+		},
 	}
-	return s.repo.Subscribe(event.StreamTopicEntityEvent, s.entityRepo)
+	for _, c := range components {
+		c.discoverySVC.SetLogger(s.log)
+		err := s.repo.Subscribe(c.shardEvent, c.discoverySVC.shardRepo)
+		if err != nil {
+			return err
+		}
+		err = s.repo.Subscribe(c.entityEvent, c.discoverySVC.entityRepo)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) Name() string {
@@ -150,7 +176,9 @@ func (s *Server) Serve() error {
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
 	s.ser = grpclib.NewServer(opts...)
-	streamv1.RegisterStreamServiceServer(s.ser, s)
+
+	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
+	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
 	// register *Registry
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
