@@ -15,26 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package grpc
+package grpc_test
 
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"path/filepath"
 	"runtime"
 	"sync"
-	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -46,51 +45,68 @@ import (
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
-var _ run.PreRunner = (*preloadStreamService)(nil)
+var _ = Describe("Stream", func() {
+	var gracefulStop func()
+	var conn *grpclib.ClientConn
+	It("is a plain server", func() {
+		gracefulStop = setup(nil)
+		var err error
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		Expect(err).NotTo(HaveOccurred())
+		streamWrite(conn)
+		Eventually(func() (int, error) {
+			return streamQuery(conn)
+		}).Should(Equal(1))
+	})
+	It("is a TLS server", func() {
+		flags := []string{"--tls=true"}
+		_, currentFile, _, _ := runtime.Caller(0)
+		basePath := filepath.Dir(currentFile)
+		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
+		keyFile := filepath.Join(basePath, "testdata/server_key.pem")
+		flags = append(flags, "--cert-file="+certFile)
+		flags = append(flags, "--key-file="+keyFile)
+		addr := "localhost:17913"
+		flags = append(flags, "--addr="+addr)
+		gracefulStop = setup(flags)
+		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
+		Expect(err).NotTo(HaveOccurred())
+		conn, err = grpclib.Dial(addr, grpclib.WithTransportCredentials(creds))
+		Expect(err).NotTo(HaveOccurred())
+		streamWrite(conn)
+		Eventually(func() (int, error) {
+			return streamQuery(conn)
+		}).Should(Equal(1))
+	})
+	AfterEach(func() {
+		_ = conn.Close()
+		gracefulStop()
+	})
+})
 
-type preloadStreamService struct {
-	metaSvc metadata.Service
-}
-
-func (p *preloadStreamService) Name() string {
-	return "preload-measure"
-}
-
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
-}
-
-type testData struct {
-	certFile           string
-	serverHostOverride string
-	TLS                bool
-	addr               string
-	basePath           string
-}
-
-func setup(req *require.Assertions, testData testData) func() {
-	req.NoError(logger.Init(logger.Logging{
+func setup(flags []string) func() {
+	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	}))
+	})).Should(Succeed())
 	g := run.Group{Name: "standalone"}
 	// Init `Discovery` module
 	repo, err := discovery.NewServiceRepo(context.Background())
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 	// Init `Queue` module
 	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 	// Init `Stream` module
 	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 	// Init `Query` module
 	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 
-	tcp := NewServer(context.TODO(), pipeline, repo, metaSvc)
+	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
 
 	closer := run.NewTester("closer")
 	startListener := run.NewTester("started-listener")
@@ -108,18 +124,12 @@ func setup(req *require.Assertions, testData testData) func() {
 		startListener,
 	)
 	// Create a random directory
-	rootPath, deferFunc := test.Space(req)
-	flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + teststream.RandomTempDir()}
-	if testData.TLS {
-		flags = append(flags, "--tls=true")
-		certFile := filepath.Join(testData.basePath, "testdata/server_cert.pem")
-		keyFile := filepath.Join(testData.basePath, "testdata/server_key.pem")
-		flags = append(flags, "--cert-file="+certFile)
-		flags = append(flags, "--key-file="+keyFile)
-		flags = append(flags, "--addr="+testData.addr)
-	}
+	rootPath, deferFunc, err := test.NewSpace()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--root-path="+rootPath, "--metadata-root-path="+teststream.RandomTempDir())
+
 	err = g.RegisterFlags().Parse(flags)
-	req.NoError(err)
+	Expect(err).NotTo(HaveOccurred())
 
 	wg := sync.WaitGroup{}
 
@@ -130,72 +140,27 @@ func setup(req *require.Assertions, testData testData) func() {
 		errRun := g.Run()
 		if errRun != nil {
 			startListener.GracefulStop()
-			req.NoError(errRun)
+			Expect(errRun).Should(Succeed())
 		}
 		deferFunc()
 	}()
-	req.NoError(startListener.WaitUntilStarted())
+	Expect(startListener.WaitUntilStarted()).Should(Succeed())
 	return func() {
 		closer.GracefulStop()
 		wg.Wait()
 	}
 }
 
-type caseData struct {
-	name           string
-	queryGenerator func(baseTs time.Time) *streamv1.QueryRequest
-	writeGenerator func() *streamv1.WriteRequest
-	args           testData
-	wantLen        int
+type preloadStreamService struct {
+	metaSvc metadata.Service
 }
 
-func TestStreamService(t *testing.T) {
-	req := require.New(t)
-	_, currentFile, _, _ := runtime.Caller(0)
-	basePath := filepath.Dir(currentFile)
-	certFile := filepath.Join(basePath, "testdata/server_cert.pem")
-	testCases := []caseData{
-		{
-			name:           "isTLS",
-			queryGenerator: queryCriteria,
-			writeGenerator: writeData,
-			args: testData{
-				TLS:                true,
-				certFile:           certFile,
-				serverHostOverride: "localhost",
-				addr:               "localhost:17913",
-				basePath:           basePath,
-			},
-			wantLen: 1,
-		},
-		{
-			name:           "noTLS",
-			queryGenerator: queryCriteria,
-			writeGenerator: writeData,
-			args: testData{
-				TLS:  false,
-				addr: "localhost:17912",
-			},
-			wantLen: 1,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gracefulStop := setup(req, tc.args)
-			defer gracefulStop()
-			if tc.args.TLS {
-				var opts []grpclib.DialOption
-				creds, err := credentials.NewClientTLSFromFile(tc.args.certFile, tc.args.serverHostOverride)
-				assert.NoError(t, err)
-				opts = append(opts, grpclib.WithTransportCredentials(creds))
-				dialService(t, tc, opts)
-			} else {
-				var opts []grpclib.DialOption
-				opts = append(opts, grpclib.WithInsecure())
-				dialService(t, tc, opts)
-			}
-		})
-	}
+func (p *preloadStreamService) Name() string {
+	return "preload-measure"
+}
+
+func (p *preloadStreamService) PreRun() error {
+	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
 func writeData() *streamv1.WriteRequest {
@@ -227,60 +192,23 @@ func queryCriteria(baseTs time.Time) *streamv1.QueryRequest {
 		Build()
 }
 
-func dialService(t *testing.T, tc caseData, opts []grpclib.DialOption) {
-	conn, err := grpclib.Dial(tc.args.addr, opts...)
-	assert.NoError(t, err)
-	defer func(conn *grpclib.ClientConn) {
-		_ = conn.Close()
-	}(conn)
-	streamWrite(t, tc, conn)
-	requireTester := require.New(t)
-	assert.NoError(t, test.Retry(10, 100*time.Millisecond, func() error {
-		now := time.Now()
-		resp := streamQuery(requireTester, conn, tc.queryGenerator(now))
-		if len(resp.GetElements()) == tc.wantLen {
-			return nil
-		}
-		return fmt.Errorf("expected elements number: %d got: %d", tc.wantLen, len(resp.GetElements()))
-	}))
-}
-
-func streamWrite(t *testing.T, tc caseData, conn *grpclib.ClientConn) {
+func streamWrite(conn *grpclib.ClientConn) {
 	client := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	writeClient, errorWrite := client.Write(ctx)
-	if errorWrite != nil {
-		t.Errorf("%v.write(_) = _, %v", client, errorWrite)
-	}
-	waitc := make(chan struct{})
-	go func() {
-		for {
-			writeResponse, errRecv := writeClient.Recv()
-			if errRecv == io.EOF {
-				// read done.
-				close(waitc)
-				return
-			}
-			assert.NoError(t, errRecv)
-			assert.NotNil(t, writeResponse)
-		}
-	}()
-	if errSend := writeClient.Send(tc.writeGenerator()); errSend != nil {
-		t.Errorf("Failed to send a note: %v", errSend)
-	}
-	if errorSend := writeClient.CloseSend(); errorSend != nil {
-		t.Errorf("Failed to send a note: %v", errorSend)
-	}
-	<-waitc
+	Expect(errorWrite).Should(Succeed())
+	Expect(writeClient.Send(writeData())).Should(Succeed())
+	Expect(writeClient.CloseSend()).Should(Succeed())
+	Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}).Should(Equal(io.EOF))
 }
 
-func streamQuery(tester *require.Assertions, conn *grpclib.ClientConn, request *streamv1.QueryRequest) *streamv1.QueryResponse {
+func streamQuery(conn *grpclib.ClientConn) (int, error) {
 	client := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
-	queryResponse, errRev := client.Query(ctx, request)
-	if errRev != nil {
-		tester.Errorf(errRev, "Retrieve client failed: %v")
-	}
-	tester.NotNil(queryResponse)
-	return queryResponse
+	resp, err := client.Query(ctx, queryCriteria(time.Now()))
+
+	return len(resp.GetElements()), err
 }

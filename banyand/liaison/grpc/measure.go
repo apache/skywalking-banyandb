@@ -18,63 +18,47 @@
 package grpc
 
 import (
-	"context"
 	"io"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-type streamService struct {
+type measureService struct {
 	*discoveryService
-	streamv1.UnimplementedStreamServiceServer
+	measurev1.UnimplementedMeasureServiceServer
 }
 
-func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
+func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
 	for {
-		writeEntity, err := stream.Recv()
+		writeRequest, err := measure.Recv()
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
-			s.log.Error().Err(err).Msg("failed to navigate to the write target")
+			ms.log.Error().Err(err).Msg("failed to navigate to the write target")
 			continue
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
-			Request:    writeEntity,
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &measurev1.InternalWriteRequest{
+			Request:    writeRequest,
 			ShardId:    uint32(shardID),
 			SeriesHash: tsdb.HashEntity(entity),
 		})
-		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
+		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			return errWritePub
 		}
-		if errSend := stream.Send(&streamv1.WriteResponse{}); errSend != nil {
+		if errSend := measure.Send(&measurev1.WriteResponse{}); errSend != nil {
 			return errSend
 		}
 	}
 }
 
-func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
-	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
-	if errQuery != nil {
-		return nil, errQuery
-	}
-	msg, errFeat := feat.Get()
-	if errFeat != nil {
-		return nil, errFeat
-	}
-	queryMsg, ok := msg.Data().([]*streamv1.Element)
-	if !ok {
-		return nil, ErrQueryMsg
-	}
-	return &streamv1.QueryResponse{Elements: queryMsg}, nil
-}
+//TODO: implement topN & Query

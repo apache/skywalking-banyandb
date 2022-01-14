@@ -20,12 +20,54 @@ package grpc
 import (
 	"sync"
 
+	"github.com/pkg/errors"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
+
+var ErrNotExist = errors.New("the object doesn't exist")
+
+type discoveryService struct {
+	shardRepo  *shardRepo
+	entityRepo *entityRepo
+	pipeline   queue.Queue
+	log        *logger.Logger
+}
+
+func newDiscoveryService(pipeline queue.Queue) *discoveryService {
+	return &discoveryService{
+		shardRepo:  &shardRepo{shardEventsMap: make(map[identity]uint32)},
+		entityRepo: &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)},
+		pipeline:   pipeline,
+	}
+}
+
+func (ds *discoveryService) SetLogger(log *logger.Logger) {
+	ds.log = log
+	ds.shardRepo.log = log
+	ds.entityRepo.log = log
+}
+
+func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (tsdb.Entity, common.ShardID, error) {
+	id := getID(metadata)
+	shardNum, existed := ds.shardRepo.shardNum(id)
+	if !existed {
+		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the shard num by: %v", metadata)
+	}
+	locator, existed := ds.entityRepo.getLocator(id)
+	if !existed {
+		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the locator by: %v", metadata)
+	}
+	return locator.Locate(tagFamilies, shardNum)
+}
 
 type identity struct {
 	name  string
