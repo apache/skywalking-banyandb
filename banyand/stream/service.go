@@ -60,8 +60,8 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type metadataEvent struct {
-	typ    eventType
-	stream *databasev1.Stream
+	typ      eventType
+	metadata *commonv1.Metadata
 }
 
 type service struct {
@@ -153,9 +153,9 @@ func (s *service) reconcile() {
 		case evt := <-s.eventCh:
 			switch evt.typ {
 			case eventAddOrUpdate:
-				s.reloadStream(evt.stream)
+				s.reloadStream(evt.metadata)
 			case eventDelete:
-
+				s.removeStream(evt.metadata)
 			}
 		case <-s.workerStopCh:
 			return
@@ -167,8 +167,8 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
 		s.eventCh <- metadataEvent{
-			typ:    eventAddOrUpdate,
-			stream: m.Spec.(*databasev1.Stream),
+			typ:      eventAddOrUpdate,
+			metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
 		}
 	case schema.KindIndexRuleBinding:
 		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -181,8 +181,8 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 				return
 			}
 			s.eventCh <- metadataEvent{
-				typ:    eventAddOrUpdate,
-				stream: stm,
+				typ:      eventAddOrUpdate,
+				metadata: stm.GetMetadata(),
 			}
 		}
 	case schema.KindIndexRule:
@@ -193,8 +193,8 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 		}
 		for _, sub := range subjects {
 			s.eventCh <- metadataEvent{
-				typ:    eventAddOrUpdate,
-				stream: sub.(*databasev1.Stream),
+				typ:      eventAddOrUpdate,
+				metadata: sub.(*databasev1.Stream).GetMetadata(),
 			}
 		}
 	default:
@@ -205,8 +205,8 @@ func (s *service) OnDelete(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
 		s.eventCh <- metadataEvent{
-			typ:    eventDelete,
-			stream: m.Spec.(*databasev1.Stream),
+			typ:      eventDelete,
+			metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
 		}
 	case schema.KindIndexRuleBinding:
 		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -219,8 +219,8 @@ func (s *service) OnDelete(m schema.Metadata) {
 				return
 			}
 			s.eventCh <- metadataEvent{
-				typ:    eventDelete,
-				stream: stm,
+				typ:      eventDelete,
+				metadata: stm.GetMetadata(),
 			}
 		}
 	case schema.KindIndexRule:
@@ -231,13 +231,13 @@ func (s *service) OnDelete(m schema.Metadata) {
 // initStream initializes the given Stream definition
 // 1. Prepare underlying storage layer with all belonging indexRules
 // 2. Save the storage object into the cache
-func (s *service) initStream(sa *databasev1.Stream) (*stream, error) {
-	iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.Metadata)
+func (s *service) initStream(streamSchema *databasev1.Stream) (*stream, error) {
+	iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), streamSchema.Metadata)
 	if errIndexRules != nil {
 		return nil, errIndexRules
 	}
 	sm, errTS := openStream(s.root, streamSpec{
-		schema:     sa,
+		schema:     streamSchema,
 		indexRules: iRules,
 	}, s.l)
 	if errTS != nil {
@@ -359,9 +359,17 @@ func (s *service) removeStream(metadata *commonv1.Metadata) {
 	}
 }
 
-func (s *service) reloadStream(streamSchema *databasev1.Stream) {
-	// first find existing *stream in the schemaMap
-	s.removeStream(streamSchema.GetMetadata())
+func (s *service) reloadStream(metadata *commonv1.Metadata) {
+	// first find existing stream in the schemaMap
+	s.removeStream(metadata)
+
+	streamSchema, err := s.metadata.StreamRegistry().GetStream(context.TODO(), metadata)
+
+	if err != nil {
+		// probably we cannot find stream since it has been deleted
+		s.l.Error().Err(err).Msg("fail to fetch stream schema")
+		return
+	}
 
 	stm, err := s.initStream(streamSchema)
 	if err != nil {
