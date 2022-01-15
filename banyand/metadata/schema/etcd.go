@@ -535,12 +535,32 @@ func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt List
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, metadata Metadata) (bool, error) {
-	resp, err := e.kv.Delete(ctx, metadata.Key())
+	resp, err := e.kv.Delete(ctx, metadata.Key(), clientv3.WithPrevKV())
 	if err != nil {
 		return false, err
 	}
-	if resp.Deleted > 0 {
-		e.notifyDelete(metadata)
+	if resp.Deleted == 1 {
+		var message proto.Message
+		switch metadata.Kind {
+		case KindMeasure:
+			message = &databasev1.Measure{}
+		case KindStream:
+			message = &databasev1.Stream{}
+		case KindIndexRuleBinding:
+			message = &databasev1.IndexRuleBinding{}
+		case KindIndexRule:
+			message = &databasev1.IndexRule{}
+		}
+		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
+			e.notifyDelete(Metadata{
+				TypeMeta: TypeMeta{
+					Kind:  metadata.Kind,
+					Name:  metadata.Name,
+					Group: g.GetName(),
+				},
+				Spec: message,
+			})
+		}
 		return true, e.touchGroup(ctx, g)
 	}
 	return false, nil

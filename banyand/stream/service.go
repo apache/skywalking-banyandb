@@ -38,6 +38,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+type eventType uint8
+
+const (
+	eventAddOrUpdate eventType = iota
+	eventDelete
+)
+
 var (
 	ErrEmptyRootPath  = errors.New("root path is empty")
 	ErrStreamNotExist = errors.New("stream doesn't exist")
@@ -52,6 +59,11 @@ type Service interface {
 
 var _ Service = (*service)(nil)
 
+type metadataEvent struct {
+	typ    eventType
+	stream *databasev1.Stream
+}
+
 type service struct {
 	schemaMap     sync.Map
 	writeListener *writeCallback
@@ -63,10 +75,9 @@ type service struct {
 	// stop channel for the service
 	stopCh chan struct{}
 	// stop channel for the inner worker
-	stopCh2 chan struct{}
+	workerStopCh chan struct{}
 
-	updateCh chan *databasev1.Stream
-	deleteCh chan *commonv1.Metadata
+	eventCh chan metadataEvent
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -124,7 +135,7 @@ func (s *service) Serve() error {
 		return errWrite
 	}
 
-	s.stopCh2 = make(chan struct{})
+	s.workerStopCh = make(chan struct{})
 	// run a serial reconciler
 	go s.reconcile()
 
@@ -139,11 +150,14 @@ func (s *service) Serve() error {
 func (s *service) reconcile() {
 	for {
 		select {
-		case streamEntity := <-s.updateCh:
-			s.reloadStream(streamEntity)
-		case metadataEntity := <-s.deleteCh:
-			s.removeStream(metadataEntity)
-		case <-s.stopCh2:
+		case evt := <-s.eventCh:
+			switch evt.typ {
+			case eventAddOrUpdate:
+				s.reloadStream(evt.stream)
+			case eventDelete:
+
+			}
+		case <-s.workerStopCh:
 			return
 		}
 	}
@@ -152,7 +166,10 @@ func (s *service) reconcile() {
 func (s *service) OnAddOrUpdate(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
-		s.updateCh <- m.Spec.(*databasev1.Stream)
+		s.eventCh <- metadataEvent{
+			typ:    eventAddOrUpdate,
+			stream: m.Spec.(*databasev1.Stream),
+		}
 	case schema.KindIndexRuleBinding:
 		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 			stm, err := s.metadata.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
@@ -163,7 +180,10 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 				s.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
-			s.updateCh <- stm
+			s.eventCh <- metadataEvent{
+				typ:    eventAddOrUpdate,
+				stream: stm,
+			}
 		}
 	case schema.KindIndexRule:
 		subjects, err := s.metadata.Subjects(context.TODO(), m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
@@ -172,7 +192,10 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 			return
 		}
 		for _, sub := range subjects {
-			s.updateCh <- sub.(*databasev1.Stream)
+			s.eventCh <- metadataEvent{
+				typ:    eventAddOrUpdate,
+				stream: sub.(*databasev1.Stream),
+			}
 		}
 	default:
 	}
@@ -181,12 +204,25 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 func (s *service) OnDelete(m schema.Metadata) {
 	switch m.Kind {
 	case schema.KindStream:
-		s.deleteCh <- &commonv1.Metadata{
-			Name:  m.Name,
-			Group: m.Group,
+		s.eventCh <- metadataEvent{
+			typ:    eventDelete,
+			stream: m.Spec.(*databasev1.Stream),
 		}
 	case schema.KindIndexRuleBinding:
-		// TODO: we only have metadata(group and name) here, what shall we remove?
+		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+			stm, err := s.metadata.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
+				Name:  m.Name,
+				Group: m.Group,
+			})
+			if err != nil {
+				s.l.Error().Err(err).Msg("fail to get subject")
+				return
+			}
+			s.eventCh <- metadataEvent{
+				typ:    eventDelete,
+				stream: stm,
+			}
+		}
 	case schema.KindIndexRule:
 	default:
 	}
@@ -345,8 +381,8 @@ func (s *service) GracefulStop() {
 		return true
 	})
 
-	if s.stopCh2 != nil {
-		close(s.stopCh2)
+	if s.workerStopCh != nil {
+		close(s.workerStopCh)
 	}
 
 	if s.stopCh != nil {
@@ -360,7 +396,6 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		metadata: metadata,
 		repo:     repo,
 		pipeline: pipeline,
-		updateCh: make(chan *databasev1.Stream),
-		deleteCh: make(chan *commonv1.Metadata),
+		eventCh:  make(chan metadataEvent),
 	}, nil
 }
