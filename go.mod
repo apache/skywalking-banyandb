@@ -12,6 +12,8 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/klauspost/compress v1.13.1
 	github.com/oklog/run v1.1.0
+	github.com/onsi/ginkgo/v2 v2.0.0
+	github.com/onsi/gomega v1.17.0
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.23.0
 	github.com/spf13/cobra v1.2.1
@@ -26,11 +28,6 @@ require (
 	google.golang.org/genproto v0.0.0-20210722135532-667f2b7c528f // indirect
 	google.golang.org/grpc v1.39.0
 	google.golang.org/protobuf v1.27.1
-)
-
-require (
-	github.com/onsi/ginkgo/v2 v2.0.0
-	github.com/onsi/gomega v1.17.0
 )
 
 require (
