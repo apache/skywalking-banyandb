@@ -22,12 +22,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -38,16 +39,45 @@ import (
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
-var _ bus.MessageListener = (*mockedMessageListener)(nil)
+var (
+	_ gomock.Matcher = (*shardEventMatcher)(nil)
+	_ gomock.Matcher = (*entityEventMatcher)(nil)
+)
 
-type mockedMessageListener struct {
-	mock.Mock
+type shardEventMatcher struct {
+	action databasev1.Action
 }
 
-func (m *mockedMessageListener) Rev(message bus.Message) bus.Message {
-	m.Mock.Called(message)
+func (s *shardEventMatcher) Matches(x interface{}) bool {
+	if m, messageOk := x.(bus.Message); messageOk {
+		if evt, dataOk := m.Data().(*databasev1.ShardEvent); dataOk {
+			return evt.Action == s.action
+		}
+	}
 
-	return bus.NewMessage(0, nil)
+	return false
+}
+
+func (s *shardEventMatcher) String() string {
+	return "shard-event-matcher"
+}
+
+type entityEventMatcher struct {
+	action databasev1.Action
+}
+
+func (s *entityEventMatcher) Matches(x interface{}) bool {
+	if m, messageOk := x.(bus.Message); messageOk {
+		if evt, dataOk := m.Data().(*databasev1.EntityEvent); dataOk {
+			return evt.Action == s.action
+		}
+	}
+
+	return false
+}
+
+func (s *entityEventMatcher) String() string {
+	return "entity-event-matcher"
 }
 
 type streamEventSubscriber struct {
@@ -96,6 +126,8 @@ func (p *preloadStreamService) PreRun() error {
 	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
+var ctrl *gomock.Controller
+
 // BeforeSuite - Init logger
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
@@ -104,12 +136,18 @@ var _ = BeforeSuite(func() {
 	})).To(Succeed())
 })
 
+// BeforeEach - Create Mock Controller
+var _ = BeforeEach(func() {
+	ctrl = gomock.NewController(GinkgoT())
+	Expect(ctrl).ShouldNot(BeNil())
+})
+
 var _ = Describe("Stream Service", func() {
 	var closer run.Service
 	var streamService Service
 	var metadataService metadata.Service
-	var shardEventListener *mockedMessageListener
-	var entityEventListener *mockedMessageListener
+	var shardEventListener *bus.MockMessageListener
+	var entityEventListener *bus.MockMessageListener
 
 	BeforeEach(func() {
 		var flags []string
@@ -145,11 +183,15 @@ var _ = Describe("Stream Service", func() {
 		closer = run.NewTester("closer")
 		startListener := run.NewTester("started-listener")
 
-		shardEventListener = new(mockedMessageListener)
-		shardEventListener.On("Rev", mock.Anything).Return(bus.Message{})
+		shardEventListener = bus.NewMockMessageListener(ctrl)
+		shardEventListener.EXPECT().Rev(&shardEventMatcher{
+			action: databasev1.Action_ACTION_PUT,
+		}).Return(bus.Message{}).Times(2)
 
-		entityEventListener = new(mockedMessageListener)
-		entityEventListener.On("Rev", mock.Anything).Return(bus.Message{})
+		entityEventListener = bus.NewMockMessageListener(ctrl)
+		entityEventListener.EXPECT().Rev(&entityEventMatcher{
+			action: databasev1.Action_ACTION_PUT,
+		}).Return(bus.Message{})
 
 		eventSubscribers := &streamEventSubscriber{
 			repo:                 repo,
@@ -191,22 +233,24 @@ var _ = Describe("Stream Service", func() {
 	})
 
 	Context("Delete a stream", func() {
-		BeforeEach(func() {
+		It("should close the stream", func() {
+			shardEventListener.EXPECT().Rev(&shardEventMatcher{
+				action: databasev1.Action_ACTION_DELETE,
+			}).Return(bus.Message{}).Times(2)
+			entityEventListener.EXPECT().Rev(&entityEventMatcher{
+				action: databasev1.Action_ACTION_DELETE,
+			}).Return(bus.Message{}).Times(1)
+
 			deleted, err := metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
 				Name:  "sw",
 				Group: "default",
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
-		})
-
-		It("should close the stream", func() {
 			Eventually(func() bool {
 				_, ok := streamService.(*service).schemaMap.Load(formatStreamID("sw", "default"))
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
-			entityEventListener.AssertNumberOfCalls(GinkgoT(), "Rev", 2)
-			shardEventListener.AssertNumberOfCalls(GinkgoT(), "Rev", 4)
 		})
 	})
 })
