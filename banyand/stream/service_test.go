@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -59,7 +60,7 @@ func (s *shardEventMatcher) Matches(x interface{}) bool {
 }
 
 func (s *shardEventMatcher) String() string {
-	return "shard-event-matcher"
+	return fmt.Sprintf("shard-event-matcher(%s)", databasev1.Action_name[int32(s.action)])
 }
 
 type entityEventMatcher struct {
@@ -77,7 +78,7 @@ func (s *entityEventMatcher) Matches(x interface{}) bool {
 }
 
 func (s *entityEventMatcher) String() string {
-	return "entity-event-matcher"
+	return fmt.Sprintf("entity-event-matcher(%s)", databasev1.Action_name[int32(s.action)])
 }
 
 type streamEventSubscriber struct {
@@ -250,6 +251,51 @@ var _ = Describe("Stream Service", func() {
 			Eventually(func() bool {
 				_, ok := streamService.(*service).schemaMap.Load(formatStreamID("sw", "default"))
 				return ok
+			}).WithTimeout(10 * time.Second).Should(BeFalse())
+		})
+	})
+
+	Context("Update a stream", func() {
+		var streamSchema *databasev1.Stream
+
+		BeforeEach(func() {
+			var err error
+			streamSchema, err = metadataService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			})
+
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(streamSchema).ShouldNot(BeNil())
+		})
+
+		It("should first close and then open a new stream", func() {
+			shardEventListener.EXPECT().Rev(&shardEventMatcher{
+				action: databasev1.Action_ACTION_DELETE,
+			}).Return(bus.Message{}).Times(2)
+			entityEventListener.EXPECT().Rev(&entityEventMatcher{
+				action: databasev1.Action_ACTION_DELETE,
+			}).Return(bus.Message{}).Times(1)
+
+			shardEventListener.EXPECT().Rev(&shardEventMatcher{
+				action: databasev1.Action_ACTION_PUT,
+			}).Return(bus.Message{}).Times(3)
+			entityEventListener.EXPECT().Rev(&entityEventMatcher{
+				action: databasev1.Action_ACTION_PUT,
+			}).Return(bus.Message{}).Times(1)
+
+			// extend sharding from 2 to 3
+			streamSchema.GetOpts().ShardNum = 3
+
+			Expect(metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)).Should(Succeed())
+
+			Eventually(func() bool {
+				stm, ok := streamService.(*service).schemaMap.Load(formatStreamID("sw", "default"))
+				if !ok {
+					return false
+				}
+
+				return len(stm.(*stream).db.Shards()) == 3
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
 		})
 	})

@@ -353,8 +353,8 @@ func (s *service) removeStream(metadata *commonv1.Metadata) {
 		}
 
 		// then close the underlying storage
-		if err := oldStm.(*stream).Close(); err != nil {
-			s.l.Error().Err(err).Msg("fail to close the old stream")
+		if closeErr := oldStm.(*stream).Close(); closeErr != nil {
+			s.l.Error().Err(closeErr).Msg("fail to close the old stream")
 		}
 	}
 }

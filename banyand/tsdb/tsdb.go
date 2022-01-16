@@ -114,10 +114,14 @@ func (d *database) Shard(id common.ShardID) (Shard, error) {
 }
 
 func (d *database) Close() error {
+	var err error
 	for _, s := range d.sLst {
-		_ = s.Close()
+		innerErr := s.Close()
+		if innerErr != nil {
+			err = multierr.Append(err, innerErr)
+		}
 	}
-	return nil
+	return err
 }
 
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
