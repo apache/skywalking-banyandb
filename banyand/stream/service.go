@@ -362,7 +362,7 @@ func (s *service) removeStream(metadata *commonv1.Metadata) {
 func (s *service) reloadStream(metadata *commonv1.Metadata) {
 	// first find existing stream in the schemaMap
 	s.removeStream(metadata)
-
+	// fetch the latest stream entity
 	streamSchema, err := s.metadata.StreamRegistry().GetStream(context.TODO(), metadata)
 
 	if err != nil {

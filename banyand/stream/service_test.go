@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang/mock/gomock"
@@ -144,6 +145,7 @@ var _ = BeforeEach(func() {
 })
 
 var _ = Describe("Stream Service", func() {
+	var wg sync.WaitGroup
 	var closer run.Service
 	var streamService Service
 	var metadataService metadata.Service
@@ -175,9 +177,6 @@ var _ = Describe("Stream Service", func() {
 		Expect(err).NotTo(HaveOccurred())
 		rootPath, deferFunc, err := test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
-			deferFunc()
-		})
 
 		flags = append(flags, "--root-path="+rootPath)
 
@@ -216,14 +215,24 @@ var _ = Describe("Stream Service", func() {
 		err = g.RegisterFlags().Parse(flags)
 		Expect(err).NotTo(HaveOccurred())
 
+		wg = sync.WaitGroup{}
+		wg.Add(1)
+
 		go func() {
-			Expect(g.Run()).Should(Succeed())
+			defer wg.Done()
+			errRun := g.Run()
+			if errRun != nil {
+				startListener.GracefulStop()
+				Expect(errRun).ShouldNot(HaveOccurred())
+			}
+			deferFunc()
 		}()
 		Expect(startListener.WaitUntilStarted()).Should(Succeed())
 	})
 
 	AfterEach(func() {
 		closer.GracefulStop()
+		wg.Wait()
 	})
 
 	It("should pass smoke test", func() {
@@ -290,13 +299,13 @@ var _ = Describe("Stream Service", func() {
 			Expect(metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)).Should(Succeed())
 
 			Eventually(func() bool {
-				stm, ok := streamService.(*service).schemaMap.Load(formatStreamID("sw", "default"))
+				val, ok := streamService.(*service).schemaMap.Load(formatStreamID("sw", "default"))
 				if !ok {
 					return false
 				}
 
-				return len(stm.(*stream).db.Shards()) == 3
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+				return len(val.(*stream).db.Shards()) == 3
+			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
 	})
 })
