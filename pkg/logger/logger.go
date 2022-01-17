@@ -18,6 +18,7 @@
 package logger
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -50,4 +51,15 @@ func (l *Logger) Named(name string) *Logger {
 // Loggable indicates the implement supports logging
 type Loggable interface {
 	SetLogger(*Logger)
+}
+
+func Fetch(ctx context.Context, name string) *Logger {
+	parentLogger := ctx.Value(ContextKey)
+	if parentLogger == nil {
+		return GetLogger(name)
+	}
+	if pl, ok := parentLogger.(*Logger); ok {
+		return pl.Named(name)
+	}
+	return GetLogger(name)
 }

@@ -51,7 +51,7 @@ var _ IndexDatabase = (*indexDB)(nil)
 
 type indexDB struct {
 	shardID common.ShardID
-	lst     []*segment
+	segCtrl *segmentController
 }
 
 func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
@@ -60,36 +60,38 @@ func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = i.lst[0].globalIndex.GetAll(f, func(rawBytes []byte) error {
-		id := &GlobalItemID{}
-		errUnMarshal := id.UnMarshal(rawBytes)
-		if errUnMarshal != nil {
-			return errUnMarshal
+	for _, s := range i.segCtrl.segments() {
+		err = s.globalIndex.GetAll(f, func(rawBytes []byte) error {
+			id := &GlobalItemID{}
+			errUnMarshal := id.UnMarshal(rawBytes)
+			if errUnMarshal != nil {
+				return errUnMarshal
+			}
+			result = append(result, *id)
+			return nil
+		})
+		if err == kv.ErrKeyNotFound {
+			return result, nil
 		}
-		result = append(result, *id)
-		return nil
-	})
-	if err == kv.ErrKeyNotFound {
-		return result, nil
 	}
 	return result, err
 }
 
 func (i *indexDB) WriterBuilder() IndexWriterBuilder {
-	return newIndexWriterBuilder(i.lst)
+	return newIndexWriterBuilder(i.segCtrl)
 }
 
-func newIndexDatabase(_ context.Context, id common.ShardID, lst []*segment) (IndexDatabase, error) {
+func newIndexDatabase(_ context.Context, id common.ShardID, segCtrl *segmentController) (IndexDatabase, error) {
 	return &indexDB{
 		shardID: id,
-		lst:     lst,
+		segCtrl: segCtrl,
 	}, nil
 }
 
 var _ IndexWriterBuilder = (*indexWriterBuilder)(nil)
 
 type indexWriterBuilder struct {
-	segments     []*segment
+	segCtrl      *segmentController
 	ts           time.Time
 	seg          *segment
 	globalItemID *GlobalItemID
@@ -97,12 +99,11 @@ type indexWriterBuilder struct {
 
 func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
 	i.ts = ts
-	for _, s := range i.segments {
-		if s.contains(ts) {
-			i.seg = s
-			break
-		}
+	segs := i.segCtrl.span(NewTimeRangeDuration(ts, 0, true, false))
+	if len(segs) != 1 {
+		return i
 	}
+	i.seg = segs[0]
 	return i
 }
 
@@ -125,9 +126,9 @@ func (i *indexWriterBuilder) Build() (IndexWriter, error) {
 	}, nil
 }
 
-func newIndexWriterBuilder(segments []*segment) IndexWriterBuilder {
+func newIndexWriterBuilder(segCtrl *segmentController) IndexWriterBuilder {
 	return &indexWriterBuilder{
-		segments: segments,
+		segCtrl: segCtrl,
 	}
 }
 

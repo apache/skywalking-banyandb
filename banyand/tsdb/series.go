@@ -34,6 +34,7 @@ import (
 var (
 	ErrEmptySeriesSpan = errors.New("there is no data in such time range")
 	ErrItemIDMalformed = errors.New("serialized item id is malformed")
+	ErrBlockAbsent     = errors.New("block is absent")
 )
 
 type GlobalItemID struct {
@@ -72,30 +73,61 @@ func (i *GlobalItemID) UnMarshal(data []byte) error {
 }
 
 type TimeRange struct {
-	Start time.Time
-	End   time.Time
+	Start        time.Time
+	End          time.Time
+	IncludeStart bool
+	IncludeEnd   bool
 }
 
-func (t TimeRange) contains(unixNano uint64) bool {
+func (t TimeRange) Contains(unixNano uint64) bool {
 	tp := time.Unix(0, int64(unixNano))
-	if tp.Equal(t.End) || tp.After(t.End) {
-		return false
+	if t.Start.Equal(tp) {
+		return t.IncludeStart
 	}
-	return tp.Equal(t.Start) || tp.After(t.Start)
+	if t.End.Equal(tp) {
+		return t.IncludeEnd
+	}
+	return !tp.Before(t.Start) && !tp.After(t.End)
 }
 
-func NewTimeRange(Start, End time.Time) TimeRange {
+func (t TimeRange) Overlapping(other TimeRange) bool {
+	if t.Start.Equal(other.End) {
+		return t.IncludeStart && other.IncludeEnd
+	}
+	if other.Start.Equal(t.End) {
+		return t.IncludeEnd && other.IncludeStart
+	}
+	return !t.Start.After(other.End) && !other.Start.After(t.End)
+}
+
+func (t TimeRange) Duration() time.Duration {
+	return t.End.Sub(t.Start)
+}
+
+func NewInclusiveTimeRange(start, end time.Time) TimeRange {
 	return TimeRange{
-		Start: Start,
-		End:   End,
+		Start:        start,
+		End:          end,
+		IncludeStart: true,
+		IncludeEnd:   true,
 	}
 }
 
-func NewTimeRangeDuration(Start time.Time, Duration time.Duration) TimeRange {
+func NewInclusiveTimeRangeDuration(start time.Time, duration time.Duration) TimeRange {
+	return NewTimeRangeDuration(start, duration, true, true)
+}
+
+func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange {
 	return TimeRange{
-		Start: Start,
-		End:   Start.Add(Duration),
+		Start:        start,
+		End:          end,
+		IncludeStart: includeStart,
+		IncludeEnd:   includeEnd,
 	}
+}
+
+func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart, includeEnd bool) TimeRange {
+	return NewTimeRange(start, start.Add(duration), includeStart, includeEnd)
 }
 
 type Series interface {
@@ -121,6 +153,9 @@ type series struct {
 
 func (s *series) Get(id GlobalItemID) (Item, io.Closer, error) {
 	b := s.blockDB.block(id)
+	if b == nil {
+		return nil, nil, errors.WithMessagef(ErrBlockAbsent, "id: %v", id)
+	}
 	return &item{
 		data:     b.dataReader(),
 		itemID:   id.ID,

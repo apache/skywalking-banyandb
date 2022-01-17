@@ -56,7 +56,7 @@ func (s *seekerBuilder) buildSeries(conditions []condWithIRT) ([]Iterator, error
 
 func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []Iterator, err error) {
 	timeFilter := func(item Item) bool {
-		valid := s.seriesSpan.timeRange.contains(item.Time())
+		valid := s.seriesSpan.timeRange.Contains(item.Time())
 		timeRange := s.seriesSpan.timeRange
 		s.seriesSpan.l.Trace().
 			Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
