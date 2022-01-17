@@ -149,7 +149,7 @@ func (t *plainEncoder) Encode() ([]byte, error) {
 	l := len(data)
 	dst := make([]byte, 0, compressBound(l))
 	dst = zstdEncoder.EncodeAll(data, dst)
-	result := buffer.NewBufferWriter(bytes.NewBuffer(make([]byte, len(dst)+2)))
+	result := buffer.NewBufferWriter(bytes.NewBuffer(make([]byte, 0, len(dst)+2)))
 	result.Write(dst)
 	result.PutUint16(uint16(l))
 	return result.Bytes(), nil
@@ -187,7 +187,7 @@ func (t *plainDecoder) Decode(_, rawData []byte) (err error) {
 	var data []byte
 	size := binary.LittleEndian.Uint16(rawData[len(rawData)-2:])
 	if data, err = zstdDecoder.DecodeAll(rawData[:len(rawData)-2], make([]byte, 0, size)); err != nil {
-		return err
+		return errors.Wrap(err, "plain decoder fails to decode")
 	}
 	l := uint32(len(data))
 	if l <= 8 {

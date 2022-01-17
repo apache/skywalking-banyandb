@@ -18,6 +18,8 @@
 package lsm
 
 import (
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -34,7 +36,7 @@ type store struct {
 }
 
 func (s *store) Close() error {
-	return s.lsm.Close()
+	return multierr.Combine(s.lsm.Close(), s.termMetadata.Close())
 }
 
 func (s *store) Write(field index.Field, itemID common.ItemID) error {

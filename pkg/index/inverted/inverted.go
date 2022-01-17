@@ -69,7 +69,7 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 }
 
 func (s *store) Close() error {
-	return s.diskTable.Close()
+	return multierr.Combine(s.diskTable.Close(), s.termMetadata.Close())
 }
 
 func (s *store) Write(field index.Field, chunkID common.ItemID) error {
