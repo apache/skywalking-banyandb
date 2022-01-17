@@ -24,7 +24,7 @@ tool_include := "$(root_dir)/include"
 uname_os := $(shell uname -s)
 uname_arch := $(shell uname -m)
 
-buf_version ?= v1.0.0-rc5
+buf_version ?= v1.0.0-rc10
 
 ## Tools
 BUF := $(tool_bin)/buf

@@ -56,6 +56,11 @@ var (
 	MeasureKeyPrefix          = "/measures/"
 )
 
+type HasMetadata interface {
+	GetMetadata() *commonv1.Metadata
+	proto.Message
+}
+
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
 func RootDir(rootDir string) RegistryOption {
@@ -481,8 +486,13 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	if resp.Count > 1 {
 		return ErrUnexpectedNumberOfEntities
 	}
-	if err := proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
+	if err = proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
 		return err
+	}
+	if messageWithMetadata, ok := message.(HasMetadata); ok {
+		// Assign readonly fields
+		messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
+		messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
 	}
 	return nil
 }
@@ -508,10 +518,15 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	entities := make([]proto.Message, resp.Count)
 	for i := int64(0); i < resp.Count; i++ {
 		message := factory()
-		if err := proto.Unmarshal(resp.Kvs[i].Value, message); err != nil {
-			return nil, err
+		if innerErr := proto.Unmarshal(resp.Kvs[i].Value, message); innerErr != nil {
+			return nil, innerErr
 		}
 		entities[i] = message
+		if messageWithMetadata, ok := message.(HasMetadata); ok {
+			// Assign readonly fields
+			messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
+			messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
+		}
 	}
 	return entities, nil
 }

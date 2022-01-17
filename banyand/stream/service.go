@@ -136,8 +136,8 @@ func (s *service) Serve() error {
 	}
 
 	s.workerStopCh = make(chan struct{})
-	// run a serial reconciler
-	go s.reconcile()
+	// run a serial watcher
+	go s.watcher()
 
 	s.metadata.StreamRegistry().RegisterHandler(schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule, s)
 
@@ -147,7 +147,8 @@ func (s *service) Serve() error {
 	return nil
 }
 
-func (s *service) reconcile() {
+func (s *service) watcher() {
+	ticker := time.NewTicker(60 * time.Second)
 	for {
 		select {
 		case evt := <-s.eventCh:
@@ -157,8 +158,54 @@ func (s *service) reconcile() {
 			case eventDelete:
 				s.removeStream(evt.metadata)
 			}
+		case <-ticker.C:
+			// reconcile all streams
+			s.periodicReconcile()
 		case <-s.workerStopCh:
+			ticker.Stop()
 			return
+		}
+	}
+}
+
+func (s *service) periodicReconcile() {
+	schemas, err := s.metadata.StreamRegistry().ListStream(context.TODO(), schema.ListOpt{})
+	if err != nil {
+		s.l.Error().Err(err).Msg("fail to list schemas")
+		return
+	}
+
+	for _, sa := range schemas {
+		if stm, ok := s.schemaMap.Load(formatStreamID(sa.GetMetadata().GetName(), sa.GetMetadata().GetGroup())); ok {
+			// first compare revision
+			if stm.(*stream).schema.GetMetadata().GetModRevision() < sa.GetMetadata().GetModRevision() {
+				s.reloadStream(sa.GetMetadata())
+			} else {
+				// we only need to check the max modifications revision observed for index rules
+				idxRules, errIndexRules := s.metadata.IndexRules(context.TODO(), sa.GetMetadata())
+				if errIndexRules != nil {
+					continue
+				}
+				// if deletion or insertion happened
+				if len(idxRules) != len(stm.(*stream).indexRules) {
+					s.reloadStream(sa.GetMetadata())
+					continue
+				}
+				// Otherwise, the number of the index rules are even,
+				// Then reload if a larger mod_rev is observed
+				maxModRevision := parseMaxModRevision(idxRules)
+				if stm.(*stream).maxObservedModRevision < maxModRevision {
+					s.reloadStream(sa.GetMetadata())
+				}
+			}
+		} else { // if we missed this stream, init and serve now
+			newStream, innerErr := s.initStream(sa)
+			if innerErr != nil {
+				s.l.Error().Err(innerErr).Msg("fail to init stream")
+			}
+
+			// incremental serve the changed stream
+			s.serveStream(newStream)
 		}
 	}
 }
@@ -232,13 +279,13 @@ func (s *service) OnDelete(m schema.Metadata) {
 // 1. Prepare underlying storage layer with all belonging indexRules
 // 2. Save the storage object into the cache
 func (s *service) initStream(streamSchema *databasev1.Stream) (*stream, error) {
-	iRules, errIndexRules := s.metadata.IndexRules(context.TODO(), streamSchema.Metadata)
+	idxRules, errIndexRules := s.metadata.IndexRules(context.TODO(), streamSchema.GetMetadata())
 	if errIndexRules != nil {
 		return nil, errIndexRules
 	}
 	sm, errTS := openStream(s.root, streamSpec{
 		schema:     streamSchema,
-		indexRules: iRules,
+		indexRules: idxRules,
 	}, s.l)
 	if errTS != nil {
 		return nil, errTS

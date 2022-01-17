@@ -107,10 +107,6 @@ func preloadSchema(e Registry) error {
 	return nil
 }
 
-type HasMetadata interface {
-	GetMetadata() *commonv1.Metadata
-}
-
 func randomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
@@ -197,6 +193,8 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 			if !tt.expectedErr {
 				req.NoError(err)
 				req.NotNil(entity)
+				req.Greater(entity.GetMetadata().GetCreateRevision(), int64(0))
+				req.Greater(entity.GetMetadata().GetModRevision(), int64(0))
 				req.Equal(entity.GetMetadata().GetGroup(), tt.meta.GetGroup())
 				req.Equal(entity.GetMetadata().GetName(), tt.meta.GetName())
 			} else {
