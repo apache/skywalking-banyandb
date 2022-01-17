@@ -18,6 +18,8 @@
 package metadata
 
 import (
+	"io"
+
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -28,6 +30,7 @@ import (
 type Term interface {
 	ID(term []byte) (id []byte, err error)
 	Literal(id []byte) (term []byte, err error)
+	io.Closer
 }
 
 var _ Term = (*term)(nil)
@@ -63,4 +66,8 @@ func (t *term) ID(term []byte) (id []byte, err error) {
 
 func (t *term) Literal(id []byte) (term []byte, err error) {
 	return t.store.Get(id)
+}
+
+func (t *term) Close() error {
+	return t.store.Close()
 }

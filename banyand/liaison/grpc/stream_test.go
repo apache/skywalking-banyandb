@@ -38,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -46,10 +45,20 @@ import (
 )
 
 var _ = Describe("Stream", func() {
-	var gracefulStop func()
+	var rootPath, metadataPath string
+	var gracefulStop, deferRootFunc, deferMetadataFunc func()
 	var conn *grpclib.ClientConn
+	BeforeEach(func() {
+		var err error
+		rootPath, deferRootFunc, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		metadataPath, deferMetadataFunc, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+	})
 	It("is a plain server", func() {
-		gracefulStop = setup(nil)
+		By("Verifying an empty server")
+		flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		gracefulStop = setup(flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
 		Expect(err).NotTo(HaveOccurred())
@@ -57,9 +66,23 @@ var _ = Describe("Stream", func() {
 		Eventually(func() (int, error) {
 			return streamQuery(conn)
 		}).Should(Equal(1))
+		_ = conn.Close()
+		gracefulStop()
+		By("Verifying an existing server")
+		gracefulStop = setup(flags)
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() int {
+			num, err := streamQuery(conn)
+			if err != nil {
+				GinkgoWriter.Printf("stream query err: %v \n", err)
+				return 0
+			}
+			return num
+		}).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true"}
+		flags := []string{"--tls=true", "--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -81,14 +104,13 @@ var _ = Describe("Stream", func() {
 	AfterEach(func() {
 		_ = conn.Close()
 		gracefulStop()
+		deferMetadataFunc()
+		deferRootFunc()
 	})
 })
 
 func setup(flags []string) func() {
-	Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: "warn",
-	})).Should(Succeed())
+
 	g := run.Group{Name: "standalone"}
 	// Init `Discovery` module
 	repo, err := discovery.NewServiceRepo(context.Background())
@@ -123,10 +145,6 @@ func setup(flags []string) func() {
 		tcp,
 		startListener,
 	)
-	// Create a random directory
-	rootPath, deferFunc, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--root-path="+rootPath, "--metadata-root-path="+teststream.RandomTempDir())
 
 	err = g.RegisterFlags().Parse(flags)
 	Expect(err).NotTo(HaveOccurred())
@@ -140,9 +158,8 @@ func setup(flags []string) func() {
 		errRun := g.Run()
 		if errRun != nil {
 			startListener.GracefulStop()
-			Expect(errRun).Should(Succeed())
+			Expect(errRun).NotTo(HaveOccurred())
 		}
-		deferFunc()
 	}()
 	Expect(startListener.WaitUntilStarted()).Should(Succeed())
 	return func() {
@@ -195,9 +212,15 @@ func queryCriteria(baseTs time.Time) *streamv1.QueryRequest {
 func streamWrite(conn *grpclib.ClientConn) {
 	client := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
-	writeClient, errorWrite := client.Write(ctx)
-	Expect(errorWrite).Should(Succeed())
-	Expect(writeClient.Send(writeData())).Should(Succeed())
+	var writeClient streamv1.StreamService_WriteClient
+	Eventually(func(g Gomega) {
+		var err error
+		writeClient, err = client.Write(ctx)
+		g.Expect(err).NotTo(HaveOccurred())
+	}).Should(Succeed())
+	Eventually(func() error {
+		return writeClient.Send(writeData())
+	}).ShouldNot(HaveOccurred())
 	Expect(writeClient.CloseSend()).Should(Succeed())
 	Eventually(func() error {
 		_, err := writeClient.Recv()

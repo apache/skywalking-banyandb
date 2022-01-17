@@ -43,7 +43,7 @@ func NewTester(ID string) *Tester {
 func (t *Tester) WaitUntilStarted() error {
 	select {
 	case err := <-t.stopCh:
-		return fmt.Errorf("stoped: %v", err)
+		return fmt.Errorf("stopped: %v", err)
 	case <-t.startedNotifier:
 		return nil
 	}

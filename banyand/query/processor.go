@@ -83,6 +83,8 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
+	q.log.Debug().Str("plan", p.String()).Msg("query plan")
+
 	entities, err := p.Execute(ec)
 	if err != nil {
 		q.log.Error().Err(err).Msg("fail to execute the query plan")
