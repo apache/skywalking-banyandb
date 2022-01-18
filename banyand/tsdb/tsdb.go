@@ -190,7 +190,8 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 		if shardID >= int(db.shardNum) {
 			return nil
 		}
-		so, errOpenShard := openShard(ctx, common.ShardID(shardID), absolutePath)
+		db.logger.Info().Int("shard_id", shardID).Str("path", absolutePath).Msg("opening a shard")
+		so, errOpenShard := openShard(context.WithValue(ctx, logger.ContextKey, db.logger), common.ShardID(shardID), absolutePath)
 		if errOpenShard != nil {
 			return errOpenShard
 		}
@@ -214,8 +215,9 @@ func walkDir(root, prefix string, walkFn walkFn) error {
 		if !f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
 			continue
 		}
-		if walkFn(f.Name(), fmt.Sprintf(rootPrefix, root)+f.Name()) != nil {
-			return errors.WithMessagef(err, "failed to load: %s", f.Name())
+		errWalk := walkFn(f.Name(), fmt.Sprintf(rootPrefix, root)+f.Name())
+		if errWalk != nil {
+			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
 		}
 	}
 	return nil

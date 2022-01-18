@@ -19,17 +19,20 @@ package tsdb
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var _ Shard = (*shard)(nil)
 
 type shard struct {
 	sync.Mutex
-	id common.ShardID
+	id     common.ShardID
+	logger *logger.Logger
 
 	location       string
 	seriesDatabase SeriesDatabase
@@ -54,6 +57,12 @@ func openShard(ctx context.Context, id common.ShardID, location string) (*shard,
 		id:       id,
 		location: location,
 	}
+	parentLogger := ctx.Value(logger.ContextKey)
+	if parentLogger != nil {
+		if pl, ok := parentLogger.(*logger.Logger); ok {
+			s.logger = pl.Named("shard" + strconv.Itoa(int(id)))
+		}
+	}
 	loadSeg := func(path string) error {
 		seg, err := newSegment(ctx, path)
 		if err != nil {
@@ -64,9 +73,11 @@ func openShard(ctx context.Context, id common.ShardID, location string) (*shard,
 			defer s.Unlock()
 			s.lst = append(s.lst, seg)
 		}
+		s.logger.Info().Int("size", len(s.lst)).Msg("seg size")
 		return nil
 	}
 	err := walkDir(location, segPathPrefix, func(_, absolutePath string) error {
+		s.logger.Info().Str("path", absolutePath).Msg("loading a segment")
 		return loadSeg(absolutePath)
 	})
 	if err != nil {
@@ -78,6 +89,7 @@ func openShard(ctx context.Context, id common.ShardID, location string) (*shard,
 		if err != nil {
 			return nil, err
 		}
+		s.logger.Info().Str("path", segPath).Msg("creating a new segment")
 		err = loadSeg(segPath)
 		if err != nil {
 			return nil, err

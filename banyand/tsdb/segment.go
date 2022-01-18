@@ -102,4 +102,5 @@ func (s *segment) close() {
 	for _, b := range s.lst {
 		b.close()
 	}
+	s.globalIndex.Close()
 }
