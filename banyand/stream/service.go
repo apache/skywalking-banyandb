@@ -421,6 +421,7 @@ func (s *service) reloadStream(metadata *commonv1.Metadata) {
 	stm, err := s.initStream(streamSchema)
 	if err != nil {
 		s.l.Error().Err(err).Msg("fail to init stream")
+		return
 	}
 
 	// incremental serve the changed stream
