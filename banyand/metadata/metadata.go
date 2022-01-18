@@ -30,10 +30,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-//IndexFilter provides methods to find a specific index related objects
+// IndexFilter provides methods to find a specific index related objects and vice versa
 type IndexFilter interface {
-	//IndexRules fetches v1.IndexRule by subject defined in IndexRuleBinding
+	// IndexRules fetches v1.IndexRule by subject defined in IndexRuleBinding
 	IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error)
+	// Subjects fetches Subject(s) by index rule
+	Subjects(ctx context.Context, indexRule *databasev1.IndexRule, catalog commonv1.Catalog) ([]schema.Spec, error)
 }
 
 type Repo interface {
@@ -162,4 +164,48 @@ func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([
 
 	}
 	return result, indexRuleErr
+}
+
+func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule, catalog commonv1.Catalog) ([]schema.Spec, error) {
+	bindings, err := s.schemaRegistry.ListIndexRuleBinding(ctx, schema.ListOpt{Group: indexRule.GetMetadata().GetGroup()})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	var subjectErr error
+	foundSubjects := make([]schema.Spec, 0)
+	for _, binding := range bindings {
+		if binding.GetBeginAt().AsTime().After(now) ||
+			binding.GetExpireAt().AsTime().Before(now) {
+			continue
+		}
+		sub := binding.GetSubject()
+		if sub.GetCatalog() != catalog {
+			continue
+		}
+
+		switch catalog {
+		case commonv1.Catalog_CATALOG_STREAM:
+			stream, getErr := s.schemaRegistry.GetStream(context.TODO(), &commonv1.Metadata{
+				Name:  sub.GetName(),
+				Group: indexRule.GetMetadata().GetGroup(),
+			})
+			if getErr != nil {
+				subjectErr = multierr.Append(subjectErr, getErr)
+			}
+			foundSubjects = append(foundSubjects, stream)
+		case commonv1.Catalog_CATALOG_MEASURE:
+			measure, getErr := s.schemaRegistry.GetMeasure(context.TODO(), &commonv1.Metadata{
+				Name:  sub.GetName(),
+				Group: indexRule.GetMetadata().GetGroup(),
+			})
+			if getErr != nil {
+				subjectErr = multierr.Append(subjectErr, getErr)
+			}
+			foundSubjects = append(foundSubjects, measure)
+		}
+	}
+
+	return foundSubjects, subjectErr
 }

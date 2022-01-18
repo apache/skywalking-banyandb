@@ -71,65 +71,86 @@ var (
 	}
 )
 
-func setupServices(tester *require.Assertions) (stream.Service, queue.Queue, func()) {
+func setupServices(require *require.Assertions) (stream.Service, queue.Queue, func()) {
 	// Bootstrap logger system
-	tester.NoError(logger.Init(logger.Logging{
+	require.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
 	}))
 
-	// Init `Discovery` module
-	repo, err := discovery.NewServiceRepo(context.Background())
-	tester.NoError(err)
-	tester.NotNil(repo)
-	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	tester.NoError(err)
-
 	// Create a random directory
-	rootPath, deferFunc := test.Space(tester)
+	rootPath, deferFunc := test.Space(require)
 
-	// Init `Metadata` module
-	metadataSvc, err := metadata.NewService(context.TODO())
-	tester.NoError(err)
+	var repo discovery.ServiceRepo
+	var pipeline queue.Queue
+	var metadataSvc metadata.Service
+	var streamSvc stream.Service
+	var etcdRootDir string
+	var executor Executor
 
-	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
-	tester.NoError(err)
-
-	etcdRootDir := teststream.RandomTempDir()
-	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
-	tester.NoError(err)
-
-	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
-	tester.NoError(err)
-
-	// Init `Query` module
-	executor, err := NewExecutor(context.TODO(), streamSvc, metadataSvc, repo, pipeline)
-	tester.NoError(err)
-
-	// :PreRun:
-	// 1) metadata
-	// 2) measure
-	// 3) query
-	// 4) liaison
-	err = metadataSvc.PreRun()
-	tester.NoError(err)
-
-	err = teststream.PreloadSchema(metadataSvc.SchemaRegistry())
-	tester.NoError(err)
-
-	err = streamSvc.PreRun()
-	tester.NoError(err)
-
-	err = executor.PreRun()
-	tester.NoError(err)
-
-	return streamSvc, pipeline, func() {
+	flow := test.NewTestFlow().PushErrorHandler(func() {
 		deferFunc()
-		metadataSvc.GracefulStop()
-		_ = os.RemoveAll(rootPath)
-		_ = os.RemoveAll(etcdRootDir)
-	}
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		// Init `Discovery` module
+		repo, err = discovery.NewServiceRepo(context.Background())
+		return
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		// Init `Queue` module
+		pipeline, err = queue.NewQueue(context.TODO(), repo)
+		return
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		// Init `Metadata` module
+		metadataSvc, err = metadata.NewService(context.TODO())
+		return
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		// Init `Stream` module
+		streamSvc, err = stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
+		return
+	}).Run(context.TODO(), func() error {
+		etcdRootDir = teststream.RandomTempDir()
+		return metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
+	}, func() {
+		if len(etcdRootDir) > 0 {
+			_ = os.RemoveAll(etcdRootDir)
+		}
+	}).RunWithoutSideEffect(context.TODO(), func() error {
+		return streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
+	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
+		// Init `Query` module
+		executor, err = NewExecutor(context.TODO(), streamSvc, metadataSvc, repo, pipeline)
+		return err
+	}).Run(context.TODO(), func() error {
+		// :PreRun:
+		// 1) metadata
+		// 2) measure
+		// 3) query
+		// 4) liaison
+		if err := metadataSvc.PreRun(); err != nil {
+			return err
+		}
+
+		if err := teststream.PreloadSchema(metadataSvc.SchemaRegistry()); err != nil {
+			return err
+		}
+
+		if err := streamSvc.PreRun(); err != nil {
+			return err
+		}
+
+		if err := executor.PreRun(); err != nil {
+			return err
+		}
+
+		return nil
+	}, func() {
+		if metadataSvc != nil {
+			metadataSvc.GracefulStop()
+		}
+	})
+
+	require.NoError(flow.Error())
+
+	return streamSvc, pipeline, flow.Shutdown()
 }
 
 //go:embed testdata/*.json

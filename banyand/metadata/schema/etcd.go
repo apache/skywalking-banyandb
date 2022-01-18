@@ -56,6 +56,11 @@ var (
 	MeasureKeyPrefix          = "/measures/"
 )
 
+type HasMetadata interface {
+	GetMetadata() *commonv1.Metadata
+	proto.Message
+}
+
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
 func RootDir(rootDir string) RegistryOption {
@@ -78,9 +83,19 @@ func UseRandomListener() RegistryOption {
 	}
 }
 
+type eventHandler struct {
+	interestKeys Kind
+	handler      EventHandler
+}
+
+func (eh *eventHandler) InterestOf(kind Kind) bool {
+	return KindMask&kind&eh.interestKeys != 0
+}
+
 type etcdSchemaRegistry struct {
-	server *embed.Etcd
-	kv     clientv3.KV
+	server   *embed.Etcd
+	kv       clientv3.KV
+	handlers []*eventHandler
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -90,6 +105,29 @@ type etcdSchemaRegistryConfig struct {
 	listenerClientURL string
 	// listenerPeerURL is the listener for peer
 	listenerPeerURL string
+}
+
+func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
+	e.handlers = append(e.handlers, &eventHandler{
+		interestKeys: kind,
+		handler:      handler,
+	})
+}
+
+func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
+	for _, h := range e.handlers {
+		if h.InterestOf(metadata.Kind) {
+			h.handler.OnAddOrUpdate(metadata)
+		}
+	}
+}
+
+func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
+	for _, h := range e.handlers {
+		if h.InterestOf(metadata.Kind) {
+			h.handler.OnDelete(metadata)
+		}
+	}
 }
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
@@ -190,7 +228,14 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if err != nil {
 		return errors.Wrap(err, measure.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatMeasureKey(measure.GetMetadata()), measure)
+	return e.update(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindMeasure,
+			Group: g.GetName(),
+			Name:  measure.GetMetadata().GetName(),
+		},
+		Spec: measure,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -198,12 +243,18 @@ func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *common
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatMeasureKey(metadata))
+	return e.delete(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindMeasure,
+			Group: g.GetName(),
+			Name:  metadata.GetName(),
+		},
+	})
 }
 
 func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
 	var entity databasev1.Stream
-	if err := e.get(ctx, formatSteamKey(metadata), &entity); err != nil {
+	if err := e.get(ctx, formatStreamKey(metadata), &entity); err != nil {
 		return nil, err
 	}
 	return &entity, nil
@@ -237,7 +288,14 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if err != nil {
 		return errors.Wrap(err, stream.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatSteamKey(stream.GetMetadata()), stream)
+	return e.update(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindStream,
+			Group: g.GetName(),
+			Name:  stream.GetMetadata().GetName(),
+		},
+		Spec: stream,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -245,7 +303,13 @@ func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatSteamKey(metadata))
+	return e.delete(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindStream,
+			Group: g.GetName(),
+			Name:  metadata.GetName(),
+		},
+	})
 }
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -282,7 +346,14 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	if err != nil {
 		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatIndexRuleBindingKey(indexRuleBinding.GetMetadata()), indexRuleBinding)
+	return e.update(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRuleBinding,
+			Name:  indexRuleBinding.GetMetadata().GetName(),
+			Group: g.GetName(),
+		},
+		Spec: indexRuleBinding,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -290,7 +361,13 @@ func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadat
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatIndexRuleBindingKey(metadata))
+	return e.delete(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRuleBinding,
+			Name:  metadata.GetName(),
+			Group: g.GetName(),
+		},
+	})
 }
 
 func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
@@ -327,7 +404,14 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 	if err != nil {
 		return errors.Wrap(err, indexRule.GetMetadata().GetGroup())
 	}
-	return e.update(ctx, g, formatIndexRuleKey(indexRule.GetMetadata()), indexRule)
+	return e.update(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRule,
+			Name:  indexRule.GetMetadata().GetName(),
+			Group: g.GetName(),
+		},
+		Spec: indexRule,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -335,7 +419,13 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 	if err != nil {
 		return false, errors.Wrap(err, metadata.GetGroup())
 	}
-	return e.delete(ctx, g, formatIndexRuleKey(metadata))
+	return e.delete(ctx, g, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRule,
+			Name:  metadata.GetName(),
+			Group: g.GetName(),
+		},
+	})
 }
 
 func (e *etcdSchemaRegistry) ReadyNotify() <-chan struct{} {
@@ -396,21 +486,27 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	if resp.Count > 1 {
 		return ErrUnexpectedNumberOfEntities
 	}
-	if err := proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
+	if err = proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
 		return err
+	}
+	if messageWithMetadata, ok := message.(HasMetadata); ok {
+		// Assign readonly fields
+		messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
+		messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
 	}
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, key string, message proto.Message) error {
-	val, err := proto.Marshal(message)
+func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, metadata Metadata) error {
+	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
 		return err
 	}
-	_, err = e.kv.Put(ctx, key, string(val))
+	_, err = e.kv.Put(ctx, metadata.Key(), string(val))
 	if err != nil {
 		return err
 	}
+	e.notifyUpdate(metadata)
 	return e.touchGroup(ctx, group)
 }
 
@@ -422,10 +518,15 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	entities := make([]proto.Message, resp.Count)
 	for i := int64(0); i < resp.Count; i++ {
 		message := factory()
-		if err := proto.Unmarshal(resp.Kvs[i].Value, message); err != nil {
-			return nil, err
+		if innerErr := proto.Unmarshal(resp.Kvs[i].Value, message); innerErr != nil {
+			return nil, innerErr
 		}
 		entities[i] = message
+		if messageWithMetadata, ok := message.(HasMetadata); ok {
+			// Assign readonly fields
+			messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
+			messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
+		}
 	}
 	return entities, nil
 }
@@ -448,12 +549,33 @@ func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt List
 	return keyPrefixes, nil
 }
 
-func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, key string) (bool, error) {
-	resp, err := e.kv.Delete(ctx, key)
+func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, metadata Metadata) (bool, error) {
+	resp, err := e.kv.Delete(ctx, metadata.Key(), clientv3.WithPrevKV())
 	if err != nil {
 		return false, err
 	}
-	if resp.Deleted > 0 {
+	if resp.Deleted == 1 {
+		var message proto.Message
+		switch metadata.Kind {
+		case KindMeasure:
+			message = &databasev1.Measure{}
+		case KindStream:
+			message = &databasev1.Stream{}
+		case KindIndexRuleBinding:
+			message = &databasev1.IndexRuleBinding{}
+		case KindIndexRule:
+			message = &databasev1.IndexRule{}
+		}
+		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
+			e.notifyDelete(Metadata{
+				TypeMeta: TypeMeta{
+					Kind:  metadata.Kind,
+					Name:  metadata.Name,
+					Group: g.GetName(),
+				},
+				Spec: message,
+			})
+		}
 		return true, e.touchGroup(ctx, g)
 	}
 	return false, nil
@@ -467,7 +589,7 @@ func formatIndexRuleBindingKey(metadata *commonv1.Metadata) string {
 	return formatKey(IndexRuleBindingKeyPrefix, metadata)
 }
 
-func formatSteamKey(metadata *commonv1.Metadata) string {
+func formatStreamKey(metadata *commonv1.Metadata) string {
 	return formatKey(StreamKeyPrefix, metadata)
 }
 

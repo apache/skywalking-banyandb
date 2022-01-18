@@ -32,14 +32,17 @@ import (
 const chunkSize = 1 << 20
 
 type stream struct {
-	name          string
-	group         string
-	l             *logger.Logger
-	schema        *databasev1.Stream
-	db            tsdb.Database
-	entityLocator partition.EntityLocator
-	indexRules    []*databasev1.IndexRule
-	indexWriter   *index.Writer
+	name  string
+	group string
+	l     *logger.Logger
+	// schema is the reference to the spec of the stream
+	schema *databasev1.Stream
+	// maxObservedModRevision is the max observed revision of index rules in the spec
+	maxObservedModRevision int64
+	db                     tsdb.Database
+	entityLocator          partition.EntityLocator
+	indexRules             []*databasev1.IndexRule
+	indexWriter            *index.Writer
 }
 
 func (s *stream) Close() error {
@@ -47,11 +50,20 @@ func (s *stream) Close() error {
 	return s.db.Close()
 }
 
-func (s *stream) parseSchema() {
-	sm := s.schema
-	meta := sm.GetMetadata()
-	s.name, s.group = meta.GetName(), meta.GetGroup()
-	s.entityLocator = partition.NewEntityLocator(sm.TagFamilies, sm.Entity)
+func parseMaxModRevision(indexRules []*databasev1.IndexRule) (maxRevisionForIdxRules int64) {
+	maxRevisionForIdxRules = int64(0)
+	for _, idxRule := range indexRules {
+		if idxRule.GetMetadata().GetModRevision() > maxRevisionForIdxRules {
+			maxRevisionForIdxRules = idxRule.GetMetadata().GetModRevision()
+		}
+	}
+	return
+}
+
+func (s *stream) parseSpec() {
+	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
+	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
+	s.maxObservedModRevision = parseMaxModRevision(s.indexRules)
 }
 
 type streamSpec struct {
@@ -65,7 +77,7 @@ func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error)
 		indexRules: spec.indexRules,
 		l:          l,
 	}
-	sm.parseSchema()
+	sm.parseSpec()
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 	db, err := tsdb.OpenDatabase(
 		ctx,

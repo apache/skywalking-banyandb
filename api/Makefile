@@ -24,7 +24,7 @@ include ../scripts/build/base.mk
 include ../scripts/build/help.mk
 
 generate: $(BUF)
-	@PATH=$(PATH):$(tool_bin):$(proto_dir) buf generate
+	@PATH=$(PATH):$(tool_bin):$(proto_dir) $(BUF) generate
 
 lint: $(PROTOC)
-	@PATH=$(PATH):$(tool_bin):$(proto_dir) buf lint
+	@PATH=$(PATH):$(tool_bin):$(proto_dir) $(BUF) lint

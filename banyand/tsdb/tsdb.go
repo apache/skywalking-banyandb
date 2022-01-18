@@ -114,10 +114,14 @@ func (d *database) Shard(id common.ShardID) (Shard, error) {
 }
 
 func (d *database) Close() error {
+	var err error
 	for _, s := range d.sLst {
-		_ = s.Close()
+		innerErr := s.Close()
+		if innerErr != nil {
+			err = multierr.Append(err, innerErr)
+		}
 	}
-	return nil
+	return err
 }
 
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
@@ -149,19 +153,24 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)
 	}
-	return createDatabase(thisContext, db)
+	return initDatabase(thisContext, db)
 }
 
-func createDatabase(ctx context.Context, db *database) (Database, error) {
-	var err error
+func initDatabase(ctx context.Context, db *database) (Database, error) {
 	db.Lock()
 	defer db.Unlock()
-	for i := uint32(0); i < db.shardNum; i++ {
+	return createDatabase(ctx, db, 0)
+}
+
+func createDatabase(ctx context.Context, db *database, startID int) (Database, error) {
+	var err error
+	for i := startID; i < int(db.shardNum); i++ {
 		shardLocation, errInternal := mkdir(shardTemplate, db.location, i)
 		if errInternal != nil {
 			err = multierr.Append(err, errInternal)
 			continue
 		}
+		db.logger.Info().Int("shard_id", i).Str("path", shardLocation).Msg("creating a shard")
 		so, errNewShard := openShard(ctx, common.ShardID(i), shardLocation)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
@@ -196,6 +205,15 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	})
 	if err != nil {
 		return nil, errors.WithMessage(err, "load the database failed")
+	}
+
+	loadedShardsNum := len(db.sLst)
+	if loadedShardsNum < int(db.shardNum) {
+		_, err := createDatabase(ctx, db, loadedShardsNum)
+		if err != nil {
+			return nil, errors.WithMessage(err, "load the database failed")
+		}
+
 	}
 	return db, nil
 }

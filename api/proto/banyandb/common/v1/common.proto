@@ -37,6 +37,10 @@ message Metadata {
     // name of the entity
     string name = 2;
     uint32 id = 3;
+    // readonly. create_revision is the revision of last creation on this key.
+    int64 create_revision = 4;
+    // readonly. mod_revision is the revision of last modification on this key.
+    int64 mod_revision = 5;
 }
 
 // Group is an internal object for Group management

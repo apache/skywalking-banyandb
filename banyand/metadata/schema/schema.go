@@ -25,6 +25,22 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
+type Kind int
+
+type EventHandler interface {
+	OnAddOrUpdate(Metadata)
+	OnDelete(Metadata)
+}
+
+const (
+	KindStream Kind = 1 << iota
+	KindMeasure
+	KindIndexRuleBinding
+	KindIndexRule
+)
+
+const KindMask = KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule
+
 type ListOpt struct {
 	Group string
 }
@@ -41,11 +57,56 @@ type Registry interface {
 	Group
 }
 
+type TypeMeta struct {
+	Kind  Kind
+	Name  string
+	Group string
+}
+
+type Metadata struct {
+	TypeMeta
+
+	// Spec holds the configuration object as a protobuf message
+	// Or a metadataHolder as a container
+	Spec Spec
+}
+
+type Spec interface {
+}
+
+func (m Metadata) Key() string {
+	switch m.Kind {
+	case KindMeasure:
+		return formatMeasureKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
+	case KindStream:
+		return formatStreamKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
+	case KindIndexRule:
+		return formatIndexRuleKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
+	case KindIndexRuleBinding:
+		return formatIndexRuleBindingKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		})
+	default:
+		panic("unsupported Kind")
+	}
+}
+
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
 	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	RegisterHandler(Kind, EventHandler)
 }
 
 type IndexRule interface {
@@ -67,6 +128,7 @@ type Measure interface {
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	RegisterHandler(Kind, EventHandler)
 }
 
 type Group interface {
