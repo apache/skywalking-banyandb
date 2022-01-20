@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"path"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -71,7 +72,7 @@ func openMeasure(root string, spec measureSpec, l *logger.Logger) (*measure, err
 	db, err := tsdb.OpenDatabase(
 		ctx,
 		tsdb.DatabaseOpts{
-			Location:   root,
+			Location:   path.Join(root, spec.schema.GetMetadata().GetGroup(), spec.schema.GetMetadata().GetName()),
 			ShardNum:   sm.schema.GetOpts().GetShardNum(),
 			IndexRules: spec.indexRules,
 			EncodingMethod: tsdb.EncodingMethod{
