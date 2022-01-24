@@ -96,7 +96,7 @@ func (s *Strategy) Run() {
 			c := s.current.Report()
 			for {
 				select {
-				case status, more := <-c:
+				case status, closed := <-c:
 					if !more {
 						reset()
 						goto bucket
