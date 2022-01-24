@@ -71,7 +71,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		return err
 	}
 	t := value.GetTimestamp().AsTime()
-	wp, err := series.Span(tsdb.NewTimeRangeDuration(t, 0))
+	wp, err := series.Span(tsdb.NewInclusiveTimeRangeDuration(t, 0))
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()

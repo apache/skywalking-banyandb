@@ -77,7 +77,9 @@ func executeForShard(series tsdb.SeriesList, timeRange tsdb.TimeRange,
 		itersInSeries, err := func() ([]tsdb.Iterator, error) {
 			sp, errInner := seriesFound.Span(timeRange)
 			defer func(sp tsdb.SeriesSpan) {
-				_ = sp.Close()
+				if sp != nil {
+					_ = sp.Close()
+				}
 			}(sp)
 			if errInner != nil {
 				return nil, errInner

@@ -108,7 +108,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 
 	return &localIndexScan{
 		orderBy:             orderBySubPlan,
-		timeRange:           tsdb.NewTimeRange(uis.startTime, uis.endTime),
+		timeRange:           tsdb.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:              s,
 		projectionFieldRefs: projFieldsRefs,
 		metadata:            uis.metadata,

@@ -377,8 +377,13 @@ func TestQueryProcessor(t *testing.T) {
 			singleTester.NoError(err)
 			singleTester.NotNil(msg)
 			// TODO: better error response
-			singleTester.NotNil(msg.Data())
-			singleTester.Len(msg.Data(), tt.wantLen)
+			var dataLen int
+			if msg.Data() == nil {
+				dataLen = 0
+			} else {
+				dataLen = len(msg.Data().([]*streamv1.Element))
+			}
+			singleTester.Equal(dataLen, tt.wantLen)
 			if tt.checker != nil {
 				singleTester.True(tt.checker(msg.Data().([]*streamv1.Element)))
 			}

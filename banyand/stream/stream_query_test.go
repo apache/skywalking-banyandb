@@ -20,7 +20,6 @@ package stream
 import (
 	"bytes"
 	"embed"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -107,7 +106,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "all",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 			},
 			want: shardsForTest{
 				{
@@ -137,7 +136,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "time range",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime.Add(1500*time.Millisecond), 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime.Add(1500*time.Millisecond), 1*time.Hour),
 			},
 			want: shardsForTest{
 				{
@@ -164,7 +163,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "find series by service_id and instance_id",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 			},
 			want: shardsForTest{
 				{
@@ -183,7 +182,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "find a series",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 			},
 			want: shardsForTest{
 				{
@@ -197,7 +196,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "filter",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					builder.Filter(&databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
@@ -243,7 +242,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "order by duration",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					builder.OrderByIndex(&databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
@@ -284,7 +283,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "filter by duration",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					rule := &databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
@@ -331,7 +330,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "filter and sort by duration",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					rule := &databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
@@ -379,7 +378,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "filter by several conditions",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					rule := &databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{
@@ -442,7 +441,7 @@ func Test_Stream_Series(t *testing.T) {
 			name: "filter by several conditions, sort by duration",
 			args: queryOpts{
 				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: tsdb.NewTimeRangeDuration(baseTime, 1*time.Hour),
+				timeRange: tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
 				buildFn: func(builder tsdb.SeekerBuilder) {
 					rule := &databasev1.IndexRule{
 						Metadata: &commonv1.Metadata{

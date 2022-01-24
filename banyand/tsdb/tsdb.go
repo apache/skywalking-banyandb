@@ -49,8 +49,11 @@ const (
 	blockTemplate       = rootPrefix + blockPathPrefix + "-%s"
 	globalIndexTemplate = rootPrefix + "index"
 
-	segFormat   = "20060102"
-	blockFormat = "1504"
+	segDayFormat         = "20060102"
+	segMonthFormat       = "200601"
+	segYearFormat        = "2006"
+	segMillisecondFormat = "20060102150405000"
+	blockFormat          = "1504"
 
 	dirPerm = 0700
 )
@@ -125,21 +128,16 @@ func (d *database) Close() error {
 }
 
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
-	db := &database{
-		location: opts.Location,
-		shardNum: opts.ShardNum,
-	}
-	parentLogger := ctx.Value(logger.ContextKey)
-	if parentLogger != nil {
-		if pl, ok := parentLogger.(*logger.Logger); ok {
-			db.logger = pl.Named("tsdb")
-		}
-	}
 	if opts.EncodingMethod.EncoderPool == nil || opts.EncodingMethod.DecoderPool == nil {
 		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to open database")
 	}
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
+	}
+	db := &database{
+		location: opts.Location,
+		shardNum: opts.ShardNum,
+		logger:   logger.Fetch(ctx, "tsdb"),
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	var entries []fs.FileInfo
@@ -165,13 +163,11 @@ func initDatabase(ctx context.Context, db *database) (Database, error) {
 func createDatabase(ctx context.Context, db *database, startID int) (Database, error) {
 	var err error
 	for i := startID; i < int(db.shardNum); i++ {
-		shardLocation, errInternal := mkdir(shardTemplate, db.location, i)
-		if errInternal != nil {
-			err = multierr.Append(err, errInternal)
-			continue
-		}
-		db.logger.Info().Int("shard_id", i).Str("path", shardLocation).Msg("creating a shard")
-		so, errNewShard := openShard(ctx, common.ShardID(i), shardLocation)
+		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
+		so, errNewShard := OpenShard(ctx, common.ShardID(i), db.location, IntervalRule{
+			Unit: DAY,
+			Num:  1,
+		})
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -186,17 +182,23 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	//TODO: open the manifest file
 	db.Lock()
 	defer db.Unlock()
-	err := walkDir(db.location, shardPathPrefix, func(name, absolutePath string) error {
-		shardSegs := strings.Split(name, "-")
-		shardID, err := strconv.Atoi(shardSegs[1])
+	err := walkDir(db.location, shardPathPrefix, func(suffix, _ string) error {
+		shardID, err := strconv.Atoi(suffix)
 		if err != nil {
 			return err
 		}
 		if shardID >= int(db.shardNum) {
 			return nil
 		}
-		db.logger.Info().Int("shard_id", shardID).Str("path", absolutePath).Msg("opening a shard")
-		so, errOpenShard := openShard(context.WithValue(ctx, logger.ContextKey, db.logger), common.ShardID(shardID), absolutePath)
+		db.logger.Info().Int("shard_id", shardID).Msg("opening a existing shard")
+		so, errOpenShard := OpenShard(
+			context.WithValue(ctx, logger.ContextKey, db.logger),
+			common.ShardID(shardID),
+			db.location,
+			IntervalRule{
+				Unit: DAY,
+				Num:  1,
+			})
 		if errOpenShard != nil {
 			return errOpenShard
 		}
@@ -218,7 +220,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	return db, nil
 }
 
-type walkFn func(name, absolutePath string) error
+type walkFn func(suffix, absolutePath string) error
 
 func walkDir(root, prefix string, walkFn walkFn) error {
 	files, err := ioutil.ReadDir(root)
@@ -229,7 +231,8 @@ func walkDir(root, prefix string, walkFn walkFn) error {
 		if !f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
 			continue
 		}
-		errWalk := walkFn(f.Name(), fmt.Sprintf(rootPrefix, root)+f.Name())
+		segs := strings.Split(f.Name(), "-")
+		errWalk := walkFn(segs[len(segs)-1], fmt.Sprintf(rootPrefix, root)+f.Name())
 		if errWalk != nil {
 			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
 		}

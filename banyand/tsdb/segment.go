@@ -19,42 +19,74 @@ package tsdb
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type segment struct {
-	path string
+	id     uint16
+	path   string
+	suffix string
 
 	lst         []*block
 	globalIndex kv.Store
 	sync.Mutex
-	l         *logger.Logger
-	startTime time.Time
-	endTime   time.Time
+	l              *logger.Logger
+	reporterStopCh chan struct{}
+	TimeRange
 }
 
-func (s *segment) contains(ts time.Time) bool {
-	greaterAndEqualStart := s.startTime.Equal(ts) || s.startTime.Before(ts)
-	if s.endTime.IsZero() {
-		return greaterAndEqualStart
+func (s *segment) Report() bucket.Channel {
+	ch := make(bucket.Channel)
+	interval := s.Duration() >> 4
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
 	}
-	return greaterAndEqualStart && s.endTime.After(ts)
-}
-
-func newSegment(ctx context.Context, path string) (s *segment, err error) {
-	s = &segment{
-		path:      path,
-		startTime: time.Now(),
-	}
-	parentLogger := ctx.Value(logger.ContextKey)
-	if parentLogger != nil {
-		if pl, ok := parentLogger.(*logger.Logger); ok {
-			s.l = pl.Named("segment")
+	go func() {
+		defer close(ch)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				status := bucket.Status{
+					Capacity: int(s.End.UnixNano() - s.Start.UnixNano()),
+					Volume:   int(time.Now().UnixNano() - s.Start.UnixNano()),
+				}
+				ch <- status
+				if status.Volume >= status.Capacity {
+					return
+				}
+			case <-s.reporterStopCh:
+				return
+			}
 		}
+	}()
+	return ch
+}
+
+func openSegment(ctx context.Context, suffix, path string, intervalRule IntervalRule) (s *segment, err error) {
+	startTime, err := intervalRule.Unit.Parse(suffix)
+	if err != nil {
+		return nil, err
+	}
+	suffixInteger, err := strconv.Atoi(suffix)
+	if err != nil {
+		return nil, err
+	}
+	id := uint16(intervalRule.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
+	s = &segment{
+		id:             id,
+		path:           path,
+		suffix:         suffix,
+		l:              logger.Fetch(ctx, "segment"),
+		reporterStopCh: make(chan struct{}),
+		TimeRange:      NewTimeRange(startTime, intervalRule.NextTime(startTime), true, false),
 	}
 	indexPath, err := mkdir(globalIndexTemplate, path)
 	if err != nil {
@@ -66,7 +98,8 @@ func newSegment(ctx context.Context, path string) (s *segment, err error) {
 	loadBlock := func(path string) error {
 		var b *block
 		if b, err = newBlock(context.WithValue(ctx, logger.ContextKey, s.l), blockOpts{
-			path: path,
+			segID: s.id,
+			path:  path,
 		}); err != nil {
 			return err
 		}
@@ -77,7 +110,7 @@ func newSegment(ctx context.Context, path string) (s *segment, err error) {
 		}
 		return nil
 	}
-	err = walkDir(path, blockPathPrefix, func(name, absolutePath string) error {
+	err = walkDir(path, blockPathPrefix, func(_, absolutePath string) error {
 		return loadBlock(absolutePath)
 	})
 	if err != nil {
@@ -103,4 +136,5 @@ func (s *segment) close() {
 		b.close()
 	}
 	s.globalIndex.Close()
+	close(s.reporterStopCh)
 }

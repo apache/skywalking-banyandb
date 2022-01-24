@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
-	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
@@ -63,16 +63,14 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		path:      opts.path,
 		ref:       z.NewCloser(1),
 		startTime: time.Now(),
-	}
-	parentLogger := ctx.Value(logger.ContextKey)
-	if parentLogger != nil {
-		if pl, ok := parentLogger.(*logger.Logger); ok {
-			b.l = pl.Named("block")
-		}
+		l:         logger.Fetch(ctx, "block"),
 	}
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
-		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to create a block")
+		encodingMethodObject = EncodingMethod{
+			EncoderPool: encoding.NewPlainEncoderPool(0),
+			DecoderPool: encoding.NewPlainDecoderPool(0),
+		}
 	}
 	encodingMethod := encodingMethodObject.(EncodingMethod)
 	if b.store, err = kv.OpenTimeSeriesStore(

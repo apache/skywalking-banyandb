@@ -106,7 +106,7 @@ type seriesDB struct {
 	sync.Mutex
 	l *logger.Logger
 
-	lst            []*segment
+	segCtrl        *segmentController
 	seriesMetadata kv.Store
 	sID            common.ShardID
 }
@@ -134,7 +134,11 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 }
 
 func (s *seriesDB) block(id GlobalItemID) blockDelegate {
-	return s.lst[id.segID].lst[id.blockID].delegate()
+	seg := s.segCtrl.get(id.segID)
+	if seg == nil {
+		return nil
+	}
+	return seg.lst[id.blockID].delegate()
 }
 
 func (s *seriesDB) shardID() common.ShardID {
@@ -191,11 +195,13 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(_ TimeRange) []blockDelegate {
+func (s *seriesDB) span(timeRange TimeRange) []blockDelegate {
 	//TODO: return correct blocks
-	result := make([]blockDelegate, 0, len(s.lst[0].lst))
-	for _, b := range s.lst[0].lst {
-		result = append(result, b.delegate())
+	result := make([]blockDelegate, 0)
+	for _, s := range s.segCtrl.span(timeRange) {
+		for _, b := range s.lst {
+			result = append(result, b.delegate())
+		}
 	}
 	return result
 }
@@ -205,23 +211,14 @@ func (s *seriesDB) context() context.Context {
 }
 
 func (s *seriesDB) Close() error {
-	for _, seg := range s.lst {
-		seg.close()
-	}
 	return s.seriesMetadata.Close()
 }
 
-func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string, segLst []*segment) (SeriesDatabase, error) {
+func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string, segCtrl *segmentController) (SeriesDatabase, error) {
 	sdb := &seriesDB{
-		sID: shardID,
-		lst: segLst,
-	}
-	parentLogger := ctx.Value(logger.ContextKey)
-	if parentLogger == nil {
-		return nil, logger.ErrNoLoggerInContext
-	}
-	if pl, ok := parentLogger.(*logger.Logger); ok {
-		sdb.l = pl.Named("series_database")
+		sID:     shardID,
+		segCtrl: segCtrl,
+		l:       logger.Fetch(ctx, "series_database"),
 	}
 	var err error
 	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))
