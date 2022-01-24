@@ -91,38 +91,34 @@ func (s *Strategy) Run() {
 	reset()
 	go func(s *Strategy) {
 		var err error
+	bucket:
+		c := s.current.Report()
 		for {
-		bucket:
-			c := s.current.Report()
-			for {
-				select {
-				case status, closed := <-c:
-					if !closed {
-						reset()
-						goto bucket
-					}
-					ratio := Ratio(status.Volume) / Ratio(status.Capacity)
-					if ratio >= s.ratio && s.next == nil {
-						s.next, err = s.ctrl.Next()
-						if errors.Is(err, ErrNoMoreBucket) {
-							return
-						}
-						if err != nil {
-							s.logger.Err(err).Msg("failed to create the next bucket")
-						}
-					}
-					if ratio >= 1.0 {
-						s.current = s.next
-						s.next = nil
-						goto bucket
-					}
-				case <-s.stopCh:
-					return
+			select {
+			case status, closed := <-c:
+				if !closed {
+					reset()
+					goto bucket
 				}
+				ratio := Ratio(status.Volume) / Ratio(status.Capacity)
+				if ratio >= s.ratio && s.next == nil {
+					s.next, err = s.ctrl.Next()
+					if errors.Is(err, ErrNoMoreBucket) {
+						return
+					}
+					if err != nil {
+						s.logger.Err(err).Msg("failed to create the next bucket")
+					}
+				}
+				if ratio >= 1.0 {
+					s.current = s.next
+					s.next = nil
+					goto bucket
+				}
+			case <-s.stopCh:
+				return
 			}
-
 		}
-
 	}(s)
 }
 
