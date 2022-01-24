@@ -49,9 +49,9 @@ func (s *segment) Report() bucket.Channel {
 	}
 	go func() {
 		defer close(ch)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 		for {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
 			select {
 			case <-ticker.C:
 				status := bucket.Status{

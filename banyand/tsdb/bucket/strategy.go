@@ -97,7 +97,7 @@ func (s *Strategy) Run() {
 			for {
 				select {
 				case status, closed := <-c:
-					if !more {
+					if !closed {
 						reset()
 						goto bucket
 					}
