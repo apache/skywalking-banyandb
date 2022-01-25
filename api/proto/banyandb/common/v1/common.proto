@@ -47,6 +47,6 @@ message Metadata {
 message Group {
     // name of the group
     string name = 1;
-    // updated_at_nanoseconds indicates when resources of the group are updated
+    // updated_at indicates when resources of the group are updated
     google.protobuf.Timestamp updated_at = 2;
 }

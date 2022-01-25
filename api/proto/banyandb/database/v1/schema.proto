@@ -51,7 +51,7 @@ enum TagType {
 message TagFamilySpec {
     string name = 1;
     // tags defines accepted tags
-    repeated TagSpec tags = 2; 
+    repeated TagSpec tags = 2;
 }
 
 message TagSpec {
@@ -63,13 +63,13 @@ message TagSpec {
 message Stream {
     // metadata is the identity of a trace series
     common.v1.Metadata metadata = 1;
-    // tag_families 
+    // tag_families
     repeated TagFamilySpec tag_families = 2;
     // entity indicates how to generate a series and shard a stream
     Entity entity = 3;
     ResourceOpts opts = 4;
-    // updated_at_nanoseconds indicates when the stream is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 5;
+    // updated_at indicates when the stream is updated
+    google.protobuf.Timestamp updated_at = 5;
 }
 
 message Entity {
@@ -139,8 +139,8 @@ message Measure {
     repeated IntervalRule interval_rules = 5;
     // opts is basic resource management options
     ResourceOpts opts = 6;
-    // updated_at_nanoseconds indicates when the measure is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 7;
+    // updated_at indicates when the measure is updated
+    google.protobuf.Timestamp updated_at = 7;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation
@@ -164,8 +164,8 @@ message TopNAggregation {
     int32 counters_number = 7;
     // opts is basic resource management options
     ResourceOpts opts = 8;
-    // updated_at_nanoseconds indicates when the measure is updated
-    google.protobuf.Timestamp updated_at_nanoseconds = 9;
+    // updated_at indicates when the measure is updated
+    google.protobuf.Timestamp updated_at = 9;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type
@@ -192,7 +192,7 @@ message IndexRule {
     }
     // location indicates where to store index.
     Location location = 4;
-    // updated_at_nanoseconds indicates when the IndexRule is updated
+    // updated_at indicates when the IndexRule is updated
     google.protobuf.Timestamp updated_at = 5;
 }
 
@@ -219,6 +219,6 @@ message IndexRuleBinding {
     // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
     // expire_at_nanoseconds must be larger than begin_at_nanoseconds
     google.protobuf.Timestamp expire_at = 5;
-    // updated_at_nanoseconds indicates when the IndexRuleBinding is updated
+    // updated_at indicates when the IndexRuleBinding is updated
     google.protobuf.Timestamp updated_at = 6;
 }

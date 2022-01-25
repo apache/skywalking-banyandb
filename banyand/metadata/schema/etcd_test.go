@@ -456,7 +456,7 @@ func Test_Notify(t *testing.T) {
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
-					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+					mocked.AssertNumberOfCalls(t, "OnDelete", 1)
 			},
 		},
 		{

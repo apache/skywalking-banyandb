@@ -180,7 +180,7 @@ type Group struct {
 
 	// name of the group
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// updated_at_nanoseconds indicates when resources of the group are updated
+	// updated_at indicates when resources of the group are updated
 	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 }
 
