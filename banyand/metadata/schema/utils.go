@@ -135,5 +135,6 @@ func fieldSpecsEqual(a, b []*databasev1.FieldSpec) bool {
 }
 
 func fieldSpecEqual(a, b *databasev1.FieldSpec) bool {
-	return a.GetName() == b.GetName() && a.GetFieldType() == b.GetFieldType() && a.GetCompressionMethod() == b.GetCompressionMethod() && a.GetEncodingMethod() == b.GetEncodingMethod()
+	return a.GetName() == b.GetName() && a.GetFieldType() == b.GetFieldType() &&
+		a.GetCompressionMethod() == b.GetCompressionMethod() && a.GetEncodingMethod() == b.GetEncodingMethod()
 }
