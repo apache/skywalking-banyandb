@@ -418,6 +418,24 @@ func Test_Notify(t *testing.T) {
 				return r.UpdateIndexRule(ctx, ir)
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 1) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+			},
+		},
+		{
+			name: "modify indexRule without modification",
+			testFunc: func(ctx context.Context, r Registry) error {
+				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
+					Name:  "db.instance",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+
+				return r.UpdateIndexRule(ctx, ir)
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
 					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
 			},
@@ -461,6 +479,24 @@ func Test_Notify(t *testing.T) {
 			},
 		},
 		{
+			name: "update indexRuleBinding without modification",
+			testFunc: func(ctx context.Context, r Registry) error {
+				irb, err := r.GetIndexRuleBinding(ctx, &commonv1.Metadata{
+					Name:  "sw-index-rule-binding",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+
+				return r.UpdateIndexRuleBinding(ctx, irb)
+			},
+			validationFunc: func(mocked *mockedEventHandler) bool {
+				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
+					mocked.AssertNumberOfCalls(t, "OnDelete", 0)
+			},
+		},
+		{
 			name: "delete indexRuleBinding",
 			testFunc: func(ctx context.Context, r Registry) error {
 				_, err := r.DeleteIndexRuleBinding(ctx, &commonv1.Metadata{
@@ -487,7 +523,7 @@ func Test_Notify(t *testing.T) {
 			mockedObj := new(mockedEventHandler)
 			mockedObj.On("OnAddOrUpdate", mock.Anything).Return()
 			mockedObj.On("OnDelete", mock.Anything).Return()
-			registry.RegisterHandler(KindStream|KindIndexRuleBinding, mockedObj)
+			registry.RegisterHandler(KindStream|KindIndexRuleBinding|KindIndexRule, mockedObj)
 
 			err := tt.testFunc(context.TODO(), registry)
 			req.NoError(err)
