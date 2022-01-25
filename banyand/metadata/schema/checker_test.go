@@ -42,6 +42,14 @@ func loadIndexRuleBinding() *databasev1.IndexRuleBinding {
 	return irb
 }
 
+func loadIndexRule() *databasev1.IndexRule {
+	ir := &databasev1.IndexRule{}
+	data, err := indexRuleStore.ReadFile(indexRuleDir + "/db.instance.json")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(protojson.Unmarshal(data, ir)).To(Succeed())
+	return ir
+}
+
 var _ = ginkgo.Describe("Utils", func() {
 	ginkgo.Context("Check equality for Stream", func() {
 		var s *databasev1.Stream
@@ -86,9 +94,21 @@ var _ = ginkgo.Describe("Utils", func() {
 			Expect(checker(s, newS)).Should(BeFalse())
 		})
 
-		ginkgo.It("should be equal if UpdatedAtNanoseconds changed", func() {
+		ginkgo.It("should be equal if UpdatedAt changed", func() {
 			newS := loadStream()
 			newS.UpdatedAt = timestamppb.Now()
+			Expect(checker(s, newS)).Should(BeTrue())
+		})
+
+		ginkgo.It("should be equal if metadata.mod_revision changed", func() {
+			newS := loadStream()
+			newS.Metadata.ModRevision = 10000
+			Expect(checker(s, newS)).Should(BeTrue())
+		})
+
+		ginkgo.It("should be equal if metadata.create_revision changed", func() {
+			newS := loadStream()
+			newS.Metadata.CreateRevision = 10000
 			Expect(checker(s, newS)).Should(BeTrue())
 		})
 	})
@@ -140,6 +160,50 @@ var _ = ginkgo.Describe("Utils", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.UpdatedAt = timestamppb.Now()
 			Expect(checker(irb, newIrb)).Should(BeTrue())
+		})
+	})
+
+	ginkgo.Context("Check equality for IndexRule", func() {
+		var ir *databasev1.IndexRule
+		var checker equalityChecker
+
+		ginkgo.BeforeEach(func() {
+			ir = loadIndexRule()
+			checker = checkerMap[KindIndexRule]
+		})
+
+		ginkgo.It("should be equal if nothing changed", func() {
+			Expect(checker(ir, ir)).Should(BeTrue())
+		})
+
+		ginkgo.It("should not be equal if metadata.name changed", func() {
+			newIr := loadIndexRule()
+			newIr.Metadata.Name = "new-name"
+			Expect(checker(ir, newIr)).Should(BeFalse())
+		})
+
+		ginkgo.It("should not be equal if metadata.id changed", func() {
+			newIr := loadIndexRule()
+			newIr.Metadata.Id = 1000
+			Expect(checker(ir, newIr)).Should(BeTrue())
+		})
+
+		ginkgo.It("should not be equal if metadata.group changed", func() {
+			newIr := loadIndexRule()
+			newIr.GetMetadata().Group = "new-group"
+			Expect(checker(ir, newIr)).Should(BeFalse())
+		})
+
+		ginkgo.It("should not be equal if rules changed", func() {
+			newIr := loadIndexRule()
+			newIr.Tags = []string{"new-tag"}
+			Expect(checker(ir, newIr)).Should(BeFalse())
+		})
+
+		ginkgo.It("should be equal if UpdatedAtNanoseconds changed", func() {
+			newIr := loadIndexRule()
+			newIr.UpdatedAt = timestamppb.Now()
+			Expect(checker(ir, newIr)).Should(BeTrue())
 		})
 	})
 })
