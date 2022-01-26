@@ -21,8 +21,15 @@ import (
 	"context"
 	"io"
 
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+)
+
+var (
+	ErrUnsupportedEntityType = errors.New("unsupported entity type")
 )
 
 type Kind int
@@ -74,31 +81,63 @@ type Metadata struct {
 type Spec interface {
 }
 
-func (m Metadata) Key() string {
+func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
+	switch tm.Kind {
+	case KindStream:
+		m = &databasev1.Stream{}
+		err = proto.Unmarshal(data, m)
+	case KindMeasure:
+		m = &databasev1.Measure{}
+		err = proto.Unmarshal(data, m)
+	case KindIndexRuleBinding:
+		m = &databasev1.IndexRuleBinding{}
+		err = proto.Unmarshal(data, m)
+	case KindIndexRule:
+		m = &databasev1.IndexRule{}
+		err = proto.Unmarshal(data, m)
+	default:
+		return nil, ErrUnsupportedEntityType
+	}
+	return
+}
+
+func (m Metadata) Key() (string, error) {
 	switch m.Kind {
 	case KindMeasure:
 		return formatMeasureKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
-		})
+		}), nil
 	case KindStream:
 		return formatStreamKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
-		})
+		}), nil
 	case KindIndexRule:
 		return formatIndexRuleKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
-		})
+		}), nil
 	case KindIndexRuleBinding:
 		return formatIndexRuleBindingKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
-		})
+		}), nil
 	default:
-		panic("unsupported Kind")
+		return "", ErrUnsupportedEntityType
 	}
+}
+
+func (m Metadata) Equal(other proto.Message) bool {
+	if other == nil {
+		return false
+	}
+
+	if checker, ok := checkerMap[m.Kind]; ok {
+		return checker(m.Spec.(proto.Message), other)
+	}
+
+	return false
 }
 
 type Stream interface {

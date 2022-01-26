@@ -185,6 +185,10 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 			continue
 		}
 
+		if !contains(binding.GetRules(), indexRule.GetMetadata().GetName()) {
+			continue
+		}
+
 		switch catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
 			stream, getErr := s.schemaRegistry.GetStream(context.TODO(), &commonv1.Metadata{
@@ -208,4 +212,13 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 	}
 
 	return foundSubjects, subjectErr
+}
+
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }

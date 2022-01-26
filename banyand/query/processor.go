@@ -61,7 +61,9 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	meta := queryCriteria.GetMetadata()
 	ec, err := q.streamService.Stream(meta)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to get measure execution context")
+		q.log.Error().Err(err).
+			Str("stream", meta.GetName()).
+			Msg("fail to get execution context for stream")
 		return
 	}
 
@@ -73,7 +75,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to build trace schema")
+		q.log.Error().Err(err).Msg("fail to build stream schema")
 		return
 	}
 

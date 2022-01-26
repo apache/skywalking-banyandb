@@ -45,6 +45,7 @@ var (
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
+	ErrConcurrentModification     = errors.New("concurrent modification of entities")
 
 	unixDomainSockScheme = "unix"
 
@@ -498,13 +499,48 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 }
 
 func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, metadata Metadata) error {
+	key, err := metadata.Key()
+	if err != nil {
+		return err
+	}
+	getResp, err := e.kv.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	if getResp.Count > 1 {
+		return ErrUnexpectedNumberOfEntities
+	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
 		return err
 	}
-	_, err = e.kv.Put(ctx, metadata.Key(), string(val))
-	if err != nil {
-		return err
+	replace := getResp.Count > 0
+	if replace {
+		existingVal, innerErr := metadata.Unmarshal(getResp.Kvs[0].Value)
+		if innerErr != nil {
+			return innerErr
+		}
+		// directly return if we have the same entity
+		if metadata.Equal(existingVal) {
+			return nil
+		}
+
+		modRevision := getResp.Kvs[0].ModRevision
+		txnResp, txnErr := e.kv.Txn(context.Background()).
+			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
+			Then(clientv3.OpPut(key, string(val))).
+			Commit()
+		if txnErr != nil {
+			return txnErr
+		}
+		if !txnResp.Succeeded {
+			return ErrConcurrentModification
+		}
+	} else {
+		_, err = e.kv.Put(ctx, key, string(val))
+		if err != nil {
+			return err
+		}
 	}
 	e.notifyUpdate(metadata)
 	return e.touchGroup(ctx, group)
@@ -550,7 +586,11 @@ func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt List
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, metadata Metadata) (bool, error) {
-	resp, err := e.kv.Delete(ctx, metadata.Key(), clientv3.WithPrevKV())
+	key, err := metadata.Key()
+	if err != nil {
+		return false, err
+	}
+	resp, err := e.kv.Delete(ctx, key, clientv3.WithPrevKV())
 	if err != nil {
 		return false, err
 	}
