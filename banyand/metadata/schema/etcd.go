@@ -560,8 +560,8 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 		entities[i] = message
 		if messageWithMetadata, ok := message.(HasMetadata); ok {
 			// Assign readonly fields
-			messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
-			messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
+			messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[i].CreateRevision
+			messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[i].ModRevision
 		}
 	}
 	return entities, nil

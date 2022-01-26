@@ -218,9 +218,14 @@ func (s *service) OnAddOrUpdate(m schema.Metadata) {
 			metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
 		}
 	case schema.KindIndexRuleBinding:
-		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+		irb, ok := m.Spec.(*databasev1.IndexRuleBinding)
+		if !ok {
+			s.l.Warn().Msg("fail to convert message to IndexRuleBinding")
+			return
+		}
+		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 			stm, err := s.metadata.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
-				Name:  m.Name,
+				Name:  irb.GetSubject().GetName(),
 				Group: m.Group,
 			})
 			if err != nil {
