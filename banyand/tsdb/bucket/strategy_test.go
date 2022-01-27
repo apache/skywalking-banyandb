@@ -139,3 +139,6 @@ func (r *reporter) Report() bucket.Channel {
 	}()
 	return ch
 }
+
+func (r *reporter) Stop() {
+}

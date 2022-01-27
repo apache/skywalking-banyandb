@@ -26,6 +26,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func Test_ParseTag_And_ParseField(t *testing.T) {
@@ -37,7 +38,7 @@ func Test_ParseTag_And_ParseField(t *testing.T) {
 	r.NoError(err)
 	series, err := shard.Series().Get(tsdb.Entity{tsdb.Entry("1")})
 	r.NoError(err)
-	seriesSpan, err := series.Span(tsdb.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
+	seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
 	defer func(seriesSpan tsdb.SeriesSpan) {
 		_ = seriesSpan.Close()
 	}(seriesSpan)

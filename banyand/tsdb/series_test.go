@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Series", func() {
@@ -34,7 +34,7 @@ var _ = Describe("Series", func() {
 				startTime, _ := time.Parse("20060202", start)
 				endTime, _ := time.Parse("20060202", end)
 				tsTime, _ := time.Parse("20060202", ts)
-				Expect(tsdb.NewTimeRange(startTime, endTime, includeStart, includeEnd).Contains(uint64(tsTime.UnixNano()))).To(Equal(expected))
+				Expect(timestamp.NewTimeRange(startTime, endTime, includeStart, includeEnd).Contains(uint64(tsTime.UnixNano()))).To(Equal(expected))
 			}
 			DescribeTable("It's a exclusive range",
 				func(start, end, ts string, expected bool) {
@@ -90,8 +90,8 @@ var _ = Describe("Series", func() {
 						for _, r2l := range includes {
 							for _, r2u := range includes {
 								By(fmt.Sprintf("r1 lower:%v upper:%v. r1 lower:%v upper:%v", r1l, r1u, r2l, r2u), func() {
-									r1 := tsdb.NewTimeRange(startTime1, endTime1, r1l, r1u)
-									r2 := tsdb.NewTimeRange(startTime2, endTime2, r2l, r2u)
+									r1 := timestamp.NewTimeRange(startTime1, endTime1, r1l, r1u)
+									r2 := timestamp.NewTimeRange(startTime2, endTime2, r2l, r2u)
 									Expect(r1.Overlapping(r2)).To(Equal(expected))
 									Expect(r2.Overlapping(r1)).To(Equal(expected))
 								})
@@ -114,8 +114,8 @@ var _ = Describe("Series", func() {
 				endTime1, _ := time.Parse("20060102", "20210107")
 				startTime2, _ := time.Parse("20060102", "20210107")
 				endTime2, _ := time.Parse("20060102", "20210109")
-				r1 := tsdb.NewTimeRange(startTime1, endTime1, false, include1)
-				r2 := tsdb.NewTimeRange(startTime2, endTime2, include2, false)
+				r1 := timestamp.NewTimeRange(startTime1, endTime1, false, include1)
+				r2 := timestamp.NewTimeRange(startTime2, endTime2, include2, false)
 				Expect(r1.Overlapping(r2)).To(Equal(expected))
 			}
 

@@ -19,8 +19,6 @@ package tsdb_test
 
 import (
 	"context"
-	"io/ioutil"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -48,22 +46,41 @@ var _ = Describe("Shard", func() {
 		})
 		It("generates several segments", func() {
 			var err error
-			shard, err = tsdb.OpenShard(context.TODO(), common.ShardID(0), tmp, tsdb.IntervalRule{
-				Unit: tsdb.MILLISECOND,
-				Num:  1000,
-			})
+			shard, err = tsdb.OpenShard(context.TODO(), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.MILLISECOND,
+					Num:  3000,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.MILLISECOND,
+					Num:  1000,
+				},
+			)
 			Expect(err).NotTo(HaveOccurred())
+			segDirectories := make([]string, 3)
 			Eventually(func() int {
-				files, err := ioutil.ReadDir(tmp + "/shard-0")
-				Expect(err).NotTo(HaveOccurred())
 				num := 0
-				for _, fi := range files {
-					if fi.IsDir() && strings.HasPrefix(fi.Name(), "seg-") {
-						num++
+				err := tsdb.WalkDir(tmp+"/shard-0", "seg-", func(suffix, absolutePath string) error {
+					if num < 3 {
+						segDirectories[num] = absolutePath
 					}
-				}
+					num++
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
 				return num
 			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 3))
+			for _, d := range segDirectories {
+				Eventually(func() int {
+					num := 0
+					err := tsdb.WalkDir(d, "block-", func(suffix, absolutePath string) error {
+						num++
+						return nil
+					})
+					Expect(err).NotTo(HaveOccurred())
+					return num
+				}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 3))
+			}
 		})
 
 	})

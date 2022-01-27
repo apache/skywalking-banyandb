@@ -49,18 +49,18 @@ const (
 	blockTemplate       = rootPrefix + blockPathPrefix + "-%s"
 	globalIndexTemplate = rootPrefix + "index"
 
-	segDayFormat         = "20060102"
-	segMonthFormat       = "200601"
-	segYearFormat        = "2006"
-	segMillisecondFormat = "20060102150405000"
-	blockFormat          = "1504"
+	segHourFormat     = "2006010215"
+	segDayFormat      = "20060102"
+	millisecondFormat = "20060102150405000"
+	blockHourFormat   = "15"
+	blockDayFormat    = "0102"
 
 	dirPerm = 0700
 )
 
 var (
-	ErrInvalidShardID       = errors.New("invalid shard id")
-	ErrEncodingMethodAbsent = errors.New("encoding method is absent")
+	ErrInvalidShardID = errors.New("invalid shard id")
+	ErrOpenDatabase   = errors.New("fails to open the database")
 
 	indexRulesKey     = contextIndexRulesKey{}
 	encodingMethodKey = contextEncodingMethodKey{}
@@ -89,6 +89,8 @@ type DatabaseOpts struct {
 	ShardNum       uint32
 	IndexRules     []*databasev1.IndexRule
 	EncodingMethod EncodingMethod
+	SegmentSize    IntervalRule
+	BlockSize      IntervalRule
 }
 
 type EncodingMethod struct {
@@ -97,9 +99,11 @@ type EncodingMethod struct {
 }
 
 type database struct {
-	logger   *logger.Logger
-	location string
-	shardNum uint32
+	logger      *logger.Logger
+	location    string
+	shardNum    uint32
+	segmentSize IntervalRule
+	blockSize   IntervalRule
 
 	sLst []Shard
 	sync.Mutex
@@ -129,15 +133,34 @@ func (d *database) Close() error {
 
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if opts.EncodingMethod.EncoderPool == nil || opts.EncodingMethod.DecoderPool == nil {
-		return nil, errors.Wrap(ErrEncodingMethodAbsent, "failed to open database")
+		return nil, errors.Wrap(ErrOpenDatabase, "encoding method is absent")
 	}
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}
+	segmentSize := opts.SegmentSize
+	if segmentSize.Unit == MILLISECOND {
+		segmentSize = IntervalRule{
+			Unit: DAY,
+			Num:  1,
+		}
+	}
+	blockSize := opts.BlockSize
+	if blockSize.Unit == MILLISECOND {
+		blockSize = IntervalRule{
+			Unit: HOUR,
+			Num:  2,
+		}
+	}
+	if blockSize.EstimatedDuration() > segmentSize.EstimatedDuration() {
+		return nil, errors.Wrapf(ErrOpenDatabase, "the block size is bigger than the segment size")
+	}
 	db := &database{
-		location: opts.Location,
-		shardNum: opts.ShardNum,
-		logger:   logger.Fetch(ctx, "tsdb"),
+		location:    opts.Location,
+		shardNum:    opts.ShardNum,
+		logger:      logger.Fetch(ctx, "tsdb"),
+		segmentSize: segmentSize,
+		blockSize:   blockSize,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	var entries []fs.FileInfo
@@ -164,10 +187,8 @@ func createDatabase(ctx context.Context, db *database, startID int) (Database, e
 	var err error
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
-		so, errNewShard := OpenShard(ctx, common.ShardID(i), db.location, IntervalRule{
-			Unit: DAY,
-			Num:  1,
-		})
+		so, errNewShard := OpenShard(ctx, common.ShardID(i),
+			db.location, db.segmentSize, db.blockSize)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -182,7 +203,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	//TODO: open the manifest file
 	db.Lock()
 	defer db.Unlock()
-	err := walkDir(db.location, shardPathPrefix, func(suffix, _ string) error {
+	err := WalkDir(db.location, shardPathPrefix, func(suffix, _ string) error {
 		shardID, err := strconv.Atoi(suffix)
 		if err != nil {
 			return err
@@ -195,10 +216,9 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 			context.WithValue(ctx, logger.ContextKey, db.logger),
 			common.ShardID(shardID),
 			db.location,
-			IntervalRule{
-				Unit: DAY,
-				Num:  1,
-			})
+			db.segmentSize,
+			db.blockSize,
+		)
 		if errOpenShard != nil {
 			return errOpenShard
 		}
@@ -220,9 +240,9 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	return db, nil
 }
 
-type walkFn func(suffix, absolutePath string) error
+type WalkFn func(suffix, absolutePath string) error
 
-func walkDir(root, prefix string, walkFn walkFn) error {
+func WalkDir(root, prefix string, walkFn WalkFn) error {
 	files, err := ioutil.ReadDir(root)
 	if err != nil {
 		return errors.Wrapf(err, "failed to walk the database path: %s", root)
