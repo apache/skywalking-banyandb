@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var maxIntBytes = convert.Uint64ToBytes(math.MaxUint64)
@@ -95,7 +96,7 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(timeRange TimeRange) []blockDelegate
+	span(timeRange timestamp.TimeRange) []blockDelegate
 	block(id GlobalItemID) blockDelegate
 }
 
@@ -138,7 +139,11 @@ func (s *seriesDB) block(id GlobalItemID) blockDelegate {
 	if seg == nil {
 		return nil
 	}
-	return seg.lst[id.blockID].delegate()
+	block := seg.blockController.get(id.blockID)
+	if block == nil {
+		return nil
+	}
+	return block.delegate()
 }
 
 func (s *seriesDB) shardID() common.ShardID {
@@ -195,11 +200,11 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(timeRange TimeRange) []blockDelegate {
+func (s *seriesDB) span(timeRange timestamp.TimeRange) []blockDelegate {
 	//TODO: return correct blocks
 	result := make([]blockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
-		for _, b := range s.lst {
+		for _, b := range s.blockController.span(timeRange) {
 			result = append(result, b.delegate())
 		}
 	}

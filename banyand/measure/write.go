@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -78,7 +79,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 		return err
 	}
 	t := value.GetTimestamp().AsTime()
-	wp, err := series.Span(tsdb.NewInclusiveTimeRangeDuration(t, 0))
+	wp, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(t, 0))
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()

@@ -23,6 +23,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type (
@@ -70,7 +71,7 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
 // This method is used by the underlying tableScan and localIndexScan plans.
-func executeForShard(series tsdb.SeriesList, timeRange tsdb.TimeRange,
+func executeForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 	builders ...seekerBuilder) ([]tsdb.Iterator, error) {
 	var itersInShard []tsdb.Iterator
 	for _, seriesFound := range series {

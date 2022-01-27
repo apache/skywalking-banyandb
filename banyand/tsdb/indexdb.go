@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type IndexDatabase interface {
@@ -99,7 +100,7 @@ type indexWriterBuilder struct {
 
 func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
 	i.ts = ts
-	segs := i.segCtrl.span(NewTimeRangeDuration(ts, 0, true, false))
+	segs := i.segCtrl.span(timestamp.NewTimeRangeDuration(ts, 0, true, false))
 	if len(segs) != 1 {
 		return i
 	}

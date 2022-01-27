@@ -17,6 +17,12 @@
 
 package bucket
 
+import (
+	"time"
+
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
 type Controller interface {
 	Current() Reporter
 	Next() (Reporter, error)
@@ -31,4 +37,50 @@ type Channel chan Status
 
 type Reporter interface {
 	Report() Channel
+	Stop()
+}
+
+type timeBasedReporter struct {
+	timestamp.TimeRange
+	reporterStopCh chan struct{}
+}
+
+func NewTimeBasedReporter(timeRange timestamp.TimeRange) Reporter {
+	return &timeBasedReporter{
+		TimeRange:      timeRange,
+		reporterStopCh: make(chan struct{}),
+	}
+}
+
+func (tr *timeBasedReporter) Report() Channel {
+	ch := make(Channel)
+	interval := tr.Duration() >> 4
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	go func() {
+		defer close(ch)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				status := Status{
+					Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
+					Volume:   int(time.Now().UnixNano() - tr.Start.UnixNano()),
+				}
+				ch <- status
+				if status.Volume >= status.Capacity {
+					return
+				}
+			case <-tr.reporterStopCh:
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func (tr *timeBasedReporter) Stop() {
+	close(tr.reporterStopCh)
 }

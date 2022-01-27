@@ -62,7 +62,7 @@ func verifyDatabaseStructure(tester *assert.Assertions, tempDir string) {
 	now := time.Now()
 	segPath := fmt.Sprintf(segTemplate, shardPath, now.Format(segDayFormat))
 	validateDirectory(tester, segPath)
-	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockFormat)))
+	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockHourFormat)))
 }
 
 func openDatabase(t *require.Assertions, path string) (db Database) {

@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -72,67 +73,9 @@ func (i *GlobalItemID) UnMarshal(data []byte) error {
 	return nil
 }
 
-type TimeRange struct {
-	Start        time.Time
-	End          time.Time
-	IncludeStart bool
-	IncludeEnd   bool
-}
-
-func (t TimeRange) Contains(unixNano uint64) bool {
-	tp := time.Unix(0, int64(unixNano))
-	if t.Start.Equal(tp) {
-		return t.IncludeStart
-	}
-	if t.End.Equal(tp) {
-		return t.IncludeEnd
-	}
-	return !tp.Before(t.Start) && !tp.After(t.End)
-}
-
-func (t TimeRange) Overlapping(other TimeRange) bool {
-	if t.Start.Equal(other.End) {
-		return t.IncludeStart && other.IncludeEnd
-	}
-	if other.Start.Equal(t.End) {
-		return t.IncludeEnd && other.IncludeStart
-	}
-	return !t.Start.After(other.End) && !other.Start.After(t.End)
-}
-
-func (t TimeRange) Duration() time.Duration {
-	return t.End.Sub(t.Start)
-}
-
-func NewInclusiveTimeRange(start, end time.Time) TimeRange {
-	return TimeRange{
-		Start:        start,
-		End:          end,
-		IncludeStart: true,
-		IncludeEnd:   true,
-	}
-}
-
-func NewInclusiveTimeRangeDuration(start time.Time, duration time.Duration) TimeRange {
-	return NewTimeRangeDuration(start, duration, true, true)
-}
-
-func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange {
-	return TimeRange{
-		Start:        start,
-		End:          end,
-		IncludeStart: includeStart,
-		IncludeEnd:   includeEnd,
-	}
-}
-
-func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart, includeEnd bool) TimeRange {
-	return NewTimeRange(start, start.Add(duration), includeStart, includeEnd)
-}
-
 type Series interface {
 	ID() common.SeriesID
-	Span(timeRange TimeRange) (SeriesSpan, error)
+	Span(timeRange timestamp.TimeRange) (SeriesSpan, error)
 	Get(id GlobalItemID) (Item, io.Closer, error)
 }
 
@@ -167,7 +110,7 @@ func (s *series) ID() common.SeriesID {
 	return s.id
 }
 
-func (s *series) Span(timeRange TimeRange) (SeriesSpan, error) {
+func (s *series) Span(timeRange timestamp.TimeRange) (SeriesSpan, error) {
 	blocks := s.blockDB.span(timeRange)
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
@@ -199,7 +142,7 @@ type seriesSpan struct {
 	blocks    []blockDelegate
 	seriesID  common.SeriesID
 	shardID   common.ShardID
-	timeRange TimeRange
+	timeRange timestamp.TimeRange
 	l         *logger.Logger
 }
 
@@ -218,7 +161,7 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(ctx context.Context, timeRange TimeRange, blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
 	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,

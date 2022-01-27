@@ -20,6 +20,7 @@ package tsdb
 import (
 	"context"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
@@ -27,43 +28,55 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
-	path string
-	l    *logger.Logger
-	ref  *z.Closer
+	path   string
+	l      *logger.Logger
+	suffix string
+	ref    *z.Closer
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
 	invertedIndex index.Store
 	lsmIndex      index.Store
 	closableLst   []io.Closer
-	endTime       time.Time
-	startTime     time.Time
-	segID         uint16
-	blockID       uint16
+	timestamp.TimeRange
+	bucket.Reporter
+	segID   uint16
+	blockID uint16
 }
 
 type blockOpts struct {
-	segID   uint16
-	blockID uint16
-	path    string
+	segID     uint16
+	blockSize IntervalRule
+	startTime time.Time
+	suffix    string
+	path      string
 }
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
+	suffixInteger, err := strconv.Atoi(opts.suffix)
+	if err != nil {
+		return nil, err
+	}
+	id := uint16(opts.blockSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
+	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
 	b = &block{
 		segID:     opts.segID,
-		blockID:   opts.blockID,
+		blockID:   id,
 		path:      opts.path,
 		ref:       z.NewCloser(1),
-		startTime: time.Now(),
 		l:         logger.Fetch(ctx, "block"),
+		TimeRange: timeRange,
+		Reporter:  bucket.NewTimeBasedReporter(timeRange),
 	}
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
@@ -169,7 +182,7 @@ func (d *bDelegate) primaryIndexReader() index.Searcher {
 }
 
 func (d *bDelegate) startTime() time.Time {
-	return d.delegate.startTime
+	return d.delegate.Start
 }
 
 func (d *bDelegate) identity() (segID uint16, blockID uint16) {
@@ -199,11 +212,7 @@ func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) erro
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {
-	greaterAndEqualStart := d.delegate.startTime.Equal(ts) || d.delegate.startTime.Before(ts)
-	if d.delegate.endTime.IsZero() {
-		return greaterAndEqualStart
-	}
-	return greaterAndEqualStart && d.delegate.endTime.After(ts)
+	return d.delegate.Contains(uint64(ts.UnixNano()))
 }
 
 func (d *bDelegate) Close() error {

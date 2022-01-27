@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ Shard = (*shard)(nil)
@@ -54,7 +55,7 @@ func (s *shard) Index() IndexDatabase {
 	return s.indexDatabase
 }
 
-func OpenShard(ctx context.Context, id common.ShardID, root string, intervalRule IntervalRule) (Shard, error) {
+func OpenShard(ctx context.Context, id common.ShardID, root string, segmentSize, blockSize IntervalRule) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
 		return nil, errors.Wrapf(err, "make the directory of the shard %d ", int(id))
@@ -63,7 +64,7 @@ func OpenShard(ctx context.Context, id common.ShardID, root string, intervalRule
 	l.Info().Int("shard_id", int(id)).Str("path", path).Msg("creating a shard")
 	s := &shard{
 		id:                id,
-		segmentController: newSegmentController(path, intervalRule),
+		segmentController: newSegmentController(path, segmentSize, blockSize),
 		l:                 l,
 	}
 	shardCtx := context.WithValue(ctx, logger.ContextKey, s.l)
@@ -102,51 +103,20 @@ func (s *shard) Close() error {
 type IntervalUnit int
 
 const (
-	DAY IntervalUnit = iota
-	MONTH
-	YEAR
-	MILLISECOND // only for testing
+	MILLISECOND IntervalUnit = iota // only for testing
+	HOUR
+	DAY
 )
 
 func (iu IntervalUnit) String() string {
 	switch iu {
+	case HOUR:
+		return "hour"
 	case DAY:
 		return "day"
-	case MONTH:
-		return "month"
-	case YEAR:
-		return "year"
 	case MILLISECOND:
 		return "millis"
 
-	}
-	panic("invalid interval unit")
-}
-
-func (iu IntervalUnit) Format(tm time.Time) string {
-	switch iu {
-	case DAY:
-		return tm.Format(segDayFormat)
-	case MONTH:
-		return tm.Format(segMonthFormat)
-	case YEAR:
-		return tm.Format(segYearFormat)
-	case MILLISECOND:
-		return tm.Format(segMillisecondFormat)
-	}
-	panic("invalid interval unit")
-}
-
-func (iu IntervalUnit) Parse(value string) (time.Time, error) {
-	switch iu {
-	case DAY:
-		return time.Parse(segDayFormat, value)
-	case MONTH:
-		return time.Parse(segMonthFormat, value)
-	case YEAR:
-		return time.Parse(segYearFormat, value)
-	case MILLISECOND:
-		return time.Parse(segMillisecondFormat, value)
 	}
 	panic("invalid interval unit")
 }
@@ -158,29 +128,41 @@ type IntervalRule struct {
 
 func (ir IntervalRule) NextTime(current time.Time) time.Time {
 	switch ir.Unit {
+	case HOUR:
+		return current.Add(time.Hour * time.Duration(ir.Num))
 	case DAY:
 		return current.AddDate(0, 0, ir.Num)
-	case MONTH:
-		return current.AddDate(0, ir.Num, 0)
-	case YEAR:
-		return current.AddDate(ir.Num, 0, 0)
 	case MILLISECOND:
 		return current.Add(time.Millisecond * time.Duration(ir.Num))
 	}
 	panic("invalid interval unit")
 }
 
-type segmentController struct {
-	sync.RWMutex
-	location     string
-	intervalRule IntervalRule
-	lst          []*segment
+func (ir IntervalRule) EstimatedDuration() time.Duration {
+	switch ir.Unit {
+	case HOUR:
+		return time.Hour * time.Duration(ir.Num)
+	case DAY:
+		return 24 * time.Hour * time.Duration(ir.Num)
+	case MILLISECOND:
+		return time.Microsecond * time.Duration(ir.Num)
+	}
+	panic("invalid interval unit")
 }
 
-func newSegmentController(location string, intervalRule IntervalRule) *segmentController {
+type segmentController struct {
+	sync.RWMutex
+	location    string
+	segmentSize IntervalRule
+	blockSize   IntervalRule
+	lst         []*segment
+}
+
+func newSegmentController(location string, segmentSize, blockSize IntervalRule) *segmentController {
 	return &segmentController{
-		location:     location,
-		intervalRule: intervalRule,
+		location:    location,
+		segmentSize: segmentSize,
+		blockSize:   blockSize,
 	}
 }
 
@@ -197,7 +179,7 @@ func (sc *segmentController) get(segID uint16) *segment {
 	return nil
 }
 
-func (sc *segmentController) span(timeRange TimeRange) (ss []*segment) {
+func (sc *segmentController) span(timeRange timestamp.TimeRange) (ss []*segment) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
@@ -223,7 +205,7 @@ func (sc *segmentController) Current() bucket.Reporter {
 	defer sc.RUnlock()
 	now := time.Now()
 	for _, s := range sc.lst {
-		if s.suffix == sc.intervalRule.Unit.Format(now) {
+		if s.suffix == sc.Format(now) {
 			return s
 		}
 	}
@@ -235,12 +217,37 @@ func (sc *segmentController) Current() bucket.Reporter {
 }
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
-	return sc.create(context.TODO(), sc.intervalRule.Unit.Format(
-		sc.intervalRule.NextTime(time.Now())))
+	seg := sc.Current().(*segment)
+	return sc.create(context.TODO(), sc.Format(
+		sc.segmentSize.NextTime(seg.Start)))
+}
+
+func (sc *segmentController) Format(tm time.Time) string {
+	switch sc.segmentSize.Unit {
+	case HOUR:
+		return tm.Format(segHourFormat)
+	case DAY:
+		return tm.Format(segDayFormat)
+	case MILLISECOND:
+		return tm.Format(millisecondFormat)
+	}
+	panic("invalid interval unit")
+}
+
+func (sc *segmentController) Parse(value string) (time.Time, error) {
+	switch sc.segmentSize.Unit {
+	case HOUR:
+		return time.Parse(segHourFormat, value)
+	case DAY:
+		return time.Parse(segDayFormat, value)
+	case MILLISECOND:
+		return time.Parse(millisecondFormat, value)
+	}
+	panic("invalid interval unit")
 }
 
 func (sc *segmentController) open(ctx context.Context) error {
-	err := walkDir(
+	err := WalkDir(
 		sc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
@@ -251,7 +258,7 @@ func (sc *segmentController) open(ctx context.Context) error {
 		return err
 	}
 	if sc.Current() == nil {
-		_, err = sc.create(ctx, sc.intervalRule.Unit.Format(time.Now()))
+		_, err = sc.create(ctx, sc.Format(time.Now()))
 		if err != nil {
 			return err
 		}
@@ -268,7 +275,11 @@ func (sc *segmentController) create(ctx context.Context, suffix string) (*segmen
 }
 
 func (sc *segmentController) load(ctx context.Context, suffix, path string) (seg *segment, err error) {
-	seg, err = openSegment(ctx, suffix, path, sc.intervalRule)
+	startTime, err := sc.Parse(suffix)
+	if err != nil {
+		return nil, err
+	}
+	seg, err = openSegment(ctx, startTime, path, suffix, sc.segmentSize, sc.blockSize)
 	if err != nil {
 		return nil, err
 	}

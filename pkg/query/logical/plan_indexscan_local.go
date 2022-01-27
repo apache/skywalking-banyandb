@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
@@ -108,7 +109,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 
 	return &localIndexScan{
 		orderBy:             orderBySubPlan,
-		timeRange:           tsdb.NewInclusiveTimeRange(uis.startTime, uis.endTime),
+		timeRange:           timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:              s,
 		projectionFieldRefs: projFieldsRefs,
 		metadata:            uis.metadata,
@@ -121,7 +122,7 @@ var _ Plan = (*localIndexScan)(nil)
 
 type localIndexScan struct {
 	*orderBy
-	timeRange           tsdb.TimeRange
+	timeRange           timestamp.TimeRange
 	schema              Schema
 	metadata            *commonv1.Metadata
 	conditionMap        map[*databasev1.IndexRule][]Expr
