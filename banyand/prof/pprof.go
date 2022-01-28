@@ -19,6 +19,7 @@ package prof
 
 import (
 	"net/http"
+	// Register pprof package
 	_ "net/http/pprof"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
