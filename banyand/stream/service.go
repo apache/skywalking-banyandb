@@ -202,6 +202,7 @@ func (s *service) periodicReconcile() {
 			newStream, innerErr := s.initStream(sa)
 			if innerErr != nil {
 				s.l.Error().Err(innerErr).Msg("fail to init stream")
+				return
 			}
 
 			// incremental serve the changed stream
