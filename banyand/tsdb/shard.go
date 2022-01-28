@@ -252,6 +252,9 @@ func (sc *segmentController) open(ctx context.Context) error {
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
 			_, err := sc.load(ctx, suffix, absolutePath)
+			if errors.Is(err, ErrEndOfSegment) {
+				return nil
+			}
 			return err
 		})
 	if err != nil {
