@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/prof"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -68,6 +69,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
+	profSvc := prof.NewProfService()
 
 	// Meta the run Group units.
 	g.Register(
@@ -78,6 +80,7 @@ func newStandaloneCmd() *cobra.Command {
 		streamSvc,
 		q,
 		tcp,
+		profSvc,
 	)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{
