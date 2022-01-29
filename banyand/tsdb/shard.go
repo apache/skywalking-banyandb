@@ -237,11 +237,11 @@ func (sc *segmentController) Format(tm time.Time) string {
 func (sc *segmentController) Parse(value string) (time.Time, error) {
 	switch sc.segmentSize.Unit {
 	case HOUR:
-		return time.Parse(segHourFormat, value)
+		return time.ParseInLocation(segHourFormat, value, time.Local)
 	case DAY:
-		return time.Parse(segDayFormat, value)
+		return time.ParseInLocation(segDayFormat, value, time.Local)
 	case MILLISECOND:
-		return time.Parse(millisecondFormat, value)
+		return time.ParseInLocation(millisecondFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
 }

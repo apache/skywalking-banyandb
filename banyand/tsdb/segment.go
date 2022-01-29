@@ -192,10 +192,10 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	switch bc.blockSize.Unit {
 	case HOUR:
 		return time.Date(startTime.Year(), startTime.Month(),
-			startTime.Day(), t.Hour(), 0, 0, 0, time.UTC), nil
+			startTime.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
 	case DAY:
 		return time.Date(startTime.Year(), startTime.Month(),
-			t.Day(), t.Hour(), 0, 0, 0, time.UTC), nil
+			t.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
 	case MILLISECOND:
 		return time.Parse(millisecondFormat, suffix)
 	}
