@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -40,6 +41,7 @@ type IndexWriter interface {
 }
 
 type IndexWriterBuilder interface {
+	Scope(scope Entry) IndexWriterBuilder
 	Time(ts time.Time) IndexWriterBuilder
 	GlobalItemID(itemID GlobalItemID) IndexWriterBuilder
 	Build() (IndexWriter, error)
@@ -92,10 +94,16 @@ func newIndexDatabase(_ context.Context, id common.ShardID, segCtrl *segmentCont
 var _ IndexWriterBuilder = (*indexWriterBuilder)(nil)
 
 type indexWriterBuilder struct {
+	scope        Entry
 	segCtrl      *segmentController
 	ts           time.Time
 	seg          *segment
 	globalItemID *GlobalItemID
+}
+
+func (i *indexWriterBuilder) Scope(scope Entry) IndexWriterBuilder {
+	i.scope = scope
+	return i
 }
 
 func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
@@ -121,6 +129,7 @@ func (i *indexWriterBuilder) Build() (IndexWriter, error) {
 		return nil, errors.WithStack(ErrNoVal)
 	}
 	return &indexWriter{
+		scope:  i.scope,
 		seg:    i.seg,
 		ts:     i.ts,
 		itemID: i.globalItemID,
@@ -136,12 +145,16 @@ func newIndexWriterBuilder(segCtrl *segmentController) IndexWriterBuilder {
 var _ IndexWriter = (*indexWriter)(nil)
 
 type indexWriter struct {
+	scope  Entry
 	seg    *segment
 	ts     time.Time
 	itemID *GlobalItemID
 }
 
 func (i *indexWriter) WriteLSMIndex(field index.Field) error {
+	if i.scope != nil {
+		field.Key.SeriesID = GlobalSeriesID(i.scope)
+	}
 	key, err := field.MarshalStraight()
 	if err != nil {
 		return err
@@ -150,9 +163,16 @@ func (i *indexWriter) WriteLSMIndex(field index.Field) error {
 }
 
 func (i *indexWriter) WriteInvertedIndex(field index.Field) error {
+	if i.scope != nil {
+		field.Key.SeriesID = GlobalSeriesID(i.scope)
+	}
 	key, err := field.MarshalStraight()
 	if err != nil {
 		return err
 	}
 	return i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano()))
+}
+
+func GlobalSeriesID(scope Entry) common.SeriesID {
+	return common.SeriesID(convert.Hash(scope))
 }

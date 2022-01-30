@@ -57,16 +57,14 @@ func (p *pprofService) Name() string {
 	return "pprof-service"
 }
 
-func (p *pprofService) Serve() error {
+func (p *pprofService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start pprof server")
 		_ = http.ListenAndServe(p.listenAddr, nil)
 	}()
 
-	<-p.stopCh
-
-	return nil
+	return p.stopCh
 }
 
 func (p *pprofService) GracefulStop() {

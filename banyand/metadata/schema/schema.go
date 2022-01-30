@@ -40,13 +40,14 @@ type EventHandler interface {
 }
 
 const (
-	KindStream Kind = 1 << iota
+	KindGroup Kind = 1 << iota
+	KindStream
 	KindMeasure
 	KindIndexRuleBinding
 	KindIndexRule
 )
 
-const KindMask = KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule
+const KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule
 
 type ListOpt struct {
 	Group string
@@ -83,26 +84,27 @@ type Spec interface {
 
 func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 	switch tm.Kind {
+	case KindGroup:
+		m = &commonv1.Group{}
 	case KindStream:
 		m = &databasev1.Stream{}
-		err = proto.Unmarshal(data, m)
 	case KindMeasure:
 		m = &databasev1.Measure{}
-		err = proto.Unmarshal(data, m)
 	case KindIndexRuleBinding:
 		m = &databasev1.IndexRuleBinding{}
-		err = proto.Unmarshal(data, m)
 	case KindIndexRule:
 		m = &databasev1.IndexRule{}
-		err = proto.Unmarshal(data, m)
 	default:
 		return nil, ErrUnsupportedEntityType
 	}
+	err = proto.Unmarshal(data, m)
 	return
 }
 
 func (m Metadata) Key() (string, error) {
 	switch m.Kind {
+	case KindGroup:
+		return formatGroupKey(m.Name), nil
 	case KindMeasure:
 		return formatMeasureKey(&commonv1.Metadata{
 			Group: m.Group,
@@ -172,11 +174,8 @@ type Measure interface {
 
 type Group interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
-	ListGroup(ctx context.Context) ([]string, error)
+	ListGroup(ctx context.Context) ([]*commonv1.Group, error)
 	// DeleteGroup delete all items belonging to the group
 	DeleteGroup(ctx context.Context, group string) (bool, error)
-	// CreateGroup works like `touch` in unix systems.
-	// 1. It will create the group if it does not exist.
-	// 2. It will update the updated_at timestamp to the current timestamp.
-	CreateGroup(ctx context.Context, group string) error
+	UpdateGroup(ctx context.Context, group *commonv1.Group) error
 }

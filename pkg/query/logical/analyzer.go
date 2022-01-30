@@ -86,6 +86,10 @@ func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) 
 }
 
 func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
+	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
+	if err != nil {
+		return nil, err
+	}
 	stream, err := a.metadataRepoImpl.StreamRegistry().GetStream(ctx, metadata)
 
 	if err != nil {
@@ -99,6 +103,7 @@ func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Met
 	}
 
 	s := &schema{
+		group:      group,
 		stream:     stream,
 		indexRules: indexRules,
 		fieldMap:   make(map[string]*tagSpec),

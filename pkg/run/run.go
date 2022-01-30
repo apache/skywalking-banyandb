@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
+	"time"
 
 	"github.com/oklog/run"
 	"github.com/spf13/pflag"
@@ -92,6 +94,8 @@ func (p preRunner) PreRun() error {
 	return p.fn()
 }
 
+type StopNotify <-chan struct{}
+
 // Service interface should be implemented by Group Unit objects that need
 // to run a blocking service until an error occurs or a shutdown request is
 // made.
@@ -105,7 +109,7 @@ type Service interface {
 	// Unit for Group registration and identification
 	Unit
 	// Serve starts the GroupService and blocks.
-	Serve() error
+	Serve() StopNotify
 	// GracefulStop shuts down and cleans up the GroupService.
 	GracefulStop()
 }
@@ -123,6 +127,7 @@ type Group struct {
 	c   []Config
 	p   []PreRunner
 	s   []Service
+	swg *sync.WaitGroup
 	log *logger.Logger
 
 	showRunGroup bool
@@ -308,6 +313,8 @@ func (g *Group) Run() (err error) {
 		}
 	}
 
+	g.swg = &sync.WaitGroup{}
+	g.swg.Add(len(g.s))
 	// feed our registered services to our internal run.Group
 	for idx := range g.s {
 		// a Service might have been deregistered during Run
@@ -318,7 +325,10 @@ func (g *Group) Run() (err error) {
 
 		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
-			return s.Serve()
+			notify := s.Serve()
+			g.swg.Done()
+			<-notify
+			return nil
 		}, func(_ error) {
 			g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stop")
 			s.GracefulStop()
@@ -364,4 +374,11 @@ func (g Group) ListUnits() string {
 	}
 
 	return fmt.Sprintf("Group: %s [%s]%s", g.Name, t, s)
+}
+
+func (g *Group) WaitTillReady() {
+	for g.swg == nil {
+		time.Sleep(100 * time.Microsecond)
+	}
+	g.swg.Wait()
 }

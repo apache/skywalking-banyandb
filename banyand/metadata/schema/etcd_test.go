@@ -45,6 +45,8 @@ var (
 	indexRuleBindingJSON string
 	//go:embed testdata/stream.json
 	streamJSON string
+	//go:embed testdata/group.json
+	groupJSON string
 
 	_ EventHandler = (*mockedEventHandler)(nil)
 )
@@ -62,7 +64,11 @@ func (m *mockedEventHandler) OnDelete(metadata Metadata) {
 }
 
 func preloadSchema(e Registry) error {
-	if err := e.CreateGroup(context.TODO(), "default"); err != nil {
+	g := &commonv1.Group{}
+	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
+		return err
+	}
+	if err := e.UpdateGroup(context.TODO(), g); err != nil {
 		return err
 	}
 
@@ -139,6 +145,17 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		get         func(Registry, *commonv1.Metadata) (HasMetadata, error)
 		expectedErr bool
 	}{
+		{
+			name: "Get Group",
+			meta: &commonv1.Metadata{Name: "default"},
+			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+				stm, innerErr := registry.GetGroup(context.TODO(), meta.GetName())
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				return HasMetadata(stm), nil
+			},
+		},
 		{
 			name: "Get Stream",
 			meta: &commonv1.Metadata{Name: "sw", Group: "default"},
@@ -220,9 +237,9 @@ func Test_Etcd_Entity_List(t *testing.T) {
 		expectedLen int
 	}{
 		{
-			name: "List Stream without Group",
+			name: "List Group",
 			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListStream(context.TODO(), ListOpt{})
+				entities, innerErr := r.ListGroup(context.TODO())
 				if innerErr != nil {
 					return 0, innerErr
 				}
@@ -231,7 +248,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 			expectedLen: 1,
 		},
 		{
-			name: "List Stream with Group default",
+			name: "List Stream",
 			list: func(r Registry) (int, error) {
 				entities, innerErr := r.ListStream(context.TODO(), ListOpt{Group: "default"})
 				if innerErr != nil {
@@ -242,18 +259,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 			expectedLen: 1,
 		},
 		{
-			name: "List IndexRuleBinding without Group",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), ListOpt{})
-				if innerErr != nil {
-					return 0, innerErr
-				}
-				return len(entities), nil
-			},
-			expectedLen: 1,
-		},
-		{
-			name: "List IndexRuleBinding with Group",
+			name: "List IndexRuleBinding",
 			list: func(r Registry) (int, error) {
 				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), ListOpt{Group: "default"})
 				if innerErr != nil {
@@ -264,18 +270,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 			expectedLen: 1,
 		},
 		{
-			name: "List IndexRule without Group",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{})
-				if innerErr != nil {
-					return 0, innerErr
-				}
-				return len(entities), nil
-			},
-			expectedLen: 10,
-		},
-		{
-			name: "List IndexRule with Group",
+			name: "List IndexRule",
 			list: func(r Registry) (int, error) {
 				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
 				if innerErr != nil {
@@ -286,18 +281,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 			expectedLen: 10,
 		},
 		{
-			name: "List Measure without Group",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListMeasure(context.TODO(), ListOpt{})
-				if innerErr != nil {
-					return 0, innerErr
-				}
-				return len(entities), nil
-			},
-			expectedLen: 0,
-		},
-		{
-			name: "List Measure with Group",
+			name: "List Measure",
 			list: func(r Registry) (int, error) {
 				entities, innerErr := r.ListMeasure(context.TODO(), ListOpt{Group: "default"})
 				if innerErr != nil {

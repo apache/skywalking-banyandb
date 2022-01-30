@@ -58,6 +58,8 @@ type Server struct {
 	repo           discovery.ServiceRepo
 	creds          credentials.TransportCredentials
 
+	stopCh chan struct{}
+
 	streamSVC  *streamService
 	measureSVC *measureService
 	*streamRegistryServer
@@ -162,7 +164,7 @@ func (s *Server) Validate() error {
 	return nil
 }
 
-func (s *Server) Serve() error {
+func (s *Server) Serve() run.StopNotify {
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
@@ -186,8 +188,13 @@ func (s *Server) Serve() error {
 	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
 	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
 
-	s.log.Info().Str("addr", s.addr).Msg("Listening to")
-	return s.ser.Serve(lis)
+	s.stopCh = make(chan struct{})
+	go func() {
+		s.log.Info().Str("addr", s.addr).Msg("Listening to")
+		s.ser.Serve(lis)
+		close(s.stopCh)
+	}()
+	return s.stopCh
 }
 
 func (s *Server) GracefulStop() {

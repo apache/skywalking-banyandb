@@ -254,7 +254,7 @@ type groupRegistryServer struct {
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
 	*databasev1.GroupRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.GroupRegistry().CreateGroup(ctx, req.GetGroup()); err != nil {
+	if err := rs.schemaRegistry.GroupRegistry().Update(ctx, req.GetGroup()); err != nil {
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceCreateResponse{}, nil

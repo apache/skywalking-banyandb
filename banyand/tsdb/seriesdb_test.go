@@ -32,11 +32,28 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
+func TestEntity(t *testing.T) {
+	tester := assert.New(t)
+	entity := Entity{
+		Entry("productpage"),
+		Entry("10.0.0.1"),
+		Entry(convert.Uint64ToBytes(0)),
+	}
+	entity = entity.Prepend(Entry("segment"))
+	tester.Equal(Entity{
+		Entry("segment"),
+		Entry("productpage"),
+		Entry("10.0.0.1"),
+		Entry(convert.Uint64ToBytes(0)),
+	}, entity)
+}
+
 func TestNewPath(t *testing.T) {
 	tester := assert.New(t)
 	tests := []struct {
 		name   string
 		entity Entity
+		scope  Entry
 		want   Path
 	}{
 		{
@@ -63,6 +80,7 @@ func TestNewPath(t *testing.T) {
 					maxIntBytes,
 					maxIntBytes,
 				}, nil),
+				offset: 24,
 			},
 		},
 		{
@@ -84,6 +102,7 @@ func TestNewPath(t *testing.T) {
 					maxIntBytes,
 					maxIntBytes,
 				}, nil),
+				offset: 0,
 			},
 		},
 		{
@@ -107,6 +126,7 @@ func TestNewPath(t *testing.T) {
 					zeroIntBytes,
 					maxIntBytes,
 				}, nil),
+				offset: 8,
 			},
 		},
 		{
@@ -131,12 +151,129 @@ func TestNewPath(t *testing.T) {
 					maxIntBytes,
 					zeroIntBytes,
 				}, nil),
+				offset: 16,
+			},
+		},
+		{
+			name: "prepend a scope",
+			entity: Entity{
+				Entry("productpage"),
+				Entry("10.0.0.1"),
+				Entry(convert.Uint64ToBytes(0)),
+			},
+			scope: Entry("segment"),
+			want: Path{
+				isFull: true,
+				prefix: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
+				template: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
+				mask: bytes.Join([][]byte{
+					maxIntBytes,
+					maxIntBytes,
+					maxIntBytes,
+					maxIntBytes,
+				}, nil),
+				offset: 32,
+			},
+		},
+		{
+			name: "prepend a scope to the entity whose first entry is anyone",
+			entity: Entity{
+				AnyEntry,
+				Entry("10.0.0.1"),
+				Entry(convert.Uint64ToBytes(0)),
+			},
+			scope: Entry("segment"),
+			want: Path{
+				prefix: hash([]byte("segment")),
+				template: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					zeroIntBytes,
+					hash([]byte("10.0.0.1")),
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
+				mask: bytes.Join([][]byte{
+					maxIntBytes,
+					zeroIntBytes,
+					maxIntBytes,
+					maxIntBytes,
+				}, nil),
+				offset: 8,
+			},
+		},
+		{
+			name: "prepend a scope to the entity whose second entry is anyone",
+			entity: Entity{
+				Entry("productpage"),
+				AnyEntry,
+				Entry(convert.Uint64ToBytes(0)),
+			},
+			scope: Entry("segment"),
+			want: Path{
+				prefix: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+				}, nil),
+				template: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					zeroIntBytes,
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
+				mask: bytes.Join([][]byte{
+					maxIntBytes,
+					maxIntBytes,
+					zeroIntBytes,
+					maxIntBytes,
+				}, nil),
+				offset: 16,
+			},
+		},
+		{
+			name: "prepend a scope to the entity whose last entry is anyone",
+			entity: Entity{
+				Entry("productpage"),
+				Entry("10.0.0.1"),
+				AnyEntry,
+			},
+			scope: Entry("segment"),
+			want: Path{
+				prefix: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+				}, nil),
+				template: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					zeroIntBytes,
+				}, nil),
+				mask: bytes.Join([][]byte{
+					maxIntBytes,
+					maxIntBytes,
+					maxIntBytes,
+					zeroIntBytes,
+				}, nil),
+				offset: 24,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := NewPath(tt.entity)
+			if tt.scope != nil {
+				got = got.Prepand(tt.scope)
+			}
 			tester.Equal(tt.want, got)
 		})
 	}

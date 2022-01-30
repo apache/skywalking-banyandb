@@ -38,6 +38,7 @@ import (
 type CallbackFn func()
 
 type Message struct {
+	Scope       tsdb.Entry
 	Value       Value
 	LocalWriter tsdb.Writer
 	BlockCloser io.Closer
@@ -53,12 +54,12 @@ type WriterOptions struct {
 	ShardNum   uint32
 	Families   []*databasev1.TagFamilySpec
 	IndexRules []*databasev1.IndexRule
-	DB         tsdb.Database
+	DB         tsdb.Supplier
 }
 
 type Writer struct {
 	l              *logger.Logger
-	db             tsdb.Database
+	db             tsdb.Supplier
 	shardNum       uint32
 	ch             chan Message
 	indexRuleIndex []*partition.IndexRuleLocator
@@ -110,7 +111,7 @@ func (s *Writer) bootIndexGenerator() {
 				case databasev1.IndexRule_LOCATION_SERIES:
 					err = multierr.Append(err, writeLocalIndex(m.LocalWriter, ruleIndex, m.Value))
 				case databasev1.IndexRule_LOCATION_GLOBAL:
-					err = multierr.Append(err, s.writeGlobalIndex(ruleIndex, m.LocalWriter.ItemID(), m.Value))
+					err = multierr.Append(err, s.writeGlobalIndex(m.Scope, ruleIndex, m.LocalWriter.ItemID(), m.Value))
 				}
 			}
 			err = multierr.Append(err, m.BlockCloser.Close())
@@ -125,7 +126,7 @@ func (s *Writer) bootIndexGenerator() {
 }
 
 //TODO: should listen to pipeline in a distributed cluster
-func (s *Writer) writeGlobalIndex(ruleIndex *partition.IndexRuleLocator, ref tsdb.GlobalItemID, value Value) error {
+func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRuleLocator, ref tsdb.GlobalItemID, value Value) error {
 	val, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
@@ -134,12 +135,13 @@ func (s *Writer) writeGlobalIndex(ruleIndex *partition.IndexRuleLocator, ref tsd
 	if err != nil {
 		return err
 	}
-	shard, err := s.db.Shard(common.ShardID(indexShardID))
+	shard, err := s.db.SupplyTSDB().Shard(common.ShardID(indexShardID))
 	if err != nil {
 		return err
 	}
 	builder := shard.Index().WriterBuilder()
 	indexWriter, err := builder.
+		Scope(scope).
 		GlobalItemID(ref).
 		Time(value.Timestamp).
 		Build()

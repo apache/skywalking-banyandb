@@ -18,8 +18,6 @@
 package stream
 
 import (
-	"sync"
-
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
@@ -38,7 +36,7 @@ var (
 )
 
 func (s *stream) Write(value *streamv1.ElementValue) error {
-	entity, shardID, err := s.entityLocator.Locate(value.GetTagFamilies(), s.schema.GetOpts().GetShardNum())
+	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)
 	if err != nil {
 		return err
 	}
@@ -63,7 +61,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 	if fLen > len(sm.TagFamilies) {
 		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
 	}
-	shard, err := s.db.Shard(shardID)
+	shard, err := s.db.SupplyTSDB().Shard(shardID)
 	if err != nil {
 		return err
 	}
@@ -123,6 +121,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		return err
 	}
 	m := index.Message{
+		Scope:       tsdb.Entry(s.name),
 		LocalWriter: writer,
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
@@ -136,14 +135,14 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 }
 
 type writeCallback struct {
-	l         *logger.Logger
-	schemaMap *sync.Map
+	l          *logger.Logger
+	schemaRepo *schemaRepo
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaMap *sync.Map) *writeCallback {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) *writeCallback {
 	wcb := &writeCallback{
-		l:         l,
-		schemaMap: schemaMap,
+		l:          l,
+		schemaRepo: schemaRepo,
 	}
 	return wcb
 }
@@ -154,20 +153,14 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("invalid event data type")
 		return
 	}
-	sm := writeEvent.GetRequest().GetMetadata()
-	id := formatStreamID(sm.GetName(), sm.GetGroup())
-	val, ok := w.schemaMap.Load(id)
+	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		w.l.Warn().Msg("cannot find stream definition")
 		return
 	}
-
-	if stm, ok := val.(*stream); ok {
-		err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
-		if err != nil {
-			w.l.Debug().Err(err).Msg("fail to write entity")
-		}
+	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
+	if err != nil {
+		w.l.Debug().Err(err).Msg("fail to write entity")
 	}
-
 	return
 }

@@ -50,11 +50,18 @@ func (e Entity) Marshal() []byte {
 	return bytes.Join(data, nil)
 }
 
+func (e Entity) Prepend(entry Entry) Entity {
+	d := e
+	d = append(Entity{entry}, d...)
+	return d
+}
+
 type Path struct {
 	prefix   []byte
 	mask     []byte
 	template []byte
 	isFull   bool
+	offset   int
 }
 
 func NewPath(entries []Entry) Path {
@@ -63,7 +70,6 @@ func NewPath(entries []Entry) Path {
 		template: make([]byte, 0),
 	}
 
-	var offset int
 	var encounterAny bool
 	for _, e := range entries {
 		if e == nil {
@@ -74,7 +80,7 @@ func NewPath(entries []Entry) Path {
 		}
 		entry := hash(e)
 		if !encounterAny {
-			offset += 8
+			p.offset += 8
 		}
 		p.mask = append(p.mask, maxIntBytes...)
 		p.template = append(p.template, entry...)
@@ -82,7 +88,26 @@ func NewPath(entries []Entry) Path {
 	if !encounterAny {
 		p.isFull = true
 	}
-	p.prefix = p.template[:offset]
+	p.extractPrefix()
+	return p
+}
+
+func (p *Path) extractPrefix() {
+	p.prefix = p.template[:p.offset]
+}
+
+func (p Path) Prepand(entry Entry) Path {
+	e := hash(entry)
+	var prepand = func(src []byte, entry []byte) []byte {
+		dst := make([]byte, len(src)+len(entry))
+		copy(dst, entry)
+		copy(dst[len(entry):], src)
+		return dst
+	}
+	p.template = prepand(p.template, e)
+	p.offset += len(e)
+	p.extractPrefix()
+	p.mask = prepand(p.mask, maxIntBytes)
 	return p
 }
 
@@ -118,7 +143,7 @@ func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
 		return nil, err
 	}
 	if err == nil {
-		return newSeries(s.context(), bytesConvSeriesID(seriesID), s), nil
+		return newSeries(s.context(), bytesToSeriesID(seriesID), s), nil
 	}
 	s.Lock()
 	defer s.Unlock()
@@ -127,7 +152,7 @@ func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSeries(s.context(), bytesConvSeriesID(seriesID), s), nil
+	return newSeries(s.context(), bytesToSeriesID(seriesID), s), nil
 }
 
 func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
@@ -162,7 +187,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 			return nil, err
 		}
 		if err == nil {
-			seriesID := bytesConvSeriesID(id)
+			seriesID := bytesToSeriesID(id)
 			s.l.Debug().
 				Hex("path", path.prefix).
 				Uint64("series_id", uint64(seriesID)).
@@ -185,7 +210,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 				err = multierr.Append(err, errGetVal)
 				return nil
 			}
-			seriesID := bytesConvSeriesID(id)
+			seriesID := bytesToSeriesID(id)
 			s.l.Debug().
 				Hex("path", path.prefix).
 				Uint64("series_id", uint64(seriesID)).
@@ -241,11 +266,15 @@ func HashEntity(entity Entity) []byte {
 	return result
 }
 
+func SeriesID(entity Entity) common.SeriesID {
+	return common.SeriesID(convert.Hash((HashEntity(entity))))
+}
+
 func hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
 }
 
-func bytesConvSeriesID(data []byte) common.SeriesID {
+func bytesToSeriesID(data []byte) common.SeriesID {
 	return common.SeriesID(convert.BytesToUint64(data))
 }
 

@@ -18,29 +18,37 @@
 package stream
 
 import (
-	"context"
 	"encoding/base64"
-	"os"
-	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test"
-	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
-func Test_Stream_Write(t *testing.T) {
-	tester := assert.New(t)
-	s, deferFunc := setup(t)
-	defer deferFunc()
+var _ = Describe("Write", func() {
+	var (
+		s       *stream
+		deferFn func()
+	)
+
+	BeforeEach(func() {
+		var svcs *services
+		svcs, deferFn = setUp()
+		var ok bool
+		s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+			Name:  "sw",
+			Group: "default",
+		})
+		Expect(ok).To(BeTrue())
+	})
+
+	AfterEach(func() {
+		deferFn()
+	})
 
 	type args struct {
 		ele *streamv1.ElementValue
@@ -171,89 +179,19 @@ func Test_Stream_Write(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := s.Write(tt.args.ele)
-			if tt.wantErr {
-				tester.Error(err)
-				return
-			}
-			tester.NoError(err)
-		})
-	}
-
-}
-
-func setup(t *testing.T) (*stream, test.StopFunc) {
-	flow := test.NewTestFlow()
-	req := require.New(t)
-	req.NoError(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: "info",
-	}))
-	tempDir, deferFunc := test.Space(req)
-
-	var mService metadata.Service
-	var etcdRootDir string
-	var defaultStream *databasev1.Stream
-	var rules []*databasev1.IndexRule
-	var s *stream
-
-	flow.
-		PushErrorHandler(func() {
-			deferFunc()
-		}).
-		Run(context.TODO(), func() (err error) {
-			mService, err = metadata.NewService(context.TODO())
-			return
-		}, func() {
-			if mService != nil {
-				mService.GracefulStop()
-			}
-		}).
-		RunWithoutSideEffect(context.TODO(), func() error {
-			etcdRootDir = teststream.RandomTempDir()
-			return mService.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
-		}).
-		Run(context.TODO(), func() error {
-			return mService.PreRun()
-		}, func() {
-			if len(etcdRootDir) > 0 {
-				_ = os.RemoveAll(etcdRootDir)
-			}
-		}).
-		RunWithoutSideEffect(context.TODO(), func() error {
-			return teststream.PreloadSchema(mService.SchemaRegistry())
-		}).
-		RunWithoutSideEffect(context.TODO(), func() (err error) {
-			defaultStream, err = mService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
-				Name:  "sw",
-				Group: "default",
+	Context("Writing stream", func() {
+		for _, tt := range tests {
+			It(tt.name, func() {
+				err := s.Write(tt.args.ele)
+				if tt.wantErr {
+					Expect(err).Should(HaveOccurred())
+					return
+				}
+				Expect(err).ShouldNot(HaveOccurred())
 			})
-			return
-		}).
-		RunWithoutSideEffect(context.TODO(), func() (err error) {
-			rules, err = mService.IndexRules(context.TODO(), defaultStream.GetMetadata())
-			return
-		}).
-		Run(context.TODO(), func() (err error) {
-			sSpec := streamSpec{
-				schema:     defaultStream,
-				indexRules: rules,
-			}
-			s, err = openStream(tempDir, sSpec, logger.GetLogger("test"))
-			return
-		}, func() {
-			if s != nil {
-				_ = s.Close()
-			}
-		})
-
-	req.NoError(flow.Error())
-
-	return s, flow.Shutdown()
-}
+		}
+	})
+})
 
 func getEle(tags ...interface{}) *streamv1.ElementValue {
 	searchableTags := make([]*modelv1.TagValue, 0)
