@@ -18,13 +18,13 @@
 
 NAME := api
 
-proto_dir := $(root_dir)/api/proto
-
 include ../scripts/build/base.mk
 include ../scripts/build/help.mk
 
+proto_dir := $(root_dir)/api/proto
+
 generate: $(BUF)
-	@PATH=$(PATH):$(tool_bin):$(proto_dir) $(BUF) generate
+	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate
 
 lint: $(PROTOC)
-	@PATH=$(PATH):$(tool_bin):$(proto_dir) $(BUF) lint
+	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
