@@ -57,16 +57,17 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 }
 
 func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (tsdb.Entity, common.ShardID, error) {
-	id := getID(metadata)
-	shardNum, existed := ds.shardRepo.shardNum(id)
+	shardNum, existed := ds.shardRepo.shardNum(getID(&commonv1.Metadata{
+		Name: metadata.Group,
+	}))
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the shard num by: %v", metadata)
 	}
-	locator, existed := ds.entityRepo.getLocator(id)
+	locator, existed := ds.entityRepo.getLocator(getID(metadata))
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the locator by: %v", metadata)
 	}
-	return locator.Locate(tagFamilies, shardNum)
+	return locator.Locate(metadata.Name, tagFamilies, shardNum)
 }
 
 type identity struct {

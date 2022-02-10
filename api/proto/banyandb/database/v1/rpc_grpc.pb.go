@@ -943,8 +943,9 @@ var MeasureRegistryService_ServiceDesc = grpc.ServiceDesc{
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type GroupRegistryServiceClient interface {
 	Create(ctx context.Context, in *GroupRegistryServiceCreateRequest, opts ...grpc.CallOption) (*GroupRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *GroupRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*GroupRegistryServiceUpdateResponse, error)
 	Delete(ctx context.Context, in *GroupRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*GroupRegistryServiceDeleteResponse, error)
-	Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error)
+	Get(ctx context.Context, in *GroupRegistryServiceGetRequest, opts ...grpc.CallOption) (*GroupRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *GroupRegistryServiceListRequest, opts ...grpc.CallOption) (*GroupRegistryServiceListResponse, error)
 }
 
@@ -965,6 +966,15 @@ func (c *groupRegistryServiceClient) Create(ctx context.Context, in *GroupRegist
 	return out, nil
 }
 
+func (c *groupRegistryServiceClient) Update(ctx context.Context, in *GroupRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*GroupRegistryServiceUpdateResponse, error) {
+	out := new(GroupRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Update", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *groupRegistryServiceClient) Delete(ctx context.Context, in *GroupRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*GroupRegistryServiceDeleteResponse, error) {
 	out := new(GroupRegistryServiceDeleteResponse)
 	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Delete", in, out, opts...)
@@ -974,9 +984,9 @@ func (c *groupRegistryServiceClient) Delete(ctx context.Context, in *GroupRegist
 	return out, nil
 }
 
-func (c *groupRegistryServiceClient) Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error) {
-	out := new(GroupRegistryServiceExistResponse)
-	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Exist", in, out, opts...)
+func (c *groupRegistryServiceClient) Get(ctx context.Context, in *GroupRegistryServiceGetRequest, opts ...grpc.CallOption) (*GroupRegistryServiceGetResponse, error) {
+	out := new(GroupRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Get", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -997,8 +1007,9 @@ func (c *groupRegistryServiceClient) List(ctx context.Context, in *GroupRegistry
 // for forward compatibility
 type GroupRegistryServiceServer interface {
 	Create(context.Context, *GroupRegistryServiceCreateRequest) (*GroupRegistryServiceCreateResponse, error)
+	Update(context.Context, *GroupRegistryServiceUpdateRequest) (*GroupRegistryServiceUpdateResponse, error)
 	Delete(context.Context, *GroupRegistryServiceDeleteRequest) (*GroupRegistryServiceDeleteResponse, error)
-	Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error)
+	Get(context.Context, *GroupRegistryServiceGetRequest) (*GroupRegistryServiceGetResponse, error)
 	List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error)
 	mustEmbedUnimplementedGroupRegistryServiceServer()
 }
@@ -1010,11 +1021,14 @@ type UnimplementedGroupRegistryServiceServer struct {
 func (UnimplementedGroupRegistryServiceServer) Create(context.Context, *GroupRegistryServiceCreateRequest) (*GroupRegistryServiceCreateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
+func (UnimplementedGroupRegistryServiceServer) Update(context.Context, *GroupRegistryServiceUpdateRequest) (*GroupRegistryServiceUpdateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
+}
 func (UnimplementedGroupRegistryServiceServer) Delete(context.Context, *GroupRegistryServiceDeleteRequest) (*GroupRegistryServiceDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedGroupRegistryServiceServer) Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
+func (UnimplementedGroupRegistryServiceServer) Get(context.Context, *GroupRegistryServiceGetRequest) (*GroupRegistryServiceGetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
 func (UnimplementedGroupRegistryServiceServer) List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
@@ -1050,6 +1064,24 @@ func _GroupRegistryService_Create_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GroupRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupRegistryServiceServer).Update(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Update",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupRegistryServiceServer).Update(ctx, req.(*GroupRegistryServiceUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _GroupRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GroupRegistryServiceDeleteRequest)
 	if err := dec(in); err != nil {
@@ -1068,20 +1100,20 @@ func _GroupRegistryService_Delete_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GroupRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupRegistryServiceExistRequest)
+func _GroupRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceGetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GroupRegistryServiceServer).Exist(ctx, in)
+		return srv.(GroupRegistryServiceServer).Get(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/banyandb.database.v1.GroupRegistryService/Exist",
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroupRegistryServiceServer).Exist(ctx, req.(*GroupRegistryServiceExistRequest))
+		return srv.(GroupRegistryServiceServer).Get(ctx, req.(*GroupRegistryServiceGetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1116,12 +1148,16 @@ var GroupRegistryService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _GroupRegistryService_Create_Handler,
 		},
 		{
+			MethodName: "Update",
+			Handler:    _GroupRegistryService_Update_Handler,
+		},
+		{
 			MethodName: "Delete",
 			Handler:    _GroupRegistryService_Delete_Handler,
 		},
 		{
-			MethodName: "Exist",
-			Handler:    _GroupRegistryService_Exist_Handler,
+			MethodName: "Get",
+			Handler:    _GroupRegistryService_Get_Handler,
 		},
 		{
 			MethodName: "List",

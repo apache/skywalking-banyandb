@@ -22,24 +22,29 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"google.golang.org/grpc"
+	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 var _ = Describe("Registry", func() {
 	var gracefulStop func()
-	var conn *grpc.ClientConn
+	var conn *grpclib.ClientConn
 	meta := &commonv1.Metadata{
 		Group: "default",
 	}
 	BeforeEach(func() {
-		gracefulStop = setup(nil)
+		gracefulStop = setupForRegistry()
 		var err error
-		conn, err = grpc.Dial("localhost:17912", grpc.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("manages the stream", func() {
@@ -137,3 +142,34 @@ var _ = Describe("Registry", func() {
 		gracefulStop()
 	})
 })
+
+func setupForRegistry() func() {
+	// Init `Discovery` module
+	repo, err := discovery.NewServiceRepo(context.Background())
+	Expect(err).NotTo(HaveOccurred())
+	// Init `Queue` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	Expect(err).NotTo(HaveOccurred())
+	// Init `Metadata` module
+	metaSvc, err := metadata.NewService(context.TODO())
+	Expect(err).NotTo(HaveOccurred())
+
+	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
+	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
+	var flags []string
+	metaPath, metaDeferFunc, err := test.NewSpace()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--metadata-root-path="+metaPath)
+	deferFunc := test.SetUpModules(
+		flags,
+		repo,
+		pipeline,
+		metaSvc,
+		preloadStreamSvc,
+		tcp,
+	)
+	return func() {
+		deferFunc()
+		metaDeferFunc()
+	}
+}

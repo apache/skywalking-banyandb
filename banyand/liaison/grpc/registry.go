@@ -254,10 +254,18 @@ type groupRegistryServer struct {
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
 	*databasev1.GroupRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.GroupRegistry().Update(ctx, req.GetGroup()); err != nil {
+	if err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup()); err != nil {
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceCreateResponse{}, nil
+}
+
+func (rs *groupRegistryServer) Update(ctx context.Context, req *databasev1.GroupRegistryServiceUpdateRequest) (
+	*databasev1.GroupRegistryServiceUpdateResponse, error) {
+	if err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup()); err != nil {
+		return nil, err
+	}
+	return &databasev1.GroupRegistryServiceUpdateResponse{}, nil
 }
 
 func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.GroupRegistryServiceDeleteRequest) (
@@ -271,13 +279,13 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 	}, nil
 }
 
-func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupRegistryServiceExistRequest) (
-	*databasev1.GroupRegistryServiceExistResponse, error) {
+func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupRegistryServiceGetRequest) (
+	*databasev1.GroupRegistryServiceGetResponse, error) {
 	g, err := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, req.GetGroup())
 	if err != nil {
 		return nil, err
 	}
-	return &databasev1.GroupRegistryServiceExistResponse{
+	return &databasev1.GroupRegistryServiceGetResponse{
 		Group: g,
 	}, nil
 }

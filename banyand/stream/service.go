@@ -124,7 +124,7 @@ func (s *service) PreRun() error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	s.schemaRepo.notifyAll()
+	_ = s.schemaRepo.notifyAll()
 	// run a serial watcher
 	go s.schemaRepo.watcher()
 

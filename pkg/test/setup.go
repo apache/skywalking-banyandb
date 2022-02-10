@@ -19,9 +19,13 @@ package test
 
 import (
 	"context"
+	"sync"
 
+	"github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type StartFunc func() error
@@ -125,4 +129,28 @@ func (tf *testFlow) PushErrorHandler(stopFunc StopFunc) Flow {
 
 func (tf *testFlow) Error() error {
 	return tf.err
+}
+
+func SetUpModules(flags []string, units ...run.Unit) func() {
+	closer := run.NewTester("closer")
+	g := run.Group{Name: "standalone-test"}
+	g.Register(append([]run.Unit{closer}, units...)...)
+	err := g.RegisterFlags().Parse(flags)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		defer func() {
+			wg.Done()
+		}()
+		errRun := g.Run()
+		gomega.Expect(errRun).ShouldNot(gomega.HaveOccurred())
+	}()
+	g.WaitTillReady()
+	return func() {
+		closer.GracefulStop()
+		wg.Wait()
+	}
 }

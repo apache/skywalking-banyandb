@@ -210,10 +210,18 @@ service MeasureRegistryService {
 }
 
 message GroupRegistryServiceCreateRequest {
-  string group = 1;
+  banyandb.common.v1.Group group = 1;
 }
 
 message GroupRegistryServiceCreateResponse {
+
+}
+
+message GroupRegistryServiceUpdateRequest {
+  banyandb.common.v1.Group group = 1;
+}
+
+message GroupRegistryServiceUpdateResponse {
 
 }
 
@@ -225,11 +233,11 @@ message GroupRegistryServiceDeleteResponse {
   bool deleted = 1;
 }
 
-message GroupRegistryServiceExistRequest {
+message GroupRegistryServiceGetRequest {
   string group = 1;
 }
 
-message GroupRegistryServiceExistResponse {
+message GroupRegistryServiceGetResponse {
   banyandb.common.v1.Group group = 1;
 }
 
@@ -237,12 +245,13 @@ message GroupRegistryServiceListRequest {
 }
 
 message GroupRegistryServiceListResponse {
-  repeated string group = 1;
+  repeated banyandb.common.v1.Group group = 1;
 }
 
 service GroupRegistryService {
   rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse);
+  rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse);
   rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse);
-  rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
+  rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse);
   rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse);
 }

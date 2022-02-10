@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-	
+
 .PHONY: generate
 generate: $(MOCKGEN) $(PROTOC)
-	@PATH=$(PATH):$(tool_bin) go generate ./...
+	@PATH=$(tool_bin):$$PATH; go generate ./...

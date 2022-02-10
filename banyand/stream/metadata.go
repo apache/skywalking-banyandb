@@ -23,6 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -33,9 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type eventType uint8
@@ -218,7 +219,8 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	g, ok := sr.getGroup(name)
 	if !ok {
 		sr.l.Info().Str("group", name).Msg("creating a tsdb")
-		db, err := sr.openDB(groupSchema)
+		var db tsdb.Database
+		db, err = sr.openDB(groupSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +266,7 @@ func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	if err != nil {
 		return err
 	}
-	sr.notify(g.groupSchema, databasev1.Action_ACTION_DELETE)
+	_ = sr.notify(g.groupSchema, databasev1.Action_ACTION_DELETE)
 	delete(sr.data, name)
 	return nil
 }
@@ -364,7 +366,7 @@ func (sr *schemaRepo) notifyAll() (err error) {
 	for _, g := range sr.getMap() {
 		err = multierr.Append(err, sr.notify(g.groupSchema, databasev1.Action_ACTION_PUT))
 		for _, s := range g.getMap() {
-			multierr.Append(err, g.notify(s, databasev1.Action_ACTION_PUT))
+			err = multierr.Append(err, g.notify(s, databasev1.Action_ACTION_PUT))
 		}
 	}
 	return err

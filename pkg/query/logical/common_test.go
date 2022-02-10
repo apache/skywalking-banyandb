@@ -35,7 +35,9 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -87,6 +89,12 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	}))
 
 	tempDir, deferFunc := test.Space(t)
+	// Init `Discovery` module
+	repo, err := discovery.NewServiceRepo(context.Background())
+	t.NoError(err)
+	// Init `Queue` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	t.NoError(err)
 
 	metadataSvc, err := metadata.NewService(context.TODO())
 	t.NoError(err)
@@ -95,7 +103,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
 	t.NoError(err)
 
-	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, nil, nil)
+	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
 	t.NoError(err)
 
 	// 1 - (MetadataService).PreRun

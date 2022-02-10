@@ -20,8 +20,11 @@ package stream
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
+
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -30,12 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 func TestStream(t *testing.T) {
@@ -114,7 +113,6 @@ type services struct {
 func setUp() (*services, func()) {
 	ctrl := gomock.NewController(GinkgoT())
 	Expect(ctrl).ShouldNot(BeNil())
-	var flags []string
 	// Init Discovery
 	repo := discovery.NewMockServiceRepo(ctrl)
 	repo.EXPECT().NodeID().AnyTimes()
@@ -129,53 +127,34 @@ func setUp() (*services, func()) {
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
-	metaPath, metaDeferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--metadata-root-path="+metaPath)
 
 	// Init Stream Service
 	streamService, err := NewService(context.TODO(), metadataService, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
+	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
+	var flags []string
+	metaPath, metaDeferFunc, err := test.NewSpace()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-
 	flags = append(flags, "--root-path="+rootPath)
-
-	closer := run.NewTester("closer")
-
-	g := run.Group{Name: "standalone"}
-	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
-	g.Register(
-		closer,
+	moduleDeferFunc := test.SetUpModules(
+		flags,
 		repo,
 		pipeline,
 		metadataService,
 		preloadStreamSvc,
 		streamService,
 	)
-
-	err = g.RegisterFlags().Parse(flags)
-	Expect(err).NotTo(HaveOccurred())
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
-		defer func() {
-			metaDeferFunc()
-			deferFunc()
-			wg.Done()
-		}()
-		errRun := g.Run()
-		Expect(errRun).ShouldNot(HaveOccurred())
-	}()
-	g.WaitTillReady()
 	return &services{
 			stream:          streamService.(*service),
 			metadataService: metadataService,
 			repo:            repo,
 		}, func() {
-			closer.GracefulStop()
-			wg.Wait()
+			moduleDeferFunc()
+			metaDeferFunc()
+			deferFunc()
 		}
 }

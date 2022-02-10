@@ -23,7 +23,6 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -39,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
@@ -110,8 +108,6 @@ var _ = Describe("Stream", func() {
 })
 
 func setup(flags []string) func() {
-
-	g := run.Group{Name: "standalone"}
 	// Init `Discovery` module
 	repo, err := discovery.NewServiceRepo(context.Background())
 	Expect(err).NotTo(HaveOccurred())
@@ -129,13 +125,10 @@ func setup(flags []string) func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
-
-	closer := run.NewTester("closer")
-	startListener := run.NewTester("started-listener")
-
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
-	g.Register(
-		closer,
+
+	return test.SetUpModules(
+		flags,
 		repo,
 		pipeline,
 		metaSvc,
@@ -143,29 +136,7 @@ func setup(flags []string) func() {
 		streamSvc,
 		q,
 		tcp,
-		startListener,
 	)
-
-	err = g.RegisterFlags().Parse(flags)
-	Expect(err).NotTo(HaveOccurred())
-
-	wg := sync.WaitGroup{}
-
-	wg.Add(1)
-	go func() {
-		// we have to wait for this goroutine to safely shutdown
-		defer wg.Done()
-		errRun := g.Run()
-		if errRun != nil {
-			startListener.GracefulStop()
-			Expect(errRun).NotTo(HaveOccurred())
-		}
-	}()
-	Expect(startListener.WaitUntilStarted()).Should(Succeed())
-	return func() {
-		closer.GracefulStop()
-		wg.Wait()
-	}
 }
 
 type preloadStreamService struct {
