@@ -168,7 +168,9 @@ func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Elem
 }
 
 func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
-	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
+	path := tsdb.NewPath(i.entity)
+	path.Prepand(tsdb.Entry(i.metadata.Name))
+	seriesList, err := shard.Series().List(path)
 	if err != nil {
 		return nil, err
 	}
