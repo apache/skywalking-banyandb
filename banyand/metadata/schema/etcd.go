@@ -30,7 +30,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -43,6 +42,7 @@ var (
 	_ Measure          = (*etcdSchemaRegistry)(nil)
 	_ Group            = (*etcdSchemaRegistry)(nil)
 
+	ErrGroupAbsent                = errors.New("group is absent")
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	ErrConcurrentModification     = errors.New("concurrent modification of entities")
@@ -140,22 +140,21 @@ func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commo
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]string, error) {
+func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, error) {
 	messages, err := e.kv.Get(ctx, GroupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(GroupsKeyPrefix)))
 	if err != nil {
 		return nil, err
 	}
 
-	if messages.Count == 0 {
-		return []string{}, nil
-	}
-
-	var groups []string
+	var groups []*commonv1.Group
 	for _, kv := range messages.Kvs {
 		// kv.Key = "/groups/" + {group} + "/__meta_info__"
-		groupWithSuffix := strings.TrimPrefix(string(kv.Key), GroupsKeyPrefix)
-		if strings.HasSuffix(groupWithSuffix, GroupMetadataKey) {
-			groups = append(groups, strings.TrimSuffix(groupWithSuffix, GroupMetadataKey))
+		if strings.HasSuffix(string(kv.Key), GroupMetadataKey) {
+			message := &commonv1.Group{}
+			if innerErr := proto.Unmarshal(kv.Value, message); innerErr != nil {
+				return nil, innerErr
+			}
+			groups = append(groups, message)
 		}
 	}
 
@@ -167,32 +166,32 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	if err != nil {
 		return false, errors.Wrap(err, group)
 	}
-	keyPrefix := GroupsKeyPrefix + g.GetName() + "/"
-	_, err = e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
+	keyPrefix := GroupsKeyPrefix + g.GetMetadata().GetName() + "/"
+	resp, err := e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
 	if err != nil {
 		return false, err
 	}
+	if resp.Deleted > 0 {
+		e.notifyDelete(Metadata{
+			TypeMeta: TypeMeta{
+				Kind: KindGroup,
+				Name: group,
+			},
+			Spec: g,
+		})
+	}
+
 	return true, nil
 }
 
-func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group string) error {
-	_, err := e.GetGroup(ctx, group)
-	if err != nil && !errors.Is(err, ErrEntityNotFound) {
-		return errors.Wrap(err, group)
-	}
-	return e.touchGroup(ctx, &commonv1.Group{
-		Name: group,
+func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
+	return e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind: KindGroup,
+			Name: group.GetMetadata().GetName(),
+		},
+		Spec: group,
 	})
-}
-
-func (e *etcdSchemaRegistry) touchGroup(ctx context.Context, g *commonv1.Group) error {
-	groupBytes, err := proto.Marshal(g)
-	if err != nil {
-		return err
-	}
-	g.UpdatedAt = timestamppb.Now()
-	_, err = e.kv.Put(ctx, formatGroupKey(g.GetName()), string(groupBytes))
-	return err
 }
 
 func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
@@ -204,35 +203,27 @@ func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.
 }
 
 func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
-	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, MeasureKeyPrefix)
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list measure")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, MeasureKeyPrefix), func() proto.Message {
+		return &databasev1.Measure{}
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	var entities []*databasev1.Measure
-	for _, keyPrefix := range keyPrefixes {
-		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-			return &databasev1.Measure{}
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, message := range messages {
-			entities = append(entities, message.(*databasev1.Measure))
-		}
+	entities := make([]*databasev1.Measure, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.Measure))
 	}
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
-	g, err := e.GetGroup(ctx, measure.GetMetadata().GetGroup())
-	if err != nil {
-		return errors.Wrap(err, measure.GetMetadata().GetGroup())
-	}
-	return e.update(ctx, g, Metadata{
+	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
-			Group: g.GetName(),
+			Group: measure.GetMetadata().GetGroup(),
 			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
@@ -240,14 +231,10 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	g, err := e.GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return false, errors.Wrap(err, metadata.GetGroup())
-	}
-	return e.delete(ctx, g, Metadata{
+	return e.delete(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
-			Group: g.GetName(),
+			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},
 	})
@@ -262,37 +249,27 @@ func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.M
 }
 
 func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
-	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, StreamKeyPrefix)
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list stream")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, StreamKeyPrefix), func() proto.Message {
+		return &databasev1.Stream{}
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	var entities []*databasev1.Stream
-	for _, keyPrefix := range keyPrefixes {
-		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-			return &databasev1.Stream{}
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		for _, message := range messages {
-			entities = append(entities, message.(*databasev1.Stream))
-		}
+	entities := make([]*databasev1.Stream, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.Stream))
 	}
-
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
-	g, err := e.GetGroup(ctx, stream.GetMetadata().GetGroup())
-	if err != nil {
-		return errors.Wrap(err, stream.GetMetadata().GetGroup())
-	}
-	return e.update(ctx, g, Metadata{
+	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindStream,
-			Group: g.GetName(),
+			Group: stream.GetMetadata().GetGroup(),
 			Name:  stream.GetMetadata().GetName(),
 		},
 		Spec: stream,
@@ -300,14 +277,10 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	g, err := e.GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return false, errors.Wrap(err, metadata.GetGroup())
-	}
-	return e.delete(ctx, g, Metadata{
+	return e.delete(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindStream,
-			Group: g.GetName(),
+			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},
 	})
@@ -322,51 +295,39 @@ func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *
 }
 
 func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
-	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, IndexRuleBindingKeyPrefix)
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list index rule binding")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleBindingKeyPrefix), func() proto.Message {
+		return &databasev1.IndexRuleBinding{}
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	var entities []*databasev1.IndexRuleBinding
-	for _, keyPrefix := range keyPrefixes {
-		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-			return &databasev1.IndexRuleBinding{}
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, message := range messages {
-			entities = append(entities, message.(*databasev1.IndexRuleBinding))
-		}
+	entities := make([]*databasev1.IndexRuleBinding, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.IndexRuleBinding))
 	}
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
-	g, err := e.GetGroup(ctx, indexRuleBinding.GetMetadata().GetGroup())
-	if err != nil {
-		return errors.Wrap(err, indexRuleBinding.GetMetadata().GetGroup())
-	}
-	return e.update(ctx, g, Metadata{
+	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
-			Group: g.GetName(),
+			Group: indexRuleBinding.GetMetadata().GetGroup(),
 		},
 		Spec: indexRuleBinding,
 	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	g, err := e.GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return false, errors.Wrap(err, metadata.GetGroup())
-	}
-	return e.delete(ctx, g, Metadata{
+	return e.delete(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  metadata.GetName(),
-			Group: g.GetName(),
+			Group: metadata.GetGroup(),
 		},
 	})
 }
@@ -380,51 +341,39 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 }
 
 func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
-	keyPrefixes, err := e.listPrefixesForEntity(ctx, opt, IndexRuleKeyPrefix)
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list index rule")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleKeyPrefix), func() proto.Message {
+		return &databasev1.IndexRule{}
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	var entities []*databasev1.IndexRule
-	for _, keyPrefix := range keyPrefixes {
-		messages, err := e.listWithPrefix(ctx, keyPrefix, func() proto.Message {
-			return &databasev1.IndexRule{}
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, message := range messages {
-			entities = append(entities, message.(*databasev1.IndexRule))
-		}
+	entities := make([]*databasev1.IndexRule, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.IndexRule))
 	}
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
-	g, err := e.GetGroup(ctx, indexRule.GetMetadata().GetGroup())
-	if err != nil {
-		return errors.Wrap(err, indexRule.GetMetadata().GetGroup())
-	}
-	return e.update(ctx, g, Metadata{
+	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
-			Group: g.GetName(),
+			Group: indexRule.GetMetadata().GetGroup(),
 		},
 		Spec: indexRule,
 	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	g, err := e.GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return false, errors.Wrap(err, metadata.GetGroup())
-	}
-	return e.delete(ctx, g, Metadata{
+	return e.delete(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  metadata.GetName(),
-			Group: g.GetName(),
+			Group: metadata.GetGroup(),
 		},
 	})
 }
@@ -498,7 +447,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, metadata Metadata) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
 	key, err := metadata.Key()
 	if err != nil {
 		return err
@@ -543,7 +492,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, group *commonv1.Group, 
 		}
 	}
 	e.notifyUpdate(metadata)
-	return e.touchGroup(ctx, group)
+	return nil
 }
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
@@ -567,25 +516,11 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) listPrefixesForEntity(ctx context.Context, opt ListOpt, entityPrefix string) ([]string, error) {
-	var keyPrefixes []string
-
-	if opt.Group != "" {
-		keyPrefixes = append(keyPrefixes, GroupsKeyPrefix+opt.Group+entityPrefix)
-	} else {
-		groups, err := e.ListGroup(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, g := range groups {
-			keyPrefixes = append(keyPrefixes, GroupsKeyPrefix+g+entityPrefix)
-		}
-	}
-
-	return keyPrefixes, nil
+func listPrefixesForEntity(group, entityPrefix string) string {
+	return GroupsKeyPrefix + group + entityPrefix
 }
 
-func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, metadata Metadata) (bool, error) {
+func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
 	key, err := metadata.Key()
 	if err != nil {
 		return false, err
@@ -611,12 +546,12 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, g *commonv1.Group, meta
 				TypeMeta: TypeMeta{
 					Kind:  metadata.Kind,
 					Name:  metadata.Name,
-					Group: g.GetName(),
+					Group: metadata.Group,
 				},
 				Spec: message,
 			})
 		}
-		return true, e.touchGroup(ctx, g)
+		return true, nil
 	}
 	return false, nil
 }

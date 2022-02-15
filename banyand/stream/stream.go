@@ -19,12 +19,10 @@ package stream
 
 import (
 	"context"
-	"path"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
@@ -33,22 +31,22 @@ import (
 const chunkSize = 1 << 20
 
 type stream struct {
-	name  string
-	group string
-	l     *logger.Logger
+	name     string
+	group    string
+	shardNum uint32
+	l        *logger.Logger
 	// schema is the reference to the spec of the stream
 	schema *databasev1.Stream
 	// maxObservedModRevision is the max observed revision of index rules in the spec
 	maxObservedModRevision int64
-	db                     tsdb.Database
+	db                     tsdb.Supplier
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
 	indexWriter            *index.Writer
 }
 
 func (s *stream) Close() error {
-	_ = s.indexWriter.Close()
-	return s.db.Close()
+	return s.indexWriter.Close()
 }
 
 func parseMaxModRevision(indexRules []*databasev1.IndexRule) (maxRevisionForIdxRules int64) {
@@ -72,38 +70,22 @@ type streamSpec struct {
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(root string, spec streamSpec, l *logger.Logger) (*stream, error) {
+func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) (*stream, error) {
 	sm := &stream{
+		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
 	}
 	sm.parseSpec()
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
-	db, err := tsdb.OpenDatabase(
-		ctx,
-		tsdb.DatabaseOpts{
-			Location:   path.Join(root, spec.schema.GetMetadata().GetGroup(), spec.schema.GetMetadata().GetName()),
-			ShardNum:   sm.schema.GetOpts().GetShardNum(),
-			IndexRules: spec.indexRules,
-			EncodingMethod: tsdb.EncodingMethod{
-				EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
-				DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
-			},
-		})
-	if err != nil {
-		return nil, err
-	}
+
 	sm.db = db
 	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:         db,
-		ShardNum:   spec.schema.GetOpts().ShardNum,
+		ShardNum:   shardNum,
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
 	return sm, nil
-}
-
-func formatStreamID(name, group string) string {
-	return name + ":" + group
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
@@ -40,9 +41,18 @@ var (
 	indexRuleBindingJSON string
 	//go:embed testdata/stream.json
 	streamJSON string
+	//go:embed testdata/group.json
+	groupJSON string
 )
 
 func PreloadSchema(e schema.Registry) error {
+	g := &commonv1.Group{}
+	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
+		return err
+	}
+	if err := e.UpdateGroup(context.TODO(), g); err != nil {
+		return err
+	}
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err

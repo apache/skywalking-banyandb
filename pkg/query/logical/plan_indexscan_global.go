@@ -99,6 +99,7 @@ func (t *globalIndexScan) executeForShard(ec executor.ExecutionContext, shard ts
 	var elementsInShard []*streamv1.Element
 	itemIDs, err := shard.Index().Seek(index.Field{
 		Key: index.FieldKey{
+			SeriesID:    tsdb.GlobalSeriesID(t.schema.Scope()),
 			IndexRuleID: t.globalIndexRule.GetMetadata().GetId(),
 		},
 		Term: t.expr.(*binaryExpr).r.(LiteralExpr).Bytes()[0],

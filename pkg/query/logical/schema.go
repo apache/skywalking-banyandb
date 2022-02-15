@@ -21,10 +21,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 type Schema interface {
+	Scope() tsdb.Entry
 	EntityList() []string
 	IndexDefined(*Tag) (bool, *databasev1.IndexRule)
 	IndexRuleDefined(string) (bool, *databasev1.IndexRule)
@@ -57,6 +60,7 @@ func (fs *tagSpec) Equal(other *tagSpec) bool {
 var _ Schema = (*schema)(nil)
 
 type schema struct {
+	group      *commonv1.Group
 	stream     *databasev1.Stream
 	indexRules []*databasev1.IndexRule
 	fieldMap   map[string]*tagSpec
@@ -172,5 +176,9 @@ func (s *schema) Proj(refs ...[]*FieldRef) Schema {
 }
 
 func (s *schema) ShardNumber() uint32 {
-	return s.stream.GetOpts().GetShardNum()
+	return s.group.ResourceOpts.ShardNum
+}
+
+func (s *schema) Scope() tsdb.Entry {
+	return tsdb.Entry(s.stream.Metadata.Name)
 }

@@ -81,17 +81,11 @@ func (s *service) PreRun() error {
 		return err
 	}
 	<-s.schemaRegistry.ReadyNotify()
-	return s.initializeMetadata()
-}
-
-// initializeMetadata creates "default" group after the metadata storage layer is ready
-func (s *service) initializeMetadata() error {
-	return s.schemaRegistry.CreateGroup(context.TODO(), "default")
-}
-
-func (s *service) Serve() error {
-	<-s.schemaRegistry.StoppingNotify()
 	return nil
+}
+
+func (s *service) Serve() run.StopNotify {
+	return s.schemaRegistry.StoppingNotify()
 }
 
 func (s *service) GracefulStop() {

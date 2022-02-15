@@ -53,10 +53,9 @@ func (t *Tester) Name() string {
 	return t.ID
 }
 
-func (t *Tester) Serve() error {
+func (t *Tester) Serve() StopNotify {
 	close(t.startedNotifier)
-	<-t.stopCh
-	return nil
+	return t.stopCh
 }
 
 func (t *Tester) GracefulStop() {

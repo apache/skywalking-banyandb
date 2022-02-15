@@ -27,7 +27,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -57,6 +56,8 @@ type Server struct {
 	pipeline       queue.Queue
 	repo           discovery.ServiceRepo
 	creds          credentials.TransportCredentials
+
+	stopCh chan struct{}
 
 	streamSVC  *streamService
 	measureSVC *measureService
@@ -162,7 +163,7 @@ func (s *Server) Validate() error {
 	return nil
 }
 
-func (s *Server) Serve() error {
+func (s *Server) Serve() run.StopNotify {
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		s.log.Fatal().Err(err).Msg("Failed to listen")
@@ -178,7 +179,7 @@ func (s *Server) Serve() error {
 	s.ser = grpclib.NewServer(opts...)
 
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
-	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
+	// measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
 	// register *Registry
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
@@ -186,8 +187,13 @@ func (s *Server) Serve() error {
 	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
 	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
 
-	s.log.Info().Str("addr", s.addr).Msg("Listening to")
-	return s.ser.Serve(lis)
+	s.stopCh = make(chan struct{})
+	go func() {
+		s.log.Info().Str("addr", s.addr).Msg("Listening to")
+		_ = s.ser.Serve(lis)
+		close(s.stopCh)
+	}()
+	return s.stopCh
 }
 
 func (s *Server) GracefulStop() {

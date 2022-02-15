@@ -32,7 +32,6 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -62,13 +61,14 @@ var (
 	ErrInvalidShardID = errors.New("invalid shard id")
 	ErrOpenDatabase   = errors.New("fails to open the database")
 
-	indexRulesKey     = contextIndexRulesKey{}
 	encodingMethodKey = contextEncodingMethodKey{}
 )
 
-type contextIndexRulesKey struct{}
 type contextEncodingMethodKey struct{}
 
+type Supplier interface {
+	SupplyTSDB() Database
+}
 type Database interface {
 	io.Closer
 	Shards() []Shard
@@ -87,7 +87,6 @@ var _ Database = (*database)(nil)
 type DatabaseOpts struct {
 	Location       string
 	ShardNum       uint32
-	IndexRules     []*databasev1.IndexRule
 	EncodingMethod EncodingMethod
 	SegmentSize    IntervalRule
 	BlockSize      IntervalRule
@@ -169,7 +168,6 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
-	thisContext = context.WithValue(thisContext, indexRulesKey, opts.IndexRules)
 	thisContext = context.WithValue(thisContext, encodingMethodKey, opts.EncodingMethod)
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)

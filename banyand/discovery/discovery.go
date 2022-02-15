@@ -24,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+//go:generate mockgen -destination=./discovery_mock.go -package=discovery github.com/apache/skywalking-banyandb/banyand/discovery ServiceRepo
 type ServiceRepo interface {
 	NodeID() string
 	run.Unit

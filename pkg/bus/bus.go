@@ -51,7 +51,6 @@ func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, payload: data}
 }
 
-//go:generate mockgen -destination=./bus_mock.go -package=bus github.com/apache/skywalking-banyandb/pkg/bus MessageListener
 //MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
 	Rev(message Message) Message

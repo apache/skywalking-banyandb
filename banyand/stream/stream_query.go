@@ -52,27 +52,39 @@ type Stream interface {
 var _ Stream = (*stream)(nil)
 
 func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
+	wrap := func(shards []tsdb.Shard) []tsdb.Shard {
+		result := make([]tsdb.Shard, len(shards))
+		for i := 0; i < len(shards); i++ {
+			result[i] = newShardDelegate(tsdb.Entry(s.name), shards[i])
+		}
+		return result
+	}
+	db := s.db.SupplyTSDB()
 	if len(entity) < 1 {
-		return s.db.Shards(), nil
+		return wrap(db.Shards()), nil
 	}
 	for _, e := range entity {
 		if e == nil {
-			return s.db.Shards(), nil
+			return wrap(db.Shards()), nil
 		}
 	}
-	shardID, err := partition.ShardID(entity.Marshal(), s.schema.GetOpts().GetShardNum())
+	shardID, err := partition.ShardID(entity.Prepend(tsdb.Entry(s.name)).Marshal(), s.shardNum)
 	if err != nil {
 		return nil, err
 	}
-	shard, err := s.db.Shard(common.ShardID(shardID))
+	shard, err := db.Shard(common.ShardID(shardID))
 	if err != nil {
 		return nil, err
 	}
-	return []tsdb.Shard{shard}, nil
+	return []tsdb.Shard{newShardDelegate(tsdb.Entry(s.name), shard)}, nil
 }
 
 func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
-	return s.db.Shard(id)
+	shard, err := s.db.SupplyTSDB().Shard(id)
+	if err != nil {
+		return nil, err
+	}
+	return newShardDelegate(tsdb.Entry(s.name), shard), nil
 }
 
 func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
@@ -115,4 +127,65 @@ func (s *stream) ParseElementID(item tsdb.Item) (string, error) {
 		return "", err
 	}
 	return string(rawBytes), nil
+}
+
+var _ tsdb.Shard = (*shardDelegate)(nil)
+
+type shardDelegate struct {
+	scope     tsdb.Entry
+	delegated tsdb.Shard
+}
+
+func newShardDelegate(scope tsdb.Entry, delegated tsdb.Shard) tsdb.Shard {
+	return &shardDelegate{
+		scope:     scope,
+		delegated: delegated,
+	}
+}
+
+func (sd *shardDelegate) Close() error {
+	// the delegate can't close the underlying shard
+	return nil
+}
+
+func (sd *shardDelegate) ID() common.ShardID {
+	return sd.delegated.ID()
+}
+
+func (sd *shardDelegate) Series() tsdb.SeriesDatabase {
+	return &seriesDatabaseDelegate{
+		scope:     sd.scope,
+		delegated: sd.delegated.Series(),
+	}
+}
+
+func (sd *shardDelegate) Index() tsdb.IndexDatabase {
+	return sd.delegated.Index()
+}
+
+var _ tsdb.SeriesDatabase = (*seriesDatabaseDelegate)(nil)
+
+type seriesDatabaseDelegate struct {
+	scope     tsdb.Entry
+	delegated tsdb.SeriesDatabase
+}
+
+func (sdd *seriesDatabaseDelegate) Close() error {
+	return nil
+}
+
+func (sdd *seriesDatabaseDelegate) GetByHashKey(key []byte) (tsdb.Series, error) {
+	return sdd.delegated.GetByHashKey(key)
+}
+
+func (sdd *seriesDatabaseDelegate) GetByID(id common.SeriesID) (tsdb.Series, error) {
+	return sdd.delegated.GetByID(id)
+}
+
+func (sdd *seriesDatabaseDelegate) Get(entity tsdb.Entity) (tsdb.Series, error) {
+	return sdd.delegated.Get(entity.Prepend(sdd.scope))
+}
+
+func (sdd *seriesDatabaseDelegate) List(path tsdb.Path) (tsdb.SeriesList, error) {
+	return sdd.delegated.List(path.Prepand(sdd.scope))
 }

@@ -26,12 +26,12 @@ import (
 	"io"
 	"sort"
 	"strconv"
-	"testing"
 	"time"
 
 	"github.com/golang/protobuf/jsonpb"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -53,524 +53,551 @@ type shardStruct struct {
 
 type shardsForTest []shardStruct
 
-func Test_Stream_SelectShard(t *testing.T) {
-	s, deferFunc := setup(t)
-	defer deferFunc()
-	_ = setupQueryData(t, "multiple_shards.json", s)
-	tests := []struct {
-		name         string
-		entity       tsdb.Entity
-		wantShardNum int
-		wantErr      bool
-	}{
-		{
-			name:         "all shards",
-			wantShardNum: 2,
-		},
-		{
-			name:         "select a shard",
-			entity:       tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
-			wantShardNum: 1,
-		},
-		{
-			name:         "select shards",
-			entity:       tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.AnyEntry, convert.Int64ToBytes(0)},
-			wantShardNum: 2,
-		},
-	}
+var _ = Describe("Write", func() {
+	var (
+		s       *stream
+		deferFn func()
+	)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ast := assert.New(t)
-			shards, err := s.Shards(tt.entity)
-			if tt.wantErr {
-				ast.Error(err)
-			}
-			ast.NoError(err)
-			ast.Equal(tt.wantShardNum, len(shards))
+	BeforeEach(func() {
+		var svcs *services
+		svcs, deferFn = setUp()
+		var ok bool
+		s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+			Name:  "sw",
+			Group: "default",
 		})
-	}
+		Expect(ok).To(BeTrue())
+	})
 
-}
-
-func Test_Stream_Series(t *testing.T) {
-	s, deferFunc := setup(t)
-	defer deferFunc()
-	baseTime := setupQueryData(t, "multiple_shards.json", s)
-	tests := []struct {
-		name    string
-		args    queryOpts
-		want    shardsForTest
-		wantErr bool
-	}{
-		{
-			name: "all",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
+	AfterEach(func() {
+		deferFn()
+	})
+	Context("Select shard", func() {
+		tests := []struct {
+			name         string
+			entity       tsdb.Entity
+			wantShardNum int
+			wantErr      bool
+		}{
+			{
+				name:         "all shards",
+				wantShardNum: 2,
 			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-					elements: []string{"4"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-					elements: []string{"2"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-					elements: []string{"1"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
+			{
+				name:         "select a shard",
+				entity:       tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
+				wantShardNum: 1,
 			},
-		},
-
-		{
-			name: "time range",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime.Add(1500*time.Millisecond), 1*time.Hour),
+			{
+				name:         "select shards",
+				entity:       tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.AnyEntry, convert.Int64ToBytes(0)},
+				wantShardNum: 2,
 			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-					elements: []string{"4"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"5"},
-				},
-			},
-		},
-		{
-			name: "find series by service_id and instance_id",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-			},
-			want: shardsForTest{
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-					elements: []string{"1"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
-			},
-		},
-		{
-			name: "find a series",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-			},
-			want: shardsForTest{
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
-			},
-		},
-		{
-			name: "filter",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					builder.Filter(&databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "endpoint_id",
-							Group: "default",
-							Id:    4,
-						},
-						Tags:     []string{"endpoint_id"},
-						Type:     databasev1.IndexRule_TYPE_INVERTED,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}, tsdb.Condition{
-						"endpoint_id": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_EQ,
-								Values: [][]byte{[]byte("/home_id")},
-							},
-						},
-					})
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-					elements: []string{"1"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3"},
-				},
-			},
-		},
-		{
-			name: "order by duration",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					builder.OrderByIndex(&databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "duration",
-							Group: "default",
-							Id:    3,
-						},
-						Tags:     []string{"duration"},
-						Type:     databasev1.IndexRule_TYPE_TREE,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}, modelv1.Sort_SORT_ASC)
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-					elements: []string{"4"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-					elements: []string{"2"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-					elements: []string{"1"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
-			},
-		},
-		{
-			name: "filter by duration",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "duration",
-							Group: "default",
-							Id:    3,
-						},
-						Tags:     []string{"duration"},
-						Type:     databasev1.IndexRule_TYPE_TREE,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}
-					builder.Filter(rule, tsdb.Condition{
-						"duration": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_LT,
-								Values: [][]byte{convert.Int64ToBytes(500)},
-							},
-						},
-					})
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-					elements: []string{"4"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
-			},
-		},
-		{
-			name: "filter and sort by duration",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "duration",
-							Group: "default",
-							Id:    3,
-						},
-						Tags:     []string{"duration"},
-						Type:     databasev1.IndexRule_TYPE_TREE,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}
-					builder.Filter(rule, tsdb.Condition{
-						"duration": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_LT,
-								Values: [][]byte{convert.Int64ToBytes(500)},
-							},
-						},
-					})
-					builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-					elements: []string{"4"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3", "5"},
-				},
-			},
-		},
-		{
-			name: "filter by several conditions",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "duration",
-							Group: "default",
-							Id:    3,
-						},
-						Tags:     []string{"duration"},
-						Type:     databasev1.IndexRule_TYPE_TREE,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}
-					builder.Filter(rule, tsdb.Condition{
-						"duration": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_LT,
-								Values: [][]byte{convert.Int64ToBytes(500)},
-							},
-						},
-					})
-					builder.Filter(&databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "endpoint_id",
-							Group: "default",
-							Id:    4,
-						},
-						Tags:     []string{"endpoint_id"},
-						Type:     databasev1.IndexRule_TYPE_INVERTED,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}, tsdb.Condition{
-						"endpoint_id": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_EQ,
-								Values: [][]byte{[]byte("/home_id")},
-							},
-						},
-					})
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3"},
-				},
-			},
-		},
-		{
-			name: "filter by several conditions, sort by duration",
-			args: queryOpts{
-				entity:    tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
-				timeRange: timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour),
-				buildFn: func(builder tsdb.SeekerBuilder) {
-					rule := &databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "duration",
-							Group: "default",
-							Id:    3,
-						},
-						Tags:     []string{"duration"},
-						Type:     databasev1.IndexRule_TYPE_TREE,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}
-					builder.Filter(rule, tsdb.Condition{
-						"duration": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_LT,
-								Values: [][]byte{convert.Int64ToBytes(500)},
-							},
-						},
-					})
-					builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
-					builder.Filter(&databasev1.IndexRule{
-						Metadata: &commonv1.Metadata{
-							Name:  "endpoint_id",
-							Group: "default",
-							Id:    4,
-						},
-						Tags:     []string{"endpoint_id"},
-						Type:     databasev1.IndexRule_TYPE_INVERTED,
-						Location: databasev1.IndexRule_LOCATION_SERIES,
-					}, tsdb.Condition{
-						"endpoint_id": []index.ConditionValue{
-							{
-								Op:     modelv1.Condition_BINARY_OP_EQ,
-								Values: [][]byte{[]byte("/home_id")},
-							},
-						},
-					})
-				},
-			},
-			want: shardsForTest{
-				{
-					id:       0,
-					location: []string{"series_16283518706331625322", "data_flow_0"},
-				},
-				{
-					id:       0,
-					location: []string{"series_4862694201852929188", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_13343478452567673284", "data_flow_0"},
-				},
-				{
-					id:       1,
-					location: []string{"series_7898679171060804990", "data_flow_0"},
-					elements: []string{"3"},
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ast := assert.New(t)
-			got, err := queryData(ast, s, tt.args)
-			if tt.wantErr {
-				ast.Error(err)
-				return
-			}
-			ast.NoError(err)
-			sort.SliceStable(got, func(i, j int) bool {
-				a := got[i]
-				b := got[j]
-				if a.id > b.id {
-					return false
+		}
+		for _, tt := range tests {
+			It(tt.name, func() {
+				shards, err := s.Shards(tt.entity)
+				if tt.wantErr {
+					Expect(err).Should(HaveOccurred())
+					return
 				}
-				for i, al := range a.location {
-					bl := b.location[i]
-					if bytes.Compare([]byte(al), []byte(bl)) > 0 {
+				Expect(err).ShouldNot(HaveOccurred())
+				Expect(len(shards)).To(Equal(tt.wantShardNum))
+			})
+		}
+	})
+	Context("Querying by local indices", func() {
+		var now time.Time
+		BeforeEach(func() {
+			now = setupQueryData("multiple_shards.json", s)
+		})
+		When("", func() {
+			l1 := []string{fmt.Sprintf("series_%d", tsdb.SeriesID(tsdb.Entity{
+				tsdb.Entry("sw"),
+				tsdb.Entry("webapp_id"),
+				tsdb.Entry("10.0.0.5_id"),
+				tsdb.Entry(convert.Int64ToBytes(0)),
+			})), "data_flow_0"}
+			l2 := []string{fmt.Sprintf("series_%d", tsdb.SeriesID(tsdb.Entity{
+				tsdb.Entry("sw"),
+				tsdb.Entry("webapp_id"),
+				tsdb.Entry("10.0.0.1_id"),
+				tsdb.Entry(convert.Int64ToBytes(1)),
+			})), "data_flow_0"}
+			l3 := []string{fmt.Sprintf("series_%d", tsdb.SeriesID(tsdb.Entity{
+				tsdb.Entry("sw"),
+				tsdb.Entry("webapp_id"),
+				tsdb.Entry("10.0.0.3_id"),
+				tsdb.Entry(convert.Int64ToBytes(1)),
+			})), "data_flow_0"}
+			l4 := []string{fmt.Sprintf("series_%d", tsdb.SeriesID(tsdb.Entity{
+				tsdb.Entry("sw"),
+				tsdb.Entry("webapp_id"),
+				tsdb.Entry("10.0.0.1_id"),
+				tsdb.Entry(convert.Int64ToBytes(0)),
+			})), "data_flow_0"}
+
+			DescribeTable("", func(args queryOpts, want shardsForTest, wantErr bool) {
+				got, err := queryData(s, now, args)
+				if wantErr {
+					Expect(err).Should(HaveOccurred())
+					return
+				}
+				Expect(err).ShouldNot(HaveOccurred())
+				sort.SliceStable(got, func(i, j int) bool {
+					a := got[i]
+					b := got[j]
+					if a.id > b.id {
 						return false
 					}
-				}
-				return true
-			})
-			ast.Equal(tt.want, got)
+					for i, al := range a.location {
+						bl := b.location[i]
+						if bytes.Compare([]byte(al), []byte(bl)) > 0 {
+							return false
+						}
+					}
+					return true
+				})
+				Expect(got).To(Equal(want))
+			},
+				Entry(
+					"all",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+							elements: []string{"1"},
+						},
+						{
+							id:       1,
+							location: l3,
+							elements: []string{"2"},
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+					"time range",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						offset:   1500 * time.Millisecond,
+						duration: 1 * time.Hour,
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"5"},
+						},
+					},
+					false,
+				),
+				Entry(
+					"find series by service_id and instance_id",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+					},
+					shardsForTest{
+						{
+							id:       1,
+							location: l2,
+							elements: []string{"1"},
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+					"find a series",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), convert.Int64ToBytes(0)},
+						duration: 1 * time.Hour,
+					},
+					shardsForTest{
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							builder.Filter(&databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "endpoint_id",
+									Group: "default",
+									Id:    4,
+								},
+								Tags:     []string{"endpoint_id"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}, tsdb.Condition{
+								"endpoint_id": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_EQ,
+										Values: [][]byte{[]byte("/home_id")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+						},
+						{
+							id:       1,
+							location: l2,
+							elements: []string{"1"},
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"order by duration",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							builder.OrderByIndex(&databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "duration",
+									Group: "default",
+									Id:    3,
+								},
+								Tags:     []string{"duration"},
+								Type:     databasev1.IndexRule_TYPE_TREE,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}, modelv1.Sort_SORT_ASC)
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+							elements: []string{"1"},
+						},
+						{
+							id:       1,
+							location: l3,
+							elements: []string{"2"},
+						},
+
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter by duration",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "duration",
+									Group: "default",
+									Id:    3,
+								},
+								Tags:     []string{"duration"},
+								Type:     databasev1.IndexRule_TYPE_TREE,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"duration": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_LT,
+										Values: [][]byte{convert.Int64ToBytes(500)},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter and sort by duration",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "duration",
+									Group: "default",
+									Id:    3,
+								},
+								Tags:     []string{"duration"},
+								Type:     databasev1.IndexRule_TYPE_TREE,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"duration": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_LT,
+										Values: [][]byte{convert.Int64ToBytes(500)},
+									},
+								},
+							})
+							builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter by several conditions",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "duration",
+									Group: "default",
+									Id:    3,
+								},
+								Tags:     []string{"duration"},
+								Type:     databasev1.IndexRule_TYPE_TREE,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"duration": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_LT,
+										Values: [][]byte{convert.Int64ToBytes(500)},
+									},
+								},
+							})
+							builder.Filter(&databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "endpoint_id",
+									Group: "default",
+									Id:    4,
+								},
+								Tags:     []string{"endpoint_id"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}, tsdb.Condition{
+								"endpoint_id": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_EQ,
+										Values: [][]byte{[]byte("/home_id")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3"},
+						},
+					},
+					false,
+				),
+				Entry(
+					"filter by several conditions, sort by duration",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "duration",
+									Group: "default",
+									Id:    3,
+								},
+								Tags:     []string{"duration"},
+								Type:     databasev1.IndexRule_TYPE_TREE,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"duration": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_LT,
+										Values: [][]byte{convert.Int64ToBytes(500)},
+									},
+								},
+							})
+							builder.OrderByIndex(rule, modelv1.Sort_SORT_ASC)
+							builder.Filter(&databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "endpoint_id",
+									Group: "default",
+									Id:    4,
+								},
+								Tags:     []string{"endpoint_id"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}, tsdb.Condition{
+								"endpoint_id": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_EQ,
+										Values: [][]byte{[]byte("/home_id")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3"},
+						},
+					},
+					false,
+				),
+			)
 		})
-	}
-}
+	})
 
-func Test_Stream_Global_Index(t *testing.T) {
-	tester := assert.New(t)
-	s, deferFunc := setup(t)
-	defer deferFunc()
-	_ = setupQueryData(t, "global_index.json", s)
-	tests := []struct {
-		name                string
-		traceID             string
-		wantTraceSegmentNum int
-		wantErr             bool
-	}{
-		{
-			name:                "trace id is 1",
-			traceID:             "1",
-			wantTraceSegmentNum: 2,
-		},
-		{
-			name:                "trace id is 2",
-			traceID:             "2",
-			wantTraceSegmentNum: 3,
-		},
-		{
-			name:    "unknown trace id",
-			traceID: "foo",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	Context("Querying by global indices", func() {
+		BeforeEach(func() {
+			_ = setupQueryData("global_index.json", s)
+		})
+		DescribeTable("", func(traceID string, wantTraceSegmentNum int, wantErr bool) {
 			shards, errShards := s.Shards(nil)
-			tester.NoError(errShards)
+			Expect(errShards).ShouldNot(HaveOccurred())
 			err := func() error {
+				itemSize := 0
 				for _, shard := range shards {
 					itemIDs, err := shard.Index().Seek(index.Field{
 						Key: index.FieldKey{
+							SeriesID: tsdb.GlobalSeriesID(tsdb.Entry(s.name)),
 							//trace_id
 							IndexRuleID: 10,
 						},
-						Term: []byte(tt.traceID),
+						Term: []byte(traceID),
 					})
 					if err != nil {
 						return errors.WithStack(err)
@@ -581,7 +608,7 @@ func Test_Stream_Global_Index(t *testing.T) {
 					if err != nil {
 						return errors.WithStack(err)
 					}
-					tester.Equal(tt.wantTraceSegmentNum, len(itemIDs))
+					itemSize += len(itemIDs)
 					for _, itemID := range itemIDs {
 						segShard, err := s.Shard(itemID.ShardID)
 						if err != nil {
@@ -605,7 +632,7 @@ func Test_Stream_Global_Index(t *testing.T) {
 							}
 							for _, tag := range tagFamily.GetTags() {
 								if tag.GetKey() == "trace_id" {
-									tester.Equal(tt.traceID, tag.GetValue().GetStr().GetValue())
+									Expect(tag.GetValue().GetStr().GetValue()).To(Equal(traceID))
 								}
 							}
 							return nil
@@ -616,26 +643,48 @@ func Test_Stream_Global_Index(t *testing.T) {
 
 					}
 				}
+				Expect(itemSize).To(Equal(wantTraceSegmentNum))
 				return nil
 			}()
-			if tt.wantErr {
-				tester.Error(err)
+			if wantErr {
+				Expect(err).Should(HaveOccurred())
 				return
 			}
-			tester.NoError(err)
-		})
-	}
-}
+			Expect(err).ShouldNot(HaveOccurred())
+		},
+			Entry(
+				"trace id is 1",
+				"1",
+				2,
+				false,
+			),
+			Entry(
+				"trace id is 2",
+				"2",
+				3,
+				false,
+			),
+			Entry(
+				"unknown trace id",
+				"foo",
+				0,
+				false,
+			),
+		)
+	})
+
+})
 
 type queryOpts struct {
-	entity    tsdb.Entity
-	timeRange timestamp.TimeRange
-	buildFn   func(builder tsdb.SeekerBuilder)
+	entity   tsdb.Entity
+	offset   time.Duration
+	duration time.Duration
+	buildFn  func(builder tsdb.SeekerBuilder)
 }
 
-func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForTest, error) {
+func queryData(s *stream, baseTime time.Time, opts queryOpts) (shardsForTest, error) {
 	shards, err := s.Shards(opts.entity)
-	tester.NoError(err)
+	Expect(err).ShouldNot(HaveOccurred())
 	got := shardsForTest{}
 	for _, shard := range shards {
 		seriesList, err := shard.Series().List(tsdb.NewPath(opts.entity))
@@ -644,9 +693,11 @@ func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForT
 		}
 		for _, series := range seriesList {
 			got, err = func(g shardsForTest) (shardsForTest, error) {
-				sp, errInner := series.Span(opts.timeRange)
+				sp, errInner := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime.Add(opts.offset), opts.duration))
 				defer func(sp tsdb.SeriesSpan) {
-					_ = sp.Close()
+					if sp != nil {
+						_ = sp.Close()
+					}
 				}(sp)
 				if errInner != nil {
 					return nil, errInner
@@ -679,7 +730,7 @@ func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForT
 						if errInner != nil {
 							return nil, errInner
 						}
-						tester.NotEmpty(eleID)
+						Expect(eleID).ShouldNot(BeEmpty())
 					}
 					_ = iterator.Close()
 					g = append(g, shardStruct{
@@ -705,19 +756,18 @@ func queryData(tester *assert.Assertions, s *stream, opts queryOpts) (shardsForT
 //go:embed testdata/*.json
 var dataFS embed.FS
 
-func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTime time.Time) {
-	t := assert.New(testing)
+func setupQueryData(dataFile string, stream *stream) (baseTime time.Time) {
 	var templates []interface{}
 	baseTime = time.Now()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
-	t.NoError(err)
-	t.NoError(json.Unmarshal(content, &templates))
+	Expect(err).ShouldNot(HaveOccurred())
+	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
-		t.NoError(errMarshal)
+		Expect(errMarshal).ShouldNot(HaveOccurred())
 		searchTagFamily := &modelv1.TagFamilyForWrite{}
-		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
+		Expect(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily)).ShouldNot(HaveOccurred())
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
@@ -735,7 +785,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream *stream) (baseTi
 		}
 		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
 		errInner := stream.Write(e)
-		t.NoError(errInner)
+		Expect(errInner).ShouldNot(HaveOccurred())
 	}
 	return baseTime
 }

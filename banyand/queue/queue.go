@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+//go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
 type Queue interface {
 	run.Unit
 	bus.Subscriber

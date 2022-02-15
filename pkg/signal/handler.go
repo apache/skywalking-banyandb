@@ -51,20 +51,17 @@ func (h *Handler) PreRun() error {
 }
 
 // Serve implements run.Service and listens for incoming unix signals.
-func (h *Handler) Serve() error {
-	for {
-		select {
-		case sig := <-h.signal:
-			return fmt.Errorf("%s %w", sig, ErrSignal)
-		case <-h.cancel:
-			signal.Stop(h.signal)
-			close(h.signal)
-			return nil
-		}
-	}
+func (h *Handler) Serve() run.StopNotify {
+	go func() {
+		sig := <-h.signal
+		fmt.Fprintf(os.Stderr, "%s %v", sig, ErrSignal)
+		close(h.cancel)
+	}()
+	return h.cancel
 }
 
 // GracefulStop implements run.GroupService and will close the signal handler.
 func (h *Handler) GracefulStop() {
-	close(h.cancel)
+	signal.Stop(h.signal)
+	close(h.signal)
 }
