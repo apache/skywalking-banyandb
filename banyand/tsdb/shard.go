@@ -31,6 +31,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const defaultBlockQueueSize = 1 << 4
+
 var _ Shard = (*shard)(nil)
 
 type shard struct {
@@ -55,16 +57,24 @@ func (s *shard) Index() IndexDatabase {
 	return s.indexDatabase
 }
 
-func OpenShard(ctx context.Context, id common.ShardID, root string, segmentSize, blockSize IntervalRule) (Shard, error) {
+func OpenShard(ctx context.Context, id common.ShardID,
+	root string, segmentSize, blockSize IntervalRule, openedBlockSize int) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
 		return nil, errors.Wrapf(err, "make the directory of the shard %d ", int(id))
 	}
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
 	l.Info().Int("shard_id", int(id)).Str("path", path).Msg("creating a shard")
+	if openedBlockSize < 1 {
+		openedBlockSize = defaultBlockQueueSize
+	}
+	sc, err := newSegmentController(path, segmentSize, blockSize, openedBlockSize, l)
+	if err != nil {
+		return nil, errors.Wrapf(err, "create the segment controller of the shard %d", int(id))
+	}
 	s := &shard{
 		id:                id,
-		segmentController: newSegmentController(path, segmentSize, blockSize),
+		segmentController: sc,
 		l:                 l,
 	}
 	shardCtx := context.WithValue(ctx, logger.ContextKey, s.l)
@@ -156,14 +166,34 @@ type segmentController struct {
 	segmentSize IntervalRule
 	blockSize   IntervalRule
 	lst         []*segment
+	blockQueue  bucket.Queue
+
+	l *logger.Logger
 }
 
-func newSegmentController(location string, segmentSize, blockSize IntervalRule) *segmentController {
-	return &segmentController{
+type blockIDAndSegID struct {
+	segID   uint16
+	blockID uint16
+}
+
+func newSegmentController(location string, segmentSize, blockSize IntervalRule, openedBlockSize int, l *logger.Logger) (*segmentController, error) {
+	sc := &segmentController{
 		location:    location,
 		segmentSize: segmentSize,
 		blockSize:   blockSize,
+		l:           l,
 	}
+	var err error
+	sc.blockQueue, err = bucket.NewQueue(openedBlockSize, func(id interface{}) {
+		bsID := id.(blockIDAndSegID)
+		seg := sc.get(bsID.segID)
+		if seg == nil {
+			l.Warn().Uint16("segID", bsID.segID).Msg("segment is absent")
+			return
+		}
+		seg.notifyCloseBlock(bsID.blockID)
+	})
+	return sc, err
 }
 
 func (sc *segmentController) get(segID uint16) *segment {
@@ -220,6 +250,10 @@ func (sc *segmentController) Next() (bucket.Reporter, error) {
 	seg := sc.Current().(*segment)
 	return sc.create(context.TODO(), sc.Format(
 		sc.segmentSize.NextTime(seg.Start)))
+}
+
+func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
+	sc.l.Info().Stringer("prev", prev).Stringer("next", next).Msg("move to the next segment")
 }
 
 func (sc *segmentController) Format(tm time.Time) string {
@@ -282,7 +316,7 @@ func (sc *segmentController) load(ctx context.Context, suffix, path string) (seg
 	if err != nil {
 		return nil, err
 	}
-	seg, err = openSegment(ctx, startTime, path, suffix, sc.segmentSize, sc.blockSize)
+	seg, err = openSegment(ctx, startTime, path, suffix, sc.segmentSize, sc.blockSize, sc.blockQueue)
 	if err != nil {
 		return nil, err
 	}

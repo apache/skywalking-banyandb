@@ -53,6 +53,24 @@ func (t TimeRange) Duration() time.Duration {
 	return t.End.Sub(t.Start)
 }
 
+func (t TimeRange) String() string {
+	var buf []byte
+	if t.IncludeStart {
+		buf = []byte("[")
+	} else {
+		buf = []byte("(")
+	}
+	buf = append(buf, t.Start.String()...)
+	buf = append(buf, ", "...)
+	buf = append(buf, t.End.String()...)
+	if t.IncludeEnd {
+		buf = append(buf, "]"...)
+	} else {
+		buf = append(buf, ")"...)
+	}
+	return string(buf)
+}
+
 func NewInclusiveTimeRange(start, end time.Time) TimeRange {
 	return TimeRange{
 		Start:        start,

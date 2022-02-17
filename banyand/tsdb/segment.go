@@ -37,15 +37,16 @@ type segment struct {
 	path   string
 	suffix string
 
-	globalIndex kv.Store
-	l           *logger.Logger
+	blockCloseCh chan uint16
+	globalIndex  kv.Store
+	l            *logger.Logger
 	timestamp.TimeRange
 	bucket.Reporter
 	blockController     *blockController
 	blockManageStrategy *bucket.Strategy
 }
 
-func openSegment(ctx context.Context, startTime time.Time, path, suffix string, segmentSize, blockSize IntervalRule) (s *segment, err error) {
+func openSegment(ctx context.Context, startTime time.Time, path, suffix string, segmentSize, blockSize IntervalRule, blockQueue bucket.Queue) (s *segment, err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
 		return nil, err
@@ -53,14 +54,16 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 	// TODO: fix id overflow
 	id := uint16(segmentSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
 	timeRange := timestamp.NewTimeRange(startTime, segmentSize.NextTime(startTime), true, false)
+	l := logger.Fetch(ctx, "segment")
 	s = &segment{
 		id:              id,
 		path:            path,
 		suffix:          suffix,
-		l:               logger.Fetch(ctx, "segment"),
-		blockController: newBlockController(id, path, timeRange, blockSize),
+		l:               l,
+		blockController: newBlockController(id, path, timeRange, blockSize, l, blockQueue),
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange),
+		blockCloseCh:    make(chan uint16, 24),
 	}
 	err = s.blockController.open(context.WithValue(ctx, logger.ContextKey, s.l))
 	if err != nil {
@@ -79,6 +82,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 		return nil, err
 	}
 	s.blockManageStrategy.Run()
+	s.blockController.listenToBlockClosing(s.blockCloseCh)
 	return s, nil
 }
 
@@ -89,6 +93,14 @@ func (s *segment) close() {
 	s.Stop()
 }
 
+func (s *segment) notifyCloseBlock(id uint16) {
+	s.blockCloseCh <- id
+}
+
+func (s segment) String() string {
+	return s.Reporter.String()
+}
+
 type blockController struct {
 	sync.RWMutex
 	segID        uint16
@@ -96,14 +108,22 @@ type blockController struct {
 	segTimeRange timestamp.TimeRange
 	blockSize    IntervalRule
 	lst          []*block
+	blockQueue   bucket.Queue
+	closing      chan struct{}
+
+	l *logger.Logger
 }
 
-func newBlockController(segID uint16, location string, segTimeRange timestamp.TimeRange, blockSize IntervalRule) *blockController {
+func newBlockController(segID uint16, location string, segTimeRange timestamp.TimeRange,
+	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue) *blockController {
 	return &blockController{
 		segID:        segID,
 		location:     location,
 		blockSize:    blockSize,
 		segTimeRange: segTimeRange,
+		closing:      make(chan struct{}),
+		blockQueue:   blockQueue,
+		l:            l,
 	}
 }
 
@@ -131,6 +151,46 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 		return nil, bucket.ErrNoMoreBucket
 	}
 	return reporter, err
+}
+
+func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
+	bc.blockQueue.Push(blockIDAndSegID{
+		segID:   bc.segID,
+		blockID: prev.(*block).blockID,
+	})
+}
+
+func (bc *blockController) listenToBlockClosing(closeCh <-chan uint16) {
+	go func() {
+		for {
+			select {
+			case id := <-closeCh:
+				b := bc.removeBlock(id)
+				if b != nil {
+					b.close()
+					continue
+				}
+				bc.l.Warn().Uint16("blockID", id).Uint16("segID", id).
+					Msg("block is absent on removing it from the segment")
+			case <-bc.closing:
+				return
+			}
+		}
+	}()
+}
+
+func (bc *blockController) removeBlock(blockID uint16) *block {
+	bc.Lock()
+	defer bc.Unlock()
+	for i := range bc.lst {
+		b := bc.lst[i]
+		if b.blockID == blockID {
+			//remove the block from the internal lst
+			bc.lst = append(bc.lst[:i], bc.lst[i+1:]...)
+			return b
+		}
+	}
+	return nil
 }
 
 func (bc *blockController) Format(tm time.Time) string {
@@ -260,6 +320,7 @@ func (bc *blockController) load(ctx context.Context, suffix, path string) (b *bl
 }
 
 func (bc *blockController) close() {
+	bc.closing <- struct{}{}
 	for _, s := range bc.lst {
 		s.close()
 	}

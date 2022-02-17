@@ -111,6 +111,7 @@ func (s *Strategy) Run() {
 					}
 				}
 				if ratio >= 1.0 {
+					s.ctrl.OnMove(s.current, s.next)
 					s.current = s.next
 					s.next = nil
 					goto bucket
