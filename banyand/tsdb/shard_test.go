@@ -19,6 +19,9 @@ package tsdb_test
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -55,6 +58,7 @@ var _ = Describe("Shard", func() {
 					Unit: tsdb.MILLISECOND,
 					Num:  1000,
 				},
+				1<<4,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			segDirectories := make([]string, 3)
@@ -81,6 +85,45 @@ var _ = Describe("Shard", func() {
 					return num
 				}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 3))
 			}
+		})
+		It("closes blocks", func() {
+			var err error
+			shard, err = tsdb.OpenShard(context.TODO(), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  1,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.MILLISECOND,
+					Num:  1000,
+				},
+				2,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			var segDirectory string
+			Eventually(func() int {
+				num := 0
+				errInternal := tsdb.WalkDir(tmp+"/shard-0", "seg-", func(suffix, absolutePath string) error {
+					if num < 1 {
+						segDirectory = absolutePath
+					}
+					num++
+					return nil
+				})
+				Expect(errInternal).NotTo(HaveOccurred())
+				return num
+			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 1))
+			Eventually(func() int {
+				num := 0
+				errInternal := tsdb.WalkDir(segDirectory, "block-", func(suffix, absolutePath string) error {
+					if _, err := os.Stat(path.Join(absolutePath, "store", "LOCK")); errors.Is(err, os.ErrNotExist) {
+						num++
+					}
+					return nil
+				})
+				Expect(errInternal).NotTo(HaveOccurred())
+				return num
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 1))
 		})
 
 	})

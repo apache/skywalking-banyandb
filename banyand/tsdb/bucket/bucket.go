@@ -26,6 +26,7 @@ import (
 type Controller interface {
 	Current() Reporter
 	Next() (Reporter, error)
+	OnMove(prev, next Reporter)
 }
 
 type Status struct {
@@ -38,6 +39,7 @@ type Channel chan Status
 type Reporter interface {
 	Report() Channel
 	Stop()
+	String() string
 }
 
 type timeBasedReporter struct {

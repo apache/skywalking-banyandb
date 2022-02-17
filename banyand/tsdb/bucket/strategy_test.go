@@ -109,6 +109,9 @@ func (c *controller) Current() bucket.Reporter {
 	return c.reporter
 }
 
+func (c *controller) OnMove(prev bucket.Reporter, next bucket.Reporter) {
+}
+
 func (c *controller) newReporter() {
 	c.reporter = &reporter{step: c.step, capacity: c.capacity}
 }
@@ -141,4 +144,8 @@ func (r *reporter) Report() bucket.Channel {
 }
 
 func (r *reporter) Stop() {
+}
+
+func (r *reporter) String() string {
+	return "default"
 }

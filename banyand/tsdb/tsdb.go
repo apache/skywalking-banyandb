@@ -186,7 +186,7 @@ func createDatabase(ctx context.Context, db *database, startID int) (Database, e
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
 		so, errNewShard := OpenShard(ctx, common.ShardID(i),
-			db.location, db.segmentSize, db.blockSize)
+			db.location, db.segmentSize, db.blockSize, defaultBlockQueueSize)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -216,6 +216,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 			db.location,
 			db.segmentSize,
 			db.blockSize,
+			defaultBlockQueueSize,
 		)
 		if errOpenShard != nil {
 			return errOpenShard

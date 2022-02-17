@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
+	"go.uber.org/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -37,10 +38,11 @@ import (
 )
 
 type block struct {
-	path   string
-	l      *logger.Logger
-	suffix string
-	ref    *z.Closer
+	path    string
+	l       *logger.Logger
+	suffix  string
+	ref     *z.Closer
+	closing *atomic.Bool
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
@@ -76,6 +78,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		l:         logger.Fetch(ctx, "block"),
 		TimeRange: timeRange,
 		Reporter:  bucket.NewTimeBasedReporter(timeRange),
+		closing:   atomic.NewBool(false),
 	}
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
@@ -113,10 +116,17 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		return nil, err
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
+	go func() {
+		<-b.ref.HasBeenClosed()
+		b.closing.Store(true)
+	}()
 	return b, err
 }
 
 func (b *block) delegate() blockDelegate {
+	if b.closing.Load() {
+		return nil
+	}
 	b.incRef()
 	return &bDelegate{
 		delegate: b,
@@ -137,6 +147,10 @@ func (b *block) close() {
 	for _, closer := range b.closableLst {
 		_ = closer.Close()
 	}
+}
+
+func (b block) String() string {
+	return b.Reporter.String()
 }
 
 type blockDelegate interface {
