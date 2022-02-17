@@ -123,7 +123,7 @@ var _ = Describe("Shard", func() {
 				})
 				Expect(errInternal).NotTo(HaveOccurred())
 				return num
-			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 2))
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 1))
 		})
 
 	})
