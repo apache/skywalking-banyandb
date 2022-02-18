@@ -88,7 +88,6 @@ func (t *globalIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Ele
 	for _, shard := range shards {
 		elementsInShard, shardErr := t.executeForShard(ec, shard)
 		if shardErr != nil {
-			// TODO: shall we proceed?
 			return elements, shardErr
 		}
 		elements = append(elements, elementsInShard...)

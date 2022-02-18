@@ -180,7 +180,7 @@ func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, erro
 		return nil, err
 	}
 
-	if seriesList == nil || len(seriesList) == 0 {
+	if len(seriesList) == 0 {
 		return nil, nil
 	}
 
