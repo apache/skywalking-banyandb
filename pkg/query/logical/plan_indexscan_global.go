@@ -86,9 +86,10 @@ func (t *globalIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Ele
 	}
 	var elements []*streamv1.Element
 	for _, shard := range shards {
-		elementsInShard, err := t.executeForShard(ec, shard)
-		if err != nil {
-			return elements, err
+		elementsInShard, shardErr := t.executeForShard(ec, shard)
+		if shardErr != nil {
+			// TODO: shall we proceed?
+			return elements, shardErr
 		}
 		elements = append(elements, elementsInShard...)
 	}
@@ -119,7 +120,9 @@ func (t *globalIndexScan) executeForShard(ec executor.ExecutionContext, shard ts
 		err = func() error {
 			item, closer, errInner := series.Get(itemID)
 			defer func(closer io.Closer) {
-				_ = closer.Close()
+				if closer != nil {
+					_ = closer.Close()
+				}
 			}(closer)
 			if errInner != nil {
 				return errors.WithStack(errInner)

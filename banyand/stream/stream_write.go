@@ -112,7 +112,8 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			Interface("data", value).
 			Uint64("series_id", uint64(series.ID())).
 			Int("shard_id", int(shardID)).
-			Msg("write measure")
+			Str("stream", sm.Metadata.GetName()).
+			Msg("write stream")
 		return writer, errWrite
 	}
 	writer, err := writeFn()
