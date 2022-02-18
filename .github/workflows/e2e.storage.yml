@@ -1,0 +1,74 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: OAP-E2E
+
+on:
+  pull_request:
+  schedule:
+    - cron: '0 18 * * *'
+
+env:
+  SW_AGENT_JDK_VERSION: 8
+
+concurrency:
+  group: e2e-storages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  StoragePlugins:
+    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
+    name: Storage
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        config-file:
+          - storage/banyandb/e2e.yaml
+    env:
+      TAG: ${{ github.sha }}
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.17
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v2
+      - name: Update dependencies 
+        run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Generate codes
+        run: make generate
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Build docker image
+        run: |
+          make docker || make docker
+          docker image ls
+      - name: Run E2E Test
+        uses: ./.github/actions/infra-e2e-test
+        with:
+          config-file: ${{ matrix.config-file }}
+
+  Storage:
+    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [StoragePlugins]
+    steps:
+      - name: To pass or not pass
+        run: echo "Just to make the GitHub merge button green"
