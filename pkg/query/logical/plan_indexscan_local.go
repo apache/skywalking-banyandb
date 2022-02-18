@@ -149,7 +149,7 @@ func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Elem
 
 	var elems []*streamv1.Element
 
-	if iters == nil || len(iters) == 0 {
+	if len(iters) == 0 {
 		return elems, nil
 	}
 

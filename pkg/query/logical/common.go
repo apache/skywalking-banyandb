@@ -48,7 +48,7 @@ func createComparator(sortDirection modelv1.Sort) comparator {
 func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*FieldRef) ([]*modelv1.TagFamily, error) {
 	tagFamily := make([]*modelv1.TagFamily, len(projectionFieldRefs))
 	for i, refs := range projectionFieldRefs {
-		if refs == nil || len(refs) == 0 {
+		if len(refs) == 0 {
 			continue
 		}
 		tags := make([]*modelv1.Tag, len(refs))
