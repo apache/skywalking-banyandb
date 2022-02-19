@@ -22,6 +22,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"os"
 	"strconv"
 	"testing"
@@ -235,6 +236,23 @@ func TestQueryProcessor(t *testing.T) {
 					Offset(0).
 					Metadata("default", "sw").
 					TimeRange(sT, eT).
+					Projection("searchable", "trace_id").
+					Projection("data", "data_binary").
+					Build()
+			},
+			wantLen: 5,
+			checker: withDataBinaryChecker,
+		},
+		{
+			name: "query max valid time-range which covers all the segments with data binary projection",
+			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
+				return pb.NewQueryRequestBuilder().
+					Limit(10).
+					Offset(0).
+					Metadata("default", "sw").
+					// min: 1677-09-21T00:12:43.145224194Z
+					// max: 2262-04-11T23:47:16.854775806Z
+					TimeRange(time.Unix(0, math.MinInt64), time.Unix(0, math.MaxInt64)).
 					Projection("searchable", "trace_id").
 					Projection("data", "data_binary").
 					Build()

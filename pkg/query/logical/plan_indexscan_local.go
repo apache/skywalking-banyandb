@@ -137,16 +137,23 @@ func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Elem
 	}
 	var iters []tsdb.Iterator
 	for _, shard := range shards {
-		itersInShard, err := i.executeInShard(shard)
-		if err != nil {
-			return nil, err
+		itersInShard, innerErr := i.executeInShard(shard)
+		if innerErr != nil {
+			return nil, innerErr
+		}
+		if itersInShard == nil {
+			continue
 		}
 		iters = append(iters, itersInShard...)
 	}
 
-	c := createComparator(i.sort)
-
 	var elems []*streamv1.Element
+
+	if len(iters) == 0 {
+		return elems, nil
+	}
+
+	c := createComparator(i.sort)
 	it := NewItemIter(iters, c)
 	for it.HasNext() {
 		nextItem := it.Next()
@@ -171,6 +178,10 @@ func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, erro
 	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
 	if err != nil {
 		return nil, err
+	}
+
+	if len(seriesList) == 0 {
+		return nil, nil
 	}
 
 	var builders []seekerBuilder
