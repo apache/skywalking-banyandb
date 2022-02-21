@@ -18,6 +18,7 @@ version: '2.1'
 services:
   banyandb:
     image: "skywalking-banyandb:${TAG}"
+    command: ["standalone", "--root-path", "/tmp/banyandb-data"]
     expose:
       - 6667
     networks:
