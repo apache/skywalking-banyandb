@@ -20,11 +20,14 @@ services:
     image: "skywalking-banyandb:${TAG}"
     command: ["standalone", "--root-path", "/tmp/banyandb-data"]
     expose:
-      - 6667
+      - 17912
+    ports:
+      - 17912
+      - 6060
     networks:
       - e2e
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/17912"]
+      test: ["CMD", "nc", "-zv", "127.0.0.1", "17912"]
       interval: 5s
       timeout: 60s
       retries: 120
