@@ -29,37 +29,83 @@ services:
       retries: 120
 
   oap:
-    extends:
-      file: ../../../script/docker-compose/base-compose.yml
-      service: oap
-    environment:
-      SW_STORAGE: banyandb
+    # Pin OAP server
+    image: "ghcr.io/apache/skywalking-banyandb/oap:${SW_OAP_COMMIT}"
+    expose:
+      - 11800
+      - 12800
+      - 10051
+      - 5005
     ports:
       - 12800
     networks:
       - e2e
+    volumes:
+      - ./../prepare/setup-oap/log4j2.xml:/skywalking/config/log4j2.xml
+    environment:
+      SW_CLUSTER_ZK_HOST_PORT: zk:2181
+      SW_CONFIG_ETCD_PERIOD: 1
+      SW_CONFIG_ETCD_ENDPOINTS: http://etcd:2379
+      SW_CLUSTER_ETCD_ENDPOINTS: http://etcd:2379
+      SW_STORAGE: banyandb
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
     depends_on:
       banyandb:
         condition: service_healthy
 
   provider:
-    extends:
-      file: ../../../script/docker-compose/base-compose.yml
-      service: provider
+    image: "quay.io/megrez/skywalking-oap-provider:latest"
+    command: [ "java", "-jar", "/services_provider.jar" ]
+    environment:
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      SW_AGENT_NAME: e2e-service-provider
+      SW_AGENT_INSTANCE_NAME: provider1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    expose:
+      - 9090
+      - 5005
     ports:
       - 9090
     networks:
       - e2e
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
     depends_on:
       oap:
         condition: service_healthy
 
   consumer:
-    extends:
-      file: ../../../script/docker-compose/base-compose.yml
-      service: consumer
+    image: "quay.io/megrez/skywalking-oap-consumer:latest"
+    command: [ "java", "-jar", "/services_consumer.jar" ]
+    networks:
+      - e2e
+    expose:
+      - 9092
+      - 5005
     ports:
       - 9092
+    environment:
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      PROVIDER_URL: http://provider:9090
+      SW_AGENT_NAME: e2e-service-consumer
+      SW_AGENT_INSTANCE_NAME: consumer1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
     depends_on:
       oap:
         condition: service_healthy

@@ -28,24 +28,8 @@ runs:
     - name: Set Skip Env Var
       uses: ./.github/actions/skip
     - if: env.SKIP_CI != 'true'
-      name: Cache local Maven repository
-      uses: actions/cache@v2
-      with:
-        path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-        restore-keys: |
-          ${{ runner.os }}-maven-
-    - if: env.SKIP_CI != 'true'
       name: Check License
       uses: apache/skywalking-eyes@a63f4afcc287dfb3727ecc45a4afc55a5e69c15f
-    - if: env.SKIP_CI != 'true'
-      name: Build Java Test Services
-      shell: bash
-      run: |
-        echo "::group::build java test services"
-        # Retry one more time due to frequent "maven connection reset"
-        ./mvnw --batch-mode -f test/e2e-v2/java-test-service/pom.xml clean package
-        echo "::endgroup::"
     - if: env.SKIP_CI != 'true'
       name: Setup go
       uses: actions/setup-go@v2
