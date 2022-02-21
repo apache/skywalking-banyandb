@@ -163,6 +163,10 @@ func (sd *shardDelegate) Index() tsdb.IndexDatabase {
 	return sd.delegated.Index()
 }
 
+func (sd *shardDelegate) State() tsdb.ShardState {
+	return sd.delegated.State()
+}
+
 var _ tsdb.SeriesDatabase = (*seriesDatabaseDelegate)(nil)
 
 type seriesDatabaseDelegate struct {

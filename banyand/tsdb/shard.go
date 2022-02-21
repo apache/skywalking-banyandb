@@ -45,18 +45,6 @@ type shard struct {
 	segmentManageStrategy *bucket.Strategy
 }
 
-func (s *shard) ID() common.ShardID {
-	return s.id
-}
-
-func (s *shard) Series() SeriesDatabase {
-	return s.seriesDatabase
-}
-
-func (s *shard) Index() IndexDatabase {
-	return s.indexDatabase
-}
-
 func OpenShard(ctx context.Context, id common.ShardID,
 	root string, segmentSize, blockSize IntervalRule, openedBlockSize int) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
@@ -102,6 +90,34 @@ func OpenShard(ctx context.Context, id common.ShardID,
 	}
 	s.segmentManageStrategy.Run()
 	return s, nil
+}
+
+func (s *shard) ID() common.ShardID {
+	return s.id
+}
+
+func (s *shard) Series() SeriesDatabase {
+	return s.seriesDatabase
+}
+
+func (s *shard) Index() IndexDatabase {
+	return s.indexDatabase
+}
+
+func (s *shard) State() (shardState ShardState) {
+	for _, seg := range s.segmentController.segments() {
+		for _, b := range seg.blockController.blocks() {
+			shardState.OpenedBlocks = append(shardState.OpenedBlocks, BlockState{
+				ID: BlockID{
+					SegID:   b.segID,
+					BlockID: b.blockID,
+				},
+				TimeRange: b.TimeRange,
+				Closed:    b.isClosed(),
+			})
+		}
+	}
+	return shardState
 }
 
 func (s *shard) Close() error {
@@ -171,11 +187,6 @@ type segmentController struct {
 	l *logger.Logger
 }
 
-type blockIDAndSegID struct {
-	segID   uint16
-	blockID uint16
-}
-
 func newSegmentController(location string, segmentSize, blockSize IntervalRule, openedBlockSize int, l *logger.Logger) (*segmentController, error) {
 	sc := &segmentController{
 		location:    location,
@@ -185,13 +196,14 @@ func newSegmentController(location string, segmentSize, blockSize IntervalRule, 
 	}
 	var err error
 	sc.blockQueue, err = bucket.NewQueue(openedBlockSize, func(id interface{}) {
-		bsID := id.(blockIDAndSegID)
-		seg := sc.get(bsID.segID)
+		bsID := id.(BlockID)
+		seg := sc.get(bsID.SegID)
 		if seg == nil {
-			l.Warn().Uint16("segID", bsID.segID).Msg("segment is absent")
+			l.Warn().Uint16("segID", bsID.SegID).Msg("segment is absent")
 			return
 		}
-		seg.notifyCloseBlock(bsID.blockID)
+		l.Info().Uint16("blockID", bsID.BlockID).Uint16("segID", bsID.SegID).Msg("closing the block")
+		seg.closeBlock(bsID.BlockID)
 	})
 	return sc, err
 }
@@ -253,7 +265,14 @@ func (sc *segmentController) Next() (bucket.Reporter, error) {
 }
 
 func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
-	sc.l.Info().Stringer("prev", prev).Stringer("next", next).Msg("move to the next segment")
+	event := sc.l.Info()
+	if prev != nil {
+		event.Stringer("prev", prev)
+	}
+	if next != nil {
+		event.Stringer("next", next)
+	}
+	event.Msg("move to the next segment")
 }
 
 func (sc *segmentController) Format(tm time.Time) string {
