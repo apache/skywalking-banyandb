@@ -17,7 +17,7 @@ version: '2.1'
 
 services:
   banyandb:
-    image: "ghcr.io/apache/skywalking-banyandb:${TAG}"
+    image: "skywalking-banyandb:${TAG}"
     expose:
       - 6667
     networks:
