@@ -30,7 +30,7 @@ services:
 
   oap:
     # Pin OAP server
-    image: "ghcr.io/apache/skywalking-banyandb/oap:${SW_OAP_COMMIT}"
+    image: "quay.io/megrez/skywalking-oap:${SW_OAP_COMMIT}"
     expose:
       - 11800
       - 12800
