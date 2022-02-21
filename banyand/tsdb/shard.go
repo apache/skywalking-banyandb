@@ -260,8 +260,12 @@ func (sc *segmentController) Current() bucket.Reporter {
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
 	seg := sc.Current().(*segment)
-	return sc.create(context.TODO(), sc.Format(
+	reporter, err := sc.create(context.TODO(), sc.Format(
 		sc.segmentSize.NextTime(seg.Start)))
+	if errors.Is(err, ErrEndOfSegment) {
+		return nil, bucket.ErrNoMoreBucket
+	}
+	return reporter, err
 }
 
 func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
@@ -339,11 +343,9 @@ func (sc *segmentController) load(ctx context.Context, suffix, path string) (seg
 	if err != nil {
 		return nil, err
 	}
-	{
-		sc.Lock()
-		defer sc.Unlock()
-		sc.lst = append(sc.lst, seg)
-	}
+	sc.Lock()
+	defer sc.Unlock()
+	sc.lst = append(sc.lst, seg)
 	return seg, nil
 }
 
