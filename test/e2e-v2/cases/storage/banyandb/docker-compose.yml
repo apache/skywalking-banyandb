@@ -58,7 +58,7 @@ services:
         condition: service_healthy
 
   provider:
-    image: "lujiajing1126/skywalking-oap-provider:latest"
+    image: "quay.io/megrez/skywalking-oap-e2e-provider:latest"
     command: [ "java", "-jar", "/services_provider.jar" ]
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
@@ -84,7 +84,7 @@ services:
         condition: service_healthy
 
   consumer:
-    image: "lujiajing1126/skywalking-oap-consumer:latest"
+    image: "quay.io/megrez/skywalking-oap-e2e-consumer:latest"
     command: [ "java", "-jar", "/services_consumer.jar" ]
     networks:
       - e2e
