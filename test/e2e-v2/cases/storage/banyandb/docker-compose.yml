@@ -52,6 +52,7 @@ services:
       SW_CONFIG_ETCD_ENDPOINTS: http://etcd:2379
       SW_CLUSTER_ETCD_ENDPOINTS: http://etcd:2379
       SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_HOST: banyandb
     healthcheck:
       test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800" ]
       interval: 5s
