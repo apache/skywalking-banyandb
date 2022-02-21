@@ -30,7 +30,7 @@ services:
 
   oap:
     # Pin OAP server
-    image: "quay.io/megrez/skywalking-oap:${SW_OAP_COMMIT}"
+    image: "lujiajing1126/skywalking-oap:${SW_OAP_COMMIT}"
     expose:
       - 11800
       - 12800
@@ -58,7 +58,7 @@ services:
         condition: service_healthy
 
   provider:
-    image: "quay.io/megrez/skywalking-oap-provider:latest"
+    image: "lujiajing1126/skywalking-oap-provider:latest"
     command: [ "java", "-jar", "/services_provider.jar" ]
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
@@ -84,7 +84,7 @@ services:
         condition: service_healthy
 
   consumer:
-    image: "quay.io/megrez/skywalking-oap-consumer:latest"
+    image: "lujiajing1126/skywalking-oap-consumer:latest"
     command: [ "java", "-jar", "/services_consumer.jar" ]
     networks:
       - e2e
