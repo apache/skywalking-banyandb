@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -80,6 +81,7 @@ type Shard interface {
 	ID() common.ShardID
 	Series() SeriesDatabase
 	Index() IndexDatabase
+	State() ShardState
 }
 
 var _ Database = (*database)(nil)
@@ -95,6 +97,20 @@ type DatabaseOpts struct {
 type EncodingMethod struct {
 	EncoderPool encoding.SeriesEncoderPool
 	DecoderPool encoding.SeriesDecoderPool
+}
+
+type BlockID struct {
+	SegID   uint16
+	BlockID uint16
+}
+
+type BlockState struct {
+	ID        BlockID
+	TimeRange timestamp.TimeRange
+	Closed    bool
+}
+type ShardState struct {
+	OpenedBlocks []BlockState
 }
 
 type database struct {

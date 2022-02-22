@@ -230,7 +230,10 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) []blockDelegate {
 	result := make([]blockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		for _, b := range s.blockController.span(timeRange) {
-			result = append(result, b.delegate())
+			bd := b.delegate()
+			if bd != nil {
+				result = append(result, bd)
+			}
 		}
 	}
 	return result

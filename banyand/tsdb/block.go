@@ -21,10 +21,10 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
-	"go.uber.org/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -38,11 +38,12 @@ import (
 )
 
 type block struct {
-	path    string
-	l       *logger.Logger
-	suffix  string
-	ref     *z.Closer
-	closing *atomic.Bool
+	path   string
+	l      *logger.Logger
+	suffix string
+	ref    *z.Closer
+	lock   sync.RWMutex
+	closed bool
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
@@ -51,8 +52,9 @@ type block struct {
 	closableLst   []io.Closer
 	timestamp.TimeRange
 	bucket.Reporter
-	segID   uint16
-	blockID uint16
+	segID          uint16
+	blockID        uint16
+	encodingMethod EncodingMethod
 }
 
 type blockOpts struct {
@@ -70,16 +72,6 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	}
 	id := uint16(opts.blockSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
 	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
-	b = &block{
-		segID:     opts.segID,
-		blockID:   id,
-		path:      opts.path,
-		ref:       z.NewCloser(1),
-		l:         logger.Fetch(ctx, "block"),
-		TimeRange: timeRange,
-		Reporter:  bucket.NewTimeBasedReporter(timeRange),
-		closing:   atomic.NewBool(false),
-	}
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
 		encodingMethodObject = EncodingMethod{
@@ -87,44 +79,60 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 			DecoderPool: encoding.NewPlainDecoderPool(0),
 		}
 	}
-	encodingMethod := encodingMethodObject.(EncodingMethod)
+	b = &block{
+		segID:          opts.segID,
+		blockID:        id,
+		path:           opts.path,
+		l:              logger.Fetch(ctx, "block"),
+		TimeRange:      timeRange,
+		Reporter:       bucket.NewTimeBasedReporter(timeRange),
+		closed:         true,
+		encodingMethod: encodingMethodObject.(EncodingMethod),
+	}
+	return b, err
+}
+
+func (b *block) open() (err error) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if !b.closed {
+		return nil
+	}
+	b.ref = z.NewCloser(1)
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		b.path+"/store",
-		kv.TSSWithEncoding(encodingMethod.EncoderPool, encodingMethod.DecoderPool),
+		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l),
 	); err != nil {
-		return nil, err
+		return err
 	}
 	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
 		Path:   b.path + "/primary",
 		Logger: b.l,
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
 		Path:   b.path + "/inverted",
 		Logger: b.l,
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
 		Path:   b.path + "/lsm",
 		Logger: b.l,
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
-	go func() {
-		<-b.ref.HasBeenClosed()
-		b.closing.Store(true)
-	}()
-	return b, err
+	b.closed = false
+	return nil
 }
 
 func (b *block) delegate() blockDelegate {
-	if b.closing.Load() {
+	if b.isClosed() {
 		return nil
 	}
 	b.incRef()
@@ -142,14 +150,26 @@ func (b *block) incRef() {
 }
 
 func (b *block) close() {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if b.closed {
+		return
+	}
 	b.dscRef()
 	b.ref.SignalAndWait()
 	for _, closer := range b.closableLst {
 		_ = closer.Close()
 	}
+	b.closed = true
 }
 
-func (b block) String() string {
+func (b *block) isClosed() bool {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	return b.closed
+}
+
+func (b *block) String() string {
 	return b.Reporter.String()
 }
 
