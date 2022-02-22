@@ -33,7 +33,7 @@ import (
 )
 
 var _ = Describe("Shard", func() {
-	Describe("Generate segments", func() {
+	Describe("Generate segments and blocks", func() {
 		var tmp string
 		var deferFn func()
 		var shard tsdb.Shard
@@ -47,7 +47,7 @@ var _ = Describe("Shard", func() {
 			shard.Close()
 			deferFn()
 		})
-		It("generates several segments", func() {
+		It("generates several segments and blocks", func() {
 			var err error
 			shard, err = tsdb.OpenShard(context.TODO(), common.ShardID(0), tmp,
 				tsdb.IntervalRule{
@@ -125,6 +125,53 @@ var _ = Describe("Shard", func() {
 				return num
 			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 1))
 		})
-
+		It("reopens closed blocks", func() {
+			var err error
+			shard, err = tsdb.OpenShard(context.TODO(), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.MILLISECOND,
+					Num:  3000,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.MILLISECOND,
+					Num:  1000,
+				},
+				2,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int {
+				num := 0
+				for _, bs := range shard.State().OpenedBlocks {
+					if !bs.Closed {
+						num++
+					}
+				}
+				return num
+			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 2))
+			var closedBlocks []tsdb.BlockState
+			Eventually(func() int {
+				closedBlocks = nil
+				for _, ob := range shard.State().OpenedBlocks {
+					if ob.Closed {
+						closedBlocks = append(closedBlocks, ob)
+					}
+				}
+				return len(closedBlocks)
+			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 1))
+			series, err := shard.Series().GetByID(common.SeriesID(11))
+			Expect(err).NotTo(HaveOccurred())
+			writeFn := func(bs tsdb.BlockState) {
+				span, err := series.Span(bs.TimeRange)
+				Expect(err).NotTo(HaveOccurred())
+				defer span.Close()
+				writer, err := span.WriterBuilder().Family([]byte("test"), []byte("test")).Time(bs.TimeRange.Start).Build()
+				Expect(err).NotTo(HaveOccurred())
+				_, err = writer.Write()
+				Expect(err).NotTo(HaveOccurred())
+			}
+			for _, bs := range closedBlocks {
+				writeFn(bs)
+			}
+		})
 	})
 })

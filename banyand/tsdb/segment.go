@@ -37,9 +37,8 @@ type segment struct {
 	path   string
 	suffix string
 
-	blockCloseCh chan uint16
-	globalIndex  kv.Store
-	l            *logger.Logger
+	globalIndex kv.Store
+	l           *logger.Logger
 	timestamp.TimeRange
 	bucket.Reporter
 	blockController     *blockController
@@ -63,7 +62,6 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 		blockController: newBlockController(id, path, timeRange, blockSize, l, blockQueue),
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange),
-		blockCloseCh:    make(chan uint16, 24),
 	}
 	err = s.blockController.open(context.WithValue(ctx, logger.ContextKey, s.l))
 	if err != nil {
@@ -82,7 +80,6 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 		return nil, err
 	}
 	s.blockManageStrategy.Run()
-	s.blockController.listenToBlockClosing(s.blockCloseCh)
 	return s, nil
 }
 
@@ -93,8 +90,8 @@ func (s *segment) close() {
 	s.Stop()
 }
 
-func (s *segment) notifyCloseBlock(id uint16) {
-	s.blockCloseCh <- id
+func (s *segment) closeBlock(id uint16) {
+	s.blockController.closeBlock(id)
 }
 
 func (s segment) String() string {
@@ -109,7 +106,6 @@ type blockController struct {
 	blockSize    IntervalRule
 	lst          []*block
 	blockQueue   bucket.Queue
-	closing      chan struct{}
 
 	l *logger.Logger
 }
@@ -121,7 +117,6 @@ func newBlockController(segID uint16, location string, segTimeRange timestamp.Ti
 		location:     location,
 		blockSize:    blockSize,
 		segTimeRange: segTimeRange,
-		closing:      make(chan struct{}),
 		blockQueue:   blockQueue,
 		l:            l,
 	}
@@ -150,47 +145,19 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 	if errors.Is(err, ErrEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
 	}
+	err = reporter.open()
+	if err != nil {
+		return nil, err
+	}
 	return reporter, err
 }
 
 func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
-	bc.blockQueue.Push(blockIDAndSegID{
-		segID:   bc.segID,
-		blockID: prev.(*block).blockID,
+	bc.l.Info().Stringer("prev", prev).Stringer("next", next).Msg("move to the next block")
+	bc.blockQueue.Push(BlockID{
+		SegID:   bc.segID,
+		BlockID: prev.(*block).blockID,
 	})
-}
-
-func (bc *blockController) listenToBlockClosing(closeCh <-chan uint16) {
-	go func() {
-		for {
-			select {
-			case id := <-closeCh:
-				b := bc.removeBlock(id)
-				if b != nil {
-					b.close()
-					continue
-				}
-				bc.l.Warn().Uint16("blockID", id).Uint16("segID", id).
-					Msg("block is absent on removing it from the segment")
-			case <-bc.closing:
-				return
-			}
-		}
-	}()
-}
-
-func (bc *blockController) removeBlock(blockID uint16) *block {
-	bc.Lock()
-	defer bc.Unlock()
-	for i := range bc.lst {
-		b := bc.lst[i]
-		if b.blockID == blockID {
-			//remove the block from the internal lst
-			bc.lst = append(bc.lst[:i], bc.lst[i+1:]...)
-			return b
-		}
-	}
-	return nil
 }
 
 func (bc *blockController) Format(tm time.Time) string {
@@ -218,29 +185,75 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 }
 
 func (bc *blockController) span(timeRange timestamp.TimeRange) (bb []*block) {
+	return bc.ensureBlockOpen(bc.search(func(b *block) bool {
+		return b.Overlapping(timeRange)
+	}))
+}
+
+func (bc *blockController) get(blockID uint16) *block {
+	b := bc.getBlock(blockID)
+	if b != nil {
+		return bc.ensureBlockOpen([]*block{b})[0]
+	}
+	return nil
+}
+
+func (bc *blockController) getBlock(blockID uint16) *block {
+	bb := bc.search(func(b *block) bool {
+		return b.blockID == blockID
+	})
+	if len(bb) > 0 {
+		return bb[0]
+	}
+	return nil
+}
+
+func (bc *blockController) blocks() []*block {
+	bc.RLock()
+	defer bc.RUnlock()
+	r := make([]*block, len(bc.lst))
+	copy(r, bc.lst)
+	return r
+}
+
+func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
 	bc.RLock()
 	defer bc.RUnlock()
 	last := len(bc.lst) - 1
 	for i := range bc.lst {
 		b := bc.lst[last-i]
-		if b.Overlapping(timeRange) {
+		if matcher(b) {
 			bb = append(bb, b)
 		}
 	}
 	return bb
 }
 
-func (bc *blockController) get(blockID uint16) *block {
+func (bc *blockController) ensureBlockOpen(blocks []*block) (openedBlocks []*block) {
+	if blocks == nil {
+		return nil
+	}
+	for _, b := range blocks {
+		if b.isClosed() {
+			if err := b.open(); err != nil {
+				bc.l.Error().Err(err).Stringer("block", b).Msg("fail to open block")
+				continue
+			}
+		}
+		openedBlocks = append(openedBlocks, b)
+		bc.blockQueue.Push(b.blockID)
+	}
+	return openedBlocks
+}
+
+func (bc *blockController) closeBlock(blockID uint16) {
 	bc.RLock()
 	defer bc.RUnlock()
-	last := len(bc.lst) - 1
-	for i := range bc.lst {
-		b := bc.lst[last-i]
-		if b.blockID == blockID {
-			return b
-		}
+	b := bc.getBlock(blockID)
+	if b == nil {
+		return
 	}
-	return nil
+	b.close()
 }
 
 func (bc *blockController) startTime(suffix string) (time.Time, error) {
@@ -274,8 +287,11 @@ func (bc *blockController) open(ctx context.Context) error {
 		return err
 	}
 	if bc.Current() == nil {
-		_, err = bc.create(ctx, time.Now())
+		b, err := bc.create(ctx, time.Now())
 		if err != nil {
+			return err
+		}
+		if err = b.open(); err != nil {
 			return err
 		}
 	}
@@ -311,16 +327,13 @@ func (bc *blockController) load(ctx context.Context, suffix, path string) (b *bl
 	}); err != nil {
 		return nil, err
 	}
-	{
-		bc.Lock()
-		defer bc.Unlock()
-		bc.lst = append(bc.lst, b)
-	}
+	bc.Lock()
+	defer bc.Unlock()
+	bc.lst = append(bc.lst, b)
 	return b, nil
 }
 
 func (bc *blockController) close() {
-	bc.closing <- struct{}{}
 	for _, s := range bc.lst {
 		s.close()
 	}
