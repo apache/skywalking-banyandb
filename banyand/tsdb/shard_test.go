@@ -73,7 +73,7 @@ var _ = Describe("Shard", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				return num
-			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 3))
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 3))
 			for _, d := range segDirectories {
 				Eventually(func() int {
 					num := 0
@@ -83,7 +83,7 @@ var _ = Describe("Shard", func() {
 					})
 					Expect(err).NotTo(HaveOccurred())
 					return num
-				}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 3))
+				}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 3))
 			}
 		})
 		It("closes blocks", func() {
@@ -112,7 +112,7 @@ var _ = Describe("Shard", func() {
 				})
 				Expect(errInternal).NotTo(HaveOccurred())
 				return num
-			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 1))
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 1))
 			Eventually(func() int {
 				num := 0
 				errInternal := tsdb.WalkDir(segDirectory, "block-", func(suffix, absolutePath string) error {
@@ -147,7 +147,7 @@ var _ = Describe("Shard", func() {
 					}
 				}
 				return num
-			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 2))
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 2))
 			var closedBlocks []tsdb.BlockState
 			Eventually(func() int {
 				closedBlocks = nil
@@ -157,7 +157,7 @@ var _ = Describe("Shard", func() {
 					}
 				}
 				return len(closedBlocks)
-			}).WithTimeout(10 * time.Second).Should(BeNumerically(">=", 1))
+			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 1))
 			series, err := shard.Series().GetByID(common.SeriesID(11))
 			Expect(err).NotTo(HaveOccurred())
 			writeFn := func(bs tsdb.BlockState) {
