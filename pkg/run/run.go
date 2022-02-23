@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/oklog/run"
+	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 
@@ -231,7 +232,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 
 	// Load config from env and file
 	if err = config.Load(g.f.Name, g.f.FlagSet); err != nil {
-		return false, err
+		return false, errors.Wrapf(err, "%s fails to load config", g.f.Name)
 	}
 
 	// bail early on help or version requests

@@ -209,11 +209,10 @@ func newSegmentController(location string, segmentSize, blockSize IntervalRule, 
 }
 
 func (sc *segmentController) get(segID uint16) *segment {
-	sc.RLock()
-	defer sc.RUnlock()
-	last := len(sc.lst) - 1
-	for i := range sc.lst {
-		s := sc.lst[last-i]
+	lst := sc.snapshotLst()
+	last := len(lst) - 1
+	for i := range lst {
+		s := lst[last-i]
 		if s.id == segID {
 			return s
 		}
@@ -222,16 +221,21 @@ func (sc *segmentController) get(segID uint16) *segment {
 }
 
 func (sc *segmentController) span(timeRange timestamp.TimeRange) (ss []*segment) {
-	sc.RLock()
-	defer sc.RUnlock()
-	last := len(sc.lst) - 1
-	for i := range sc.lst {
-		s := sc.lst[last-i]
+	lst := sc.snapshotLst()
+	last := len(lst) - 1
+	for i := range lst {
+		s := lst[last-i]
 		if s.Overlapping(timeRange) {
 			ss = append(ss, s)
 		}
 	}
 	return ss
+}
+
+func (sc *segmentController) snapshotLst() []*segment {
+	sc.RLock()
+	defer sc.RUnlock()
+	return sc.lst
 }
 
 func (sc *segmentController) segments() (ss []*segment) {

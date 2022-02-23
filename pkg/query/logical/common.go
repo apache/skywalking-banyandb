@@ -20,11 +20,15 @@ package logical
 import (
 	"bytes"
 
+	"github.com/pkg/errors"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+var ErrInvalidData = errors.New("data is invalid")
 
 type (
 	seekerBuilder func(builder tsdb.SeekerBuilder)
@@ -56,6 +60,11 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, err
+		}
+		if len(refs) > len(parsedTagFamily.Tags) {
+			return nil, errors.Wrapf(ErrInvalidData,
+				"the number of tags %d in %s is less then expected %d",
+				len(parsedTagFamily.Tags), familyName, len(refs))
 		}
 		for j, ref := range refs {
 			tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
