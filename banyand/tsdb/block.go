@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
+	"go.uber.org/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -43,7 +44,7 @@ type block struct {
 	suffix string
 	ref    *z.Closer
 	lock   sync.RWMutex
-	closed bool
+	closed *atomic.Bool
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
@@ -86,7 +87,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		l:              logger.Fetch(ctx, "block"),
 		TimeRange:      timeRange,
 		Reporter:       bucket.NewTimeBasedReporter(timeRange),
-		closed:         true,
+		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
 	}
 	return b, err
@@ -95,7 +96,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 func (b *block) open() (err error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	if !b.closed {
+	if !b.closed.Load() {
 		return nil
 	}
 	b.ref = z.NewCloser(1)
@@ -127,7 +128,7 @@ func (b *block) open() (err error) {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
-	b.closed = false
+	b.closed.Store(false)
 	return nil
 }
 
@@ -152,7 +153,7 @@ func (b *block) incRef() {
 func (b *block) close() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	if b.closed {
+	if b.isClosed() {
 		return
 	}
 	b.dscRef()
@@ -160,13 +161,11 @@ func (b *block) close() {
 	for _, closer := range b.closableLst {
 		_ = closer.Close()
 	}
-	b.closed = true
+	b.closed.Store(true)
 }
 
 func (b *block) isClosed() bool {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
-	return b.closed
+	return b.closed.Load()
 }
 
 func (b *block) String() string {
