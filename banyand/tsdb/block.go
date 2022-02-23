@@ -103,26 +103,26 @@ func (b *block) open() (err error) {
 		0,
 		b.path+"/store",
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
-		kv.TSSWithLogger(b.l),
+		kv.TSSWithLogger(b.l.Named("main-store")),
 	); err != nil {
 		return err
 	}
 	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
 		Path:   b.path + "/primary",
-		Logger: b.l,
+		Logger: b.l.Named("primary-lsm"),
 	}); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
 		Path:   b.path + "/inverted",
-		Logger: b.l,
+		Logger: b.l.Named("secondary-inverted"),
 	}); err != nil {
 		return err
 	}
 	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
 		Path:   b.path + "/lsm",
-		Logger: b.l,
+		Logger: b.l.Named("secondary-lsm"),
 	}); err != nil {
 		return err
 	}
@@ -186,6 +186,7 @@ type blockDelegate interface {
 	primaryIndexReader() index.Searcher
 	identity() (segID uint16, blockID uint16)
 	startTime() time.Time
+	String() string
 }
 
 var _ blockDelegate = (*bDelegate)(nil)
@@ -242,6 +243,10 @@ func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) erro
 
 func (d *bDelegate) contains(ts time.Time) bool {
 	return d.delegate.Contains(uint64(ts.UnixNano()))
+}
+
+func (d *bDelegate) String() string {
+	return d.delegate.String()
 }
 
 func (d *bDelegate) Close() error {

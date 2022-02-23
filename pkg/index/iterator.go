@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type CompositePostingValueFn = func(term, value []byte, delegated kv.Iterator) (*PostingValue, error)
@@ -36,17 +37,15 @@ var DefaultUpper = convert.Uint64ToBytes(math.MaxUint64)
 var DefaultLower = convert.Uint64ToBytes(0)
 
 type FieldIteratorTemplate struct {
-	delegated kv.Iterator
+	delegated *delegateIterator
 
-	init          bool
-	curr          *PostingValue
-	err           error
-	termRange     RangeOpts
-	fn            CompositePostingValueFn
-	reverse       bool
-	seekKey       []byte
-	fieldKeyBytes []byte
-	parseKeyFn    func(key []byte) (Field, error)
+	init      bool
+	cur       *PostingValue
+	err       error
+	termRange RangeOpts
+	fn        CompositePostingValueFn
+	reverse   bool
+	seekKey   []byte
 }
 
 func (f *FieldIteratorTemplate) Next() bool {
@@ -57,15 +56,7 @@ func (f *FieldIteratorTemplate) Next() bool {
 	if !f.delegated.Valid() {
 		return false
 	}
-	field, err := f.parseKeyFn(f.delegated.Key())
-	if err != nil {
-		f.err = err
-		return false
-	}
-	if !bytes.Equal(field.Key.Marshal(), f.fieldKeyBytes) {
-		return false
-	}
-	pv, err := f.fn(field.Term, f.delegated.Val(), f.delegated)
+	pv, err := f.fn(f.delegated.Field().Term, f.delegated.Val(), f.delegated)
 	if err != nil {
 		f.err = err
 		return false
@@ -83,19 +74,19 @@ func (f *FieldIteratorTemplate) Next() bool {
 		}
 		return f.Next()
 	}
-	f.curr = pv
+	f.cur = pv
 	return true
 }
 
 func (f *FieldIteratorTemplate) Val() *PostingValue {
-	return f.curr
+	return f.cur
 }
 
 func (f *FieldIteratorTemplate) Close() error {
 	return multierr.Append(f.err, f.delegated.Close())
 }
 
-func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
+func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
 	metadata metadata.Term, fn CompositePostingValueFn) (*FieldIteratorTemplate, error) {
 	if termRange.Upper == nil {
 		termRange.Upper = DefaultUpper
@@ -129,23 +120,23 @@ func NewFieldIteratorTemplate(fieldKey FieldKey, termRange RangeOpts, order mode
 		return nil, err
 	}
 	return &FieldIteratorTemplate{
-		delegated: iter,
+		delegated: newDelegateIterator(iter, fieldKey, metadata, l),
 		termRange: termRange,
 		fn:        fn,
 		reverse:   reverse,
-		parseKeyFn: func(key []byte) (Field, error) {
-			f := &Field{
-				Key: fieldKey,
-			}
-			errParseKey := f.Unmarshal(metadata, key)
-			if errParseKey != nil {
-				return *f, err
-			}
-			return *f, nil
-		},
-		seekKey:       seekKey,
-		fieldKeyBytes: fieldKey.Marshal(),
+		seekKey:   seekKey,
 	}, nil
+}
+
+func parseKey(fieldKey FieldKey, metadata metadata.Term, key []byte) (Field, error) {
+	f := &Field{
+		Key: fieldKey,
+	}
+	err := f.Unmarshal(metadata, key)
+	if err != nil {
+		return *f, err
+	}
+	return *f, nil
 }
 
 type SwitchFn = func(a, b []byte) bool
@@ -233,4 +224,79 @@ func (m *mergedIterator) drain(index int) {
 
 func (m *mergedIterator) allDrained() bool {
 	return m.drainedCount == len(m.inner)
+}
+
+var _ kv.Iterator = (*delegateIterator)(nil)
+
+type delegateIterator struct {
+	delegated     kv.Iterator
+	fieldKey      FieldKey
+	fieldKeyBytes []byte
+	metadata      metadata.Term
+	l             *logger.Logger
+
+	curField Field
+	closed   bool
+}
+
+func newDelegateIterator(delegated kv.Iterator, fieldKey FieldKey, metadata metadata.Term, l *logger.Logger) *delegateIterator {
+	fieldKeyBytes := fieldKey.Marshal()
+	return &delegateIterator{
+		delegated:     delegated,
+		fieldKey:      fieldKey,
+		fieldKeyBytes: fieldKeyBytes,
+		metadata:      metadata,
+		l:             l,
+	}
+}
+
+func (di *delegateIterator) Next() {
+	di.delegated.Next()
+}
+
+func (di *delegateIterator) Rewind() {
+	di.delegated.Rewind()
+}
+
+func (di *delegateIterator) Seek(key []byte) {
+	di.delegated.Seek(key)
+}
+
+func (di *delegateIterator) Key() []byte {
+	return di.delegated.Key()
+}
+
+func (di *delegateIterator) Field() Field {
+	return di.curField
+}
+
+func (di *delegateIterator) Val() []byte {
+	return di.delegated.Val()
+}
+
+func (di *delegateIterator) Valid() bool {
+	if di.closed || !di.delegated.Valid() {
+		return false
+	}
+	var err error
+	di.curField, err = parseKey(di.fieldKey, di.metadata, di.Key())
+	if err != nil {
+		di.l.Error().Err(err).Msg("fail to parse field from key")
+		di.Close()
+		return false
+	}
+	if !bytes.Equal(di.curField.Key.Marshal(), di.fieldKeyBytes) {
+		di.l.Debug().
+			Uint64("series_id", uint64(di.fieldKey.SeriesID)).
+			Uint32("index_rule_id", di.fieldKey.IndexRuleID).
+			Msg("reached the limitation of the field(series_id+index_rule_id)")
+		di.Close()
+		return false
+	}
+	return true
+}
+
+func (di *delegateIterator) Close() error {
+	di.closed = true
+	return nil
 }

@@ -42,6 +42,8 @@ type store struct {
 	memTable          *memTable
 	immutableMemTable *memTable
 	rwMutex           sync.RWMutex
+
+	l *logger.Logger
 }
 
 type StoreOpts struct {
@@ -65,6 +67,7 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 		memTable:     newMemTable(),
 		diskTable:    diskTable,
 		termMetadata: md,
+		l:            opts.Logger,
 	}, nil
 }
 
@@ -166,7 +169,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		}
 		iters = append(iters, it)
 	}
-	it, err := index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.diskTable, s.termMetadata,
+	it, err := index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.diskTable, s.termMetadata,
 		func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			list := roaring.NewPostingList()
 			err := list.Unmarshall(val)

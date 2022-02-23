@@ -19,6 +19,7 @@ package tsdb
 
 import (
 	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -39,6 +40,7 @@ type Writer interface {
 	IndexWriter
 	Write() (GlobalItemID, error)
 	ItemID() GlobalItemID
+	String() string
 }
 
 var _ WriterBuilder = (*writerBuilder)(nil)
@@ -149,6 +151,17 @@ func (w *writer) WriteLSMIndex(field index.Field) error {
 func (w *writer) WriteInvertedIndex(field index.Field) error {
 	field.Key.SeriesID = w.itemID.SeriesID
 	return w.block.writeInvertedIndex(field, w.itemID.ID)
+}
+
+func (w *writer) String() string {
+	var buf []byte
+	buf = append(buf, "block:"...)
+	buf = append(buf, w.block.String()...)
+	buf = append(buf, ",column:"...)
+	buf = append(buf, fmt.Sprintf("%+v", w.columns)...)
+	buf = append(buf, ",ts:"...)
+	buf = append(buf, w.ts.String()...)
+	return string(buf)
 }
 
 type dataBucket struct {

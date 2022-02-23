@@ -66,23 +66,26 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	return index.NewFieldIteratorTemplate(fieldKey, termRange, order, s.lsm, s.termMetadata, func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
-		pv := &index.PostingValue{
-			Term:  term,
-			Value: roaring.NewPostingListWithInitialData(convert.BytesToUint64(value)),
-		}
+	return index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm, s.termMetadata,
+		func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
+			pv := &index.PostingValue{
+				Term:  term,
+				Value: roaring.NewPostingListWithInitialData(convert.BytesToUint64(value)),
+			}
 
-		for ; delegated.Valid(); delegated.Next() {
-			f := index.Field{}
-			err := f.Unmarshal(s.termMetadata, delegated.Key())
-			if err != nil {
-				return nil, err
+			for ; delegated.Valid(); delegated.Next() {
+				f := index.Field{}
+				err := f.Unmarshal(s.termMetadata, delegated.Key())
+				if err != nil {
+					return nil, err
+				}
+				if !bytes.Equal(f.Term, term) {
+					break
+				}
+				itemID := convert.BytesToUint64(delegated.Val())
+				s.l.Debug().Uint64("item_id", itemID).Msg("add item id")
+				pv.Value.Insert(common.ItemID(itemID))
 			}
-			if !bytes.Equal(f.Term, term) {
-				break
-			}
-			pv.Value.Insert(common.ItemID(convert.BytesToUint64(delegated.Val())))
-		}
-		return pv, nil
-	})
+			return pv, nil
+		})
 }
