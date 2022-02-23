@@ -217,11 +217,15 @@ func (bc *blockController) blocks() []*block {
 }
 
 func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
-	bc.RLock()
-	defer bc.RUnlock()
-	last := len(bc.lst) - 1
-	for i := range bc.lst {
-		b := bc.lst[last-i]
+	snapshotLst := func() []*block {
+		bc.RLock()
+		defer bc.RUnlock()
+		return bc.lst
+	}
+	lst := snapshotLst()
+	last := len(lst) - 1
+	for i := range lst {
+		b := lst[last-i]
 		if matcher(b) {
 			bb = append(bb, b)
 		}
