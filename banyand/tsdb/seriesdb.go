@@ -191,7 +191,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 			s.l.Debug().
 				Hex("path", path.prefix).
 				Uint64("series_id", uint64(seriesID)).
-				Msg("got a series")
+				Msg("got a series with a full path")
 			return []Series{newSeries(s.context(), seriesID, s)}, nil
 		}
 		s.l.Debug().Hex("path", path.prefix).Msg("doesn't get any series")

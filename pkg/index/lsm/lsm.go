@@ -33,6 +33,7 @@ var _ index.Store = (*store)(nil)
 type store struct {
 	lsm          kv.Store
 	termMetadata metadata.Term
+	l            *logger.Logger
 }
 
 func (s *store) Close() error {
@@ -69,5 +70,6 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	return &store{
 		lsm:          lsm,
 		termMetadata: md,
+		l:            opts.Logger,
 	}, nil
 }

@@ -111,6 +111,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			Int("ts_nano", t.Nanosecond()).
 			Interface("data", value).
 			Uint64("series_id", uint64(series.ID())).
+			Uint64("item_id", uint64(writer.ItemID().ID)).
 			Int("shard_id", int(shardID)).
 			Str("stream", sm.Metadata.GetName()).
 			Msg("write stream")
