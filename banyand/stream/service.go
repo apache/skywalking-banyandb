@@ -97,18 +97,18 @@ func (s *service) PreRun() error {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			continue
 		}
-		gp, err := s.schemaRepo.storeGroup(g.Metadata)
+		gp, err := s.schemaRepo.StoreGroup(g.Metadata)
 		if err != nil {
 			return err
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		schemas, err := s.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: gp.groupSchema.GetMetadata().Name})
+		schemas, err := s.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().Name})
 		cancel()
 		if err != nil {
 			return err
 		}
 		for _, sa := range schemas {
-			if _, innerErr := gp.storeStream(sa); innerErr != nil {
+			if _, innerErr := gp.StoreResource(sa); innerErr != nil {
 				return innerErr
 			}
 		}
@@ -124,9 +124,9 @@ func (s *service) PreRun() error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	_ = s.schemaRepo.notifyAll()
+	_ = s.schemaRepo.NotifyAll()
 	// run a serial watcher
-	go s.schemaRepo.watcher()
+	go s.schemaRepo.Watcher()
 
 	s.metadata.StreamRegistry().RegisterHandler(schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
 		&s.schemaRepo)
@@ -136,7 +136,7 @@ func (s *service) Serve() run.StopNotify {
 }
 
 func (s *service) GracefulStop() {
-	s.schemaRepo.close()
+	s.schemaRepo.Close()
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}
