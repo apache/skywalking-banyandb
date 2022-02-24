@@ -44,7 +44,7 @@ var _ = Describe("Metadata", func() {
 	Context("Manage group", func() {
 		It("should pass smoke test", func() {
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadGroup("default")
+				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
@@ -54,7 +54,7 @@ var _ = Describe("Metadata", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadGroup("default")
+				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
 		})
@@ -70,11 +70,11 @@ var _ = Describe("Metadata", func() {
 			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
 
 			Eventually(func() bool {
-				group, ok := svcs.stream.schemaRepo.loadGroup("default")
+				group, ok := svcs.stream.schemaRepo.LoadGroup("default")
 				if !ok {
 					return false
 				}
-				return group.groupSchema.GetResourceOpts().GetShardNum() == 4
+				return group.GetSchema().GetResourceOpts().GetShardNum() == 4
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
 	})
