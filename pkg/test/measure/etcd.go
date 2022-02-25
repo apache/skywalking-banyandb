@@ -21,13 +21,13 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"math/rand"
 	"os"
 	"path"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
@@ -41,9 +41,18 @@ var (
 	indexRuleBindingJSON string
 	//go:embed testdata/measure.json
 	measureJSON string
+	//go:embed testdata/group.json
+	groupJSON string
 )
 
 func PreloadSchema(e schema.Registry) error {
+	g := &commonv1.Group{}
+	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
+		return err
+	}
+	if err := e.UpdateGroup(context.TODO(), g); err != nil {
+		return err
+	}
 	s := &databasev1.Measure{}
 	if err := protojson.Unmarshal([]byte(measureJSON), s); err != nil {
 		return err
@@ -87,10 +96,4 @@ func PreloadSchema(e schema.Registry) error {
 
 func RandomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
-}
-
-func RandomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i),
-		fmt.Sprintf("%s://localhost:%d%06d", "unix", os.Getpid(), i+1)
 }

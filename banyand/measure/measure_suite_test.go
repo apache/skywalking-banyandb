@@ -14,101 +14,104 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
-package stream
+//
+package measure_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 )
 
-func TestStream(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Stream Suite")
+func TestMeasure(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Measure Suite")
 }
 
 // BeforeSuite - Init logger
-var _ = BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
+var _ = ginkgo.BeforeSuite(func() {
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "info",
-	})).To(Succeed())
+	})).To(gomega.Succeed())
 })
 
-// service to preload stream
-type preloadStreamService struct {
+// service to preload measure
+type preloadMeasureService struct {
 	metaSvc metadata.Service
 }
 
-func (p *preloadStreamService) Name() string {
-	return "preload-stream"
+func (p *preloadMeasureService) Name() string {
+	return "preload-measure"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadMeasureService) PreRun() error {
+	return testmeasure.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
 type services struct {
-	stream          *service
+	measure         measure.Service
 	metadataService metadata.Service
 	repo            *discovery.MockServiceRepo
+	pipeline        queue.Queue
 }
 
 func setUp() (*services, func()) {
-	ctrl := gomock.NewController(GinkgoT())
-	Expect(ctrl).ShouldNot(BeNil())
+	ctrl := gomock.NewController(ginkgo.GinkgoT())
+	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
 	// Init Discovery
 	repo := discovery.NewMockServiceRepo(ctrl)
 	repo.EXPECT().NodeID().AnyTimes()
 	// Both PreRun and Serve phases send events
-	repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 1)
-	repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 2)
+	repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 1)
+	repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 2)
 
 	// Init Pipeline
 	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	// Init Stream Service
-	streamService, err := NewService(context.TODO(), metadataService, repo, pipeline)
-	Expect(err).NotTo(HaveOccurred())
-	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
+	// Init Measure Service
+	measureService, err := measure.NewService(context.TODO(), metadataService, repo, pipeline)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--root-path="+rootPath)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,
 		pipeline,
 		metadataService,
-		preloadStreamSvc,
-		streamService,
+		preloadMeasureSvc,
+		measureService,
 	)
 	return &services{
-			stream:          streamService.(*service),
+			measure:         measureService,
 			metadataService: metadataService,
 			repo:            repo,
+			pipeline:        pipeline,
 		}, func() {
 			moduleDeferFunc()
 			metaDeferFunc()

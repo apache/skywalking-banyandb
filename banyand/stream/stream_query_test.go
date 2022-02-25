@@ -54,26 +54,27 @@ type shardStruct struct {
 type shardsForTest []shardStruct
 
 var _ = Describe("Write", func() {
-	var (
-		s       *stream
-		deferFn func()
-	)
 
-	BeforeEach(func() {
-		var svcs *services
-		svcs, deferFn = setUp()
-		var ok bool
-		s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-			Name:  "sw",
-			Group: "default",
-		})
-		Expect(ok).To(BeTrue())
-	})
-
-	AfterEach(func() {
-		deferFn()
-	})
 	Context("Select shard", func() {
+		var (
+			s       *stream
+			deferFn func()
+		)
+
+		BeforeEach(func() {
+			var svcs *services
+			svcs, deferFn = setUp()
+			var ok bool
+			s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			})
+			Expect(ok).To(BeTrue())
+		})
+
+		AfterEach(func() {
+			deferFn()
+		})
 		tests := []struct {
 			name         string
 			entity       tsdb.Entity
@@ -107,10 +108,25 @@ var _ = Describe("Write", func() {
 			})
 		}
 	})
-	Context("Querying by local indices", func() {
-		var now time.Time
-		BeforeEach(func() {
+	Context("Querying by local indices", Ordered, func() {
+		var (
+			s       *stream
+			now     time.Time
+			deferFn func()
+		)
+		BeforeAll(func() {
+			var svcs *services
+			svcs, deferFn = setUp()
+			var ok bool
+			s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			})
+			Expect(ok).To(BeTrue())
 			now = setupQueryData("multiple_shards.json", s)
+		})
+		AfterAll(func() {
+			deferFn()
 		})
 		When("", func() {
 			l1 := []string{fmt.Sprintf("series_%d", tsdb.SeriesID(tsdb.Entity{
@@ -581,9 +597,24 @@ var _ = Describe("Write", func() {
 		})
 	})
 
-	Context("Querying by global indices", func() {
-		BeforeEach(func() {
+	Context("Querying by global indices", Ordered, func() {
+		var (
+			s       *stream
+			deferFn func()
+		)
+		BeforeAll(func() {
+			var svcs *services
+			svcs, deferFn = setUp()
+			var ok bool
+			s, ok = svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			})
+			Expect(ok).To(BeTrue())
 			_ = setupQueryData("global_index.json", s)
+		})
+		AfterAll(func() {
+			deferFn()
 		})
 		DescribeTable("", func(traceID string, wantTraceSegmentNum int, wantErr bool) {
 			shards, errShards := s.Shards(nil)

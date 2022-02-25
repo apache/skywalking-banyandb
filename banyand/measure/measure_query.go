@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"io"
@@ -26,10 +26,11 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var (
@@ -37,21 +38,23 @@ var (
 )
 
 type Query interface {
-	Stream(stream *commonv1.Metadata) (Stream, error)
+	LoadGroup(name string) (resourceSchema.Group, bool)
+	Measure(measure *commonv1.Metadata) (Measure, error)
 }
 
-type Stream interface {
+type Measure interface {
 	io.Closer
-	Write(value *streamv1.ElementValue) error
+	Write(value *measurev1.DataPointValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
-	ParseElementID(item tsdb.Item) (string, error)
+	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
+	GetSchema() *databasev1.Measure
 }
 
-var _ Stream = (*stream)(nil)
+var _ Measure = (*measure)(nil)
 
-func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
+func (s *measure) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	wrap := func(shards []tsdb.Shard) []tsdb.Shard {
 		result := make([]tsdb.Shard, len(shards))
 		for i := 0; i < len(shards); i++ {
@@ -79,7 +82,7 @@ func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	return []tsdb.Shard{tsdb.NewScopedShard(tsdb.Entry(s.name), shard)}, nil
 }
 
-func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
+func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
 	shard, err := s.db.SupplyTSDB().Shard(id)
 	if err != nil {
 		return nil, err
@@ -87,10 +90,10 @@ func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
 	return tsdb.NewScopedShard(tsdb.Entry(s.name), shard), nil
 }
 
-func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
-	familyRawBytes, err := item.Family(family)
+func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
+	familyRawBytes, err := item.Family(string(familyIdentity(family, TagFlag)))
 	if err != nil {
-		return nil, errors.Wrapf(err, "parse family %s", family)
+		return nil, err
 	}
 	tagFamily := &modelv1.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)
@@ -121,10 +124,21 @@ func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFami
 	}, err
 }
 
-func (s *stream) ParseElementID(item tsdb.Item) (string, error) {
-	rawBytes, err := item.Val()
-	if err != nil {
-		return "", err
+func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error) {
+	var fieldSpec *databasev1.FieldSpec
+	for _, spec := range s.schema.GetFields() {
+		if spec.GetName() == name {
+			fieldSpec = spec
+			break
+		}
 	}
-	return string(rawBytes), nil
+	bytes, err := item.Family(string(familyIdentity(name, encoderFieldFlag(fieldSpec))))
+	if err != nil {
+		return nil, err
+	}
+	fieldValue := decodeFieldValue(bytes, fieldSpec)
+	return &measurev1.DataPoint_Field{
+		Name:  name,
+		Value: fieldValue,
+	}, err
 }
