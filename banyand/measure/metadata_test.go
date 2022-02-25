@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure_test
 
 import (
 	"context"
@@ -45,24 +45,24 @@ var _ = Describe("Metadata", func() {
 	Context("Manage group", func() {
 		It("should pass smoke test", func() {
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+				_, ok := svcs.measure.LoadGroup("default")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
 		It("should close the group", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
+			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
 			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+				_, ok := svcs.measure.LoadGroup("default")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
 		})
 
 		It("should add shards", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(4)
+			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
+			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(4)
 			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "default")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(groupSchema).ShouldNot(BeNil())
@@ -71,7 +71,7 @@ var _ = Describe("Metadata", func() {
 			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
 
 			Eventually(func() bool {
-				group, ok := svcs.stream.schemaRepo.LoadGroup("default")
+				group, ok := svcs.measure.LoadGroup("default")
 				if !ok {
 					return false
 				}
@@ -80,65 +80,65 @@ var _ = Describe("Metadata", func() {
 		})
 	})
 
-	Context("Manage stream", func() {
+	Context("Manage measure", func() {
 		It("should pass smoke test", func() {
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-					Name:  "sw",
+				_, err := svcs.measure.Measure(&commonv1.Metadata{
+					Name:  "cpm",
 					Group: "default",
 				})
-				return ok
+				return err == nil
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
-		It("should close the stream", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
-			deleted, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
-				Name:  "sw",
+		It("should close the measure", func() {
+			svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
+			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
+				Name:  "cpm",
 				Group: "default",
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-					Name:  "sw",
+				_, err := svcs.measure.Measure(&commonv1.Metadata{
+					Name:  "cpm",
 					Group: "default",
 				})
-				return ok
+				return err != nil
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
 		})
 
-		Context("Update a stream", func() {
-			var streamSchema *databasev1.Stream
+		Context("Update a measure", func() {
+			var measureSchema *databasev1.Measure
 
 			BeforeEach(func() {
 				var err error
-				streamSchema, err = svcs.metadataService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
-					Name:  "sw",
+				measureSchema, err = svcs.metadataService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
+					Name:  "cpm",
 					Group: "default",
 				})
 
 				Expect(err).ShouldNot(HaveOccurred())
-				Expect(streamSchema).ShouldNot(BeNil())
+				Expect(measureSchema).ShouldNot(BeNil())
 			})
 
-			It("should update a new stream", func() {
-				svcs.repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(1)
+			It("should update a new measure", func() {
+				svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(1)
 				// Remove the first tag from the entity
-				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
-				entitySize := len(streamSchema.Entity.TagNames)
+				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
+				entitySize := len(measureSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)).Should(Succeed())
+				Expect(svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)).Should(Succeed())
 
 				Eventually(func() bool {
-					val, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-						Name:  "sw",
+					val, err := svcs.measure.Measure(&commonv1.Metadata{
+						Name:  "cpm",
 						Group: "default",
 					})
-					if !ok {
+					if err != nil {
 						return false
 					}
 
-					return len(val.schema.GetEntity().TagNames) == entitySize
+					return len(val.GetSchema().GetEntity().TagNames) == entitySize
 				}).WithTimeout(10 * time.Second).Should(BeTrue())
 			})
 		})
