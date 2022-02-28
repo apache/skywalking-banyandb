@@ -62,8 +62,16 @@ message QueryRequest {
   // tag_projection can be used to select tags of the data points in the response
   model.v1.TagProjection tag_projection = 5;
   message FieldProjection {
-    repeated string name = 1;
+    repeated string names = 1;
   }
   // field_projection can be used to select fields of the data points in the response
   FieldProjection field_projection = 6;
+  message GroupBy {
+    model.v1.TagProjection tag_projection = 1;
+    string field_name = 2;
+  }
+  // group_by groups data points based on their field value for sepcific tags and this field'name
+  GroupBy group_by = 7;
+  // agg aggregates data points grouped by tags and a field's name
+  model.v1.AggregationFunction agg = 8;
 }

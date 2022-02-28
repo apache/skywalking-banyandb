@@ -63,3 +63,12 @@ message FieldValue {
         bytes binary_data = 4;
     }
 }
+
+enum AggregationFunction {
+    AGGREGATION_FUNCTION_UNSPECIFIED = 0;
+    AGGREGATION_FUNCTION_MEAN = 1;
+    AGGREGATION_FUNCTION_MAX = 2;
+    AGGREGATION_FUNCTION_MIN = 3;
+    AGGREGATION_FUNCTION_COUNT = 4;
+    AGGREGATION_FUNCTION_SUM = 5;
+}

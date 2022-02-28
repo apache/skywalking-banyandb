@@ -46,11 +46,6 @@ message TopNResponse {
     repeated TopNList lists = 1;
 }
 
-enum AggregationFunction {
-    AGGREGATION_FUNCTION_UNSPECIFIED = 0;
-    AGGREGATION_FUNCTION_MEAN = 1;
-}
-
 // TopNRequest is the request contract for query.
 message TopNRequest {
     // metadata is required
@@ -60,7 +55,7 @@ message TopNRequest {
     // top_n set the how many items should be returned in each list.
     int32 top_n = 3;
     // agg aggregates lists grouped by field names in the time_range
-    AggregationFunction agg = 4;
+    model.v1.AggregationFunction agg = 4;
     // criteria select counters.
     repeated model.v1.Condition conditions = 5;
 }
