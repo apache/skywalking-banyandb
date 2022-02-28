@@ -84,11 +84,37 @@ message QueryOrder {
     Sort sort = 2;
 }
 
+message ProjectionSpec {
+    message Direct {
+        string col = 1;
+    }
+    // EXPR(COL) AS ALIAS
+    message Indirect {
+        enum Expr {
+            EXPR_UNSPECIFIED = 0;
+            EXPR_COUNT = 1;
+            EXPR_SUM = 2;
+            EXPR_MIN = 3;
+            EXPR_MAX = 4;
+            EXPR_AVG = 5;
+        }
+        string col = 1;
+        string alias = 2;
+        Expr expr = 3;
+    }
+    oneof spec {
+        // direct reference to the column
+        Direct direct_ref = 1;
+        // indirect reference with manipulation
+        Indirect indirect_ref = 2;
+    }
+}
+
 // TagProjection is used to select the names of keys to be returned.
 message TagProjection {
     message TagFamily {
         string name = 1;
-        repeated string tags = 2;
+        repeated ProjectionSpec tags = 2;
     }
     repeated TagFamily tag_families = 1;
 }

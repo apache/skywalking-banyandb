@@ -34,9 +34,9 @@ import (
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
-// setUpAnalyzer creates a default analyzer for testing.
+// setUpStreamAnalyzer creates a default analyzer for testing.
 // You have to close the underlying metadata after teststream
-func setUpAnalyzer() (*logical.Analyzer, func(), error) {
+func setUpStreamAnalyzer() (*logical.StreamAnalyzer, func(), error) {
 	metadataService, err := metadata.NewService(context.TODO())
 	if err != nil {
 		return nil, func() {
@@ -63,7 +63,7 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 		}, err
 	}
 
-	ana, err := logical.CreateAnalyzerFromMetaService(metadataService)
+	ana, err := logical.CreateStreamAnalyzerFromMetaService(metadataService)
 	if err != nil {
 		return nil, func() {
 		}, err
@@ -74,17 +74,17 @@ func setUpAnalyzer() (*logical.Analyzer, func(), error) {
 	}, nil
 }
 
-func TestAnalyzer_SimpleTimeScan(t *testing.T) {
+func TestStreamAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(20).
 		Offset(0).
 		Metadata("default", "sw").
@@ -110,23 +110,23 @@ func TestAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
 }
 
-func TestAnalyzer_ComplexQuery(t *testing.T) {
+func TestStreamAnalyzer_ComplexQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("duration", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "http.method", "service_id", "duration").
-		FieldsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "=", "GET", "mq.topic", "=", "event_topic").
+		TagsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "=", "GET", "mq.topic", "=", "event_topic").
 		TimeRange(sT, eT).
 		Build()
 
@@ -156,19 +156,19 @@ func TestAnalyzer_ComplexQuery(t *testing.T) {
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
 }
 
-func TestAnalyzer_TraceIDQuery(t *testing.T) {
+func TestStreamAnalyzer_TraceIDQuery(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(100).
 		Offset(0).
 		Metadata("default", "sw").
-		FieldsInTagFamily("searchable", "trace_id", "=", "123").
+		TagsInTagFamily("searchable", "trace_id", "=", "123").
 		Build()
 
 	metadata := criteria.GetMetadata()
@@ -190,21 +190,21 @@ func TestAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
 }
 
-func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
+func TestStreamAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("service_instance_id", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "trace_id", "service_id").
-		FieldsInTagFamily("searchable", "duration", ">", 500).
+		TagsInTagFamily("searchable", "duration", ">", 500).
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
 		Build()
 
@@ -217,15 +217,15 @@ func TestAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
-func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
+func TestStreamAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("duration2", modelv1.Sort_SORT_DESC).
@@ -243,15 +243,15 @@ func TestAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
-func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
+func TestStreamAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		OrderBy("duration", modelv1.Sort_SORT_DESC).
@@ -269,21 +269,21 @@ func TestAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrFieldNotDefined)
 }
 
-func TestAnalyzer_Fields_IndexNotDefined(t *testing.T) {
+func TestStreamAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
-	ana, stopFunc, err := setUpAnalyzer()
+	ana, stopFunc, err := setUpStreamAnalyzer()
 	assert.NoError(err)
 	assert.NotNil(ana)
 	defer stopFunc()
 
-	criteria := pb.NewQueryRequestBuilder().
+	criteria := pb.NewStreamQueryRequestBuilder().
 		Limit(5).
 		Offset(10).
 		Metadata("default", "sw").
 		Projection("duration", "service_id").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
-		FieldsInTagFamily("searchable", "start_time", ">", 10000).
+		TagsInTagFamily("searchable", "start_time", ">", 10000).
 		Build()
 
 	metadata := criteria.GetMetadata()

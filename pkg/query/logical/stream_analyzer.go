@@ -20,22 +20,12 @@ package logical
 import (
 	"context"
 
-	"github.com/pkg/errors"
-
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-)
-
-var (
-	ErrFieldNotDefined            = errors.New("field is not defined")
-	ErrInvalidConditionType       = errors.New("invalid pair type")
-	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
-	ErrIndexNotDefined            = errors.New("index is not define for the field")
-	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
 )
 
 var (
@@ -75,17 +65,17 @@ func (t *Tag) GetFamilyName() string {
 	return t.familyName
 }
 
-type Analyzer struct {
+type StreamAnalyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
-func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
-	return &Analyzer{
+func CreateStreamAnalyzerFromMetaService(metaSvc metadata.Service) (*StreamAnalyzer, error) {
+	return &StreamAnalyzer{
 		metaSvc,
 	}, nil
 }
 
-func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
+func (a *StreamAnalyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
 		return nil, err
@@ -102,27 +92,29 @@ func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Met
 		return nil, err
 	}
 
-	s := &schema{
-		group:      group,
-		stream:     stream,
-		indexRules: indexRules,
-		fieldMap:   make(map[string]*tagSpec),
-		entityList: stream.GetEntity().GetTagNames(),
+	s := &streamSchema{
+		common: &commonSchema{
+			group:      group,
+			indexRules: indexRules,
+			tagMap:     make(map[string]*tagSpec),
+			entityList: stream.GetEntity().GetTagNames(),
+		},
+		stream: stream,
 	}
 
-	// generate the schema of the fields for the traceSeries
+	// generate the streamSchema of the fields for the traceSeries
 	for tagFamilyIdx, tagFamily := range stream.GetTagFamilies() {
 		for tagIdx, spec := range tagFamily.GetTags() {
-			s.registerField(spec.GetName(), tagFamilyIdx, tagIdx, spec)
+			s.registerTag(tagFamilyIdx, tagIdx, spec)
 		}
 	}
 
 	return s, nil
 }
 
-func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
+func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
 	// parse fields
-	plan, err := parseFields(criteria, metadata, s)
+	plan, err := parseStreamFields(criteria, metadata, s)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +122,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, m
 	// parse orderBy
 	queryOrder := criteria.GetOrderBy()
 	if queryOrder != nil {
-		if v, ok := plan.(*unresolvedIndexScan); ok {
+		if v, ok := plan.(*unresolvedStreamIndexScan); ok {
 			v.unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 		}
 	}
@@ -152,16 +144,21 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, m
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition,
-//     i.e. they are top-level sharding keys. For example, for the current skywalking's schema,
+//     i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
 //     we use service_id + service_instance_id + state as the compound sharding keys.
-func parseFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
+func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
 	projTags := make([][]*Tag, len(criteria.GetProjection().GetTagFamilies()))
 	for i, tagFamily := range criteria.GetProjection().GetTagFamilies() {
 		var projTagInFamily []*Tag
-		for _, tagName := range tagFamily.GetTags() {
-			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
+		for _, tagProjSpec := range tagFamily.GetTags() {
+			switch v := tagProjSpec.Spec.(type) {
+			case *modelv1.ProjectionSpec_DirectRef:
+				projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), v.DirectRef.GetCol()))
+			case *modelv1.ProjectionSpec_IndirectRef:
+				return nil, ErrIndirectRefNotAllowed
+			}
 		}
 		projTags[i] = projTagInFamily
 	}

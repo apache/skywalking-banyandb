@@ -37,8 +37,8 @@ type limit struct {
 	limitNum uint32
 }
 
-func (l *limit) Execute(ec executor.ExecutionContext) ([]*streamv1.Element, error) {
-	entities, err := l.parent.input.Execute(ec)
+func (l *limit) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+	entities, err := l.parent.input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +103,8 @@ type offset struct {
 	offsetNum uint32
 }
 
-func (l *offset) Execute(ec executor.ExecutionContext) ([]*streamv1.Element, error) {
-	elements, err := l.parent.input.Execute(ec)
+func (l *offset) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+	elements, err := l.parent.input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}

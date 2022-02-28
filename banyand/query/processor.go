@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	stream2 "github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const (
@@ -67,7 +67,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(q.metaService)
+	analyzer, err := stream2.CreateAnalyzerFromMetaService(q.metaService)
 	if err != nil {
 		q.log.Error().Err(err).Msg("fail to build analyzer")
 		return

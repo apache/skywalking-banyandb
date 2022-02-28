@@ -41,7 +41,7 @@ func formatWithIndent(p Plan, indent int) string {
 	return res
 }
 
-func formatExpr(sep string, exprGroup ...[]*FieldRef) string {
+func formatExpr(sep string, exprGroup ...[]*TagRef) string {
 	var exprsStr []string
 	for _, exprs := range exprGroup {
 		for i := 0; i < len(exprs); i++ {
