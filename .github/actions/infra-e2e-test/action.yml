@@ -31,6 +31,9 @@ runs:
       name: Check License
       uses: apache/skywalking-eyes@a63f4afcc287dfb3727ecc45a4afc55a5e69c15f
     - if: env.SKIP_CI != 'true'
+      name: Download SkyWalking Java Agent
+      uses: ./.github/actions/sw-java-agent
+    - if: env.SKIP_CI != 'true'
       name: Run E2E Test
       uses: apache/skywalking-infra-e2e@main
       with:

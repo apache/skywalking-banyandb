@@ -34,7 +34,7 @@ services:
 
   oap:
     # Pin OAP server
-    image: "lujiajing1126/skywalking-oap:${SW_OAP_COMMIT}"
+    image: "quay.io/megrez/skywalking-oap:${SW_OAP_COMMIT}"
     expose:
       - 11800
       - 12800
@@ -63,9 +63,11 @@ services:
         condition: service_healthy
 
   provider:
-    image: "quay.io/megrez/skywalking-oap-e2e-provider:latest"
-    command: [ "java", "-jar", "/services_provider.jar" ]
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:latest"
+    volumes:
+      - ./../../../../../skywalking-agent:/sw-java-agent
     environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       SW_AGENT_NAME: e2e-service-provider
@@ -89,8 +91,9 @@ services:
         condition: service_healthy
 
   consumer:
-    image: "quay.io/megrez/skywalking-oap-e2e-consumer:latest"
-    command: [ "java", "-jar", "/services_consumer.jar" ]
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:latest"
+    volumes:
+      - ./../../../../../skywalking-agent:/sw-java-agent
     networks:
       - e2e
     expose:
@@ -99,6 +102,7 @@ services:
     ports:
       - 9092
     environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       PROVIDER_URL: http://provider:9090
