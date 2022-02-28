@@ -174,7 +174,7 @@ type QueryRequest struct {
 	TagProjection *v1.TagProjection `protobuf:"bytes,5,opt,name=tag_projection,json=tagProjection,proto3" json:"tag_projection,omitempty"`
 	// field_projection can be used to select fields of the data points in the response
 	FieldProjection *QueryRequest_FieldProjection `protobuf:"bytes,6,opt,name=field_projection,json=fieldProjection,proto3" json:"field_projection,omitempty"`
-	// group_by groups data points based on their field value for sepcific tags and this field'name
+	// group_by groups data points based on their field value for a specific tag and use field_name as the projection name
 	GroupBy *QueryRequest_GroupBy `protobuf:"bytes,7,opt,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"`
 	// agg aggregates data points based on a field
 	Agg *QueryRequest_Aggregation `protobuf:"bytes,8,opt,name=agg,proto3" json:"agg,omitempty"`
