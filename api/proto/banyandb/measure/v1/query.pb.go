@@ -423,8 +423,10 @@ type QueryRequest_GroupBy struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
+	// tag_projection must be a subset of the tag_projection of QueryRequest
 	TagProjection *v1.TagProjection `protobuf:"bytes,1,opt,name=tag_projection,json=tagProjection,proto3" json:"tag_projection,omitempty"`
-	FieldName     string            `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"`
+	// field_name must be one of fields indicated by field_projection
+	FieldName string `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"`
 }
 
 func (x *QueryRequest_GroupBy) Reset() {
@@ -478,8 +480,9 @@ type QueryRequest_Aggregation struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Function  v1.AggregationFunction `protobuf:"varint,1,opt,name=function,proto3,enum=banyandb.model.v1.AggregationFunction" json:"function,omitempty"`
-	FieldName string                 `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"`
+	Function v1.AggregationFunction `protobuf:"varint,1,opt,name=function,proto3,enum=banyandb.model.v1.AggregationFunction" json:"function,omitempty"`
+	// field_name must be one of files indicated by the field_projection
+	FieldName string `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"`
 }
 
 func (x *QueryRequest_Aggregation) Reset() {
