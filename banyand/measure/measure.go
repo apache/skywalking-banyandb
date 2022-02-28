@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"context"
@@ -27,21 +27,17 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 // a chunk is 1MB
 const chunkSize = 1 << 20
 
-var _ schema.Resource = (*stream)(nil)
-
-type stream struct {
+type measure struct {
 	name     string
 	group    string
 	shardNum uint32
 	l        *logger.Logger
-	// schema is the reference to the spec of the stream
-	schema *databasev1.Stream
+	schema   *databasev1.Measure
 	// maxObservedModRevision is the max observed revision of index rules in the spec
 	maxObservedModRevision int64
 	db                     tsdb.Supplier
@@ -50,39 +46,43 @@ type stream struct {
 	indexWriter            *index.Writer
 }
 
-func (s *stream) GetMetadata() *commonv1.Metadata {
+func (s *measure) GetSchema() *databasev1.Measure {
+	return s.schema
+}
+
+func (s *measure) GetMetadata() *commonv1.Metadata {
 	return s.schema.Metadata
 }
 
-func (s *stream) GetIndexRules() []*databasev1.IndexRule {
+func (s *measure) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
-func (s *stream) MaxObservedModRevision() int64 {
+func (s *measure) MaxObservedModRevision() int64 {
 	return s.maxObservedModRevision
 }
 
-func (s *stream) EntityLocator() partition.EntityLocator {
+func (s *measure) EntityLocator() partition.EntityLocator {
 	return s.entityLocator
 }
 
-func (s *stream) Close() error {
+func (s *measure) Close() error {
 	return s.indexWriter.Close()
 }
 
-func (s *stream) parseSpec() {
+func (s *measure) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
 	s.maxObservedModRevision = pbv1.ParseMaxModRevision(s.indexRules)
 }
 
-type streamSpec struct {
-	schema     *databasev1.Stream
+type measureSpec struct {
+	schema     *databasev1.Measure
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) (*stream, error) {
-	sm := &stream{
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
+	sm := &measure{
 		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
