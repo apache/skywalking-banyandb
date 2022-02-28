@@ -72,6 +72,10 @@ message QueryRequest {
   }
   // group_by groups data points based on their field value for sepcific tags and this field'name
   GroupBy group_by = 7;
-  // agg aggregates data points grouped by tags and a field's name
-  model.v1.AggregationFunction agg = 8;
+  message Aggregation {
+    model.v1.AggregationFunction function = 1;
+    string field_name = 2; 
+  }
+  // agg aggregates data points based on a field
+  Aggregation agg = 8;
 }
