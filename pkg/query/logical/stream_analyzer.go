@@ -152,13 +152,8 @@ func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metad
 	projTags := make([][]*Tag, len(criteria.GetProjection().GetTagFamilies()))
 	for i, tagFamily := range criteria.GetProjection().GetTagFamilies() {
 		var projTagInFamily []*Tag
-		for _, tagProjSpec := range tagFamily.GetTags() {
-			switch v := tagProjSpec.Spec.(type) {
-			case *modelv1.ProjectionSpec_DirectRef:
-				projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), v.DirectRef.GetCol()))
-			case *modelv1.ProjectionSpec_IndirectRef:
-				return nil, ErrIndirectRefNotAllowed
-			}
+		for _, tagName := range tagFamily.GetTags() {
+			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
 		}
 		projTags[i] = projTagInFamily
 	}

@@ -14,6 +14,10 @@
         {
           "name": "scope",
           "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "unindexed-tag",
+          "type": "TAG_TYPE_INT"
         }
       ]
     }

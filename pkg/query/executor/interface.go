@@ -46,5 +46,5 @@ type MeasureExecutionContext interface {
 }
 
 type MeasureExecutable interface {
-	Execute(ExecutionContext) ([]*measurev1.DataPoint, error)
+	Execute(MeasureExecutionContext) ([]*measurev1.DataPoint, error)
 }

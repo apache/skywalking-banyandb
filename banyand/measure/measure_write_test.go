@@ -63,13 +63,12 @@ func writeData(dataFile string, measure measure.Measure) (baseTime time.Time) {
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
-	now := time.Now()
 	for i, template := range templates {
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
 		if dataPointValue.Timestamp == nil {
-			dataPointValue.Timestamp = timestamppb.New(now.Add(time.Duration(i) * time.Minute))
+			dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		}
 		Expect(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue)).ShouldNot(HaveOccurred())
 		errInner := measure.Write(dataPointValue)

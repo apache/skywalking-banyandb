@@ -165,64 +165,6 @@ func (Condition_BinaryOp) EnumDescriptor() ([]byte, []int) {
 	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{2, 0}
 }
 
-type ProjectionSpec_Indirect_Expr int32
-
-const (
-	ProjectionSpec_Indirect_EXPR_UNSPECIFIED ProjectionSpec_Indirect_Expr = 0
-	ProjectionSpec_Indirect_EXPR_COUNT       ProjectionSpec_Indirect_Expr = 1
-	ProjectionSpec_Indirect_EXPR_SUM         ProjectionSpec_Indirect_Expr = 2
-	ProjectionSpec_Indirect_EXPR_MIN         ProjectionSpec_Indirect_Expr = 3
-	ProjectionSpec_Indirect_EXPR_MAX         ProjectionSpec_Indirect_Expr = 4
-	ProjectionSpec_Indirect_EXPR_AVG         ProjectionSpec_Indirect_Expr = 5
-)
-
-// Enum value maps for ProjectionSpec_Indirect_Expr.
-var (
-	ProjectionSpec_Indirect_Expr_name = map[int32]string{
-		0: "EXPR_UNSPECIFIED",
-		1: "EXPR_COUNT",
-		2: "EXPR_SUM",
-		3: "EXPR_MIN",
-		4: "EXPR_MAX",
-		5: "EXPR_AVG",
-	}
-	ProjectionSpec_Indirect_Expr_value = map[string]int32{
-		"EXPR_UNSPECIFIED": 0,
-		"EXPR_COUNT":       1,
-		"EXPR_SUM":         2,
-		"EXPR_MIN":         3,
-		"EXPR_MAX":         4,
-		"EXPR_AVG":         5,
-	}
-)
-
-func (x ProjectionSpec_Indirect_Expr) Enum() *ProjectionSpec_Indirect_Expr {
-	p := new(ProjectionSpec_Indirect_Expr)
-	*p = x
-	return p
-}
-
-func (x ProjectionSpec_Indirect_Expr) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (ProjectionSpec_Indirect_Expr) Descriptor() protoreflect.EnumDescriptor {
-	return file_banyandb_model_v1_query_proto_enumTypes[2].Descriptor()
-}
-
-func (ProjectionSpec_Indirect_Expr) Type() protoreflect.EnumType {
-	return &file_banyandb_model_v1_query_proto_enumTypes[2]
-}
-
-func (x ProjectionSpec_Indirect_Expr) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use ProjectionSpec_Indirect_Expr.Descriptor instead.
-func (ProjectionSpec_Indirect_Expr) EnumDescriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5, 1, 0}
-}
-
 // Pair is the building block of a record which is equivalent to a key-value pair.
 // In the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.
 // Besides, other tags are organized in key-value pair in the underlying storage layer.
@@ -516,88 +458,6 @@ func (x *QueryOrder) GetSort() Sort {
 	return Sort_SORT_UNSPECIFIED
 }
 
-type ProjectionSpec struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	// Types that are assignable to Spec:
-	//	*ProjectionSpec_DirectRef
-	//	*ProjectionSpec_IndirectRef
-	Spec isProjectionSpec_Spec `protobuf_oneof:"spec"`
-}
-
-func (x *ProjectionSpec) Reset() {
-	*x = ProjectionSpec{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[5]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *ProjectionSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProjectionSpec) ProtoMessage() {}
-
-func (x *ProjectionSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[5]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ProjectionSpec.ProtoReflect.Descriptor instead.
-func (*ProjectionSpec) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5}
-}
-
-func (m *ProjectionSpec) GetSpec() isProjectionSpec_Spec {
-	if m != nil {
-		return m.Spec
-	}
-	return nil
-}
-
-func (x *ProjectionSpec) GetDirectRef() *ProjectionSpec_Direct {
-	if x, ok := x.GetSpec().(*ProjectionSpec_DirectRef); ok {
-		return x.DirectRef
-	}
-	return nil
-}
-
-func (x *ProjectionSpec) GetIndirectRef() *ProjectionSpec_Indirect {
-	if x, ok := x.GetSpec().(*ProjectionSpec_IndirectRef); ok {
-		return x.IndirectRef
-	}
-	return nil
-}
-
-type isProjectionSpec_Spec interface {
-	isProjectionSpec_Spec()
-}
-
-type ProjectionSpec_DirectRef struct {
-	// direct reference to the column
-	DirectRef *ProjectionSpec_Direct `protobuf:"bytes,1,opt,name=direct_ref,json=directRef,proto3,oneof"`
-}
-
-type ProjectionSpec_IndirectRef struct {
-	// indirect reference with manipulation
-	IndirectRef *ProjectionSpec_Indirect `protobuf:"bytes,2,opt,name=indirect_ref,json=indirectRef,proto3,oneof"`
-}
-
-func (*ProjectionSpec_DirectRef) isProjectionSpec_Spec() {}
-
-func (*ProjectionSpec_IndirectRef) isProjectionSpec_Spec() {}
-
 // TagProjection is used to select the names of keys to be returned.
 type TagProjection struct {
 	state         protoimpl.MessageState
@@ -610,7 +470,7 @@ type TagProjection struct {
 func (x *TagProjection) Reset() {
 	*x = TagProjection{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[6]
+		mi := &file_banyandb_model_v1_query_proto_msgTypes[5]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -623,7 +483,7 @@ func (x *TagProjection) String() string {
 func (*TagProjection) ProtoMessage() {}
 
 func (x *TagProjection) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[6]
+	mi := &file_banyandb_model_v1_query_proto_msgTypes[5]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -636,7 +496,7 @@ func (x *TagProjection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TagProjection.ProtoReflect.Descriptor instead.
 func (*TagProjection) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{6}
+	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *TagProjection) GetTagFamilies() []*TagProjection_TagFamily {
@@ -660,7 +520,7 @@ type TimeRange struct {
 func (x *TimeRange) Reset() {
 	*x = TimeRange{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[7]
+		mi := &file_banyandb_model_v1_query_proto_msgTypes[6]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -673,7 +533,7 @@ func (x *TimeRange) String() string {
 func (*TimeRange) ProtoMessage() {}
 
 func (x *TimeRange) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[7]
+	mi := &file_banyandb_model_v1_query_proto_msgTypes[6]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -686,7 +546,7 @@ func (x *TimeRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeRange.ProtoReflect.Descriptor instead.
 func (*TimeRange) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{7}
+	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TimeRange) GetBegin() *timestamppb.Timestamp {
@@ -703,130 +563,19 @@ func (x *TimeRange) GetEnd() *timestamppb.Timestamp {
 	return nil
 }
 
-type ProjectionSpec_Direct struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Col string `protobuf:"bytes,1,opt,name=col,proto3" json:"col,omitempty"`
-}
-
-func (x *ProjectionSpec_Direct) Reset() {
-	*x = ProjectionSpec_Direct{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[8]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *ProjectionSpec_Direct) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProjectionSpec_Direct) ProtoMessage() {}
-
-func (x *ProjectionSpec_Direct) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[8]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ProjectionSpec_Direct.ProtoReflect.Descriptor instead.
-func (*ProjectionSpec_Direct) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5, 0}
-}
-
-func (x *ProjectionSpec_Direct) GetCol() string {
-	if x != nil {
-		return x.Col
-	}
-	return ""
-}
-
-// EXPR(COL) AS ALIAS
-type ProjectionSpec_Indirect struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Col   string                       `protobuf:"bytes,1,opt,name=col,proto3" json:"col,omitempty"`
-	Alias string                       `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
-	Expr  ProjectionSpec_Indirect_Expr `protobuf:"varint,3,opt,name=expr,proto3,enum=banyandb.model.v1.ProjectionSpec_Indirect_Expr" json:"expr,omitempty"`
-}
-
-func (x *ProjectionSpec_Indirect) Reset() {
-	*x = ProjectionSpec_Indirect{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[9]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *ProjectionSpec_Indirect) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProjectionSpec_Indirect) ProtoMessage() {}
-
-func (x *ProjectionSpec_Indirect) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[9]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ProjectionSpec_Indirect.ProtoReflect.Descriptor instead.
-func (*ProjectionSpec_Indirect) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5, 1}
-}
-
-func (x *ProjectionSpec_Indirect) GetCol() string {
-	if x != nil {
-		return x.Col
-	}
-	return ""
-}
-
-func (x *ProjectionSpec_Indirect) GetAlias() string {
-	if x != nil {
-		return x.Alias
-	}
-	return ""
-}
-
-func (x *ProjectionSpec_Indirect) GetExpr() ProjectionSpec_Indirect_Expr {
-	if x != nil {
-		return x.Expr
-	}
-	return ProjectionSpec_Indirect_EXPR_UNSPECIFIED
-}
-
 type TagProjection_TagFamily struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Name string            `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Tags []*ProjectionSpec `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
+	Name string   `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Tags []string `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
 }
 
 func (x *TagProjection_TagFamily) Reset() {
 	*x = TagProjection_TagFamily{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_banyandb_model_v1_query_proto_msgTypes[10]
+		mi := &file_banyandb_model_v1_query_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -839,7 +588,7 @@ func (x *TagProjection_TagFamily) String() string {
 func (*TagProjection_TagFamily) ProtoMessage() {}
 
 func (x *TagProjection_TagFamily) ProtoReflect() protoreflect.Message {
-	mi := &file_banyandb_model_v1_query_proto_msgTypes[10]
+	mi := &file_banyandb_model_v1_query_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +601,7 @@ func (x *TagProjection_TagFamily) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TagProjection_TagFamily.ProtoReflect.Descriptor instead.
 func (*TagProjection_TagFamily) Descriptor() ([]byte, []int) {
-	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{6, 0}
+	return file_banyandb_model_v1_query_proto_rawDescGZIP(), []int{5, 0}
 }
 
 func (x *TagProjection_TagFamily) GetName() string {
@@ -862,7 +611,7 @@ func (x *TagProjection_TagFamily) GetName() string {
 	return ""
 }
 
-func (x *TagProjection_TagFamily) GetTags() []*ProjectionSpec {
+func (x *TagProjection_TagFamily) GetTags() []string {
 	if x != nil {
 		return x.Tags
 	}
@@ -925,64 +674,34 @@ var file_banyandb_model_v1_query_proto_rawDesc = []byte{
 	0x6e, 0x64, 0x65, 0x78, 0x52, 0x75, 0x6c, 0x65, 0x4e, 0x61, 0x6d, 0x65, 0x12, 0x2b, 0x0a, 0x04,
 	0x73, 0x6f, 0x72, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x17, 0x2e, 0x62, 0x61, 0x6e,
 	0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76, 0x31, 0x2e, 0x53,
-	0x6f, 0x72, 0x74, 0x52, 0x04, 0x73, 0x6f, 0x72, 0x74, 0x22, 0xb0, 0x03, 0x0a, 0x0e, 0x50, 0x72,
-	0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x70, 0x65, 0x63, 0x12, 0x49, 0x0a, 0x0a,
-	0x64, 0x69, 0x72, 0x65, 0x63, 0x74, 0x5f, 0x72, 0x65, 0x66, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b,
-	0x32, 0x28, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65,
-	0x6c, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53,
-	0x70, 0x65, 0x63, 0x2e, 0x44, 0x69, 0x72, 0x65, 0x63, 0x74, 0x48, 0x00, 0x52, 0x09, 0x64, 0x69,
-	0x72, 0x65, 0x63, 0x74, 0x52, 0x65, 0x66, 0x12, 0x4f, 0x0a, 0x0c, 0x69, 0x6e, 0x64, 0x69, 0x72,
-	0x65, 0x63, 0x74, 0x5f, 0x72, 0x65, 0x66, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2a, 0x2e,
-	0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76,
-	0x31, 0x2e, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x70, 0x65, 0x63,
-	0x2e, 0x49, 0x6e, 0x64, 0x69, 0x72, 0x65, 0x63, 0x74, 0x48, 0x00, 0x52, 0x0b, 0x69, 0x6e, 0x64,
-	0x69, 0x72, 0x65, 0x63, 0x74, 0x52, 0x65, 0x66, 0x1a, 0x1a, 0x0a, 0x06, 0x44, 0x69, 0x72, 0x65,
-	0x63, 0x74, 0x12, 0x10, 0x0a, 0x03, 0x63, 0x6f, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x03, 0x63, 0x6f, 0x6c, 0x1a, 0xdd, 0x01, 0x0a, 0x08, 0x49, 0x6e, 0x64, 0x69, 0x72, 0x65, 0x63,
-	0x74, 0x12, 0x10, 0x0a, 0x03, 0x63, 0x6f, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03,
-	0x63, 0x6f, 0x6c, 0x12, 0x14, 0x0a, 0x05, 0x61, 0x6c, 0x69, 0x61, 0x73, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x05, 0x61, 0x6c, 0x69, 0x61, 0x73, 0x12, 0x43, 0x0a, 0x04, 0x65, 0x78, 0x70,
-	0x72, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x2f, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e,
-	0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x72, 0x6f, 0x6a,
-	0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x70, 0x65, 0x63, 0x2e, 0x49, 0x6e, 0x64, 0x69, 0x72,
-	0x65, 0x63, 0x74, 0x2e, 0x45, 0x78, 0x70, 0x72, 0x52, 0x04, 0x65, 0x78, 0x70, 0x72, 0x22, 0x64,
-	0x0a, 0x04, 0x45, 0x78, 0x70, 0x72, 0x12, 0x14, 0x0a, 0x10, 0x45, 0x58, 0x50, 0x52, 0x5f, 0x55,
-	0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0e, 0x0a, 0x0a,
-	0x45, 0x58, 0x50, 0x52, 0x5f, 0x43, 0x4f, 0x55, 0x4e, 0x54, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08,
-	0x45, 0x58, 0x50, 0x52, 0x5f, 0x53, 0x55, 0x4d, 0x10, 0x02, 0x12, 0x0c, 0x0a, 0x08, 0x45, 0x58,
-	0x50, 0x52, 0x5f, 0x4d, 0x49, 0x4e, 0x10, 0x03, 0x12, 0x0c, 0x0a, 0x08, 0x45, 0x58, 0x50, 0x52,
-	0x5f, 0x4d, 0x41, 0x58, 0x10, 0x04, 0x12, 0x0c, 0x0a, 0x08, 0x45, 0x58, 0x50, 0x52, 0x5f, 0x41,
-	0x56, 0x47, 0x10, 0x05, 0x42, 0x06, 0x0a, 0x04, 0x73, 0x70, 0x65, 0x63, 0x22, 0xb6, 0x01, 0x0a,
-	0x0d, 0x54, 0x61, 0x67, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x4d,
-	0x0a, 0x0c, 0x74, 0x61, 0x67, 0x5f, 0x66, 0x61, 0x6d, 0x69, 0x6c, 0x69, 0x65, 0x73, 0x18, 0x01,
-	0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76, 0x31, 0x2e, 0x54, 0x61, 0x67, 0x50, 0x72, 0x6f, 0x6a,
-	0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x2e, 0x54, 0x61, 0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x79,
-	0x52, 0x0b, 0x74, 0x61, 0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x69, 0x65, 0x73, 0x1a, 0x56, 0x0a,
-	0x09, 0x54, 0x61, 0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61,
-	0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x35,
-	0x0a, 0x04, 0x74, 0x61, 0x67, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x62,
-	0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76, 0x31,
-	0x2e, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x70, 0x65, 0x63, 0x52,
-	0x04, 0x74, 0x61, 0x67, 0x73, 0x22, 0x6b, 0x0a, 0x09, 0x54, 0x69, 0x6d, 0x65, 0x52, 0x61, 0x6e,
-	0x67, 0x65, 0x12, 0x30, 0x0a, 0x05, 0x62, 0x65, 0x67, 0x69, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x05, 0x62,
-	0x65, 0x67, 0x69, 0x6e, 0x12, 0x2c, 0x0a, 0x03, 0x65, 0x6e, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x03, 0x65,
-	0x6e, 0x64, 0x2a, 0x39, 0x0a, 0x04, 0x53, 0x6f, 0x72, 0x74, 0x12, 0x14, 0x0a, 0x10, 0x53, 0x4f,
-	0x52, 0x54, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00,
-	0x12, 0x0d, 0x0a, 0x09, 0x53, 0x4f, 0x52, 0x54, 0x5f, 0x44, 0x45, 0x53, 0x43, 0x10, 0x01, 0x12,
-	0x0c, 0x0a, 0x08, 0x53, 0x4f, 0x52, 0x54, 0x5f, 0x41, 0x53, 0x43, 0x10, 0x02, 0x42, 0x6c, 0x0a,
-	0x27, 0x6f, 0x72, 0x67, 0x2e, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2e, 0x73, 0x6b, 0x79, 0x77,
-	0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x76, 0x31, 0x5a, 0x41, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62,
-	0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x61, 0x70, 0x61, 0x63, 0x68, 0x65, 0x2f, 0x73, 0x6b, 0x79, 0x77,
-	0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67, 0x2d, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e,
-	0x64, 0x62, 0x2f, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x6f, 0x72, 0x74, 0x52, 0x04, 0x73, 0x6f, 0x72, 0x74, 0x22, 0x93, 0x01, 0x0a, 0x0d, 0x54, 0x61,
+	0x67, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x4d, 0x0a, 0x0c, 0x74,
+	0x61, 0x67, 0x5f, 0x66, 0x61, 0x6d, 0x69, 0x6c, 0x69, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x2a, 0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64,
+	0x65, 0x6c, 0x2e, 0x76, 0x31, 0x2e, 0x54, 0x61, 0x67, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74,
+	0x69, 0x6f, 0x6e, 0x2e, 0x54, 0x61, 0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x79, 0x52, 0x0b, 0x74,
+	0x61, 0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x69, 0x65, 0x73, 0x1a, 0x33, 0x0a, 0x09, 0x54, 0x61,
+	0x67, 0x46, 0x61, 0x6d, 0x69, 0x6c, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x74,
+	0x61, 0x67, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x09, 0x52, 0x04, 0x74, 0x61, 0x67, 0x73, 0x22,
+	0x6b, 0x0a, 0x09, 0x54, 0x69, 0x6d, 0x65, 0x52, 0x61, 0x6e, 0x67, 0x65, 0x12, 0x30, 0x0a, 0x05,
+	0x62, 0x65, 0x67, 0x69, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f,
+	0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x05, 0x62, 0x65, 0x67, 0x69, 0x6e, 0x12, 0x2c,
+	0x0a, 0x03, 0x65, 0x6e, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f,
+	0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x03, 0x65, 0x6e, 0x64, 0x2a, 0x39, 0x0a, 0x04,
+	0x53, 0x6f, 0x72, 0x74, 0x12, 0x14, 0x0a, 0x10, 0x53, 0x4f, 0x52, 0x54, 0x5f, 0x55, 0x4e, 0x53,
+	0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0d, 0x0a, 0x09, 0x53, 0x4f,
+	0x52, 0x54, 0x5f, 0x44, 0x45, 0x53, 0x43, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08, 0x53, 0x4f, 0x52,
+	0x54, 0x5f, 0x41, 0x53, 0x43, 0x10, 0x02, 0x42, 0x6c, 0x0a, 0x27, 0x6f, 0x72, 0x67, 0x2e, 0x61,
+	0x70, 0x61, 0x63, 0x68, 0x65, 0x2e, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67,
+	0x2e, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2e, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e,
+	0x76, 0x31, 0x5a, 0x41, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x61,
+	0x70, 0x61, 0x63, 0x68, 0x65, 0x2f, 0x73, 0x6b, 0x79, 0x77, 0x61, 0x6c, 0x6b, 0x69, 0x6e, 0x67,
+	0x2d, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x2f, 0x62, 0x61, 0x6e, 0x79, 0x61, 0x6e, 0x64, 0x62, 0x2f, 0x6d, 0x6f, 0x64,
+	0x65, 0x6c, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -997,45 +716,37 @@ func file_banyandb_model_v1_query_proto_rawDescGZIP() []byte {
 	return file_banyandb_model_v1_query_proto_rawDescData
 }
 
-var file_banyandb_model_v1_query_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_banyandb_model_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_banyandb_model_v1_query_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_banyandb_model_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_banyandb_model_v1_query_proto_goTypes = []interface{}{
-	(Sort)(0),                         // 0: banyandb.model.v1.Sort
-	(Condition_BinaryOp)(0),           // 1: banyandb.model.v1.Condition.BinaryOp
-	(ProjectionSpec_Indirect_Expr)(0), // 2: banyandb.model.v1.ProjectionSpec.Indirect.Expr
-	(*Tag)(nil),                       // 3: banyandb.model.v1.Tag
-	(*TagFamily)(nil),                 // 4: banyandb.model.v1.TagFamily
-	(*Condition)(nil),                 // 5: banyandb.model.v1.Condition
-	(*Criteria)(nil),                  // 6: banyandb.model.v1.Criteria
-	(*QueryOrder)(nil),                // 7: banyandb.model.v1.QueryOrder
-	(*ProjectionSpec)(nil),            // 8: banyandb.model.v1.ProjectionSpec
-	(*TagProjection)(nil),             // 9: banyandb.model.v1.TagProjection
-	(*TimeRange)(nil),                 // 10: banyandb.model.v1.TimeRange
-	(*ProjectionSpec_Direct)(nil),     // 11: banyandb.model.v1.ProjectionSpec.Direct
-	(*ProjectionSpec_Indirect)(nil),   // 12: banyandb.model.v1.ProjectionSpec.Indirect
-	(*TagProjection_TagFamily)(nil),   // 13: banyandb.model.v1.TagProjection.TagFamily
-	(*TagValue)(nil),                  // 14: banyandb.model.v1.TagValue
-	(*timestamppb.Timestamp)(nil),     // 15: google.protobuf.Timestamp
+	(Sort)(0),                       // 0: banyandb.model.v1.Sort
+	(Condition_BinaryOp)(0),         // 1: banyandb.model.v1.Condition.BinaryOp
+	(*Tag)(nil),                     // 2: banyandb.model.v1.Tag
+	(*TagFamily)(nil),               // 3: banyandb.model.v1.TagFamily
+	(*Condition)(nil),               // 4: banyandb.model.v1.Condition
+	(*Criteria)(nil),                // 5: banyandb.model.v1.Criteria
+	(*QueryOrder)(nil),              // 6: banyandb.model.v1.QueryOrder
+	(*TagProjection)(nil),           // 7: banyandb.model.v1.TagProjection
+	(*TimeRange)(nil),               // 8: banyandb.model.v1.TimeRange
+	(*TagProjection_TagFamily)(nil), // 9: banyandb.model.v1.TagProjection.TagFamily
+	(*TagValue)(nil),                // 10: banyandb.model.v1.TagValue
+	(*timestamppb.Timestamp)(nil),   // 11: google.protobuf.Timestamp
 }
 var file_banyandb_model_v1_query_proto_depIdxs = []int32{
-	14, // 0: banyandb.model.v1.Tag.value:type_name -> banyandb.model.v1.TagValue
-	3,  // 1: banyandb.model.v1.TagFamily.tags:type_name -> banyandb.model.v1.Tag
+	10, // 0: banyandb.model.v1.Tag.value:type_name -> banyandb.model.v1.TagValue
+	2,  // 1: banyandb.model.v1.TagFamily.tags:type_name -> banyandb.model.v1.Tag
 	1,  // 2: banyandb.model.v1.Condition.op:type_name -> banyandb.model.v1.Condition.BinaryOp
-	14, // 3: banyandb.model.v1.Condition.value:type_name -> banyandb.model.v1.TagValue
-	5,  // 4: banyandb.model.v1.Criteria.conditions:type_name -> banyandb.model.v1.Condition
+	10, // 3: banyandb.model.v1.Condition.value:type_name -> banyandb.model.v1.TagValue
+	4,  // 4: banyandb.model.v1.Criteria.conditions:type_name -> banyandb.model.v1.Condition
 	0,  // 5: banyandb.model.v1.QueryOrder.sort:type_name -> banyandb.model.v1.Sort
-	11, // 6: banyandb.model.v1.ProjectionSpec.direct_ref:type_name -> banyandb.model.v1.ProjectionSpec.Direct
-	12, // 7: banyandb.model.v1.ProjectionSpec.indirect_ref:type_name -> banyandb.model.v1.ProjectionSpec.Indirect
-	13, // 8: banyandb.model.v1.TagProjection.tag_families:type_name -> banyandb.model.v1.TagProjection.TagFamily
-	15, // 9: banyandb.model.v1.TimeRange.begin:type_name -> google.protobuf.Timestamp
-	15, // 10: banyandb.model.v1.TimeRange.end:type_name -> google.protobuf.Timestamp
-	2,  // 11: banyandb.model.v1.ProjectionSpec.Indirect.expr:type_name -> banyandb.model.v1.ProjectionSpec.Indirect.Expr
-	8,  // 12: banyandb.model.v1.TagProjection.TagFamily.tags:type_name -> banyandb.model.v1.ProjectionSpec
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	9,  // 6: banyandb.model.v1.TagProjection.tag_families:type_name -> banyandb.model.v1.TagProjection.TagFamily
+	11, // 7: banyandb.model.v1.TimeRange.begin:type_name -> google.protobuf.Timestamp
+	11, // 8: banyandb.model.v1.TimeRange.end:type_name -> google.protobuf.Timestamp
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_banyandb_model_v1_query_proto_init() }
@@ -1106,18 +817,6 @@ func file_banyandb_model_v1_query_proto_init() {
 			}
 		}
 		file_banyandb_model_v1_query_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProjectionSpec); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_banyandb_model_v1_query_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*TagProjection); i {
 			case 0:
 				return &v.state
@@ -1129,7 +828,7 @@ func file_banyandb_model_v1_query_proto_init() {
 				return nil
 			}
 		}
-		file_banyandb_model_v1_query_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+		file_banyandb_model_v1_query_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*TimeRange); i {
 			case 0:
 				return &v.state
@@ -1141,31 +840,7 @@ func file_banyandb_model_v1_query_proto_init() {
 				return nil
 			}
 		}
-		file_banyandb_model_v1_query_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProjectionSpec_Direct); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_banyandb_model_v1_query_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProjectionSpec_Indirect); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_banyandb_model_v1_query_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+		file_banyandb_model_v1_query_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*TagProjection_TagFamily); i {
 			case 0:
 				return &v.state
@@ -1178,17 +853,13 @@ func file_banyandb_model_v1_query_proto_init() {
 			}
 		}
 	}
-	file_banyandb_model_v1_query_proto_msgTypes[5].OneofWrappers = []interface{}{
-		(*ProjectionSpec_DirectRef)(nil),
-		(*ProjectionSpec_IndirectRef)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_banyandb_model_v1_query_proto_rawDesc,
-			NumEnums:      3,
-			NumMessages:   11,
+			NumEnums:      2,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

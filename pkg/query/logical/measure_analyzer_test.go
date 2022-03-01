@@ -26,7 +26,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -85,7 +84,7 @@ func TestMeasureAnalyzer_SimpleTimeScan(t *testing.T) {
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "sw").
+		Metadata("default", "cpm").
 		TimeRange(sT, eT).
 		Build()
 
@@ -97,11 +96,9 @@ func TestMeasureAnalyzer_SimpleTimeScan(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical.Limit(
-		logical.Offset(
-			logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
-			0),
-		20).
+	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata, nil,
+		tsdb.Entity{tsdb.AnyEntry},
+		nil, nil).
 		Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
@@ -119,9 +116,10 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "sw").
-		TagProjection("searchable", "http.method", "service_id", "duration").
-		TagsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "=", "GET", "mq.topic", "=", "event_topic").
+		Metadata("default", "cpm").
+		TagProjection("default", "entity_id", "scope").
+		TagsInTagFamily("default", "entity_id", "=", "abc", "scope", "=", "endpoint").
+		FieldProjection("summation", "count", "value").
 		TimeRange(sT, eT).
 		Build()
 
@@ -134,21 +132,40 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.Limit(
-		logical.Offset(
-			logical.IndexScan(sT, eT, metadata,
-				[]logical.Expr{
-					logical.Eq(logical.NewSearchableFieldRef("mq.topic"), logical.Str("event_topic")),
-					logical.Eq(logical.NewSearchableFieldRef("http.method"), logical.Str("GET")),
-				}, tsdb.Entity{tsdb.Entry("my_app"), tsdb.AnyEntry, tsdb.AnyEntry},
-				logical.OrderBy("duration", modelv1.Sort_SORT_DESC),
-				logical.NewTags("searchable", "http.method", "service_id", "duration")),
-			10),
-		5).
-		Analyze(schema)
+	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata,
+		[]logical.Expr{
+			logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("endpoint")),
+		}, tsdb.Entity{tsdb.Entry("abc")},
+		[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
+		[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+	).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
+}
+
+func TestMeasureAnalyzer_Projection_TagNotDefined(t *testing.T) {
+	assert := require.New(t)
+
+	ana, stopFunc, err := setUpMeasureAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
+
+	criteria := pb.NewMeasureQueryRequestBuilder().
+		Metadata("default", "cpm").
+		TagProjection("default", "scope", "entity_id", "unknown").
+		FieldProjection("summation", "count", "value").
+		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
+		Build()
+
+	metadata := criteria.GetMetadata()
+
+	schema, err := ana.BuildMeasureSchema(context.TODO(), metadata)
+	assert.NoError(err)
+
+	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
+	assert.ErrorIs(err, logical.ErrTagNotDefined)
 }
 
 func TestMeasureAnalyzer_Projection_FieldNotDefined(t *testing.T) {
@@ -160,8 +177,9 @@ func TestMeasureAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	defer stopFunc()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "sw").
-		TagProjection("searchable", "duration", "service_id", "unknown").
+		Metadata("default", "cpm").
+		TagProjection("default", "scope", "entity_id").
+		FieldProjection("summation", "count", "value", "unknown").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
 		Build()
 
@@ -183,10 +201,11 @@ func TestMeasureAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	defer stopFunc()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "sw").
-		TagProjection("duration", "service_id").
+		Metadata("default", "cpm").
+		TagProjection("default", "scope", "entity_id").
+		FieldProjection("summation", "count", "value").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
-		TagsInTagFamily("searchable", "start_time", ">", 10000).
+		TagsInTagFamily("searchable", "unindexed-tag", ">", 10000).
 		Build()
 
 	metadata := criteria.GetMetadata()

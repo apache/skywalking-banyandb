@@ -29,12 +29,12 @@ import (
 )
 
 var (
+	ErrTagNotDefined              = errors.New("tag is not defined")
 	ErrFieldNotDefined            = errors.New("field is not defined")
 	ErrInvalidConditionType       = errors.New("invalid pair type")
 	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
-	ErrIndexNotDefined            = errors.New("index is not define for the field")
+	ErrIndexNotDefined            = errors.New("index is not define for the tag")
 	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
-	ErrIndirectRefNotAllowed      = errors.New("indirect reference is not allow for stream")
 )
 
 var ErrInvalidData = errors.New("data is invalid")

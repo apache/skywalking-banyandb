@@ -143,7 +143,7 @@ func (cs *commonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 			if ts, ok := cs.tagMap[tag.GetTagName()]; ok {
 				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			} else {
-				return nil, errors.Wrap(ErrFieldNotDefined, tag.GetCompoundName())
+				return nil, errors.Wrap(ErrTagNotDefined, tag.GetCompoundName())
 			}
 		}
 		tagRefs[i] = tagRefsInFamily
@@ -261,9 +261,9 @@ func (m *measureSchema) CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error) {
 
 func (m *measureSchema) CreateFieldRef(fields ...*Field) ([]*FieldRef, error) {
 	fieldRefs := make([]*FieldRef, len(fields))
-	for _, field := range fields {
+	for idx, field := range fields {
 		if fs, ok := m.fieldMap[field.name]; ok {
-			fieldRefs = append(fieldRefs, &FieldRef{field, fs})
+			fieldRefs[idx] = &FieldRef{field, fs}
 		} else {
 			return nil, errors.Wrap(ErrFieldNotDefined, field.name)
 		}

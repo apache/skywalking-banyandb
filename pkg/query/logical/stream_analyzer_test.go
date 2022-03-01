@@ -266,7 +266,7 @@ func TestStreamAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.ErrFieldNotDefined)
+	assert.ErrorIs(err, logical.ErrTagNotDefined)
 }
 
 func TestStreamAnalyzer_Fields_IndexNotDefined(t *testing.T) {

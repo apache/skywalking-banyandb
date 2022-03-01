@@ -150,19 +150,9 @@ func buildTagValue(value interface{}) *modelv1.TagValue {
 }
 
 func (b *StreamQueryRequestBuilder) Projection(tagFamily string, projections ...string) *StreamQueryRequestBuilder {
-	var directRefs []*modelv1.ProjectionSpec
-	for _, proj := range projections {
-		directRefs = append(directRefs, &modelv1.ProjectionSpec{
-			Spec: &modelv1.ProjectionSpec_DirectRef{
-				DirectRef: &modelv1.ProjectionSpec_Direct{
-					Col: proj,
-				},
-			},
-		})
-	}
 	b.ec.Projection.TagFamilies = append(b.ec.Projection.GetTagFamilies(), &modelv1.TagProjection_TagFamily{
 		Name: tagFamily,
-		Tags: directRefs,
+		Tags: projections,
 	})
 	return b
 }
@@ -277,26 +267,16 @@ func (b *MeasureQueryRequestBuilder) TagsInTagFamily(tagFamilyName string, items
 }
 
 func (b *MeasureQueryRequestBuilder) TagProjection(tagFamily string, projections ...string) *MeasureQueryRequestBuilder {
-	var directRefs []*modelv1.ProjectionSpec
-	for _, proj := range projections {
-		directRefs = append(directRefs, &modelv1.ProjectionSpec{
-			Spec: &modelv1.ProjectionSpec_DirectRef{
-				DirectRef: &modelv1.ProjectionSpec_Direct{
-					Col: proj,
-				},
-			},
-		})
-	}
 	b.ec.TagProjection.TagFamilies = append(b.ec.TagProjection.GetTagFamilies(), &modelv1.TagProjection_TagFamily{
 		Name: tagFamily,
-		Tags: directRefs,
+		Tags: projections,
 	})
 	return b
 }
 
 func (b *MeasureQueryRequestBuilder) FieldProjection(projections ...string) *MeasureQueryRequestBuilder {
 	for _, proj := range projections {
-		b.ec.FieldProjection.Name = append(b.ec.FieldProjection.Name, proj)
+		b.ec.FieldProjection.Names = append(b.ec.FieldProjection.Names, proj)
 	}
 
 	return b

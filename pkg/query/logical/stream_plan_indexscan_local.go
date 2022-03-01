@@ -249,6 +249,7 @@ func (i *localIndexScan) Equal(plan Plan) bool {
 		i.metadata.GetName() == other.metadata.GetName() &&
 		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
 		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
+		len(i.entity) == len(other.entity) &&
 		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
 		cmp.Equal(i.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(i.schema, other.schema) &&

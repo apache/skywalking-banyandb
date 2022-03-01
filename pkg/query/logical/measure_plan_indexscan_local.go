@@ -50,7 +50,6 @@ type unresolvedMeasureIndexScan struct {
 
 func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 	localConditionMap := make(map[*databasev1.IndexRule][]Expr)
-	globalConditions := make([]interface{}, 0)
 	for _, cond := range uis.conditions {
 		if resolvable, ok := cond.(ResolvableExpr); ok {
 			err := resolvable.Resolve(s)
@@ -68,8 +67,6 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 						} else {
 							localConditionMap[indexObj] = []Expr{cond}
 						}
-					} else if indexObj.GetLocation() == databasev1.IndexRule_LOCATION_GLOBAL {
-						globalConditions = append(globalConditions, indexObj, cond)
 					}
 				} else {
 					return nil, errors.Wrap(ErrIndexNotDefined, tag.GetCompoundName())
@@ -79,7 +76,7 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 	}
 
 	var projTagsRefs [][]*TagRef
-	if len(uis.projectionFields) > 0 {
+	if len(uis.projectionTags) > 0 {
 		var err error
 		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
 		if err != nil {
@@ -87,13 +84,23 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
+	var projFieldRefs []*FieldRef
+	if len(uis.projectionFields) > 0 {
+		var err error
+		projFieldRefs, err = s.CreateFieldRef(uis.projectionFields...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &localMeasureIndexScan{
-		timeRange:          timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
-		schema:             s,
-		projectionTagsRefs: projTagsRefs,
-		metadata:           uis.metadata,
-		conditionMap:       localConditionMap,
-		entity:             uis.entity,
+		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
+		schema:               s,
+		projectionTagsRefs:   projTagsRefs,
+		projectionFieldsRefs: projFieldRefs,
+		metadata:             uis.metadata,
+		conditionMap:         localConditionMap,
+		entity:               uis.entity,
 	}, nil
 }
 
@@ -227,8 +234,10 @@ func (i *localMeasureIndexScan) Equal(plan Plan) bool {
 		i.metadata.GetName() == other.metadata.GetName() &&
 		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
 		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
+		len(i.entity) == len(other.entity) &&
 		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
 		cmp.Equal(i.projectionTagsRefs, other.projectionTagsRefs) &&
+		cmp.Equal(i.projectionFieldsRefs, other.projectionFieldsRefs) &&
 		cmp.Equal(i.schema, other.schema) &&
 		cmp.Equal(i.conditionMap, other.conditionMap)
 }

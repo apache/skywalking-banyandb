@@ -107,20 +107,15 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 	projTags := make([][]*Tag, len(criteria.GetTagProjection().GetTagFamilies()))
 	for i, tagFamily := range criteria.GetTagProjection().GetTagFamilies() {
 		var projTagInFamily []*Tag
-		for _, tagProjSpec := range tagFamily.GetTags() {
-			switch v := tagProjSpec.Spec.(type) {
-			case *modelv1.ProjectionSpec_DirectRef:
-				projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), v.DirectRef.GetCol()))
-			case *modelv1.ProjectionSpec_IndirectRef:
-				return nil, ErrIndirectRefNotAllowed
-			}
+		for _, tagName := range tagFamily.GetTags() {
+			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
 		}
 		projTags[i] = projTagInFamily
 	}
 
-	projFields := make([]*Field, len(criteria.GetFieldProjection().GetName()))
-	for _, fieldNameProj := range criteria.GetFieldProjection().GetName() {
-		projFields = append(projFields, NewField(fieldNameProj))
+	projFields := make([]*Field, len(criteria.GetFieldProjection().GetNames()))
+	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
+		projFields[i] = NewField(fieldNameProj)
 	}
 
 	var tagExprs []Expr
