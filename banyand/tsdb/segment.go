@@ -245,7 +245,10 @@ func (bc *blockController) ensureBlockOpen(blocks []*block) (openedBlocks []*blo
 			}
 		}
 		openedBlocks = append(openedBlocks, b)
-		bc.blockQueue.Push(b.blockID)
+		bc.blockQueue.Push(BlockID{
+			BlockID: b.blockID,
+			SegID:   b.segID,
+		})
 	}
 	return openedBlocks
 }
@@ -274,7 +277,7 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 		return time.Date(startTime.Year(), startTime.Month(),
 			t.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
 	case MILLISECOND:
-		return time.Parse(millisecondFormat, suffix)
+		return time.ParseInLocation(millisecondFormat, suffix, startTime.Location())
 	}
 	panic("invalid interval unit")
 }
