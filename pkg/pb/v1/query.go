@@ -275,10 +275,7 @@ func (b *MeasureQueryRequestBuilder) TagProjection(tagFamily string, projections
 }
 
 func (b *MeasureQueryRequestBuilder) FieldProjection(projections ...string) *MeasureQueryRequestBuilder {
-	for _, proj := range projections {
-		b.ec.FieldProjection.Names = append(b.ec.FieldProjection.Names, proj)
-	}
-
+	b.ec.FieldProjection.Names = append(b.ec.FieldProjection.Names, projections...)
 	return b
 }
 
