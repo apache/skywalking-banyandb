@@ -31,10 +31,10 @@ type Schema interface {
 	EntityList() []string
 	IndexDefined(*Tag) (bool, *databasev1.IndexRule)
 	IndexRuleDefined(string) (bool, *databasev1.IndexRule)
-	FieldSubscript(string) (bool, int)
-	FieldDefined(string) bool
-	CreateRef(tags ...[]*Tag) ([][]*FieldRef, error)
-	Proj(refs ...[]*FieldRef) Schema
+	TagDefined(string) bool
+	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
+	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
+	Proj(refs ...[]*TagRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
 	TraceIDFieldName() string
@@ -42,7 +42,7 @@ type Schema interface {
 
 type tagSpec struct {
 	// Idx is defined as
-	// 1) the field index based on the (trace) schema for the underlying plans which
+	// 1) the field index based on the (stream/measure) schema for the underlying plans which
 	//    directly interact with the database and index modules,
 	// 2) the projection index given by the users for those plans which can only access the data from parent plans,
 	//    e.g. orderBy plan uses this projection index to access the data entities (normally a projection view)
@@ -57,37 +57,63 @@ func (fs *tagSpec) Equal(other *tagSpec) bool {
 		fs.spec.GetType() == other.spec.GetType() && fs.spec.GetName() == other.spec.GetName()
 }
 
-var _ Schema = (*schema)(nil)
+var _ Schema = (*streamSchema)(nil)
 
-type schema struct {
+type commonSchema struct {
 	group      *commonv1.Group
-	stream     *databasev1.Stream
 	indexRules []*databasev1.IndexRule
-	fieldMap   map[string]*tagSpec
+	tagMap     map[string]*tagSpec
 	entityList []string
 }
 
-func (s *schema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
-	for _, idxRule := range s.indexRules {
-		if idxRule.GetMetadata().GetName() == indexRuleName {
-			return true, idxRule
+func (cs *commonSchema) Proj(refs ...[]*TagRef) *commonSchema {
+	if len(refs) == 0 {
+		return nil
+	}
+	newCommonSchema := &commonSchema{
+		indexRules: cs.indexRules,
+		tagMap:     make(map[string]*tagSpec),
+		entityList: cs.entityList,
+	}
+	for projFamilyIdx, refInFamily := range refs {
+		for projIdx, ref := range refInFamily {
+			newCommonSchema.tagMap[ref.tag.GetTagName()] = &tagSpec{
+				TagFamilyIdx: projFamilyIdx,
+				TagIdx:       projIdx,
+				spec:         ref.Spec.spec,
+			}
 		}
 	}
-	return false, nil
+	return newCommonSchema
 }
 
-func (s *schema) EntityList() []string {
-	return s.entityList
+// registerTag registers the tag spec with given tagFamilyName, tagName and indexes.
+func (cs *commonSchema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+	cs.tagMap[spec.GetName()] = &tagSpec{
+		TagIdx:       tagIdx,
+		TagFamilyIdx: tagFamilyIdx,
+		spec:         spec,
+	}
 }
 
-func (s *schema) TraceIDFieldName() string {
-	// TODO: how to extract trace_id?
-	return "trace_id"
+func (cs *commonSchema) ShardNumber() uint32 {
+	return cs.group.ResourceOpts.ShardNum
+}
+
+func (cs *commonSchema) EntityList() []string {
+	return cs.entityList
+}
+
+func (cs *commonSchema) TagDefined(name string) bool {
+	if _, ok := cs.tagMap[name]; ok {
+		return true
+	}
+	return false
 }
 
 // IndexDefined checks whether the field given is indexed
-func (s *schema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
-	for _, idxRule := range s.indexRules {
+func (cs *commonSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
+	for _, idxRule := range cs.indexRules {
 		for _, tagName := range idxRule.GetTags() {
 			if tag.GetTagName() == tagName {
 				return true, idxRule
@@ -97,88 +123,192 @@ func (s *schema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
-func (s *schema) FieldSubscript(field string) (bool, int) {
-	// TODO: what does this mean
-	for i, indexObj := range s.indexRules {
-		for _, fieldName := range indexObj.GetTags() {
-			if field == fieldName {
-				return true, i
-			}
+func (cs *commonSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+	for _, idxRule := range cs.indexRules {
+		if idxRule.GetMetadata().GetName() == indexRuleName {
+			return true, idxRule
 		}
 	}
-	return false, -1
+	return false, nil
 }
 
-func (s *schema) Equal(s2 Schema) bool {
-	if other, ok := s2.(*schema); ok {
-		return cmp.Equal(other.fieldMap, s.fieldMap)
-	}
-	return false
-}
-
-// registerField registers the field spec with given tagFamilyName, tagName and indexes.
-func (s *schema) registerField(tagName string, tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
-	s.fieldMap[tagName] = &tagSpec{
-		TagIdx:       tagIdx,
-		TagFamilyIdx: tagFamilyIdx,
-		spec:         spec,
-	}
-}
-
-func (s *schema) FieldDefined(name string) bool {
-	if _, ok := s.fieldMap[name]; ok {
-		return true
-	}
-	return false
-}
-
-// CreateRef create FieldRef to the given tags.
+// CreateRef create TagRef to the given tags.
 // The family name of the tag is actually not used
 // since the uniqueness of the tag names can be guaranteed across families.
-func (s *schema) CreateRef(tags ...[]*Tag) ([][]*FieldRef, error) {
-	fieldRefs := make([][]*FieldRef, len(tags))
+func (cs *commonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
+	tagRefs := make([][]*TagRef, len(tags))
 	for i, tagInFamily := range tags {
-		var fieldRefsInFamily []*FieldRef
+		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			if fs, ok := s.fieldMap[tag.GetTagName()]; ok {
-				fieldRefsInFamily = append(fieldRefsInFamily, &FieldRef{tag, fs})
+			if ts, ok := cs.tagMap[tag.GetTagName()]; ok {
+				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			} else {
-				return nil, errors.Wrap(ErrFieldNotDefined, tag.GetCompoundName())
+				return nil, errors.Wrap(ErrTagNotDefined, tag.GetCompoundName())
 			}
 		}
-		fieldRefs[i] = fieldRefsInFamily
+		tagRefs[i] = tagRefsInFamily
 	}
-	return fieldRefs, nil
+	return tagRefs, nil
 }
 
-// Proj creates a projection view from the present schema
+type streamSchema struct {
+	stream *databasev1.Stream
+	common *commonSchema
+}
+
+func (s *streamSchema) CreateFieldRef(fields ...*Field) ([]*FieldRef, error) {
+	panic("no field for stream")
+}
+
+func (s *streamSchema) TagDefined(tagName string) bool {
+	return s.common.TagDefined(tagName)
+}
+
+func (s *streamSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+	return s.common.IndexRuleDefined(indexRuleName)
+}
+
+func (s *streamSchema) EntityList() []string {
+	return s.common.EntityList()
+}
+
+func (s *streamSchema) TraceIDFieldName() string {
+	// TODO: how to extract trace_id?
+	return "trace_id"
+}
+
+// IndexDefined checks whether the field given is indexed
+func (s *streamSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
+	return s.common.IndexDefined(tag)
+}
+
+func (s *streamSchema) Equal(s2 Schema) bool {
+	if other, ok := s2.(*streamSchema); ok {
+		return cmp.Equal(other.common.tagMap, s.common.tagMap)
+	}
+	return false
+}
+
+// registerTag registers the tag spec with given tagFamilyName, tagName and indexes.
+func (s *streamSchema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+	s.common.registerTag(tagFamilyIdx, tagIdx, spec)
+}
+
+// CreateTagRef create TagRef to the given tags.
+// The family name of the tag is actually not used
+// since the uniqueness of the tag names can be guaranteed across families.
+func (s *streamSchema) CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error) {
+	return s.common.CreateRef(tags...)
+}
+
+// Proj creates a projection view from the present streamSchema
 // with a given list of projections
-func (s *schema) Proj(refs ...[]*FieldRef) Schema {
+func (s *streamSchema) Proj(refs ...[]*TagRef) Schema {
 	if len(refs) == 0 {
 		return nil
 	}
-	newSchema := &schema{
-		stream:     s.stream,
-		indexRules: s.indexRules,
-		fieldMap:   make(map[string]*tagSpec),
-		entityList: s.entityList,
-	}
-	for projFamilyIdx, refInFamily := range refs {
-		for projIdx, ref := range refInFamily {
-			newSchema.fieldMap[ref.tag.GetTagName()] = &tagSpec{
-				TagFamilyIdx: projFamilyIdx,
-				TagIdx:       projIdx,
-				spec:         ref.Spec.spec,
-			}
-		}
+	newSchema := &streamSchema{
+		stream: s.stream,
+		common: s.common.Proj(refs...),
 	}
 	return newSchema
 }
 
-func (s *schema) ShardNumber() uint32 {
-	return s.group.ResourceOpts.ShardNum
+func (s *streamSchema) ShardNumber() uint32 {
+	return s.common.ShardNumber()
 }
 
-func (s *schema) Scope() tsdb.Entry {
+func (s *streamSchema) Scope() tsdb.Entry {
 	return tsdb.Entry(s.stream.Metadata.Name)
+}
+
+var _ Schema = (*measureSchema)(nil)
+
+type fieldSpec struct {
+	FieldIdx int
+	spec     *databasev1.FieldSpec
+}
+
+type measureSchema struct {
+	measure  *databasev1.Measure
+	fieldMap map[string]*fieldSpec
+	common   *commonSchema
+}
+
+func (m *measureSchema) Scope() tsdb.Entry {
+	return tsdb.Entry(m.measure.Metadata.Name)
+}
+
+func (m *measureSchema) EntityList() []string {
+	return m.common.EntityList()
+}
+
+func (m *measureSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
+	return m.common.IndexDefined(tag)
+}
+
+func (m *measureSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+	return m.common.IndexRuleDefined(indexRuleName)
+}
+
+func (m *measureSchema) TagDefined(name string) bool {
+	return m.common.TagDefined(name)
+}
+
+func (m *measureSchema) CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error) {
+	return m.common.CreateRef(tags...)
+}
+
+func (m *measureSchema) CreateFieldRef(fields ...*Field) ([]*FieldRef, error) {
+	fieldRefs := make([]*FieldRef, len(fields))
+	for idx, field := range fields {
+		if fs, ok := m.fieldMap[field.name]; ok {
+			fieldRefs[idx] = &FieldRef{field, fs}
+		} else {
+			return nil, errors.Wrap(ErrFieldNotDefined, field.name)
+		}
+	}
+	return fieldRefs, nil
+}
+
+func (m *measureSchema) Proj(refs ...[]*TagRef) Schema {
+	if len(refs) == 0 {
+		return nil
+	}
+	newSchema := &measureSchema{
+		measure:  m.measure,
+		common:   m.common.Proj(refs...),
+		fieldMap: m.fieldMap,
+	}
+	return newSchema
+}
+
+func (m *measureSchema) Equal(s2 Schema) bool {
+	if other, ok := s2.(*measureSchema); ok {
+		// TODO: add more equality checks
+		return cmp.Equal(other.common.tagMap, m.common.tagMap)
+	}
+	return false
+}
+
+func (m *measureSchema) ShardNumber() uint32 {
+	return m.common.ShardNumber()
+}
+
+// registerTag registers the tag spec with given tagFamilyIdx and tagIdx.
+func (m *measureSchema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+	m.common.registerTag(tagFamilyIdx, tagIdx, spec)
+}
+
+// registerField registers the field spec with given index.
+func (m *measureSchema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
+	m.fieldMap[spec.GetName()] = &fieldSpec{
+		FieldIdx: fieldIdx,
+		spec:     spec,
+	}
+}
+
+func (m *measureSchema) TraceIDFieldName() string {
+	// We don't have traceID for measure
+	panic("implement me")
 }

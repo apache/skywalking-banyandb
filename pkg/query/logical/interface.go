@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
 type PlanType uint8
@@ -40,7 +39,6 @@ type UnresolvedPlan interface {
 type Plan interface {
 	fmt.Stringer
 	Type() PlanType
-	executor.Executable
 	Equal(Plan) bool
 	Children() []Plan
 	Schema() Schema

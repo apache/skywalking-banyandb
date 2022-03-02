@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -43,7 +44,7 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(metaService)
 	tester.NoError(err)
 	tester.NotNil(analyzer)
 
@@ -79,7 +80,7 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamSvc)
+			entities, err := plan.(executor.StreamExecutable).Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
 			tester.True(logical.SortedByTimestamp(entities, modelv1.Sort_SORT_ASC))
@@ -100,7 +101,7 @@ func TestPlanExecution_Offset(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(metaService)
 	tester.NoError(err)
 	tester.NotNil(analyzer)
 
@@ -136,7 +137,7 @@ func TestPlanExecution_Offset(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamSvc)
+			entities, err := plan.(executor.StreamExecutable).Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
 		})
@@ -154,7 +155,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 		Group: "default",
 	}
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(metaService)
 	tester.NoError(err)
 	tester.NotNil(analyzer)
 
@@ -191,7 +192,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 			}, logical.NewTags("searchable", "trace_id")).Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
-			entities, err := p.Execute(streamSvc)
+			entities, err := p.(executor.StreamExecutable).Execute(streamSvc)
 			tester.NoError(err)
 			for _, entity := range entities {
 				tester.Len(entity.GetTagFamilies(), 1)
@@ -216,7 +217,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(metaService)
 	tester.NoError(err)
 	tester.NotNil(analyzer)
 
@@ -289,7 +290,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			entities, err := plan.Execute(streamSvc)
+			entities, err := plan.(executor.StreamExecutable).Execute(streamSvc)
 			tester.NoError(err)
 			tester.Len(entities, tt.wantLength)
 		})
@@ -309,7 +310,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(metaService)
 	tester.NoError(err)
 	tester.NotNil(analyzer)
 
@@ -361,7 +362,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 				tester.NoError(err)
 				tester.NotNil(p)
 
-				entities, err := p.Execute(streamSvc)
+				entities, err := p.(executor.StreamExecutable).Execute(streamSvc)
 				tester.NoError(err)
 				tester.NotNil(entities)
 
@@ -373,7 +374,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 				tester.NoError(err)
 				tester.NotNil(p)
 
-				entities, err := p.Execute(streamSvc)
+				entities, err := p.(executor.StreamExecutable).Execute(streamSvc)
 				tester.NoError(err)
 				tester.NotNil(entities)
 

@@ -1,11 +1,11 @@
 {
   "metadata": {
     "id": 1,
-    "name": "entity_id",
+    "name": "scope",
     "group": "default"
   },
   "tags": [
-    "entity_id"
+    "scope"
   ],
   "type": "TYPE_INVERTED",
   "location": "LOCATION_SERIES",

@@ -20,77 +20,38 @@ package logical
 import (
 	"context"
 
-	"github.com/pkg/errors"
-
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var (
-	ErrFieldNotDefined            = errors.New("field is not defined")
-	ErrInvalidConditionType       = errors.New("invalid pair type")
-	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
-	ErrIndexNotDefined            = errors.New("index is not define for the field")
-	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
-)
-
-var (
-	DefaultLimit uint32 = 100
-)
-
-type Tag struct {
-	familyName, name string
+type Field struct {
+	name string
 }
 
-func NewTag(family, name string) *Tag {
-	return &Tag{
-		familyName: family,
-		name:       name,
-	}
+func NewField(name string) *Field {
+	return &Field{name: name}
 }
 
-// NewTags create an array of Tag within a TagFamily
-func NewTags(family string, tagNames ...string) []*Tag {
-	tags := make([]*Tag, len(tagNames))
-	for i, name := range tagNames {
-		tags[i] = NewTag(family, name)
-	}
-	return tags
-}
-
-// GetCompoundName is only used for error message
-func (t *Tag) GetCompoundName() string {
-	return t.familyName + ":" + t.name
-}
-
-func (t *Tag) GetTagName() string {
-	return t.name
-}
-
-func (t *Tag) GetFamilyName() string {
-	return t.familyName
-}
-
-type Analyzer struct {
+type MeasureAnalyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
-func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
-	return &Analyzer{
+func CreateMeasureAnalyzerFromMetaService(metaSvc metadata.Service) (*MeasureAnalyzer, error) {
+	return &MeasureAnalyzer{
 		metaSvc,
 	}, nil
 }
 
-func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
+func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
 		return nil, err
 	}
-	stream, err := a.metadataRepoImpl.StreamRegistry().GetStream(ctx, metadata)
+	measure, err := a.metadataRepoImpl.MeasureRegistry().GetMeasure(ctx, metadata)
 
 	if err != nil {
 		return nil, err
@@ -102,68 +63,59 @@ func (a *Analyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Met
 		return nil, err
 	}
 
-	s := &schema{
-		group:      group,
-		stream:     stream,
-		indexRules: indexRules,
-		fieldMap:   make(map[string]*tagSpec),
-		entityList: stream.GetEntity().GetTagNames(),
+	ms := &measureSchema{
+		common: &commonSchema{
+			group:      group,
+			indexRules: indexRules,
+			tagMap:     make(map[string]*tagSpec),
+			entityList: measure.GetEntity().GetTagNames(),
+		},
+		measure:  measure,
+		fieldMap: make(map[string]*fieldSpec),
 	}
 
-	// generate the schema of the fields for the traceSeries
-	for tagFamilyIdx, tagFamily := range stream.GetTagFamilies() {
+	for tagFamilyIdx, tagFamily := range measure.GetTagFamilies() {
 		for tagIdx, spec := range tagFamily.GetTags() {
-			s.registerField(spec.GetName(), tagFamilyIdx, tagIdx, spec)
+			ms.registerTag(tagFamilyIdx, tagIdx, spec)
 		}
 	}
 
-	return s, nil
+	for fieldIdx, spec := range measure.GetFields() {
+		ms.registerField(fieldIdx, spec)
+	}
+
+	return ms, nil
 }
 
-func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
+func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
 	// parse fields
-	plan, err := parseFields(criteria, metadata, s)
+	plan, err := parseMeasureFields(criteria, metadata, s)
 	if err != nil {
 		return nil, err
 	}
 
-	// parse orderBy
-	queryOrder := criteria.GetOrderBy()
-	if queryOrder != nil {
-		if v, ok := plan.(*unresolvedIndexScan); ok {
-			v.unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
-		}
-	}
-
-	// parse offset
-	plan = Offset(plan, criteria.GetOffset())
-
-	// parse limit
-	limitParameter := criteria.GetLimit()
-	if limitParameter == 0 {
-		limitParameter = DefaultLimit
-	}
-	plan = Limit(plan, limitParameter)
-
 	return plan.Analyze(s)
 }
 
-// parseFields parses the query request to decide which kind of plan should be generated
+// parseMeasureFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
-// 2 - If criteria is given, but all of those fields exist in the "entity" definition,
-//     i.e. they are top-level sharding keys. For example, for the current skywalking's schema,
-//     we use service_id + service_instance_id + state as the compound sharding keys.
-func parseFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
+// 2 - If criteria is given, but all of those fields exist in the "entity" definition
+func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
-	projTags := make([][]*Tag, len(criteria.GetProjection().GetTagFamilies()))
-	for i, tagFamily := range criteria.GetProjection().GetTagFamilies() {
+	projTags := make([][]*Tag, len(criteria.GetTagProjection().GetTagFamilies()))
+	for i, tagFamily := range criteria.GetTagProjection().GetTagFamilies() {
 		var projTagInFamily []*Tag
 		for _, tagName := range tagFamily.GetTags() {
 			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
 		}
 		projTags[i] = projTagInFamily
+	}
+
+	projFields := make([]*Field, len(criteria.GetFieldProjection().GetNames()))
+	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
+		projFields[i] = NewField(fieldNameProj)
 	}
 
 	var tagExprs []Expr
@@ -217,6 +169,6 @@ func parseFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s
 		}
 	}
 
-	return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagExprs, entity, nil, projTags...), nil
+	return MeasureIndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+		tagExprs, entity, projTags, projFields), nil
 }

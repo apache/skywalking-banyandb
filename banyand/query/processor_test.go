@@ -218,7 +218,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange is out of the time range of data",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -231,7 +231,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange which covers all the segments with data binary projection",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -246,7 +246,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query max valid time-range which covers all the segments with data binary projection",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -263,7 +263,7 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query given timeRange which covers all the segments and sort by duration DESC",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
@@ -280,11 +280,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query TraceID given timeRange includes the time range of data",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "trace_id", "=", "1").
+					TagsInTagFamily("searchable", "trace_id", "=", "1").
 					TimeRange(sT, eT).
 					Projection("searchable", "trace_id").
 					Build()
@@ -295,11 +295,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "query TraceID given timeRange includes the time range of data with dataBinary projection",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "trace_id", "=", "1").
+					TagsInTagFamily("searchable", "trace_id", "=", "1").
 					TimeRange(sT, eT).
 					Projection("data", "data_binary").
 					Projection("searchable", "trace_id").
@@ -311,11 +311,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Numerical Index - query duration < 500",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "duration", "<", 500).
+					TagsInTagFamily("searchable", "duration", "<", 500).
 					TimeRange(sT, eT).
 					Projection("searchable", "trace_id").
 					Build()
@@ -325,11 +325,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Numerical Index - query duration <= 500",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "duration", "<=", 500).
+					TagsInTagFamily("searchable", "duration", "<=", 500).
 					TimeRange(sT, eT).
 					Projection("searchable", "trace_id").
 					Build()
@@ -339,11 +339,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Textual Index - http.method == GET",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "http.method", "=", "GET").
+					TagsInTagFamily("searchable", "http.method", "=", "GET").
 					TimeRange(sT, eT).
 					Projection("searchable", "trace_id").
 					Build()
@@ -354,11 +354,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Textual Index - http.method == GET with dataBinary projection",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "http.method", "=", "GET").
+					TagsInTagFamily("searchable", "http.method", "=", "GET").
 					TimeRange(sT, eT).
 					Projection("data", "data_binary").
 					Projection("searchable", "trace_id").
@@ -370,11 +370,11 @@ func TestQueryProcessor(t *testing.T) {
 		{
 			name: "Mixed Index - status_code == 500 AND duration <= 100",
 			queryGenerator: func(baseTs time.Time) *streamv1.QueryRequest {
-				return pb.NewQueryRequestBuilder().
+				return pb.NewStreamQueryRequestBuilder().
 					Limit(10).
 					Offset(0).
 					Metadata("default", "sw").
-					FieldsInTagFamily("searchable", "status_code", "=", "500", "duration", "<=", 100).
+					TagsInTagFamily("searchable", "status_code", "=", "500", "duration", "<=", 100).
 					TimeRange(sT, eT).
 					Projection("searchable", "trace_id").
 					Build()

@@ -41,7 +41,7 @@ type globalIndexScan struct {
 	metadata            *commonv1.Metadata
 	globalIndexRule     *databasev1.IndexRule
 	expr                Expr
-	projectionFieldRefs [][]*FieldRef
+	projectionFieldRefs [][]*TagRef
 }
 
 func (t *globalIndexScan) String() string {
@@ -79,7 +79,7 @@ func (t *globalIndexScan) Equal(plan Plan) bool {
 		cmp.Equal(t.expr, other.expr)
 }
 
-func (t *globalIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Element, error) {
+func (t *globalIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
 	shards, err := ec.Shards(nil)
 	if err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (t *globalIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Ele
 	return elements, nil
 }
 
-func (t *globalIndexScan) executeForShard(ec executor.ExecutionContext, shard tsdb.Shard) ([]*streamv1.Element, error) {
+func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, shard tsdb.Shard) ([]*streamv1.Element, error) {
 	var elementsInShard []*streamv1.Element
 	itemIDs, err := shard.Index().Seek(index.Field{
 		Key: index.FieldKey{

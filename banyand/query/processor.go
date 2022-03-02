@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -67,7 +68,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical.CreateAnalyzerFromMetaService(q.metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(q.metaService)
 	if err != nil {
 		q.log.Error().Err(err).Msg("fail to build analyzer")
 		return
@@ -87,7 +88,7 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	q.log.Debug().Str("plan", p.String()).Msg("query plan")
 
-	entities, err := p.Execute(ec)
+	entities, err := p.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		q.log.Error().Err(err).Msg("fail to execute the query plan")
 		return

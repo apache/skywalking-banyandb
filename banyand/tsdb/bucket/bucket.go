@@ -18,6 +18,7 @@
 package bucket
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -67,6 +68,7 @@ func (tr *timeBasedReporter) Report() Channel {
 		for {
 			select {
 			case <-ticker.C:
+				fmt.Printf("tick for %v\n", interval)
 				status := Status{
 					Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
 					Volume:   int(time.Now().UnixNano() - tr.Start.UnixNano()),

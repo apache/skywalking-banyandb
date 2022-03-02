@@ -171,7 +171,7 @@ func writeData() *streamv1.WriteRequest {
 }
 
 func queryCriteria(baseTs time.Time) *streamv1.QueryRequest {
-	return pbv1.NewQueryRequestBuilder().
+	return pbv1.NewStreamQueryRequestBuilder().
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").

@@ -18,14 +18,33 @@
 package executor
 
 import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 type ExecutionContext interface {
-	stream.Stream
+	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+	Shard(id common.ShardID) (tsdb.Shard, error)
+	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 }
 
-type Executable interface {
-	Execute(ExecutionContext) ([]*streamv1.Element, error)
+type StreamExecutionContext interface {
+	ExecutionContext
+	ParseElementID(item tsdb.Item) (string, error)
+}
+
+type StreamExecutable interface {
+	Execute(StreamExecutionContext) ([]*streamv1.Element, error)
+}
+
+type MeasureExecutionContext interface {
+	ExecutionContext
+	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
+}
+
+type MeasureExecutable interface {
+	Execute(MeasureExecutionContext) ([]*measurev1.DataPoint, error)
 }

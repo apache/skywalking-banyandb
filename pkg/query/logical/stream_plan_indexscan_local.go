@@ -36,9 +36,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ UnresolvedPlan = (*unresolvedIndexScan)(nil)
+var _ UnresolvedPlan = (*unresolvedStreamIndexScan)(nil)
 
-type unresolvedIndexScan struct {
+type unresolvedStreamIndexScan struct {
 	unresolvedOrderBy *UnresolvedOrderBy
 	startTime         time.Time
 	endTime           time.Time
@@ -48,7 +48,7 @@ type unresolvedIndexScan struct {
 	entity            tsdb.Entity
 }
 
-func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
+func (uis *unresolvedStreamIndexScan) Analyze(s Schema) (Plan, error) {
 	localConditionMap := make(map[*databasev1.IndexRule][]Expr)
 	globalConditions := make([]interface{}, 0)
 	for _, cond := range uis.conditions {
@@ -59,7 +59,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 			}
 
 			if bCond, ok := cond.(*binaryExpr); ok {
-				tag := bCond.l.(*FieldRef).tag
+				tag := bCond.l.(*TagRef).tag
 				if defined, indexObj := s.IndexDefined(tag); defined {
 					if indexObj.GetLocation() == databasev1.IndexRule_LOCATION_SERIES {
 						if v, exist := localConditionMap[indexObj]; exist {
@@ -78,10 +78,10 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
-	var projFieldsRefs [][]*FieldRef
-	if uis.projectionFields != nil && len(uis.projectionFields) > 0 {
+	var projFieldsRefs [][]*TagRef
+	if len(uis.projectionFields) > 0 {
 		var err error
-		projFieldsRefs, err = s.CreateRef(uis.projectionFields...)
+		projFieldsRefs, err = s.CreateTagRef(uis.projectionFields...)
 		if err != nil {
 			return nil, err
 		}
@@ -100,7 +100,7 @@ func (uis *unresolvedIndexScan) Analyze(s Schema) (Plan, error) {
 		}, nil
 	}
 
-	// resolve sub-plan with the projected view of schema
+	// resolve sub-plan with the projected view of streamSchema
 	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.Proj(projFieldsRefs...))
 
 	if err != nil {
@@ -126,11 +126,11 @@ type localIndexScan struct {
 	schema              Schema
 	metadata            *commonv1.Metadata
 	conditionMap        map[*databasev1.IndexRule][]Expr
-	projectionFieldRefs [][]*FieldRef
+	projectionFieldRefs [][]*TagRef
 	entity              tsdb.Entity
 }
 
-func (i *localIndexScan) Execute(ec executor.ExecutionContext) ([]*streamv1.Element, error) {
+func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
 	shards, err := ec.Shards(i.entity)
 	if err != nil {
 		return nil, err
@@ -249,6 +249,7 @@ func (i *localIndexScan) Equal(plan Plan) bool {
 		i.metadata.GetName() == other.metadata.GetName() &&
 		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
 		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
+		len(i.entity) == len(other.entity) &&
 		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
 		cmp.Equal(i.projectionFieldRefs, other.projectionFieldRefs) &&
 		cmp.Equal(i.schema, other.schema) &&
@@ -258,7 +259,7 @@ func (i *localIndexScan) Equal(plan Plan) bool {
 
 func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
 	orderBy *UnresolvedOrderBy, projection ...[]*Tag) UnresolvedPlan {
-	return &unresolvedIndexScan{
+	return &unresolvedStreamIndexScan{
 		unresolvedOrderBy: orderBy,
 		startTime:         startTime,
 		endTime:           endTime,
@@ -269,9 +270,9 @@ func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, condit
 	}
 }
 
-// GlobalIndexScan is a short-hand method for composing a globalIndexScan plan
+// GlobalIndexScan is a short-handed method for composing a globalIndexScan plan
 func GlobalIndexScan(metadata *commonv1.Metadata, conditions []Expr, projection ...[]*Tag) UnresolvedPlan {
-	return &unresolvedIndexScan{
+	return &unresolvedStreamIndexScan{
 		metadata:         metadata,
 		conditions:       conditions,
 		projectionFields: projection,
@@ -282,7 +283,7 @@ func exprToCondition(exprs []Expr) tsdb.Condition {
 	cond := make(map[string][]index.ConditionValue)
 	for _, expr := range exprs {
 		bExpr := expr.(*binaryExpr)
-		l := bExpr.l.(*FieldRef)
+		l := bExpr.l.(*TagRef)
 		r := bExpr.r.(LiteralExpr)
 		if existingList, ok := cond[l.tag.GetTagName()]; ok {
 			existingList = append(existingList, index.ConditionValue{
