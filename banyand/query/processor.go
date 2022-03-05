@@ -21,9 +21,13 @@ import (
 	"context"
 	"time"
 
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/data"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -38,59 +42,65 @@ const (
 )
 
 var (
-	_ Executor            = (*queryProcessor)(nil)
-	_ bus.MessageListener = (*queryProcessor)(nil)
+	_ Executor            = (*queryService)(nil)
+	_ bus.MessageListener = (*streamQueryProcessor)(nil)
+	_ bus.MessageListener = (*measureQueryProcessor)(nil)
 )
 
-type queryProcessor struct {
-	streamService stream.Service
-	metaService   metadata.Service
-	log           *logger.Logger
-	serviceRepo   discovery.ServiceRepo
-	pipeline      queue.Queue
+type queryService struct {
+	log         *logger.Logger
+	metaService metadata.Service
+	serviceRepo discovery.ServiceRepo
+	pipeline    queue.Queue
+	sqp         *streamQueryProcessor
+	mqp         *measureQueryProcessor
 }
 
-func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
+type streamQueryProcessor struct {
+	streamService stream.Service
+	*queryService
+}
+
+func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
 	if !ok {
-		q.log.Warn().Msg("invalid event data type")
+		p.log.Warn().Msg("invalid event data type")
 		return
 	}
-	q.log.Info().
-		Msg("received a query event")
+	p.log.Info().Msg("received a query event")
 
 	meta := queryCriteria.GetMetadata()
-	ec, err := q.streamService.Stream(meta)
+	ec, err := p.streamService.Stream(meta)
 	if err != nil {
-		q.log.Error().Err(err).
+		p.log.Error().Err(err).
 			Str("stream", meta.GetName()).
 			Msg("fail to get execution context for stream")
 		return
 	}
 
-	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(q.metaService)
+	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(p.metaService)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to build analyzer")
+		p.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
 	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to build stream schema")
+		p.log.Error().Err(err).Msg("fail to build")
 		return
 	}
 
-	p, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to analyze the query request")
+		p.log.Error().Err(err).Msg("fail to analyze the query request")
 		return
 	}
 
-	q.log.Debug().Str("plan", p.String()).Msg("query plan")
+	p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 
-	entities, err := p.(executor.StreamExecutable).Execute(ec)
+	entities, err := plan.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
-		q.log.Error().Err(err).Msg("fail to execute the query plan")
+		p.log.Error().Err(err).Msg("fail to execute the query plan")
 		return
 	}
 
@@ -100,11 +110,68 @@ func (q *queryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func (q *queryProcessor) Name() string {
+type measureQueryProcessor struct {
+	measureService measure.Service
+	*queryService
+}
+
+func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
+	if !ok {
+		p.queryService.log.Warn().Msg("invalid event data type")
+		return
+	}
+	p.log.Info().Msg("received a query event")
+
+	meta := queryCriteria.GetMetadata()
+	ec, err := p.measureService.Measure(meta)
+	if err != nil {
+		p.log.Error().Err(err).
+			Str("measure", meta.GetName()).
+			Msg("fail to get execution context")
+		return
+	}
+
+	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(p.metaService)
+	if err != nil {
+		p.log.Error().Err(err).Msg("fail to build analyzer")
+		return
+	}
+
+	s, err := analyzer.BuildMeasureSchema(context.TODO(), meta)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
+		return
+	}
+
+	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to analyze the query request")
+		return
+	}
+
+	p.queryService.log.Debug().Str("plan", plan.String()).Msg("query plan")
+
+	entities, err := plan.(executor.MeasureExecutable).Execute(ec)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to execute the query plan")
+		return
+	}
+
+	now := time.Now().UnixNano()
+	resp = bus.NewMessage(bus.MessageID(now), entities)
+
+	return
+}
+
+func (q *queryService) Name() string {
 	return moduleName
 }
 
-func (q *queryProcessor) PreRun() error {
+func (q *queryService) PreRun() error {
 	q.log = logger.GetLogger(moduleName)
-	return q.pipeline.Subscribe(data.TopicStreamQuery, q)
+	var err error
+	err = multierr.Append(err, q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp))
+	err = multierr.Append(err, q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp))
+	return err
 }
