@@ -104,7 +104,7 @@ func setUpServices() (*services, func()) {
 	// Init `Measure` module
 	measureService, err := measure.NewService(context.TODO(), metadataService, repo, pipeline)
 	Expect(err).ShouldNot(HaveOccurred())
-	//preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
+	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
 
 	var flags []string
@@ -120,8 +120,8 @@ func setUpServices() (*services, func()) {
 		repo,
 		pipeline,
 		metadataService,
-		//preloadMeasureSvc,
-		//measureService,
+		preloadMeasureSvc,
+		measureService,
 		preloadStreamSvc,
 		streamService,
 		executor,
