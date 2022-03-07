@@ -300,3 +300,57 @@ func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupRe
 		Group: groups,
 	}, nil
 }
+
+type topNAggregationRegistryServer struct {
+	schemaRegistry metadata.Service
+	databasev1.UnimplementedTopNAggregationRegistryServiceServer
+}
+
+func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
+	req *databasev1.TopNAggregationRegistryServiceCreateRequest) (*databasev1.TopNAggregationRegistryServiceCreateResponse, error) {
+	if err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation()); err != nil {
+		return nil, err
+	}
+	return &databasev1.TopNAggregationRegistryServiceCreateResponse{}, nil
+}
+
+func (ts *topNAggregationRegistryServer) Update(ctx context.Context,
+	req *databasev1.TopNAggregationRegistryServiceUpdateRequest) (*databasev1.TopNAggregationRegistryServiceUpdateResponse, error) {
+	if err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation()); err != nil {
+		return nil, err
+	}
+	return &databasev1.TopNAggregationRegistryServiceUpdateResponse{}, nil
+}
+
+func (ts *topNAggregationRegistryServer) Delete(ctx context.Context,
+	req *databasev1.TopNAggregationRegistryServiceDeleteRequest) (*databasev1.TopNAggregationRegistryServiceDeleteResponse, error) {
+	ok, err := ts.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, req.GetMetadata())
+	if err != nil {
+		return nil, err
+	}
+	return &databasev1.TopNAggregationRegistryServiceDeleteResponse{
+		Deleted: ok,
+	}, nil
+}
+
+func (ts *topNAggregationRegistryServer) Get(ctx context.Context,
+	req *databasev1.TopNAggregationRegistryServiceGetRequest) (*databasev1.TopNAggregationRegistryServiceGetResponse, error) {
+	entity, err := ts.schemaRegistry.TopNAggregationRegistry().GetTopNAggregation(ctx, req.GetMetadata())
+	if err != nil {
+		return nil, err
+	}
+	return &databasev1.TopNAggregationRegistryServiceGetResponse{
+		TopNAggregation: entity,
+	}, nil
+}
+
+func (ts *topNAggregationRegistryServer) List(ctx context.Context,
+	req *databasev1.TopNAggregationRegistryServiceListRequest) (*databasev1.TopNAggregationRegistryServiceListResponse, error) {
+	entities, err := ts.schemaRegistry.TopNAggregationRegistry().ListTopNAggregation(ctx, schema.ListOpt{Group: req.GetGroup()})
+	if err != nil {
+		return nil, err
+	}
+	return &databasev1.TopNAggregationRegistryServiceListResponse{
+		TopNAggregation: entities,
+	}, nil
+}

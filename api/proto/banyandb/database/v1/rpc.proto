@@ -255,3 +255,49 @@ service GroupRegistryService {
   rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse);
   rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse);
 }
+
+message TopNAggregationRegistryServiceCreateRequest {
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
+}
+
+message TopNAggregationRegistryServiceCreateResponse {
+}
+
+message TopNAggregationRegistryServiceUpdateRequest {
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
+}
+
+message TopNAggregationRegistryServiceUpdateResponse {
+}
+
+message TopNAggregationRegistryServiceDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TopNAggregationRegistryServiceDeleteResponse {
+  bool deleted = 1;
+}
+
+message TopNAggregationRegistryServiceGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TopNAggregationRegistryServiceGetResponse {
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
+}
+
+message TopNAggregationRegistryServiceListRequest {
+  string group = 1;
+}
+
+message TopNAggregationRegistryServiceListResponse {
+  repeated banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
+}
+
+service TopNAggregationRegistryService {
+  rpc Create(TopNAggregationRegistryServiceCreateRequest) returns (TopNAggregationRegistryServiceCreateResponse);
+  rpc Update(TopNAggregationRegistryServiceUpdateRequest) returns (TopNAggregationRegistryServiceUpdateResponse);
+  rpc Delete(TopNAggregationRegistryServiceDeleteRequest) returns (TopNAggregationRegistryServiceDeleteResponse);
+  rpc Get(TopNAggregationRegistryServiceGetRequest) returns (TopNAggregationRegistryServiceGetResponse);
+  rpc List(TopNAggregationRegistryServiceListRequest) returns (TopNAggregationRegistryServiceListResponse);
+}

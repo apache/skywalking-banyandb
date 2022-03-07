@@ -1171,3 +1171,234 @@ var GroupRegistryService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
 }
+
+// TopNAggregationRegistryServiceClient is the client API for TopNAggregationRegistryService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type TopNAggregationRegistryServiceClient interface {
+	Create(ctx context.Context, in *TopNAggregationRegistryServiceCreateRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceCreateResponse, error)
+	Update(ctx context.Context, in *TopNAggregationRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceUpdateResponse, error)
+	Delete(ctx context.Context, in *TopNAggregationRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceDeleteResponse, error)
+	Get(ctx context.Context, in *TopNAggregationRegistryServiceGetRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceGetResponse, error)
+	List(ctx context.Context, in *TopNAggregationRegistryServiceListRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceListResponse, error)
+}
+
+type topNAggregationRegistryServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTopNAggregationRegistryServiceClient(cc grpc.ClientConnInterface) TopNAggregationRegistryServiceClient {
+	return &topNAggregationRegistryServiceClient{cc}
+}
+
+func (c *topNAggregationRegistryServiceClient) Create(ctx context.Context, in *TopNAggregationRegistryServiceCreateRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceCreateResponse, error) {
+	out := new(TopNAggregationRegistryServiceCreateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/Create", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *topNAggregationRegistryServiceClient) Update(ctx context.Context, in *TopNAggregationRegistryServiceUpdateRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceUpdateResponse, error) {
+	out := new(TopNAggregationRegistryServiceUpdateResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/Update", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *topNAggregationRegistryServiceClient) Delete(ctx context.Context, in *TopNAggregationRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceDeleteResponse, error) {
+	out := new(TopNAggregationRegistryServiceDeleteResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/Delete", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *topNAggregationRegistryServiceClient) Get(ctx context.Context, in *TopNAggregationRegistryServiceGetRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceGetResponse, error) {
+	out := new(TopNAggregationRegistryServiceGetResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/Get", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *topNAggregationRegistryServiceClient) List(ctx context.Context, in *TopNAggregationRegistryServiceListRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceListResponse, error) {
+	out := new(TopNAggregationRegistryServiceListResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/List", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TopNAggregationRegistryServiceServer is the server API for TopNAggregationRegistryService service.
+// All implementations must embed UnimplementedTopNAggregationRegistryServiceServer
+// for forward compatibility
+type TopNAggregationRegistryServiceServer interface {
+	Create(context.Context, *TopNAggregationRegistryServiceCreateRequest) (*TopNAggregationRegistryServiceCreateResponse, error)
+	Update(context.Context, *TopNAggregationRegistryServiceUpdateRequest) (*TopNAggregationRegistryServiceUpdateResponse, error)
+	Delete(context.Context, *TopNAggregationRegistryServiceDeleteRequest) (*TopNAggregationRegistryServiceDeleteResponse, error)
+	Get(context.Context, *TopNAggregationRegistryServiceGetRequest) (*TopNAggregationRegistryServiceGetResponse, error)
+	List(context.Context, *TopNAggregationRegistryServiceListRequest) (*TopNAggregationRegistryServiceListResponse, error)
+	mustEmbedUnimplementedTopNAggregationRegistryServiceServer()
+}
+
+// UnimplementedTopNAggregationRegistryServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedTopNAggregationRegistryServiceServer struct {
+}
+
+func (UnimplementedTopNAggregationRegistryServiceServer) Create(context.Context, *TopNAggregationRegistryServiceCreateRequest) (*TopNAggregationRegistryServiceCreateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) Update(context.Context, *TopNAggregationRegistryServiceUpdateRequest) (*TopNAggregationRegistryServiceUpdateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) Delete(context.Context, *TopNAggregationRegistryServiceDeleteRequest) (*TopNAggregationRegistryServiceDeleteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) Get(context.Context, *TopNAggregationRegistryServiceGetRequest) (*TopNAggregationRegistryServiceGetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) List(context.Context, *TopNAggregationRegistryServiceListRequest) (*TopNAggregationRegistryServiceListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) mustEmbedUnimplementedTopNAggregationRegistryServiceServer() {
+}
+
+// UnsafeTopNAggregationRegistryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TopNAggregationRegistryServiceServer will
+// result in compilation errors.
+type UnsafeTopNAggregationRegistryServiceServer interface {
+	mustEmbedUnimplementedTopNAggregationRegistryServiceServer()
+}
+
+func RegisterTopNAggregationRegistryServiceServer(s grpc.ServiceRegistrar, srv TopNAggregationRegistryServiceServer) {
+	s.RegisterService(&TopNAggregationRegistryService_ServiceDesc, srv)
+}
+
+func _TopNAggregationRegistryService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceCreateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).Create(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/Create",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).Create(ctx, req.(*TopNAggregationRegistryServiceCreateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TopNAggregationRegistryService_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).Update(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/Update",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).Update(ctx, req.(*TopNAggregationRegistryServiceUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TopNAggregationRegistryService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).Delete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/Delete",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).Delete(ctx, req.(*TopNAggregationRegistryServiceDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TopNAggregationRegistryService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceGetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).Get(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/Get",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).Get(ctx, req.(*TopNAggregationRegistryServiceGetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TopNAggregationRegistryService_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).List(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/List",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).List(ctx, req.(*TopNAggregationRegistryServiceListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// TopNAggregationRegistryService_ServiceDesc is the grpc.ServiceDesc for TopNAggregationRegistryService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TopNAggregationRegistryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "banyandb.database.v1.TopNAggregationRegistryService",
+	HandlerType: (*TopNAggregationRegistryServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Create",
+			Handler:    _TopNAggregationRegistryService_Create_Handler,
+		},
+		{
+			MethodName: "Update",
+			Handler:    _TopNAggregationRegistryService_Update_Handler,
+		},
+		{
+			MethodName: "Delete",
+			Handler:    _TopNAggregationRegistryService_Delete_Handler,
+		},
+		{
+			MethodName: "Get",
+			Handler:    _TopNAggregationRegistryService_Get_Handler,
+		},
+		{
+			MethodName: "List",
+			Handler:    _TopNAggregationRegistryService_List_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "banyandb/database/v1/rpc.proto",
+}

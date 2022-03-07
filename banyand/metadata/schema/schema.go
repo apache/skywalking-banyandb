@@ -45,9 +45,10 @@ const (
 	KindMeasure
 	KindIndexRuleBinding
 	KindIndexRule
+	KindTopNAggregation
 )
 
-const KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule
+const KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule | KindTopNAggregation
 
 type ListOpt struct {
 	Group string
@@ -63,6 +64,7 @@ type Registry interface {
 	IndexRuleBinding
 	Measure
 	Group
+	TopNAggregation
 }
 
 type TypeMeta struct {
@@ -178,4 +180,11 @@ type Group interface {
 	// DeleteGroup delete all items belonging to the group
 	DeleteGroup(ctx context.Context, group string) (bool, error)
 	UpdateGroup(ctx context.Context, group *commonv1.Group) error
+}
+
+type TopNAggregation interface {
+	GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error)
+	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
+	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
+	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
