@@ -115,6 +115,7 @@ func setUpServices() (*services, func()) {
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--root-path="+rootPath)
 	executor, err := query.NewExecutor(context.TODO(), streamService, measureService, metadataService, repo, pipeline)
+	Expect(err).NotTo(HaveOccurred())
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,
@@ -255,10 +256,10 @@ var _ = Describe("Stream Query", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(msg).ShouldNot(BeNil())
 		Expect(msg.Data()).Should(HaveLen(5))
-		// TODO: check order
-		_ = func(elements []*streamv1.Element) bool {
+		sortedChecker := func(elements []*streamv1.Element) bool {
 			return logical.SortedByIndex(elements, 0, 1, modelv1.Sort_SORT_DESC)
 		}
+		Expect(sortedChecker(msg.Data().([]*streamv1.Element))).To(BeTrue())
 	})
 
 	It("should return segments without binary when querying a given TraceID", func() {
@@ -304,7 +305,7 @@ var _ = Describe("Stream Query", func() {
 		Expect(msg.Data()).Should(HaveBinary())
 	})
 
-	It("Numerical Index - query duration < 500", func() {
+	It("uses numerical index - query duration < 500", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).
 			Offset(0).
@@ -324,7 +325,7 @@ var _ = Describe("Stream Query", func() {
 		Expect(msg.Data()).Should(HaveLen(3))
 	})
 
-	It("Numerical Index - query duration <= 500", func() {
+	It("uses numerical index - query duration <= 500", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).
 			Offset(0).
@@ -344,7 +345,7 @@ var _ = Describe("Stream Query", func() {
 		Expect(msg.Data()).Should(HaveLen(4))
 	})
 
-	It("Textual Index - http.method == GET", func() {
+	It("uses textual index - http.method == GET", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).
 			Offset(0).
@@ -365,7 +366,7 @@ var _ = Describe("Stream Query", func() {
 		Expect(msg.Data()).Should(NotHaveBinary())
 	})
 
-	It("Textual Index - http.method == GET with dataBinary projection", func() {
+	It("uses textual index - http.method == GET with dataBinary projection", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).
 			Offset(0).
@@ -387,7 +388,7 @@ var _ = Describe("Stream Query", func() {
 		Expect(msg.Data()).Should(HaveBinary())
 	})
 
-	It("Mixed Index - status_code == 500 AND duration <= 100", func() {
+	It("uses mixed index - status_code == 500 AND duration <= 100", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).
 			Offset(0).

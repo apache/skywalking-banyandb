@@ -57,21 +57,21 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 		{
 			name: "Single Index Search using scope returns all results",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
 			wantLength: 3,
 		},
 		{
 			name: "Single Index Search using scope returns all results",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("hour")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("hour")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
 			wantLength: 0,
 		},
 		{
 			name: "Single Index Search using scope returns all results with tag projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "scope")}},
 				nil),
 			wantLength: 3,
@@ -80,7 +80,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 		{
 			name: "Single Index Search using scope returns all results with field projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil,
 				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")}),
 			wantLength:  3,

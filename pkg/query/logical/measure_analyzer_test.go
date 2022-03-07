@@ -134,7 +134,7 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 
 	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata,
 		[]logical.Expr{
-			logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("endpoint")),
+			logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
 		}, tsdb.Entity{tsdb.Entry("abc")},
 		[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
 		[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},

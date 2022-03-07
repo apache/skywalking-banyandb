@@ -51,7 +51,7 @@ func (t *globalIndexScan) String() string {
 	}
 	return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		t.metadata.GetGroup(), t.metadata.GetName(),
-		t.expr.String(), formatExpr(", ", t.projectionFieldRefs...))
+		t.expr.String(), formatTagRefs(", ", t.projectionFieldRefs...))
 }
 
 func (t *globalIndexScan) Children() []Plan {

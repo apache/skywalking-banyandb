@@ -207,7 +207,7 @@ func (i *localMeasureIndexScan) String() string {
 	}
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		strings.Join(exprStr, " AND "), formatExpr(", ", i.projectionTagsRefs...))
+		strings.Join(exprStr, " AND "), formatTagRefs(", ", i.projectionTagsRefs...))
 }
 
 func (i *localMeasureIndexScan) Type() PlanType {
@@ -222,7 +222,7 @@ func (i *localMeasureIndexScan) Schema() Schema {
 	if len(i.projectionTagsRefs) == 0 {
 		return i.schema
 	}
-	return i.schema.Proj(i.projectionTagsRefs...)
+	return i.schema.ProjTags(i.projectionTagsRefs...)
 }
 
 func (i *localMeasureIndexScan) Equal(plan Plan) bool {

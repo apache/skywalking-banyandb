@@ -31,10 +31,10 @@ type Schema interface {
 	EntityList() []string
 	IndexDefined(*Tag) (bool, *databasev1.IndexRule)
 	IndexRuleDefined(string) (bool, *databasev1.IndexRule)
-	TagDefined(string) bool
 	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
-	Proj(refs ...[]*TagRef) Schema
+	ProjTags(refs ...[]*TagRef) Schema
+	ProjField(*FieldRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
 	TraceIDFieldName() string
@@ -66,7 +66,7 @@ type commonSchema struct {
 	entityList []string
 }
 
-func (cs *commonSchema) Proj(refs ...[]*TagRef) *commonSchema {
+func (cs *commonSchema) ProjTags(refs ...[]*TagRef) *commonSchema {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -102,13 +102,6 @@ func (cs *commonSchema) ShardNumber() uint32 {
 
 func (cs *commonSchema) EntityList() []string {
 	return cs.entityList
-}
-
-func (cs *commonSchema) TagDefined(name string) bool {
-	if _, ok := cs.tagMap[name]; ok {
-		return true
-	}
-	return false
 }
 
 // IndexDefined checks whether the field given is indexed
@@ -160,10 +153,6 @@ func (s *streamSchema) CreateFieldRef(fields ...*Field) ([]*FieldRef, error) {
 	panic("no field for stream")
 }
 
-func (s *streamSchema) TagDefined(tagName string) bool {
-	return s.common.TagDefined(tagName)
-}
-
 func (s *streamSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
 	return s.common.IndexRuleDefined(indexRuleName)
 }
@@ -201,17 +190,21 @@ func (s *streamSchema) CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	return s.common.CreateRef(tags...)
 }
 
-// Proj creates a projection view from the present streamSchema
+// ProjTags creates a projection view from the present streamSchema
 // with a given list of projections
-func (s *streamSchema) Proj(refs ...[]*TagRef) Schema {
+func (s *streamSchema) ProjTags(refs ...[]*TagRef) Schema {
 	if len(refs) == 0 {
 		return nil
 	}
 	newSchema := &streamSchema{
 		stream: s.stream,
-		common: s.common.Proj(refs...),
+		common: s.common.ProjTags(refs...),
 	}
 	return newSchema
+}
+
+func (s *streamSchema) ProjField(*FieldRef) Schema {
+	panic("stream does not support field")
 }
 
 func (s *streamSchema) ShardNumber() uint32 {
@@ -251,10 +244,6 @@ func (m *measureSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev
 	return m.common.IndexRuleDefined(indexRuleName)
 }
 
-func (m *measureSchema) TagDefined(name string) bool {
-	return m.common.TagDefined(name)
-}
-
 func (m *measureSchema) CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	return m.common.CreateRef(tags...)
 }
@@ -271,16 +260,28 @@ func (m *measureSchema) CreateFieldRef(fields ...*Field) ([]*FieldRef, error) {
 	return fieldRefs, nil
 }
 
-func (m *measureSchema) Proj(refs ...[]*TagRef) Schema {
+func (m *measureSchema) ProjTags(refs ...[]*TagRef) Schema {
 	if len(refs) == 0 {
 		return nil
 	}
 	newSchema := &measureSchema{
 		measure:  m.measure,
-		common:   m.common.Proj(refs...),
+		common:   m.common.ProjTags(refs...),
 		fieldMap: m.fieldMap,
 	}
 	return newSchema
+}
+
+func (m *measureSchema) ProjField(fieldRef *FieldRef) Schema {
+	newFieldMap := make(map[string]*fieldSpec)
+	if spec, ok := m.fieldMap[fieldRef.field.name]; ok {
+		newFieldMap[fieldRef.field.name] = spec
+	}
+	return &measureSchema{
+		measure:  m.measure,
+		common:   m.common,
+		fieldMap: newFieldMap,
+	}
 }
 
 func (m *measureSchema) Equal(s2 Schema) bool {

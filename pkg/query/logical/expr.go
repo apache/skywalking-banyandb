@@ -22,7 +22,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
@@ -55,11 +54,11 @@ func (f *TagRef) Equal(expr Expr) bool {
 	return false
 }
 
-func (f *TagRef) FieldType() databasev1.TagType {
+func (f *TagRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
-	return f.Spec.spec.GetType()
+	return int32(f.Spec.spec.GetType())
 }
 
 func (f *TagRef) Resolve(s Schema) error {
@@ -75,7 +74,7 @@ func (f *TagRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.tag.GetCompoundName(), f.Spec.spec.GetType().String())
 }
 
-func NewFieldRef(familyName, tagName string) *TagRef {
+func NewTagRef(familyName, tagName string) *TagRef {
 	return &TagRef{
 		tag: NewTag(familyName, tagName),
 	}
@@ -103,9 +102,11 @@ func (f *FieldRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.Spec.spec.GetName(), f.Spec.spec.GetFieldType().String())
 }
 
-func (f *FieldRef) FieldType() databasev1.TagType {
-	// TODO: what shall we return?
-	panic("Tag Type")
+func (f *FieldRef) DataType() int32 {
+	if f.Spec == nil {
+		panic("should be resolved first")
+	}
+	return int32(f.Spec.spec.GetFieldType())
 }
 
 func (f *FieldRef) Equal(expr Expr) bool {
@@ -141,7 +142,7 @@ func (b *binaryExpr) Equal(expr Expr) bool {
 	return false
 }
 
-func (b *binaryExpr) FieldType() databasev1.TagType {
+func (b *binaryExpr) DataType() int32 {
 	panic("Boolean should be added")
 }
 
@@ -158,10 +159,10 @@ func (b *binaryExpr) Resolve(s Schema) error {
 			return err
 		}
 	}
-	if b.l.FieldType() != b.r.FieldType() {
-		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %s while right is %s",
-			b.l.FieldType().String(),
-			b.r.FieldType().String(),
+	if b.l.DataType() != b.r.DataType() {
+		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %d while right is %d",
+			b.l.DataType(),
+			b.r.DataType(),
 		)
 	}
 	return nil

@@ -49,8 +49,8 @@ func Int(num int64) Expr {
 	return &int64Literal{num}
 }
 
-func (i *int64Literal) FieldType() databasev1.TagType {
-	return databasev1.TagType_TAG_TYPE_INT
+func (i *int64Literal) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_INT)
 }
 
 func (i *int64Literal) String() string {
@@ -85,8 +85,8 @@ func Ints(ints ...int64) Expr {
 	}
 }
 
-func (i *int64ArrLiteral) FieldType() databasev1.TagType {
-	return databasev1.TagType_TAG_TYPE_INT_ARRAY
+func (i *int64ArrLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_INT_ARRAY)
 }
 
 func (i *int64ArrLiteral) String() string {
@@ -115,8 +115,8 @@ func Str(str string) Expr {
 	return &strLiteral{str}
 }
 
-func (s *strLiteral) FieldType() databasev1.TagType {
-	return databasev1.TagType_TAG_TYPE_STRING
+func (s *strLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_STRING)
 }
 
 func (s *strLiteral) String() string {
@@ -151,8 +151,8 @@ func Strs(strs ...string) Expr {
 	}
 }
 
-func (s *strArrLiteral) FieldType() databasev1.TagType {
-	return databasev1.TagType_TAG_TYPE_STRING_ARRAY
+func (s *strArrLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_STRING_ARRAY)
 }
 
 func (s *strArrLiteral) String() string {
