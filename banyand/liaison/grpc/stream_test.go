@@ -55,7 +55,7 @@ var _ = Describe("Stream", func() {
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--stream-root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
 		gracefulStop = setup(flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
@@ -80,7 +80,7 @@ var _ = Describe("Stream", func() {
 		}).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--tls=true", "--stream-root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")

@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"path"
 	"time"
 
 	"github.com/pkg/errors"
@@ -69,7 +70,7 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
-	flagS.StringVar(&s.root, "root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
 	return flagS
 }
 
@@ -92,7 +93,7 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(s.root, s.metadata, s.repo, s.l)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			continue
