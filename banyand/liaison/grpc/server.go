@@ -66,6 +66,7 @@ type Server struct {
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	*groupRegistryServer
+	*topNAggregationRegistryServer
 }
 
 func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
@@ -91,6 +92,9 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 			schemaRegistry: schemaRegistry,
 		},
 		groupRegistryServer: &groupRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		topNAggregationRegistryServer: &topNAggregationRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
 	}

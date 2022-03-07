@@ -257,14 +257,14 @@ service GroupRegistryService {
 }
 
 message TopNAggregationRegistryServiceCreateRequest {
-  banyandb.database.v1.TopNAggregation topNAggregation = 1;
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
 message TopNAggregationRegistryServiceCreateResponse {
 }
 
 message TopNAggregationRegistryServiceUpdateRequest {
-  banyandb.database.v1.TopNAggregation topNAggregation = 1;
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
 message TopNAggregationRegistryServiceUpdateResponse {
@@ -283,7 +283,7 @@ message TopNAggregationRegistryServiceGetRequest {
 }
 
 message TopNAggregationRegistryServiceGetResponse {
-  banyandb.database.v1.TopNAggregation topNAggregation = 1;
+  banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
 message TopNAggregationRegistryServiceListRequest {
@@ -291,7 +291,7 @@ message TopNAggregationRegistryServiceListRequest {
 }
 
 message TopNAggregationRegistryServiceListResponse {
-  repeated banyandb.database.v1.TopNAggregation topNAggregation = 1;
+  repeated banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
 service TopNAggregationRegistryService {
