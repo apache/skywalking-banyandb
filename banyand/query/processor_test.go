@@ -113,7 +113,8 @@ func setUpServices() (*services, func()) {
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--root-path="+rootPath)
+	flags = append(flags, "--measure-root-path="+rootPath)
+	flags = append(flags, "--stream-root-path="+rootPath)
 	executor, err := query.NewExecutor(context.TODO(), streamService, measureService, metadataService, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 	moduleDeferFunc := test.SetUpModules(

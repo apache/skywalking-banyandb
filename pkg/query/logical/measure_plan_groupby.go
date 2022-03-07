@@ -21,12 +21,21 @@ var (
 )
 
 type unresolvedGroupByAggregation struct {
-	unresolvedInput *unresolvedMeasureIndexScan
+	unresolvedInput UnresolvedPlan
 	// aggrFunc is the type of aggregation
 	aggrFunc modelv1.AggregationFunction
-	// groupByTags should be a subset of tag projection
-	groupByTags      [][]*Tag
+	// groupBy should be a subset of tag projection
+	groupBy          [][]*Tag
 	aggregationField *Field
+}
+
+func GroupByAggregation(input UnresolvedPlan, aggrField *Field, aggrFunc modelv1.AggregationFunction, groupBy [][]*Tag) UnresolvedPlan {
+	return &unresolvedGroupByAggregation{
+		unresolvedInput:  input,
+		aggrFunc:         aggrFunc,
+		aggregationField: aggrField,
+		groupBy:          groupBy,
+	}
 }
 
 func (gba *unresolvedGroupByAggregation) Analyze(measureSchema Schema) (Plan, error) {
@@ -35,7 +44,7 @@ func (gba *unresolvedGroupByAggregation) Analyze(measureSchema Schema) (Plan, er
 		return nil, err
 	}
 	// check validity of groupBy tags
-	groupByTagRefs, err := indexScanPlan.Schema().CreateTagRef(gba.groupByTags...)
+	groupByTagRefs, err := indexScanPlan.Schema().CreateTagRef(gba.groupBy...)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +63,7 @@ func (gba *unresolvedGroupByAggregation) Analyze(measureSchema Schema) (Plan, er
 		},
 		schema:              measureSchema,
 		groupByTagsRefs:     groupByTagRefs,
+		aggregationType:     gba.aggrFunc,
 		aggregationFieldRef: aggregationFieldRefs[0],
 	}, nil
 }
@@ -78,7 +88,7 @@ func (g *groupByAggregation) Type() PlanType {
 }
 
 func (g *groupByAggregation) Equal(plan Plan) bool {
-	if plan.Type() != PlanLocalIndexScan {
+	if plan.Type() != PlanGroupByAggregation {
 		return false
 	}
 	other := plan.(*groupByAggregation)
