@@ -70,7 +70,7 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
-	flagS.StringVar(&s.root, "root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
 	return flagS
 }
 

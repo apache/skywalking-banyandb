@@ -74,7 +74,7 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
-	flagS.StringVar(&s.root, "root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	return flagS
 }
 
