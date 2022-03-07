@@ -115,7 +115,7 @@ func setupServices(require *require.Assertions) (stream.Service, queue.Queue, fu
 			_ = os.RemoveAll(etcdRootDir)
 		}
 	}).RunWithoutSideEffect(context.TODO(), func() error {
-		return streamSvc.FlagSet().Parse([]string{"--root-path=" + rootPath})
+		return streamSvc.FlagSet().Parse([]string{"--stream-root-path=" + rootPath})
 	}).RunWithoutSideEffect(context.TODO(), func() (err error) {
 		// Init `Query` module
 		executor, err = NewExecutor(context.TODO(), streamSvc, metadataSvc, repo, pipeline)

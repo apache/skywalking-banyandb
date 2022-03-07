@@ -98,7 +98,7 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--root-path="+rootPath)
+	flags = append(flags, "--measure-root-path="+rootPath)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,

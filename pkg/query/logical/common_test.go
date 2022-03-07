@@ -116,7 +116,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	err = teststream.PreloadSchema(metadataSvc.SchemaRegistry())
 	t.NoError(err)
 
-	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})
+	err = streamSvc.FlagSet().Parse([]string{"--stream-root-path=" + tempDir})
 	t.NoError(err)
 
 	// 2 - (StreamService).PreRun
@@ -169,7 +169,7 @@ func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, fun
 	err = testmeasure.PreloadSchema(metadataSvc.SchemaRegistry())
 	t.NoError(err)
 
-	err = measureSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})
+	err = measureSvc.FlagSet().Parse([]string{"--measure-root-path=" + tempDir})
 	t.NoError(err)
 
 	// 2 - (MeasureService).PreRun
