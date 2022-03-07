@@ -1,0 +1,133 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+//
+package schema
+
+import (
+	"context"
+
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+)
+
+var (
+	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
+	IndexRuleKeyPrefix        = "/index-rules/"
+)
+
+func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
+	var indexRuleBinding databasev1.IndexRuleBinding
+	if err := e.get(ctx, formatIndexRuleBindingKey(metadata), &indexRuleBinding); err != nil {
+		return nil, err
+	}
+	return &indexRuleBinding, nil
+}
+
+func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list index rule binding")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleBindingKeyPrefix), func() proto.Message {
+		return &databasev1.IndexRuleBinding{}
+	})
+	if err != nil {
+		return nil, err
+	}
+	entities := make([]*databasev1.IndexRuleBinding, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.IndexRuleBinding))
+	}
+	return entities, nil
+}
+
+func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	return e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRuleBinding,
+			Name:  indexRuleBinding.GetMetadata().GetName(),
+			Group: indexRuleBinding.GetMetadata().GetGroup(),
+		},
+		Spec: indexRuleBinding,
+	})
+}
+
+func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	return e.delete(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRuleBinding,
+			Name:  metadata.GetName(),
+			Group: metadata.GetGroup(),
+		},
+	})
+}
+
+func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
+	var entity databasev1.IndexRule
+	if err := e.get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
+		return nil, err
+	}
+	return &entity, nil
+}
+
+func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
+	if opt.Group == "" {
+		return nil, errors.Wrap(ErrGroupAbsent, "list index rule")
+	}
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleKeyPrefix), func() proto.Message {
+		return &databasev1.IndexRule{}
+	})
+	if err != nil {
+		return nil, err
+	}
+	entities := make([]*databasev1.IndexRule, 0, len(messages))
+	for _, message := range messages {
+		entities = append(entities, message.(*databasev1.IndexRule))
+	}
+	return entities, nil
+}
+
+func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	return e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRule,
+			Name:  indexRule.GetMetadata().GetName(),
+			Group: indexRule.GetMetadata().GetGroup(),
+		},
+		Spec: indexRule,
+	})
+}
+
+func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+	return e.delete(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRule,
+			Name:  metadata.GetName(),
+			Group: metadata.GetGroup(),
+		},
+	})
+}
+
+func formatIndexRuleKey(metadata *commonv1.Metadata) string {
+	return formatKey(IndexRuleKeyPrefix, metadata)
+}
+
+func formatIndexRuleBindingKey(metadata *commonv1.Metadata) string {
+	return formatKey(IndexRuleBindingKeyPrefix, metadata)
+}

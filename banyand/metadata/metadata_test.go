@@ -43,7 +43,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	err = s.PreRun()
 	is.NoError(err)
 	defer func() {
-		// s.GracefulStop()
+		s.GracefulStop()
 		_ = os.RemoveAll(rootDir)
 	}()
 

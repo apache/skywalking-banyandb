@@ -45,6 +45,7 @@ type Repo interface {
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
 	MeasureRegistry() schema.Measure
 	GroupRegistry() schema.Group
+	TopNAggregationRegistry() schema.TopNAggregation
 }
 
 type Service interface {
@@ -118,6 +119,10 @@ func (s *service) MeasureRegistry() schema.Measure {
 }
 
 func (s *service) GroupRegistry() schema.Group {
+	return s.schemaRegistry
+}
+
+func (s *service) TopNAggregationRegistry() schema.TopNAggregation {
 	return s.schemaRegistry
 }
 
