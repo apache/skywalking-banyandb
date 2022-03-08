@@ -106,7 +106,7 @@ func (g *groupByAggregation) Children() []Plan {
 }
 
 func (g *groupByAggregation) Schema() Schema {
-	return g.schema.ProjField(g.aggregationFieldRef).ProjTags(g.groupByTagsRefs...)
+	return g.schema.ProjFields(g.aggregationFieldRef).ProjTags(g.groupByTagsRefs...)
 }
 
 func (g *groupByAggregation) Execute(ec executor.MeasureExecutionContext) ([]*measurev1.DataPoint, error) {
@@ -123,6 +123,7 @@ func (g *groupByAggregation) Execute(ec executor.MeasureExecutionContext) ([]*me
 		op, ok := aggregationMap[key]
 		if !ok {
 			op = g.createAggregationOp()
+			aggregationMap[key] = op
 		}
 		if op == nil {
 			return nil, errors.New("aggregation op does not exist")

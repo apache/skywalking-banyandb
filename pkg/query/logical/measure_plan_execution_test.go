@@ -19,6 +19,7 @@ package logical_test
 
 import (
 	"context"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"testing"
 	"time"
 
@@ -85,6 +86,70 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")}),
 			wantLength:  3,
 			fieldLength: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := require.New(t)
+			schema, err := analyzer.BuildMeasureSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
+			plan, err := tt.unresolvedPlan.Analyze(schema)
+			tester.NoError(err)
+			tester.NotNil(plan)
+
+			dataPoints, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			tester.NoError(err)
+			tester.Len(dataPoints, tt.wantLength)
+
+			for _, dp := range dataPoints {
+				tester.Len(dp.GetFields(), tt.fieldLength)
+				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+				}
+			}
+		})
+	}
+}
+
+func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
+	tester := require.New(t)
+	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	defer deferFunc()
+	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
+
+	metadata := &commonv1.Metadata{
+		Name:  "cpm",
+		Group: "default",
+	}
+
+	sT, eT := baseTs, baseTs.Add(1*time.Hour)
+
+	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
+	tests := []struct {
+		name           string
+		unresolvedPlan logical.UnresolvedPlan
+		wantLength     int
+		tagLength      []int
+		fieldLength    int
+	}{
+		{
+			name: "Group By with Max",
+			unresolvedPlan: logical.GroupByAggregation(
+				logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+					logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
+				}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{logical.NewTags("default", "scope")}, []*logical.Field{logical.NewField("value")}),
+				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+				[][]*logical.Tag{logical.NewTags("default", "scope")},
+			),
+			wantLength:  1,
+			tagLength:   []int{1},
+			fieldLength: 1,
 		},
 	}
 

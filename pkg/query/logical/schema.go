@@ -34,7 +34,7 @@ type Schema interface {
 	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
 	ProjTags(refs ...[]*TagRef) Schema
-	ProjField(*FieldRef) Schema
+	ProjFields(refs ...*FieldRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
 	TraceIDFieldName() string
@@ -203,7 +203,7 @@ func (s *streamSchema) ProjTags(refs ...[]*TagRef) Schema {
 	return newSchema
 }
 
-func (s *streamSchema) ProjField(*FieldRef) Schema {
+func (s *streamSchema) ProjFields(...*FieldRef) Schema {
 	panic("stream does not support field")
 }
 
@@ -272,10 +272,15 @@ func (m *measureSchema) ProjTags(refs ...[]*TagRef) Schema {
 	return newSchema
 }
 
-func (m *measureSchema) ProjField(fieldRef *FieldRef) Schema {
+func (m *measureSchema) ProjFields(fieldRefs ...*FieldRef) Schema {
 	newFieldMap := make(map[string]*fieldSpec)
-	if spec, ok := m.fieldMap[fieldRef.field.name]; ok {
-		newFieldMap[fieldRef.field.name] = spec
+	i := 0
+	for _, fr := range fieldRefs {
+		if spec, ok := m.fieldMap[fr.field.name]; ok {
+			spec.FieldIdx = i
+			newFieldMap[fr.field.name] = spec
+		}
+		i++
 	}
 	return &measureSchema{
 		measure:  m.measure,

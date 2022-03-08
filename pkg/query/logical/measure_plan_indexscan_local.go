@@ -222,7 +222,7 @@ func (i *localMeasureIndexScan) Schema() Schema {
 	if len(i.projectionTagsRefs) == 0 {
 		return i.schema
 	}
-	return i.schema.ProjTags(i.projectionTagsRefs...)
+	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
 }
 
 func (i *localMeasureIndexScan) Equal(plan Plan) bool {
