@@ -116,7 +116,7 @@ type localMeasureIndexScan struct {
 	entity               tsdb.Entity
 }
 
-func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) ([]*measurev1.DataPoint, error) {
+func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	shards, err := ec.Shards(i.entity)
 	if err != nil {
 		return nil, err
@@ -133,35 +133,13 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) ([]
 		iters = append(iters, itersInShard...)
 	}
 
-	var dataPoints []*measurev1.DataPoint
-
 	if len(iters) == 0 {
-		return dataPoints, nil
+		return executor.EmptyMIterator, nil
 	}
 
 	c := createComparator(modelv1.Sort_SORT_DESC)
 	it := NewItemIter(iters, c)
-	for it.HasNext() {
-		nextItem := it.Next()
-		tagFamilies, innerErr := projectItem(ec, nextItem, i.projectionTagsRefs)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		var dpFields []*measurev1.DataPoint_Field
-		for _, f := range i.projectionFieldsRefs {
-			fieldVal, parserFieldErr := ec.ParseField(f.field.name, nextItem)
-			if parserFieldErr != nil {
-				return nil, parserFieldErr
-			}
-			dpFields = append(dpFields, fieldVal)
-		}
-		dataPoints = append(dataPoints, &measurev1.DataPoint{
-			Fields:      dpFields,
-			TagFamilies: tagFamilies,
-			Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
-		})
-	}
-	return dataPoints, nil
+	return newIndexScanMIterator(ec, i.projectionTagsRefs, i.projectionFieldsRefs, it), nil
 }
 
 func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
@@ -253,4 +231,66 @@ func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata,
 		projectionFields: projectionFields,
 		entity:           entity,
 	}
+}
+
+var _ executor.MIterator = (*indexScanMIterator)(nil)
+
+type indexScanMIterator struct {
+	ec                   executor.MeasureExecutionContext
+	projectionTagsRefs   [][]*TagRef
+	projectionFieldsRefs []*FieldRef
+	inner                ItemIterator
+
+	current *measurev1.DataPoint
+	err     error
+}
+
+func newIndexScanMIterator(ec executor.MeasureExecutionContext,
+	projectionTagsRefs [][]*TagRef,
+	projectionFieldsRefs []*FieldRef,
+	inner ItemIterator) executor.MIterator {
+	return &indexScanMIterator{
+		ec:                   ec,
+		projectionTagsRefs:   projectionTagsRefs,
+		projectionFieldsRefs: projectionFieldsRefs,
+		inner:                inner,
+	}
+}
+
+func (ism *indexScanMIterator) Next() bool {
+	if !ism.inner.HasNext() || ism.err != nil {
+		return false
+	}
+	nextItem := ism.inner.Next()
+	tagFamilies, innerErr := projectItem(ism.ec, nextItem, ism.projectionTagsRefs)
+	if innerErr != nil {
+		ism.err = innerErr
+		return false
+	}
+	dpFields := make([]*measurev1.DataPoint_Field, 0)
+	for _, f := range ism.projectionFieldsRefs {
+		fieldVal, parserFieldErr := ism.ec.ParseField(f.field.name, nextItem)
+		if parserFieldErr != nil {
+			ism.err = parserFieldErr
+			return false
+		}
+		dpFields = append(dpFields, fieldVal)
+	}
+	ism.current = &measurev1.DataPoint{
+		Fields:      dpFields,
+		TagFamilies: tagFamilies,
+		Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
+	}
+	return true
+}
+
+func (ism *indexScanMIterator) Current() []*measurev1.DataPoint {
+	if ism.current == nil {
+		return nil
+	}
+	return []*measurev1.DataPoint{ism.current}
+}
+
+func (ism *indexScanMIterator) Close() error {
+	return ism.err
 }

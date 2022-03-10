@@ -152,15 +152,23 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	p.queryService.log.Debug().Str("plan", plan.String()).Msg("query plan")
 
-	entities, err := plan.(executor.MeasureExecutable).Execute(ec)
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		p.queryService.log.Error().Err(err).Msg("fail to execute the query plan")
 		return
 	}
+	defer func() {
+		if err = mIterator.Close(); err != nil {
+			p.queryService.log.Error().Err(err).Msg("fail to close the query plan")
+		}
 
+	}()
+	result := make([]*measurev1.DataPoint, 0)
+	for mIterator.Next() {
+		result = append(result, mIterator.Current()...)
+	}
 	now := time.Now().UnixNano()
-	resp = bus.NewMessage(bus.MessageID(now), entities)
-
+	resp = bus.NewMessage(bus.MessageID(now), result)
 	return
 }
 

@@ -19,7 +19,6 @@ package logical_test
 
 import (
 	"context"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"os"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -173,17 +173,20 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.GroupByAggregation(
-		logical.MeasureIndexScan(sT, eT, metadata,
-			[]logical.Expr{
-				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
-			}, tsdb.Entity{tsdb.Entry("abc")},
-			[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
-			[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+	correctPlan, err := logical.Aggregation(
+		logical.GroupBy(
+			logical.MeasureIndexScan(sT, eT, metadata,
+				[]logical.Expr{
+					logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
+				}, tsdb.Entity{tsdb.Entry("abc")},
+				[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
+				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+			),
+			[][]*logical.Tag{logical.NewTags("default", "scope")},
 		),
 		logical.NewField("value"),
 		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
-		[][]*logical.Tag{logical.NewTags("default", "scope")},
+		true,
 	).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)

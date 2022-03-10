@@ -19,13 +19,13 @@ package logical_test
 
 import (
 	"context"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -99,17 +99,25 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			dataPoints, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
 			tester.NoError(err)
-			tester.Len(dataPoints, tt.wantLength)
-
-			for _, dp := range dataPoints {
-				tester.Len(dp.GetFields(), tt.fieldLength)
-				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
-				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
-					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			dataSize := 0
+			for iter.Next() {
+				dataPoints := iter.Current()
+				for _, dp := range dataPoints {
+					dataSize++
+					tester.Len(dp.GetFields(), tt.fieldLength)
+					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+					}
 				}
 			}
+			tester.Equal(dataSize, tt.wantLength)
 		})
 	}
 }
@@ -140,12 +148,15 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 	}{
 		{
 			name: "Group By with Max",
-			unresolvedPlan: logical.GroupByAggregation(
-				logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-					logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
-				}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{logical.NewTags("default", "scope")}, []*logical.Field{logical.NewField("value")}),
+			unresolvedPlan: logical.Aggregation(
+				logical.GroupBy(
+					logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+						logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
+					}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{logical.NewTags("default", "scope")}, []*logical.Field{logical.NewField("value")}),
+					[][]*logical.Tag{logical.NewTags("default", "scope")},
+				),
 				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
-				[][]*logical.Tag{logical.NewTags("default", "scope")},
+				true,
 			),
 			wantLength:  1,
 			tagLength:   []int{1},
@@ -163,17 +174,25 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			dataPoints, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
 			tester.NoError(err)
-			tester.Len(dataPoints, tt.wantLength)
-
-			for _, dp := range dataPoints {
-				tester.Len(dp.GetFields(), tt.fieldLength)
-				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
-				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
-					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			dataSize := 0
+			for iter.Next() {
+				dataPoints := iter.Current()
+				for _, dp := range dataPoints {
+					dataSize++
+					tester.Len(dp.GetFields(), tt.fieldLength)
+					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+					}
 				}
 			}
+			tester.Equal(dataSize, tt.wantLength)
 		})
 	}
 }

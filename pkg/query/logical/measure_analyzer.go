@@ -94,16 +94,20 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 		return nil, err
 	}
 
-	if criteria.GetAgg() != nil && criteria.GetGroupBy() != nil {
+	if criteria.GetGroupBy() != nil {
 		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
 		groupByTags := make([][]*Tag, len(groupByProjectionTags.GetTagFamilies()))
 		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
 			groupByTags[i] = NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
 		}
-		plan = GroupByAggregation(plan,
+		plan = GroupBy(plan, groupByTags)
+	}
+
+	if criteria.GetAgg() != nil {
+		plan = Aggregation(plan,
 			NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
-			groupByTags,
+			criteria.GetGroupBy() != nil,
 		)
 	}
 

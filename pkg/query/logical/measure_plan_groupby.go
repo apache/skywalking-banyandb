@@ -1,13 +1,30 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+//
 package logical
 
 import (
 	"fmt"
-	"hash/fnv"
+	"math"
 
+	"github.com/cespare/xxhash"
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -15,139 +32,115 @@ import (
 )
 
 var (
-	_ UnresolvedPlan      = (*unresolvedGroupByAggregation)(nil)
-	_ Plan                = (*groupByAggregation)(nil)
-	_ AggregationOperator = (*integerAggregation)(nil)
+	_ UnresolvedPlan = (*unresolvedGroup)(nil)
+	_ Plan           = (*groupBy)(nil)
 )
 
-type unresolvedGroupByAggregation struct {
+type unresolvedGroup struct {
 	unresolvedInput UnresolvedPlan
-	// aggrFunc is the type of aggregation
-	aggrFunc modelv1.AggregationFunction
 	// groupBy should be a subset of tag projection
-	groupBy          [][]*Tag
-	aggregationField *Field
+	groupBy [][]*Tag
 }
 
-func GroupByAggregation(input UnresolvedPlan, aggrField *Field, aggrFunc modelv1.AggregationFunction, groupBy [][]*Tag) UnresolvedPlan {
-	return &unresolvedGroupByAggregation{
-		unresolvedInput:  input,
-		aggrFunc:         aggrFunc,
-		aggregationField: aggrField,
-		groupBy:          groupBy,
+func GroupBy(input UnresolvedPlan, groupBy [][]*Tag) UnresolvedPlan {
+	return &unresolvedGroup{
+		unresolvedInput: input,
+		groupBy:         groupBy,
 	}
 }
 
-func (gba *unresolvedGroupByAggregation) Analyze(measureSchema Schema) (Plan, error) {
-	indexScanPlan, err := gba.unresolvedInput.Analyze(measureSchema)
+func (gba *unresolvedGroup) Analyze(measureSchema Schema) (Plan, error) {
+	prevPlan, err := gba.unresolvedInput.Analyze(measureSchema)
 	if err != nil {
 		return nil, err
 	}
 	// check validity of groupBy tags
-	groupByTagRefs, err := indexScanPlan.Schema().CreateTagRef(gba.groupBy...)
+	groupByTagRefs, err := prevPlan.Schema().CreateTagRef(gba.groupBy...)
 	if err != nil {
 		return nil, err
 	}
-	// check validity of aggregation fields
-	aggregationFieldRefs, err := indexScanPlan.Schema().CreateFieldRef(gba.aggregationField)
-	if err != nil {
-		return nil, err
-	}
-	if len(aggregationFieldRefs) == 0 {
-		return nil, errors.Wrap(ErrFieldNotDefined, "aggregation schema")
-	}
-	return &groupByAggregation{
+	return &groupBy{
 		parent: &parent{
 			unresolvedInput: gba.unresolvedInput,
-			input:           indexScanPlan,
+			input:           prevPlan,
 		},
-		schema:              measureSchema,
-		groupByTagsRefs:     groupByTagRefs,
-		aggregationType:     gba.aggrFunc,
-		aggregationFieldRef: aggregationFieldRefs[0],
+		schema:          measureSchema,
+		groupByTagsRefs: groupByTagRefs,
 	}, nil
 }
 
-type groupByAggregation struct {
+type groupBy struct {
 	*parent
-	schema              Schema
-	groupByTagsRefs     [][]*TagRef
-	aggregationFieldRef *FieldRef
-	aggregationType     modelv1.AggregationFunction
+	schema          Schema
+	groupByTagsRefs [][]*TagRef
 }
 
-func (g *groupByAggregation) String() string {
-	return fmt.Sprintf("GroupByAggregation: aggreation{type=%d,field=%s}; groupBy=%s",
-		g.aggregationType,
-		g.aggregationFieldRef.field.name,
+func (g *groupBy) String() string {
+	return fmt.Sprintf("GroupBy: groupBy=%s",
 		formatTagRefs(", ", g.groupByTagsRefs...))
 }
 
-func (g *groupByAggregation) Type() PlanType {
+func (g *groupBy) Type() PlanType {
 	return PlanGroupByAggregation
 }
 
-func (g *groupByAggregation) Equal(plan Plan) bool {
+func (g *groupBy) Equal(plan Plan) bool {
 	if plan.Type() != PlanGroupByAggregation {
 		return false
 	}
-	other := plan.(*groupByAggregation)
-	if g.aggregationType == other.aggregationType &&
-		cmp.Equal(g.groupByTagsRefs, other.groupByTagsRefs) &&
-		cmp.Equal(g.aggregationFieldRef, other.aggregationFieldRef) {
+	other := plan.(*groupBy)
+	if cmp.Equal(g.groupByTagsRefs, other.groupByTagsRefs) {
 		return g.parent.input.Equal(other.parent.input)
 	}
 
 	return false
 }
 
-func (g *groupByAggregation) Children() []Plan {
+func (g *groupBy) Children() []Plan {
 	return []Plan{g.input}
 }
 
-func (g *groupByAggregation) Schema() Schema {
-	return g.schema.ProjFields(g.aggregationFieldRef).ProjTags(g.groupByTagsRefs...)
+func (g *groupBy) Schema() Schema {
+	return g.schema.ProjTags(g.groupByTagsRefs...)
 }
 
-func (g *groupByAggregation) Execute(ec executor.MeasureExecutionContext) ([]*measurev1.DataPoint, error) {
-	aggregationMap := make(map[uint64]AggregationOperator)
-	dataPoints, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
+func (g *groupBy) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
-	for _, dp := range dataPoints {
-		key, innerErr := g.formatGroupByKey(dp)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		op, ok := aggregationMap[key]
-		if !ok {
-			op = g.createAggregationOp()
-			aggregationMap[key] = op
-		}
-		if op == nil {
-			return nil, errors.New("aggregation op does not exist")
-		}
-		op.Update(dp)
+	if err != nil {
+		return nil, err
 	}
-	result := make([]*measurev1.DataPoint, 0, len(aggregationMap))
-	for _, op := range aggregationMap {
-		result = append(result, op.Snapshot(g.aggregationFieldRef, g.groupByTagsRefs))
+	groupMap := make(map[uint64][]*measurev1.DataPoint)
+	groupLst := make([]uint64, 0)
+	for iter.Next() {
+		dataPoints := iter.Current()
+		for _, dp := range dataPoints {
+			key, innerErr := g.formatGroupByKey(dp)
+			if innerErr != nil {
+				return nil, innerErr
+			}
+			group, ok := groupMap[key]
+			if !ok {
+				group = make([]*measurev1.DataPoint, 0)
+				groupLst = append(groupLst, key)
+			}
+			if group == nil {
+				return nil, errors.New("aggregation op does not exist")
+			}
+			group = append(group, dp)
+			groupMap[key] = group
+		}
 	}
-	return result, nil
+	if err = iter.Close(); err != nil {
+		return nil, err
+	}
+	return newGroupMIterator(groupMap, groupLst), nil
 }
 
-func (g *groupByAggregation) createAggregationOp() AggregationOperator {
-	switch g.aggregationFieldRef.DataType() {
-	case int32(databasev1.FieldType_FIELD_TYPE_INT):
-		return NewIntAggregation(g.aggregationType, g.aggregationFieldRef)
-	default:
-		return nil
-	}
-}
-
-func (g *groupByAggregation) formatGroupByKey(point *measurev1.DataPoint) (uint64, error) {
-	hash := fnv.New64a()
+func (g *groupBy) formatGroupByKey(point *measurev1.DataPoint) (uint64, error) {
+	hash := xxhash.New()
 	for _, tagFamilyRef := range g.groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
 			tag := point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
@@ -170,108 +163,34 @@ func (g *groupByAggregation) formatGroupByKey(point *measurev1.DataPoint) (uint6
 	return hash.Sum64(), nil
 }
 
-type AggregationOperator interface {
-	Update(*measurev1.DataPoint)
-	Snapshot(*FieldRef, [][]*TagRef) *measurev1.DataPoint
+type groupMIterator struct {
+	groupMap map[uint64][]*measurev1.DataPoint
+	groupLst []uint64
+	index    int
 }
 
-type integerAggregation struct {
-	fieldRef        *FieldRef
-	aggregationFunc func(val int64, point *measurev1.DataPoint) int64
-	snapshotFunc    func(counter, val int64) int64
-	snapshot        *measurev1.DataPoint
-	counter         int64
-	val             int64
-}
-
-func (i *integerAggregation) Snapshot(fieldRef *FieldRef, tagRefs [][]*TagRef) *measurev1.DataPoint {
-	newDataPoint := new(measurev1.DataPoint)
-	newDataPoint.Fields = []*measurev1.DataPoint_Field{
-		{
-			Name: fieldRef.field.name,
-			Value: &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{
-						Value: i.snapshotFunc(i.counter, i.val),
-					},
-				},
-			},
-		},
+func newGroupMIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64) executor.MIterator {
+	return &groupMIterator{
+		groupMap: groupedMap,
+		groupLst: groupLst,
+		index:    -1,
 	}
-	newDataPoint.Timestamp = i.snapshot.Timestamp
-	newDataPoint.TagFamilies = make([]*modelv1.TagFamily, len(tagRefs))
-	for idx, tagFamilyRef := range tagRefs {
-		newDataPoint.TagFamilies[idx] = &modelv1.TagFamily{
-			Name: tagFamilyRef[0].tag.GetFamilyName(),
-			Tags: make([]*modelv1.Tag, len(tagFamilyRef)),
-		}
-		for jdx, tagRef := range tagFamilyRef {
-			newDataPoint.TagFamilies[idx].Tags[jdx] = i.snapshot.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
-		}
-	}
-	return newDataPoint
 }
 
-func (i *integerAggregation) Update(point *measurev1.DataPoint) {
-	i.val = i.aggregationFunc(i.val, point)
-	i.counter += 1
-	i.snapshot = point
+func (gmi *groupMIterator) Next() bool {
+	if gmi.index >= (len(gmi.groupLst) - 1) {
+		return false
+	}
+	gmi.index++
+	return true
 }
 
-func NewIntAggregation(aggrType modelv1.AggregationFunction, ref *FieldRef) AggregationOperator {
-	switch aggrType {
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
-		return &integerAggregation{
-			snapshotFunc: func(counter, _val int64) int64 {
-				return counter
-			},
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
-		return &integerAggregation{
-			aggregationFunc: func(i int64, point *measurev1.DataPoint) int64 {
-				curVal := point.GetFields()[ref.Spec.FieldIdx].GetValue().GetInt().GetValue()
-				if i > curVal {
-					return i
-				}
-				return curVal
-			},
-			snapshotFunc: func(counter, val int64) int64 {
-				return val
-			},
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
-		return &integerAggregation{
-			aggregationFunc: func(i int64, point *measurev1.DataPoint) int64 {
-				curVal := point.GetFields()[ref.Spec.FieldIdx].GetValue().GetInt().GetValue()
-				if i < curVal {
-					return i
-				}
-				return curVal
-			},
-			snapshotFunc: func(counter, val int64) int64 {
-				return val
-			},
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
-		return &integerAggregation{
-			aggregationFunc: func(i int64, point *measurev1.DataPoint) int64 {
-				curVal := point.GetFields()[ref.Spec.FieldIdx].GetValue().GetInt().GetValue()
-				return i + curVal
-			},
-			snapshotFunc: func(_counter, val int64) int64 {
-				return val
-			},
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		return &integerAggregation{
-			aggregationFunc: func(i int64, point *measurev1.DataPoint) int64 {
-				curVal := point.GetFields()[ref.Spec.FieldIdx].GetValue().GetInt().GetValue()
-				return i + curVal
-			},
-			snapshotFunc: func(counter, val int64) int64 {
-				return val / counter
-			},
-		}
-	}
+func (gmi *groupMIterator) Current() []*measurev1.DataPoint {
+	key := gmi.groupLst[gmi.index]
+	return gmi.groupMap[key]
+}
+
+func (gmi *groupMIterator) Close() error {
+	gmi.index = math.MaxInt
 	return nil
 }
