@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/prof"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -59,11 +60,15 @@ func newStandaloneCmd() *cobra.Command {
 	}
 	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate metadata service")
+		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	q, err := query.NewExecutor(ctx, streamSvc, metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate trace series")
+		l.Fatal().Err(err).Msg("failed to initiate measure service")
+	}
+	q, err := query.NewExecutor(ctx, streamSvc, measureSvc, metaSvc, repo, pipeline)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
 	if err != nil {
@@ -77,6 +82,7 @@ func newStandaloneCmd() *cobra.Command {
 		repo,
 		pipeline,
 		metaSvc,
+		measureSvc,
 		streamSvc,
 		q,
 		tcp,

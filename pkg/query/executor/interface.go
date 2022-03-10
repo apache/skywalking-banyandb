@@ -45,6 +45,31 @@ type MeasureExecutionContext interface {
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
 }
 
+type MIterator interface {
+	Next() bool
+
+	Current() []*measurev1.DataPoint
+
+	Close() error
+}
+
+var EmptyMIterator = emptyMIterator{}
+
+type emptyMIterator struct {
+}
+
+func (ei emptyMIterator) Next() bool {
+	return false
+}
+
+func (ei emptyMIterator) Current() []*measurev1.DataPoint {
+	return nil
+}
+
+func (ei emptyMIterator) Close() error {
+	return nil
+}
+
 type MeasureExecutable interface {
-	Execute(MeasureExecutionContext) ([]*measurev1.DataPoint, error)
+	Execute(MeasureExecutionContext) (MIterator, error)
 }

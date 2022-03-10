@@ -121,7 +121,7 @@ func setup(flags []string) func() {
 	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 	// Init `Query` module
-	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
+	q, err := query.NewExecutor(context.TODO(), streamSvc, nil, metaSvc, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)

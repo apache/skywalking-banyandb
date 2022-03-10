@@ -101,7 +101,7 @@ func (uis *unresolvedStreamIndexScan) Analyze(s Schema) (Plan, error) {
 	}
 
 	// resolve sub-plan with the projected view of streamSchema
-	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.Proj(projFieldsRefs...))
+	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.ProjTags(projFieldsRefs...))
 
 	if err != nil {
 		return nil, err
@@ -222,7 +222,7 @@ func (i *localIndexScan) String() string {
 	}
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		strings.Join(exprStr, " AND "), formatExpr(", ", i.projectionFieldRefs...))
+		strings.Join(exprStr, " AND "), formatTagRefs(", ", i.projectionFieldRefs...))
 }
 
 func (i *localIndexScan) Type() PlanType {
@@ -237,7 +237,7 @@ func (i *localIndexScan) Schema() Schema {
 	if i.projectionFieldRefs == nil || len(i.projectionFieldRefs) == 0 {
 		return i.schema
 	}
-	return i.schema.Proj(i.projectionFieldRefs...)
+	return i.schema.ProjTags(i.projectionFieldRefs...)
 }
 
 func (i *localIndexScan) Equal(plan Plan) bool {

@@ -18,6 +18,7 @@
 package grpc
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -61,4 +62,21 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	}
 }
 
-//TODO: implement topN & Query
+func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
+	if errQuery != nil {
+		return nil, errQuery
+	}
+	msg, errFeat := feat.Get()
+	if errFeat != nil {
+		return nil, errFeat
+	}
+	queryMsg, ok := msg.Data().([]*measurev1.DataPoint)
+	if !ok {
+		return nil, ErrQueryMsg
+	}
+	return &measurev1.QueryResponse{DataPoints: queryMsg}, nil
+}
+
+//TODO: implement topN

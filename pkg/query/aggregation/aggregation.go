@@ -14,39 +14,35 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
-package logical
+//
+package aggregation
 
 import (
-	"strings"
+	"github.com/pkg/errors"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-func Format(p Plan) string {
-	return formatWithIndent(p, 0)
+var ErrUnknownFunc = errors.New("unknown aggregation function")
+
+type Int64Func interface {
+	In(int64)
+	Val() int64
+	Reset()
 }
 
-func formatWithIndent(p Plan, indent int) string {
-	res := ""
-	if indent > 1 {
-		res += strings.Repeat(" ", 5*(indent-1))
+func NewInt64Func(af modelv1.AggregationFunction) (Int64Func, error) {
+	switch af {
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+		return &meanInt64Func{}, nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+		return &countInt64Func{}, nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
+		return &maxInt64Func{}, nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
+		return &minInt64Func{}, nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
+		return &sumInt64Func{}, nil
 	}
-	if indent > 0 {
-		res += "+"
-		res += strings.Repeat("-", 4)
-	}
-	res += p.String() + "\n"
-	for _, child := range p.Children() {
-		res += formatWithIndent(child, indent+1)
-	}
-	return res
-}
-
-func formatTagRefs(sep string, exprGroup ...[]*TagRef) string {
-	var exprsStr []string
-	for _, exprs := range exprGroup {
-		for i := 0; i < len(exprs); i++ {
-			exprsStr = append(exprsStr, exprs[i].String())
-		}
-	}
-	return strings.Join(exprsStr, sep)
+	return nil, ErrUnknownFunc
 }

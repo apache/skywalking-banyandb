@@ -94,6 +94,23 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 		return nil, err
 	}
 
+	if criteria.GetGroupBy() != nil {
+		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
+		groupByTags := make([][]*Tag, len(groupByProjectionTags.GetTagFamilies()))
+		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
+			groupByTags[i] = NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
+		}
+		plan = GroupBy(plan, groupByTags)
+	}
+
+	if criteria.GetAgg() != nil {
+		plan = Aggregation(plan,
+			NewField(criteria.GetAgg().GetFieldName()),
+			criteria.GetAgg().GetFunction(),
+			criteria.GetGroupBy() != nil,
+		)
+	}
+
 	return plan.Analyze(s)
 }
 
@@ -164,7 +181,7 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 			}
 			// we collect Condition only if it is not a part of entity
 			if e != nil {
-				tagExprs = append(tagExprs, binaryOpFactory[op](NewFieldRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
+				tagExprs = append(tagExprs, binaryOpFactory[op](NewTagRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
 			}
 		}
 	}

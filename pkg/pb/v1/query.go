@@ -279,6 +279,22 @@ func (b *MeasureQueryRequestBuilder) FieldProjection(projections ...string) *Mea
 	return b
 }
 
+func (b *MeasureQueryRequestBuilder) GroupBy(tagFamily string, projections ...string) *GroupByBuilder {
+	b.ec.GroupBy = &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{
+					Name: tagFamily,
+					Tags: projections,
+				},
+			},
+		},
+	}
+	return &GroupByBuilder{
+		builder: b,
+	}
+}
+
 func (b *MeasureQueryRequestBuilder) TimeRange(sT, eT time.Time) *MeasureQueryRequestBuilder {
 	b.ec.TimeRange = &modelv1.TimeRange{
 		Begin: timestamppb.New(sT),
@@ -289,4 +305,37 @@ func (b *MeasureQueryRequestBuilder) TimeRange(sT, eT time.Time) *MeasureQueryRe
 
 func (b *MeasureQueryRequestBuilder) Build() *measurev1.QueryRequest {
 	return b.ec
+}
+
+type GroupByBuilder struct {
+	builder *MeasureQueryRequestBuilder
+}
+
+func (b *GroupByBuilder) Max(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX)
+}
+
+func (b *GroupByBuilder) Min(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN)
+}
+
+func (b *GroupByBuilder) Mean(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN)
+}
+
+func (b *GroupByBuilder) Count(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT)
+}
+
+func (b *GroupByBuilder) Sum(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM)
+}
+
+func (b *GroupByBuilder) aggregate(fieldName string, aggregationFunc modelv1.AggregationFunction) *MeasureQueryRequestBuilder {
+	b.builder.ec.GroupBy.FieldName = fieldName
+	b.builder.ec.Agg = &measurev1.QueryRequest_Aggregation{
+		FieldName: fieldName,
+		Function:  aggregationFunc,
+	}
+	return b.builder
 }

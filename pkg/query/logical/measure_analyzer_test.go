@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -134,10 +135,58 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 
 	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata,
 		[]logical.Expr{
-			logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("endpoint")),
+			logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
 		}, tsdb.Entity{tsdb.Entry("abc")},
 		[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
 		[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+	).Analyze(schema)
+	assert.NoError(err)
+	assert.NotNil(correctPlan)
+	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
+}
+
+func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
+	assert := require.New(t)
+
+	ana, stopFunc, err := setUpMeasureAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
+
+	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
+
+	criteria := pb.NewMeasureQueryRequestBuilder().
+		Metadata("default", "cpm").
+		TagProjection("default", "entity_id", "scope").
+		TagsInTagFamily("default", "entity_id", "=", "abc", "scope", "=", "endpoint").
+		FieldProjection("summation", "count", "value").
+		GroupBy("default", "scope").Max("value").
+		TimeRange(sT, eT).
+		Build()
+
+	metadata := criteria.GetMetadata()
+
+	schema, err := ana.BuildMeasureSchema(context.TODO(), metadata)
+	assert.NoError(err)
+
+	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
+	assert.NoError(err)
+	assert.NotNil(plan)
+
+	correctPlan, err := logical.Aggregation(
+		logical.GroupBy(
+			logical.MeasureIndexScan(sT, eT, metadata,
+				[]logical.Expr{
+					logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
+				}, tsdb.Entity{tsdb.Entry("abc")},
+				[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
+				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+			),
+			[][]*logical.Tag{logical.NewTags("default", "scope")},
+		),
+		logical.NewField("value"),
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+		true,
 	).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)

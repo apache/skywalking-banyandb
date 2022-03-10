@@ -204,7 +204,7 @@ func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metad
 			}
 			// we collect Condition only if it is not a part of entity
 			if e != nil {
-				tagExprs = append(tagExprs, binaryOpFactory[op](NewFieldRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
+				tagExprs = append(tagExprs, binaryOpFactory[op](NewTagRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
 			}
 		}
 	}

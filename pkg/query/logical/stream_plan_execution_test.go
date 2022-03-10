@@ -188,7 +188,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 			tester.NoError(err)
 
 			p, err := logical.GlobalIndexScan(m, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "trace_id"), logical.Str(tt.traceID)),
+				logical.Eq(logical.NewTagRef("searchable", "trace_id"), logical.Str(tt.traceID)),
 			}, logical.NewTags("searchable", "trace_id")).Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
@@ -229,52 +229,52 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 		{
 			name: "Single Index Search using POST without entity returns nothing",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("POST")),
+				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("POST")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},
 		{
 			name: "Single Index Search using inverted index",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 3,
 		},
 		{
 			name: "Single Index Search using LSM tree index",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Lt(logical.NewFieldRef("searchable", "duration"), logical.Int(100)),
+				logical.Lt(logical.NewTagRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Single Index Search without entity returns results",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/home_id")),
+				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Multiple Index Search",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
-				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/home_id")),
+				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 1,
 		},
 		{
 			name: "Multiple Index Search with a combination of numerical index and textual index",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
-				logical.Lt(logical.NewFieldRef("searchable", "duration"), logical.Int(100)),
+				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Lt(logical.NewTagRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Multiple Index With One Empty Result(ChunkID)",
 			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("searchable", "http.method"), logical.Str("GET")),
-				logical.Eq(logical.NewFieldRef("searchable", "endpoint_id"), logical.Str("/unknown")),
+				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
+				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/unknown")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},

@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -57,21 +58,21 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 		{
 			name: "Single Index Search using scope returns all results",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
 			wantLength: 3,
 		},
 		{
 			name: "Single Index Search using scope returns all results",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("hour")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("hour")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
 			wantLength: 0,
 		},
 		{
 			name: "Single Index Search using scope returns all results with tag projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "scope")}},
 				nil),
 			wantLength: 3,
@@ -80,7 +81,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 		{
 			name: "Single Index Search using scope returns all results with field projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewFieldRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil,
 				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")}),
 			wantLength:  3,
@@ -98,17 +99,100 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			tester.NoError(err)
 			tester.NotNil(plan)
 
-			dataPoints, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
 			tester.NoError(err)
-			tester.Len(dataPoints, tt.wantLength)
-
-			for _, dp := range dataPoints {
-				tester.Len(dp.GetFields(), tt.fieldLength)
-				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
-				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
-					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			dataSize := 0
+			for iter.Next() {
+				dataPoints := iter.Current()
+				for _, dp := range dataPoints {
+					dataSize++
+					tester.Len(dp.GetFields(), tt.fieldLength)
+					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+					}
 				}
 			}
+			tester.Equal(dataSize, tt.wantLength)
+		})
+	}
+}
+
+func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
+	tester := require.New(t)
+	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	defer deferFunc()
+	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
+
+	metadata := &commonv1.Metadata{
+		Name:  "cpm",
+		Group: "default",
+	}
+
+	sT, eT := baseTs, baseTs.Add(1*time.Hour)
+
+	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
+	tests := []struct {
+		name           string
+		unresolvedPlan logical.UnresolvedPlan
+		wantLength     int
+		tagLength      []int
+		fieldLength    int
+	}{
+		{
+			name: "Group By with Max",
+			unresolvedPlan: logical.Aggregation(
+				logical.GroupBy(
+					logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+						logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
+					}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{logical.NewTags("default", "scope")}, []*logical.Field{logical.NewField("value")}),
+					[][]*logical.Tag{logical.NewTags("default", "scope")},
+				),
+				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+				true,
+			),
+			wantLength:  1,
+			tagLength:   []int{1},
+			fieldLength: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := require.New(t)
+			schema, err := analyzer.BuildMeasureSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
+			plan, err := tt.unresolvedPlan.Analyze(schema)
+			tester.NoError(err)
+			tester.NotNil(plan)
+
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			tester.NoError(err)
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			dataSize := 0
+			for iter.Next() {
+				dataPoints := iter.Current()
+				for _, dp := range dataPoints {
+					dataSize++
+					tester.Len(dp.GetFields(), tt.fieldLength)
+					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+					}
+				}
+			}
+			tester.Equal(dataSize, tt.wantLength)
 		})
 	}
 }

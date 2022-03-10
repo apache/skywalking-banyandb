@@ -19,8 +19,6 @@ package logical
 
 import (
 	"fmt"
-
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 type PlanType uint8
@@ -30,6 +28,7 @@ const (
 	PlanOffset
 	PlanLocalIndexScan
 	PlanGlobalIndexScan
+	PlanGroupByAggregation
 )
 
 type UnresolvedPlan interface {
@@ -46,7 +45,7 @@ type Plan interface {
 
 type Expr interface {
 	fmt.Stringer
-	FieldType() databasev1.TagType
+	DataType() int32
 	Equal(Expr) bool
 }
 
