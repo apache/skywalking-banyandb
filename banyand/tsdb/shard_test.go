@@ -20,7 +20,6 @@ package tsdb_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path"
 	"time"
@@ -75,12 +74,10 @@ var _ = Describe("Shard", func() {
 				Expect(err).NotTo(HaveOccurred())
 				return num
 			}).WithTimeout(30 * time.Second).Should(BeNumerically(">=", 3))
-			fmt.Printf("=========%s========\n", "start eventually 2")
 			for _, d := range segDirectories {
 				Eventually(func() int {
 					num := 0
 					err := tsdb.WalkDir(d, "block-", func(suffix, absolutePath string) error {
-						fmt.Printf("=========%s========\n", absolutePath)
 						num++
 						return nil
 					})

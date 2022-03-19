@@ -33,6 +33,7 @@ enum TagType {
     TAG_TYPE_STRING_ARRAY = 3;
     TAG_TYPE_INT_ARRAY = 4;
     TAG_TYPE_DATA_BINARY = 5;
+    TAG_TYPE_ID = 6;
 }
 
 message TagFamilySpec {
@@ -101,6 +102,8 @@ message Measure {
     repeated FieldSpec fields = 3;
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
+    // interval indicates how frequently to send a data point
+    string interval = 5;
     // updated_at indicates when the measure is updated
     google.protobuf.Timestamp updated_at = 6;
 }

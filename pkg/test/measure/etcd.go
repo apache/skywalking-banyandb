@@ -25,70 +25,47 @@ import (
 	"path"
 
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-const indexRuleDir = "testdata/index_rules"
+const (
+	groupDir            = "testdata/groups"
+	measureDir          = "testdata/measures"
+	indexRuleDir        = "testdata/index_rules"
+	indexRuleBindingDir = "testdata/index_rule_bindings"
+)
 
 var (
-	//go:embed testdata/index_rules/*.json
-	indexRuleStore embed.FS
-	//go:embed testdata/index_rule_binding.json
-	indexRuleBindingJSON string
-	//go:embed testdata/measure.json
-	measureJSON string
-	//go:embed testdata/group.json
-	groupJSON string
+	//go:embed testdata/*
+	store embed.FS
 )
 
 func PreloadSchema(e schema.Registry) error {
-	g := &commonv1.Group{}
-	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
-		return err
+	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {
+		return e.UpdateGroup(context.TODO(), group.(*commonv1.Group))
+	}); err != nil {
+		return errors.WithStack(err)
 	}
-	if err := e.UpdateGroup(context.TODO(), g); err != nil {
-		return err
+	if err := loadSchema(measureDir, &databasev1.Measure{}, func(group proto.Message) error {
+		return e.UpdateMeasure(context.TODO(), group.(*databasev1.Measure))
+	}); err != nil {
+		return errors.WithStack(err)
 	}
-	s := &databasev1.Measure{}
-	if err := protojson.Unmarshal([]byte(measureJSON), s); err != nil {
-		return err
+	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(group proto.Message) error {
+		return e.UpdateIndexRule(context.TODO(), group.(*databasev1.IndexRule))
+	}); err != nil {
+		return errors.WithStack(err)
 	}
-	err := e.UpdateMeasure(context.Background(), s)
-	if err != nil {
-		return err
-	}
-
-	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
-		return err
-	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
-	if err != nil {
-		return err
-	}
-
-	entries, err := indexRuleStore.ReadDir(indexRuleDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
-		if err != nil {
-			return err
-		}
-		var idxRule databasev1.IndexRule
-		err = protojson.Unmarshal(data, &idxRule)
-		if err != nil {
-			return err
-		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule)
-		if err != nil {
-			return err
-		}
+	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(group proto.Message) error {
+		return e.UpdateIndexRuleBinding(context.TODO(), group.(*databasev1.IndexRuleBinding))
+	}); err != nil {
+		return errors.WithStack(err)
 	}
 
 	return nil
@@ -96,4 +73,25 @@ func PreloadSchema(e schema.Registry) error {
 
 func RandomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
+}
+
+func loadSchema(dir string, resource proto.Message, loadFn func(resource proto.Message) error) error {
+	entries, err := store.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		data, err := store.ReadFile(path.Join(dir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		resource.ProtoReflect().Descriptor().RequiredNumbers()
+		if err := protojson.Unmarshal(data, resource); err != nil {
+			return err
+		}
+		if err := loadFn(resource); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -85,7 +85,7 @@ func TestMeasureAnalyzer_SimpleTimeScan(t *testing.T) {
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
+		Metadata("sw_metric", "service_cpm_minute").
 		TimeRange(sT, eT).
 		Build()
 
@@ -117,10 +117,10 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
-		TagProjection("default", "entity_id", "scope").
-		TagsInTagFamily("default", "entity_id", "=", "abc", "scope", "=", "endpoint").
-		FieldProjection("summation", "count", "value").
+		Metadata("sw_metric", "service_cpm_minute").
+		TagProjection("default", "entity_id", "id").
+		TagsInTagFamily("default", "entity_id", "=", "abc", "id", "=", pb.TagTypeID("aadxxx")).
+		FieldProjection("total", "value").
 		TimeRange(sT, eT).
 		Build()
 
@@ -135,10 +135,10 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 
 	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata,
 		[]logical.Expr{
-			logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
+			logical.Eq(logical.NewTagRef("default", "id"), logical.ID("aadxxx")),
 		}, tsdb.Entity{tsdb.Entry("abc")},
-		[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
-		[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+		[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
+		[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
 	).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
@@ -156,11 +156,11 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
-		TagProjection("default", "entity_id", "scope").
-		TagsInTagFamily("default", "entity_id", "=", "abc", "scope", "=", "endpoint").
-		FieldProjection("summation", "count", "value").
-		GroupBy("default", "scope").Max("value").
+		Metadata("sw_metric", "service_cpm_minute").
+		TagProjection("default", "entity_id", "id").
+		TagsInTagFamily("default", "entity_id", "=", "abc", "id", "=", pb.TagTypeID("abdxx")).
+		FieldProjection("total", "value").
+		GroupBy("default", "entity_id").Max("value").
 		TimeRange(sT, eT).
 		Build()
 
@@ -177,12 +177,12 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 		logical.GroupBy(
 			logical.MeasureIndexScan(sT, eT, metadata,
 				[]logical.Expr{
-					logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("endpoint")),
+					logical.Eq(logical.NewTagRef("default", "id"), logical.ID("abdxx")),
 				}, tsdb.Entity{tsdb.Entry("abc")},
-				[][]*logical.Tag{logical.NewTags("default", "entity_id", "scope")},
-				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")},
+				[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
+				[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
 			),
-			[][]*logical.Tag{logical.NewTags("default", "scope")},
+			[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 		),
 		logical.NewField("value"),
 		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
@@ -202,7 +202,7 @@ func TestMeasureAnalyzer_Projection_TagNotDefined(t *testing.T) {
 	defer stopFunc()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
+		Metadata("sw_metric", "service_cpm_minute").
 		TagProjection("default", "scope", "entity_id", "unknown").
 		FieldProjection("summation", "count", "value").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
@@ -226,9 +226,9 @@ func TestMeasureAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	defer stopFunc()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
-		TagProjection("default", "scope", "entity_id").
-		FieldProjection("summation", "count", "value", "unknown").
+		Metadata("sw_metric", "service_cpm_minute").
+		TagProjection("default", "id", "entity_id").
+		FieldProjection("total", "value", "unknown").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
 		Build()
 
@@ -250,11 +250,10 @@ func TestMeasureAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	defer stopFunc()
 
 	criteria := pb.NewMeasureQueryRequestBuilder().
-		Metadata("default", "cpm").
-		TagProjection("default", "scope", "entity_id").
-		FieldProjection("summation", "count", "value").
+		Metadata("sw_metric", "service_traffic").
+		TagProjection("default", "id", "name").
 		TimeRange(time.Now().Add(-3*time.Hour), time.Now()).
-		TagsInTagFamily("searchable", "unindexed-tag", ">", 10000).
+		TagsInTagFamily("default", "name", "=", "abc").
 		Build()
 
 	metadata := criteria.GetMetadata()

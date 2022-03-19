@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 )
 
-var _ = Describe("Write", func() {
+var _ = Describe("Write service_cpm_minute", func() {
 	var svcs *services
 	var deferFn func()
 	var measure measure.Measure
@@ -41,25 +41,42 @@ var _ = Describe("Write", func() {
 		svcs, deferFn = setUp()
 		var err error
 		measure, err = svcs.measure.Measure(&commonv1.Metadata{
-			Name:  "cpm",
-			Group: "default",
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 	})
 	AfterEach(func() {
 		deferFn()
 	})
-	It("writes data", func() {
-		writeData("write_data.json", measure)
-	})
+	DescribeTable("writes", func(metadata *commonv1.Metadata, dataFile string) {
+		var err error
+		measure, err = svcs.measure.Measure(metadata)
+		Expect(err).ShouldNot(HaveOccurred())
+		writeData(dataFile, measure)
+	},
+		Entry("service_cpm_minute", &commonv1.Metadata{
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
+		}, "service_cpm_minute_data.json"),
+		Entry("service_traffic", &commonv1.Metadata{
+			Name:  "service_traffic",
+			Group: "sw_metric",
+		}, "service_traffic_data.json"),
+	)
 })
 
 //go:embed testdata/*.json
 var dataFS embed.FS
 
 func writeData(dataFile string, measure measure.Measure) (baseTime time.Time) {
-	var templates []interface{}
 	baseTime = time.Now()
+	writeDataWithBaseTime(baseTime, dataFile, measure)
+	return baseTime
+}
+
+func writeDataWithBaseTime(baseTime time.Time, dataFile string, measure measure.Measure) time.Time {
+	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
@@ -67,9 +84,7 @@ func writeData(dataFile string, measure measure.Measure) (baseTime time.Time) {
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
-		if dataPointValue.Timestamp == nil {
-			dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
-		}
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		Expect(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue)).ShouldNot(HaveOccurred())
 		errInner := measure.Write(dataPointValue)
 		Expect(errInner).ShouldNot(HaveOccurred())

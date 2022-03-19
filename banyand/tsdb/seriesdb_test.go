@@ -70,6 +70,11 @@ func TestNewPath(t *testing.T) {
 					hash([]byte("10.0.0.1")),
 					hash(convert.Uint64ToBytes(0)),
 				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("productpage")),
 					hash([]byte("10.0.0.1")),
@@ -92,6 +97,11 @@ func TestNewPath(t *testing.T) {
 			},
 			want: Path{
 				prefix: []byte{},
+				seekKey: bytes.Join([][]byte{
+					zeroIntBytes,
+					zeroIntBytes,
+					zeroIntBytes,
+				}, nil),
 				template: bytes.Join([][]byte{
 					zeroIntBytes,
 					hash([]byte("10.0.0.1")),
@@ -115,6 +125,11 @@ func TestNewPath(t *testing.T) {
 			want: Path{
 				prefix: bytes.Join([][]byte{
 					hash([]byte("productpage")),
+				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("productpage")),
+					zeroIntBytes,
+					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("productpage")),
@@ -140,6 +155,11 @@ func TestNewPath(t *testing.T) {
 				prefix: bytes.Join([][]byte{
 					hash([]byte("productpage")),
 					hash([]byte("10.0.0.1")),
+				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("productpage")),
@@ -170,6 +190,12 @@ func TestNewPath(t *testing.T) {
 					hash([]byte("10.0.0.1")),
 					hash(convert.Uint64ToBytes(0)),
 				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					hash(convert.Uint64ToBytes(0)),
+				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("segment")),
 					hash([]byte("productpage")),
@@ -195,6 +221,12 @@ func TestNewPath(t *testing.T) {
 			scope: Entry("segment"),
 			want: Path{
 				prefix: hash([]byte("segment")),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					zeroIntBytes,
+					zeroIntBytes,
+					zeroIntBytes,
+				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("segment")),
 					zeroIntBytes,
@@ -222,6 +254,12 @@ func TestNewPath(t *testing.T) {
 				prefix: bytes.Join([][]byte{
 					hash([]byte("segment")),
 					hash([]byte("productpage")),
+				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					zeroIntBytes,
+					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("segment")),
@@ -251,6 +289,12 @@ func TestNewPath(t *testing.T) {
 					hash([]byte("segment")),
 					hash([]byte("productpage")),
 					hash([]byte("10.0.0.1")),
+				}, nil),
+				seekKey: bytes.Join([][]byte{
+					hash([]byte("segment")),
+					hash([]byte("productpage")),
+					hash([]byte("10.0.0.1")),
+					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
 					hash([]byte("segment")),

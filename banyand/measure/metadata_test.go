@@ -45,17 +45,17 @@ var _ = Describe("Metadata", func() {
 	Context("Manage group", func() {
 		It("should pass smoke test", func() {
 			Eventually(func() bool {
-				_, ok := svcs.measure.LoadGroup("default")
+				_, ok := svcs.measure.LoadGroup("sw_metric")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
 		})
 		It("should close the group", func() {
 			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
-			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
+			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
-				_, ok := svcs.measure.LoadGroup("default")
+				_, ok := svcs.measure.LoadGroup("sw_metric")
 				return ok
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
 		})
@@ -63,7 +63,7 @@ var _ = Describe("Metadata", func() {
 		It("should add shards", func() {
 			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
 			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(4)
-			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "default")
+			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
@@ -71,7 +71,7 @@ var _ = Describe("Metadata", func() {
 			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
 
 			Eventually(func() bool {
-				group, ok := svcs.measure.LoadGroup("default")
+				group, ok := svcs.measure.LoadGroup("sw_metric")
 				if !ok {
 					return false
 				}
@@ -84,8 +84,8 @@ var _ = Describe("Metadata", func() {
 		It("should pass smoke test", func() {
 			Eventually(func() bool {
 				_, err := svcs.measure.Measure(&commonv1.Metadata{
-					Name:  "cpm",
-					Group: "default",
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
 				return err == nil
 			}).WithTimeout(10 * time.Second).Should(BeTrue())
@@ -93,15 +93,15 @@ var _ = Describe("Metadata", func() {
 		It("should close the measure", func() {
 			svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
 			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
-				Name:  "cpm",
-				Group: "default",
+				Name:  "service_cpm_minute",
+				Group: "sw_metric",
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
 				_, err := svcs.measure.Measure(&commonv1.Metadata{
-					Name:  "cpm",
-					Group: "default",
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
 				return err != nil
 			}).WithTimeout(10 * time.Second).Should(BeFalse())
@@ -113,8 +113,8 @@ var _ = Describe("Metadata", func() {
 			BeforeEach(func() {
 				var err error
 				measureSchema, err = svcs.metadataService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
-					Name:  "cpm",
-					Group: "default",
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
 
 				Expect(err).ShouldNot(HaveOccurred())
@@ -131,8 +131,8 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func() bool {
 					val, err := svcs.measure.Measure(&commonv1.Metadata{
-						Name:  "cpm",
-						Group: "default",
+						Name:  "service_cpm_minute",
+						Group: "sw_metric",
 					})
 					if err != nil {
 						return false

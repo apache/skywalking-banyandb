@@ -51,6 +51,8 @@ func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
 		return buf.Bytes(), nil
 	case *modelv1.TagValue_BinaryData:
 		return x.BinaryData, nil
+	case *modelv1.TagValue_Id:
+		return []byte(x.Id.GetValue()), nil
 	}
 	return nil, ErrUnsupportedTagForIndexField
 }

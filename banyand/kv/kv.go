@@ -57,7 +57,7 @@ type Reader interface {
 	// Get a value by its key
 	Get(key []byte) ([]byte, error)
 	GetAll(key []byte, applyFn func([]byte) error) error
-	Scan(prefix []byte, opt ScanOpts, f ScanFunc) error
+	Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error
 }
 
 // Store is a common kv storage with auto-generated key

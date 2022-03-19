@@ -158,3 +158,33 @@ func (s *strArrLiteral) DataType() int32 {
 func (s *strArrLiteral) String() string {
 	return fmt.Sprintf("%v", s.arr)
 }
+
+var _ LiteralExpr = (*idLiteral)(nil)
+
+type idLiteral struct {
+	string
+}
+
+func (s *idLiteral) Bytes() [][]byte {
+	return [][]byte{[]byte(s.string)}
+}
+
+func (s *idLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*idLiteral); ok {
+		return other.string == s.string
+	}
+
+	return false
+}
+
+func ID(id string) Expr {
+	return &idLiteral{id}
+}
+
+func (s *idLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_ID)
+}
+
+func (s *idLiteral) String() string {
+	return s.string
+}
