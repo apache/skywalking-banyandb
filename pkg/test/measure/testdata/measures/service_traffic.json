@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "service_traffic",
+    "group": "sw_metric"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "id",
+          "type": "TAG_TYPE_ID"
+        },
+        {
+          "name": "service_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "name",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "short_name",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "service_group",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "layer",
+          "type": "TAG_TYPE_INT"
+        }
+      ]
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "id"
+    ]
+  },
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

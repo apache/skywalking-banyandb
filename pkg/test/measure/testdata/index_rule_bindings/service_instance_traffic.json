@@ -1,14 +1,14 @@
 {
   "metadata": {
-    "name": "cpm-index-rule-binding",
-    "group": "default"
+    "name": "service_instance_traffic_rule_binding",
+    "group": "sw_metric"
   },
   "rules": [
-    "scope"
+    "service_id"
   ],
   "subject":{
     "catalog": "CATALOG_MEASURE",
-    "name": "cpm"
+    "name": "service_instance_traffic"
   },
   "begin_at": "2021-04-15T01:30:15.01Z",
   "expire_at": "2121-04-15T01:30:15.01Z",

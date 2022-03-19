@@ -1,11 +1,11 @@
 {
   "metadata": {
     "id": 1,
-    "name": "scope",
-    "group": "default"
+    "name": "service_id",
+    "group": "sw_metric"
   },
   "tags": [
-    "scope"
+    "service_id"
   ],
   "type": "TYPE_INVERTED",
   "location": "LOCATION_SERIES",

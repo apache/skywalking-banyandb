@@ -72,6 +72,8 @@ func (b *StreamQueryRequestBuilder) Offset(offset uint32) *StreamQueryRequestBui
 	return b
 }
 
+type TagTypeID string
+
 func (b *StreamQueryRequestBuilder) TagsInTagFamily(tagFamilyName string, items ...interface{}) *StreamQueryRequestBuilder {
 	if len(items)%3 != 0 {
 		panic("expect 3 to be a factor of the length of items")
@@ -144,6 +146,10 @@ func buildTagValue(value interface{}) *modelv1.TagValue {
 	case []string:
 		return &modelv1.TagValue{
 			Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}},
+		}
+	case TagTypeID:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Id{Id: &modelv1.ID{Value: string(v)}},
 		}
 	}
 	panic("not supported")

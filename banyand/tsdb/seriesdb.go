@@ -58,6 +58,7 @@ func (e Entity) Prepend(entry Entry) Entity {
 
 type Path struct {
 	prefix   []byte
+	seekKey  []byte
 	mask     []byte
 	template []byte
 	isFull   bool
@@ -66,6 +67,7 @@ type Path struct {
 
 func NewPath(entries []Entry) Path {
 	p := Path{
+		seekKey:  make([]byte, 0),
 		mask:     make([]byte, 0),
 		template: make([]byte, 0),
 	}
@@ -94,6 +96,11 @@ func NewPath(entries []Entry) Path {
 
 func (p *Path) extractPrefix() {
 	p.prefix = p.template[:p.offset]
+	p.seekKey = p.seekKey[:0]
+	p.seekKey = append(p.seekKey, p.prefix...)
+	for i := 0; i < len(p.template)-p.offset; i++ {
+		p.seekKey = append(p.seekKey, 0)
+	}
 }
 
 func (p Path) Prepand(entry Entry) Path {
@@ -199,7 +206,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	}
 	result := make([]Series, 0)
 	var err error
-	errScan := s.seriesMetadata.Scan(path.prefix, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+	errScan := s.seriesMetadata.Scan(path.prefix, path.seekKey, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
 		comparableKey := make([]byte, len(key))
 		for i, b := range key {
 			comparableKey[i] = path.mask[i] & b

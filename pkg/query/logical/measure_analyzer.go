@@ -156,9 +156,13 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
 					entity[entityIdx] = []byte(v.Str.GetValue())
 				} else {
-					e = &strLiteral{
-						string: v.Str.GetValue(),
-					}
+					e = Str(v.Str.GetValue())
+				}
+			case *modelv1.TagValue_Id:
+				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
+					entity[entityIdx] = []byte(v.Id.GetValue())
+				} else {
+					e = ID(v.Id.GetValue())
 				}
 			case *modelv1.TagValue_StrArray:
 				e = &strArrLiteral{

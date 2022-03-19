@@ -38,8 +38,8 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
 
 	metadata := &commonv1.Metadata{
-		Name:  "cpm",
-		Group: "default",
+		Name:  "service_cpm_minute",
+		Group: "sw_metric",
 	}
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
@@ -56,36 +56,36 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 		fieldLength    int
 	}{
 		{
-			name: "Single Index Search using scope returns all results",
+			name: "Single Index Search using id returns a result",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
-			wantLength: 3,
+			wantLength: 1,
 		},
 		{
-			name: "Single Index Search using scope returns all results",
+			name: "Single Index Search using id returns nothing",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("hour")),
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("unknown")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
 			wantLength: 0,
 		},
 		{
-			name: "Single Index Search using scope returns all results with tag projection",
+			name: "Single Index Search using id returns a result with tag projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
-			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "scope")}},
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
+			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "id")}},
 				nil),
-			wantLength: 3,
+			wantLength: 1,
 			tagLength:  []int{1},
 		},
 		{
-			name: "Single Index Search using scope returns all results with field projection",
+			name: "Single Index Search using id returns a result with field projection",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-				logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil,
-				[]*logical.Field{logical.NewField("summation"), logical.NewField("count"), logical.NewField("value")}),
-			wantLength:  3,
-			fieldLength: 3,
+				[]*logical.Field{logical.NewField("total"), logical.NewField("value")}),
+			wantLength:  1,
+			fieldLength: 2,
 		},
 	}
 
@@ -129,8 +129,8 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
 
 	metadata := &commonv1.Metadata{
-		Name:  "cpm",
-		Group: "default",
+		Name:  "service_cpm_minute",
+		Group: "sw_metric",
 	}
 
 	sT, eT := baseTs, baseTs.Add(1*time.Hour)
@@ -150,10 +150,10 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 			name: "Group By with Max",
 			unresolvedPlan: logical.Aggregation(
 				logical.GroupBy(
-					logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
-						logical.Eq(logical.NewTagRef("default", "scope"), logical.Str("minute")),
-					}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{logical.NewTags("default", "scope")}, []*logical.Field{logical.NewField("value")}),
-					[][]*logical.Tag{logical.NewTags("default", "scope")},
+					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+						[]*logical.Field{logical.NewField("value")}),
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 				),
 				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
 				true,

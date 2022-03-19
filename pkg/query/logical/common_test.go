@@ -177,8 +177,8 @@ func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, fun
 	t.NoError(err)
 
 	m, err := measureSvc.Measure(&commonv1.Metadata{
-		Name:  "cpm",
-		Group: "default",
+		Name:  "service_cpm_minute",
+		Group: "sw_metric",
 	})
 	t.NoError(err)
 	t.NotNil(m)

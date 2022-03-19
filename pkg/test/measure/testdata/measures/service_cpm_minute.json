@@ -1,36 +1,26 @@
 {
   "metadata": {
-    "name": "cpm",
-    "group": "default"
+    "name": "service_cpm_minute",
+    "group": "sw_metric"
   },
   "tag_families": [
     {
       "name": "default",
       "tags": [
         {
+          "name": "id",
+          "type": "TAG_TYPE_ID"
+        },
+        {
           "name": "entity_id",
           "type": "TAG_TYPE_STRING"
-        },
-        {
-          "name": "scope",
-          "type": "TAG_TYPE_STRING"
-        },
-        {
-          "name": "unindexed-tag",
-          "type": "TAG_TYPE_INT"
         }
       ]
     }
   ],
   "fields": [
     {
-      "name": "summation",
-      "field_type": "FIELD_TYPE_INT",
-      "encoding_method": "ENCODING_METHOD_GORILLA",
-      "compression_method": "COMPRESSION_METHOD_ZSTD"
-    },
-    {
-      "name": "count",
+      "name": "total",
       "field_type": "FIELD_TYPE_INT",
       "encoding_method": "ENCODING_METHOD_GORILLA",
       "compression_method": "COMPRESSION_METHOD_ZSTD"
@@ -47,5 +37,6 @@
       "entity_id"
     ]
   },
+  "interval": "1m",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }
