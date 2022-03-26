@@ -88,19 +88,29 @@ func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *comm
 }
 
 func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
+	groupByEntity := false
+	var groupByTags [][]*Tag
+	if criteria.GetGroupBy() != nil {
+		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
+		groupByTags = make([][]*Tag, len(groupByProjectionTags.GetTagFamilies()))
+		tags := make([]string, 0)
+		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
+			groupByTags[i] = NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
+			tags = append(tags, tagFamily.GetTags()...)
+		}
+		if stringSlicesEqual(s.EntityList(), tags) {
+			groupByEntity = true
+		}
+	}
+
 	// parse fields
-	plan, err := parseMeasureFields(criteria, metadata, s)
+	plan, err := parseMeasureFields(criteria, metadata, s, groupByEntity)
 	if err != nil {
 		return nil, err
 	}
 
 	if criteria.GetGroupBy() != nil {
-		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
-		groupByTags := make([][]*Tag, len(groupByProjectionTags.GetTagFamilies()))
-		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
-			groupByTags[i] = NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
-		}
-		plan = GroupBy(plan, groupByTags)
+		plan = GroupBy(plan, groupByTags, groupByEntity)
 	}
 
 	if criteria.GetAgg() != nil {
@@ -111,14 +121,30 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 		)
 	}
 
+	if criteria.GetTop() != nil {
+		plan = Top(plan, criteria.GetTop())
+	}
+
 	return plan.Analyze(s)
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // parseMeasureFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition
-func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
+func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema, groupByEntity bool) (UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
 	projTags := make([][]*Tag, len(criteria.GetTagProjection().GetTagFamilies()))
@@ -191,5 +217,5 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 	}
 
 	return MeasureIndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagExprs, entity, projTags, projFields), nil
+		tagExprs, entity, projTags, projFields, groupByEntity), nil
 }

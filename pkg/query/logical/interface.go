@@ -28,7 +28,9 @@ const (
 	PlanOffset
 	PlanLocalIndexScan
 	PlanGlobalIndexScan
-	PlanGroupByAggregation
+	PlanGroupBy
+	PlanAggregation
+	PlanTop
 )
 
 type UnresolvedPlan interface {

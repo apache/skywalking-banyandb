@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -99,7 +100,7 @@ func TestMeasureAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.NotNil(plan)
 	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata, nil,
 		tsdb.Entity{tsdb.AnyEntry},
-		nil, nil).
+		nil, nil, false).
 		Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
@@ -139,6 +140,7 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 		}, tsdb.Entity{tsdb.Entry("abc")},
 		[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
 		[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
+		false,
 	).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
@@ -161,6 +163,7 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 		TagsInTagFamily("default", "entity_id", "=", "abc", "id", "=", pb.TagTypeID("abdxx")).
 		FieldProjection("total", "value").
 		GroupBy("default", "entity_id").Max("value").
+		Top(10, "value", modelv1.Sort_SORT_DESC).
 		TimeRange(sT, eT).
 		Build()
 
@@ -173,7 +176,7 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.Aggregation(
+	correctPlan, err := logical.Top(logical.Aggregation(
 		logical.GroupBy(
 			logical.MeasureIndexScan(sT, eT, metadata,
 				[]logical.Expr{
@@ -181,13 +184,19 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 				}, tsdb.Entity{tsdb.Entry("abc")},
 				[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
 				[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
+				true,
 			),
 			[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+			true,
 		),
 		logical.NewField("value"),
 		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
 		true,
-	).Analyze(schema)
+	), &measurev1.QueryRequest_Top{
+		Number:         10,
+		FieldName:      "value",
+		FieldValueSort: modelv1.Sort_SORT_DESC,
+	}).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")

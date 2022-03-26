@@ -39,13 +39,15 @@ var (
 type unresolvedGroup struct {
 	unresolvedInput UnresolvedPlan
 	// groupBy should be a subset of tag projection
-	groupBy [][]*Tag
+	groupBy       [][]*Tag
+	groupByEntity bool
 }
 
-func GroupBy(input UnresolvedPlan, groupBy [][]*Tag) UnresolvedPlan {
+func GroupBy(input UnresolvedPlan, groupBy [][]*Tag, groupByEntity bool) UnresolvedPlan {
 	return &unresolvedGroup{
 		unresolvedInput: input,
 		groupBy:         groupBy,
+		groupByEntity:   groupByEntity,
 	}
 }
 
@@ -66,6 +68,7 @@ func (gba *unresolvedGroup) Analyze(measureSchema Schema) (Plan, error) {
 		},
 		schema:          measureSchema,
 		groupByTagsRefs: groupByTagRefs,
+		groupByEntity:   gba.groupByEntity,
 	}, nil
 }
 
@@ -73,23 +76,31 @@ type groupBy struct {
 	*parent
 	schema          Schema
 	groupByTagsRefs [][]*TagRef
+	groupByEntity   bool
 }
 
 func (g *groupBy) String() string {
-	return fmt.Sprintf("GroupBy: groupBy=%s",
-		formatTagRefs(", ", g.groupByTagsRefs...))
+	var method string
+	if g.groupByEntity {
+		method = "sort"
+	} else {
+		method = "hash"
+	}
+	return fmt.Sprintf("GroupBy: groupBy=%s, method=%s",
+		formatTagRefs(", ", g.groupByTagsRefs...), method)
 }
 
 func (g *groupBy) Type() PlanType {
-	return PlanGroupByAggregation
+	return PlanGroupBy
 }
 
 func (g *groupBy) Equal(plan Plan) bool {
-	if plan.Type() != PlanGroupByAggregation {
+	if plan.Type() != PlanGroupBy {
 		return false
 	}
 	other := plan.(*groupBy)
-	if cmp.Equal(g.groupByTagsRefs, other.groupByTagsRefs) {
+	if cmp.Equal(g.groupByTagsRefs, other.groupByTagsRefs) &&
+		g.groupByEntity == other.groupByEntity {
 		return g.parent.input.Equal(other.parent.input)
 	}
 
@@ -105,10 +116,22 @@ func (g *groupBy) Schema() Schema {
 }
 
 func (g *groupBy) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+	if g.groupByEntity {
+		return g.sort(ec)
+	}
+	return g.hash(ec)
+}
+
+func (g *groupBy) sort(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
+	return newGroupSortMIterator(iter, g.groupByTagsRefs), nil
+}
+
+func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +140,7 @@ func (g *groupBy) Execute(ec executor.MeasureExecutionContext) (executor.MIterat
 	for iter.Next() {
 		dataPoints := iter.Current()
 		for _, dp := range dataPoints {
-			key, innerErr := g.formatGroupByKey(dp)
+			key, innerErr := formatGroupByKey(dp, g.groupByTagsRefs)
 			if innerErr != nil {
 				return nil, innerErr
 			}
@@ -139,9 +162,9 @@ func (g *groupBy) Execute(ec executor.MeasureExecutionContext) (executor.MIterat
 	return newGroupMIterator(groupMap, groupLst), nil
 }
 
-func (g *groupBy) formatGroupByKey(point *measurev1.DataPoint) (uint64, error) {
+func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*TagRef) (uint64, error) {
 	hash := xxhash.New()
-	for _, tagFamilyRef := range g.groupByTagsRefs {
+	for _, tagFamilyRef := range groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
 			tag := point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
 			switch v := tag.GetValue().GetValue().(type) {
@@ -193,4 +216,84 @@ func (gmi *groupMIterator) Current() []*measurev1.DataPoint {
 func (gmi *groupMIterator) Close() error {
 	gmi.index = math.MaxInt
 	return nil
+}
+
+type groupSortMIterator struct {
+	groupByTagsRefs [][]*TagRef
+	iter            executor.MIterator
+	index           int
+
+	current []*measurev1.DataPoint
+	cdp     *measurev1.DataPoint
+	key     uint64
+	closed  bool
+	err     error
+}
+
+func newGroupSortMIterator(iter executor.MIterator, groupByTagsRefs [][]*TagRef) executor.MIterator {
+	return &groupSortMIterator{
+		groupByTagsRefs: groupByTagsRefs,
+		iter:            iter,
+		index:           -1,
+	}
+}
+
+func (gmi *groupSortMIterator) Next() bool {
+	if gmi.closed {
+		return false
+	}
+	if gmi.current != nil {
+		gmi.current = gmi.current[:0]
+	}
+	if gmi.cdp != nil {
+		gmi.current = append(gmi.current, gmi.cdp)
+	}
+	for {
+		dp, ok := gmi.nextDP()
+		if !ok {
+			gmi.closed = true
+			return len(gmi.current) > 0
+		}
+		k, err := formatGroupByKey(dp, gmi.groupByTagsRefs)
+		if err != nil {
+			gmi.closed = true
+			gmi.err = err
+			return false
+		}
+		if gmi.key == 0 {
+			gmi.key = k
+		}
+		if gmi.key != k {
+			gmi.cdp = dp
+			gmi.key = k
+			return true
+		}
+		gmi.current = append(gmi.current, dp)
+	}
+}
+
+func (gmi *groupSortMIterator) Current() []*measurev1.DataPoint {
+	return gmi.current
+}
+
+func (gmi *groupSortMIterator) Close() error {
+	gmi.closed = true
+	return gmi.err
+}
+
+func (gmi *groupSortMIterator) nextDP() (*measurev1.DataPoint, bool) {
+	if gmi.index < 0 {
+		if ok := gmi.iter.Next(); !ok {
+			return nil, false
+		}
+		gmi.index = 0
+	} else {
+		gmi.index++
+	}
+	current := gmi.iter.Current()
+	if len(current) < 1 || gmi.index >= len(current) {
+		gmi.index = -1
+		return gmi.nextDP()
+	}
+	return current[gmi.index], true
 }

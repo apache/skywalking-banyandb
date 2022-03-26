@@ -77,4 +77,17 @@ message QueryRequest {
   }
   // agg aggregates data points based on a field
   Aggregation agg = 8;
+  message Top {
+    // number set the how many items should be returned
+    int32 number = 1;
+    // field_name must be one of files indicated by the field_projection
+    string field_name = 2;
+    // field_value_sort indicates how to sort fields
+    // ASC: bottomN
+    // DESC: topN
+    // UNSPECIFIED: topN
+    model.v1.Sort field_value_sort = 3;
+  } 
+  // top limit the result based on a particular field
+  Top top = 9;
 }
