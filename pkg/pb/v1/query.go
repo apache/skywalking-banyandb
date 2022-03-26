@@ -309,6 +309,15 @@ func (b *MeasureQueryRequestBuilder) TimeRange(sT, eT time.Time) *MeasureQueryRe
 	return b
 }
 
+func (b *MeasureQueryRequestBuilder) Top(n int32, fieldName string, sort modelv1.Sort) *MeasureQueryRequestBuilder {
+	b.ec.Top = &measurev1.QueryRequest_Top{
+		Number:         n,
+		FieldName:      fieldName,
+		FieldValueSort: sort,
+	}
+	return b
+}
+
 func (b *MeasureQueryRequestBuilder) Build() *measurev1.QueryRequest {
 	return b.ec
 }

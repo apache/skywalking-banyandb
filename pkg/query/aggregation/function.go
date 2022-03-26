@@ -32,7 +32,14 @@ func (m *meanInt64Func) In(val int64) {
 }
 
 func (m meanInt64Func) Val() int64 {
-	return m.sum / m.count
+	if m.count == 0 {
+		return 0
+	}
+	v := m.sum / m.count
+	if v < 1 {
+		return 1
+	}
+	return v
 }
 
 func (m *meanInt64Func) Reset() {

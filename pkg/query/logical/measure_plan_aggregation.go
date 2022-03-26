@@ -97,11 +97,11 @@ func (g *measureAggregation) String() string {
 }
 
 func (g *measureAggregation) Type() PlanType {
-	return PlanGroupByAggregation
+	return PlanAggregation
 }
 
 func (g *measureAggregation) Equal(plan Plan) bool {
-	if plan.Type() != PlanGroupByAggregation {
+	if plan.Type() != PlanAggregation {
 		return false
 	}
 	other := plan.(*measureAggregation)

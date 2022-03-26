@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -59,14 +60,14 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			name: "Single Index Search using id returns a result",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
-			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false),
 			wantLength: 1,
 		},
 		{
 			name: "Single Index Search using id returns nothing",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("unknown")),
-			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false),
 			wantLength: 0,
 		},
 		{
@@ -74,7 +75,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "id")}},
-				nil),
+				nil, false),
 			wantLength: 1,
 			tagLength:  []int{1},
 		},
@@ -83,7 +84,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil,
-				[]*logical.Field{logical.NewField("total"), logical.NewField("value")}),
+				[]*logical.Field{logical.NewField("total"), logical.NewField("value")}, false),
 			wantLength:  1,
 			fieldLength: 2,
 		},
@@ -152,8 +153,9 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 				logical.GroupBy(
 					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
 						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-						[]*logical.Field{logical.NewField("value")}),
+						[]*logical.Field{logical.NewField("value")}, true),
 					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					true,
 				),
 				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
 				true,
@@ -193,6 +195,102 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 				}
 			}
 			tester.Equal(dataSize, tt.wantLength)
+		})
+	}
+}
+
+func TestMeasurePlanExecution_Top(t *testing.T) {
+	tester := require.New(t)
+	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	defer deferFunc()
+	baseTs := setupMeasureQueryData(t, "measure_top_data.json", measureSvc)
+
+	metadata := &commonv1.Metadata{
+		Name:  "service_cpm_minute",
+		Group: "sw_metric",
+	}
+
+	sT, eT := baseTs, baseTs.Add(1*time.Hour)
+
+	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
+	tests := []struct {
+		name           string
+		unresolvedPlan logical.UnresolvedPlan
+		want           []int64
+	}{
+		{
+			name: "top 2",
+			unresolvedPlan: logical.Top(logical.Aggregation(
+				logical.GroupBy(
+					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+						[]*logical.Field{logical.NewField("value")}, true),
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					true,
+				),
+				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN,
+				true,
+			), &measurev1.QueryRequest_Top{
+				Number:         2,
+				FieldName:      "value",
+				FieldValueSort: modelv1.Sort_SORT_DESC,
+			},
+			),
+			want: []int64{5, 3},
+		},
+		{
+			name: "bottom 2",
+			unresolvedPlan: logical.Top(logical.Aggregation(
+				logical.GroupBy(
+					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+						[]*logical.Field{logical.NewField("value")}, true),
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					true,
+				),
+				logical.NewField("value"), modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN,
+				true,
+			), &measurev1.QueryRequest_Top{
+				Number:         2,
+				FieldName:      "value",
+				FieldValueSort: modelv1.Sort_SORT_ASC,
+			},
+			),
+			want: []int64{1, 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := require.New(t)
+			schema, err := analyzer.BuildMeasureSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
+			plan, err := tt.unresolvedPlan.Analyze(schema)
+			tester.NoError(err)
+			tester.NotNil(plan)
+
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			tester.NoError(err)
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			got := make([]int64, 0)
+			for iter.Next() {
+				dataPoints := iter.Current()
+				for _, dp := range dataPoints {
+					for _, f := range dp.Fields {
+						if f.Name == "value" {
+							got = append(got, f.Value.GetInt().Value)
+						}
+					}
+				}
+			}
+			tester.Equal(tt.want, got)
 		})
 	}
 }
