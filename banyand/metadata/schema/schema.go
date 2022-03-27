@@ -26,6 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 var (
@@ -46,6 +47,7 @@ const (
 	KindIndexRuleBinding
 	KindIndexRule
 	KindTopNAggregation
+	KindProperty
 )
 
 const KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule | KindTopNAggregation
@@ -65,6 +67,7 @@ type Registry interface {
 	Measure
 	Group
 	TopNAggregation
+	Property
 }
 
 type TypeMeta struct {
@@ -96,6 +99,8 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 		m = &databasev1.IndexRuleBinding{}
 	case KindIndexRule:
 		m = &databasev1.IndexRule{}
+	case KindProperty:
+		m = &propertyv1.Property{}
 	default:
 		return nil, ErrUnsupportedEntityType
 	}
@@ -124,6 +129,11 @@ func (m Metadata) Key() (string, error) {
 		}), nil
 	case KindIndexRuleBinding:
 		return formatIndexRuleBindingKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		}), nil
+	case KindProperty:
+		return formatPropertyKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
@@ -187,4 +197,11 @@ type TopNAggregation interface {
 	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
 	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
 	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+}
+
+type Property interface {
+	GetProperty(ctx context.Context, metadata *propertyv1.Metadata) (*propertyv1.Property, error)
+	ListProperty(ctx context.Context, container *commonv1.Metadata) ([]*propertyv1.Property, error)
+	UpdateProperty(ctx context.Context, property *propertyv1.Property) error
+	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata) (bool, error)
 }

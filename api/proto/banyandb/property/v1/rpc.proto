@@ -1,0 +1,72 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+option java_package = "org.apache.skywalking.banyandb.property.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
+
+package banyandb.property.v1;
+
+import "banyandb/common/v1/common.proto";
+import "banyandb/property/v1/property.proto";
+
+message CreateRequest {
+    banyandb.property.v1.Property property = 1;
+}
+
+message CreateResponse {
+}
+
+message UpdateRequest {
+    banyandb.property.v1.Property property = 1;
+}
+
+message UpdateResponse {
+}
+
+message DeleteRequest {
+    banyandb.property.v1.Metadata metadata = 1;
+}
+
+message DeleteResponse {
+    bool deleted = 1;
+}
+
+message GetRequest {
+    banyandb.property.v1.Metadata metadata = 1;
+}
+
+message GetResponse {
+    banyandb.property.v1.Property property = 1;
+}
+
+message ListRequest {
+    banyandb.common.v1.Metadata contaner = 1;
+}
+
+message ListResponse {
+    repeated banyandb.property.v1.Property property = 1;
+}
+
+service PropertyService {
+    rpc Create(CreateRequest) returns (CreateResponse);
+    rpc Update(UpdateRequest) returns (UpdateResponse);
+    rpc Delete(DeleteRequest) returns (DeleteResponse);
+    rpc Get(GetRequest) returns (GetResponse);
+    rpc List(ListRequest) returns (ListResponse);
+}
