@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -67,6 +68,7 @@ type Server struct {
 	*measureRegistryServer
 	*groupRegistryServer
 	*topNAggregationRegistryServer
+	*propertyServer
 }
 
 func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
@@ -95,6 +97,9 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 			schemaRegistry: schemaRegistry,
 		},
 		topNAggregationRegistryServer: &topNAggregationRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
+		propertyServer: &propertyServer{
 			schemaRegistry: schemaRegistry,
 		},
 	}
@@ -190,6 +195,7 @@ func (s *Server) Serve() run.StopNotify {
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
 	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
 	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
+	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 
 	s.stopCh = make(chan struct{})
 	go func() {

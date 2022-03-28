@@ -46,6 +46,7 @@ type Repo interface {
 	MeasureRegistry() schema.Measure
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
+	PropertyRegistry() schema.Property
 }
 
 type Service interface {
@@ -123,6 +124,10 @@ func (s *service) GroupRegistry() schema.Group {
 }
 
 func (s *service) TopNAggregationRegistry() schema.TopNAggregation {
+	return s.schemaRegistry
+}
+
+func (s *service) PropertyRegistry() schema.Property {
 	return s.schemaRegistry
 }
 

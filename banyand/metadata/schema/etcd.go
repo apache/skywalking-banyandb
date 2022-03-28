@@ -40,6 +40,7 @@ var (
 	_ IndexRule        = (*etcdSchemaRegistry)(nil)
 	_ Measure          = (*etcdSchemaRegistry)(nil)
 	_ Group            = (*etcdSchemaRegistry)(nil)
+	_ Property         = (*etcdSchemaRegistry)(nil)
 
 	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
