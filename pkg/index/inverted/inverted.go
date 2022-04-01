@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -93,6 +94,19 @@ func (s *store) Flush() error {
 	}
 	s.immutableMemTable = nil
 	return nil
+}
+
+func (s *store) Stats() (stat observability.Statistics) {
+	s.rwMutex.RLock()
+	defer s.rwMutex.RUnlock()
+	//TODO: add MaxMem
+	main := s.memTable.Stats()
+	stat.MemBytes += main.MemBytes
+	if s.immutableMemTable != nil {
+		sub := s.immutableMemTable.Stats()
+		stat.MemBytes += sub.MemBytes
+	}
+	return stat
 }
 
 func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, error) {

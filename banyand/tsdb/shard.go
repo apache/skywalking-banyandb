@@ -36,13 +36,15 @@ const defaultBlockQueueSize = 1 << 4
 var _ Shard = (*shard)(nil)
 
 type shard struct {
-	l  *logger.Logger
-	id common.ShardID
+	l        *logger.Logger
+	id       common.ShardID
+	position common.Position
 
 	seriesDatabase        SeriesDatabase
 	indexDatabase         IndexDatabase
 	segmentController     *segmentController
 	segmentManageStrategy *bucket.Strategy
+	stopCh                chan struct{}
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
@@ -56,7 +58,12 @@ func OpenShard(ctx context.Context, id common.ShardID,
 	if openedBlockSize < 1 {
 		openedBlockSize = defaultBlockQueueSize
 	}
-	sc, err := newSegmentController(path, segmentSize, blockSize, openedBlockSize, l)
+	shardCtx := context.WithValue(ctx, logger.ContextKey, l)
+	shardCtx = common.SetPosition(shardCtx, func(p common.Position) common.Position {
+		p.Shard = strconv.Itoa(int(id))
+		return p
+	})
+	sc, err := newSegmentController(shardCtx, path, segmentSize, blockSize, openedBlockSize, l)
 	if err != nil {
 		return nil, errors.Wrapf(err, "create the segment controller of the shard %d", int(id))
 	}
@@ -64,9 +71,9 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		id:                id,
 		segmentController: sc,
 		l:                 l,
+		stopCh:            make(chan struct{}),
 	}
-	shardCtx := context.WithValue(ctx, logger.ContextKey, s.l)
-	err = s.segmentController.open(shardCtx)
+	err = s.segmentController.open()
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +96,11 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		return nil, err
 	}
 	s.segmentManageStrategy.Run()
+	position := shardCtx.Value(common.PositionKey)
+	if position != nil {
+		s.position = position.(common.Position)
+	}
+	s.runStat()
 	return s, nil
 }
 
@@ -123,7 +135,9 @@ func (s *shard) State() (shardState ShardState) {
 func (s *shard) Close() error {
 	s.segmentManageStrategy.Close()
 	s.segmentController.close()
-	return s.seriesDatabase.Close()
+	err := s.seriesDatabase.Close()
+	close(s.stopCh)
+	return err
 }
 
 type IntervalUnit int
@@ -178,6 +192,7 @@ func (ir IntervalRule) EstimatedDuration() time.Duration {
 
 type segmentController struct {
 	sync.RWMutex
+	shardCtx    context.Context
 	location    string
 	segmentSize IntervalRule
 	blockSize   IntervalRule
@@ -187,8 +202,10 @@ type segmentController struct {
 	l *logger.Logger
 }
 
-func newSegmentController(location string, segmentSize, blockSize IntervalRule, openedBlockSize int, l *logger.Logger) (*segmentController, error) {
+func newSegmentController(shardCtx context.Context, location string,
+	segmentSize, blockSize IntervalRule, openedBlockSize int, l *logger.Logger) (*segmentController, error) {
 	sc := &segmentController{
+		shardCtx:    shardCtx,
 		location:    location,
 		segmentSize: segmentSize,
 		blockSize:   blockSize,
@@ -264,7 +281,7 @@ func (sc *segmentController) Current() bucket.Reporter {
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
 	seg := sc.Current().(*segment)
-	reporter, err := sc.create(context.TODO(), sc.Format(
+	reporter, err := sc.create(sc.Format(
 		sc.segmentSize.NextTime(seg.Start)))
 	if errors.Is(err, ErrEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
@@ -307,12 +324,12 @@ func (sc *segmentController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController) open(ctx context.Context) error {
+func (sc *segmentController) open() error {
 	err := WalkDir(
 		sc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
-			_, err := sc.load(ctx, suffix, absolutePath)
+			_, err := sc.load(suffix, absolutePath)
 			if errors.Is(err, ErrEndOfSegment) {
 				return nil
 			}
@@ -322,7 +339,7 @@ func (sc *segmentController) open(ctx context.Context) error {
 		return err
 	}
 	if sc.Current() == nil {
-		_, err = sc.create(ctx, sc.Format(time.Now()))
+		_, err = sc.create(sc.Format(time.Now()))
 		if err != nil {
 			return err
 		}
@@ -330,20 +347,23 @@ func (sc *segmentController) open(ctx context.Context) error {
 	return nil
 }
 
-func (sc *segmentController) create(ctx context.Context, suffix string) (*segment, error) {
+func (sc *segmentController) create(suffix string) (*segment, error) {
 	segPath, err := mkdir(segTemplate, sc.location, suffix)
 	if err != nil {
 		return nil, err
 	}
-	return sc.load(ctx, suffix, segPath)
+	return sc.load(suffix, segPath)
 }
 
-func (sc *segmentController) load(ctx context.Context, suffix, path string) (seg *segment, err error) {
+func (sc *segmentController) load(suffix, path string) (seg *segment, err error) {
 	startTime, err := sc.Parse(suffix)
 	if err != nil {
 		return nil, err
 	}
-	seg, err = openSegment(ctx, startTime, path, suffix, sc.segmentSize, sc.blockSize, sc.blockQueue)
+	seg, err = openSegment(common.SetPosition(sc.shardCtx, func(p common.Position) common.Position {
+		p.Segment = suffix
+		return p
+	}), startTime, path, suffix, sc.segmentSize, sc.blockSize, sc.blockQueue)
 	if err != nil {
 		return nil, err
 	}

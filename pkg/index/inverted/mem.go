@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -49,6 +50,10 @@ func newMemTable() *memTable {
 
 func (m *memTable) Write(field index.Field, itemID common.ItemID) error {
 	return m.fields.put(field, itemID)
+}
+
+func (m *memTable) Stats() observability.Statistics {
+	return m.fields.Stats()
 }
 
 var _ index.FieldIterator = (*fIterator)(nil)

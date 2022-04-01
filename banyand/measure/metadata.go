@@ -21,6 +21,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -195,7 +196,10 @@ func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (re
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	return tsdb.OpenDatabase(
-		context.TODO(),
+		context.WithValue(context.Background(), common.PositionKey, common.Position{
+			Module:   "stream",
+			Database: groupSchema.Metadata.Name,
+		}),
 		tsdb.DatabaseOpts{
 			Location: s.path,
 			ShardNum: groupSchema.ResourceOpts.ShardNum,

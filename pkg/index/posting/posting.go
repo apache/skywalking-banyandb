@@ -64,6 +64,8 @@ type List interface {
 	Marshall() ([]byte, error)
 
 	Unmarshall(data []byte) error
+
+	SizeInBytes() int64
 }
 
 type Iterator interface {
