@@ -17,7 +17,13 @@
 
 package common
 
-import "github.com/apache/skywalking-banyandb/pkg/convert"
+import (
+	"context"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+)
 
 type SeriesID uint64
 type ShardID uint32
@@ -25,4 +31,39 @@ type ItemID uint64
 
 func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
+}
+
+var PositionKey = contextPositionKey{}
+
+type contextPositionKey struct{}
+
+type Position struct {
+	Module   string
+	Database string
+	Shard    string
+	Segment  string
+	Block    string
+	KV       string
+}
+
+func (p Position) Labels() prometheus.Labels {
+	return prometheus.Labels{
+		"module":   p.Module,
+		"database": p.Database,
+		"shard":    p.Shard,
+		"seg":      p.Segment,
+		"block":    p.Block,
+		"kv":       p.KV,
+	}
+}
+
+func SetPosition(ctx context.Context, fn func(p Position) Position) context.Context {
+	val := ctx.Value(PositionKey)
+	var p Position
+	if val == nil {
+		p = Position{}
+	} else {
+		p = val.(Position)
+	}
+	return context.WithValue(ctx, PositionKey, fn(p))
 }

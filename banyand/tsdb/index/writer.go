@@ -198,6 +198,9 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val []by
 	var existInt bool
 	for _, tIndex := range ruleIndex.TagIndices {
 		tag, err := partition.GetTagByOffset(value.TagFamilies, tIndex.FamilyOffset, tIndex.TagOffset)
+		if errors.Is(err, partition.ErrMalformedElement) {
+			continue
+		}
 		if err != nil {
 			return nil, false, errors.WithMessagef(err, "index rule:%v", ruleIndex.Rule.Metadata)
 		}

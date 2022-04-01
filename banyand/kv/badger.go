@@ -27,6 +27,7 @@ import (
 	"github.com/dgraph-io/badger/v3/bydb"
 	"github.com/dgraph-io/badger/v3/y"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -45,6 +46,18 @@ type badgerTSS struct {
 	dbOpts  badger.Options
 	db      *badger.DB
 	badger.TSet
+}
+
+func (b *badgerTSS) Stats() (s observability.Statistics) {
+	return badgerStats(b.db)
+}
+
+func badgerStats(db *badger.DB) (s observability.Statistics) {
+	stat := db.Stats()
+	return observability.Statistics{
+		MemBytes:    stat.MemBytes,
+		MaxMemBytes: db.Opts().MemTableSize,
+	}
 }
 
 func (b *badgerTSS) Close() error {
@@ -108,6 +121,10 @@ type badgerDB struct {
 	shardID int
 	dbOpts  badger.Options
 	db      *badger.DB
+}
+
+func (b *badgerDB) Stats() observability.Statistics {
+	return badgerStats(b.db)
 }
 
 func (b *badgerDB) Handover(iterator Iterator) error {

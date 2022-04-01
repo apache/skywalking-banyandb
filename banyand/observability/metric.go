@@ -14,59 +14,61 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
-package prof
+//
+package observability
 
 import (
 	"net/http"
-	// Register pprof package
-	_ "net/http/pprof"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
-	_ run.Service = (*pprofService)(nil)
-	_ run.Config  = (*pprofService)(nil)
+	_ run.Service = (*metricService)(nil)
+	_ run.Config  = (*metricService)(nil)
 )
 
-func NewProfService() run.Service {
-	return &pprofService{
+func NewMetricService() run.Service {
+	return &metricService{
 		stopCh: make(chan struct{}),
 	}
 }
 
-type pprofService struct {
+type metricService struct {
 	listenAddr string
 	stopCh     chan struct{}
 	l          *logger.Logger
 }
 
-func (p *pprofService) FlagSet() *run.FlagSet {
-	flagSet := run.NewFlagSet("prof")
-	flagSet.StringVar(&p.listenAddr, "pprof-listener-addr", "127.0.0.1:6060", "listen addr for pprof")
+func (p *metricService) FlagSet() *run.FlagSet {
+	flagSet := run.NewFlagSet("observability")
+	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
 	return flagSet
 }
 
-func (p *pprofService) Validate() error {
+func (p *metricService) Validate() error {
 	return nil
 }
 
-func (p *pprofService) Name() string {
-	return "pprof-service"
+func (p *metricService) Name() string {
+	return "metric-service"
 }
 
-func (p *pprofService) Serve() run.StopNotify {
+func (p *metricService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
+	http.Handle("/metrics", promhttp.Handler())
 	go func() {
-		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start pprof server")
+		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start metric server")
 		_ = http.ListenAndServe(p.listenAddr, nil)
+		p.stopCh <- struct{}{}
 	}()
 
 	return p.stopCh
 }
 
-func (p *pprofService) GracefulStop() {
+func (p *metricService) GracefulStop() {
 	close(p.stopCh)
 }

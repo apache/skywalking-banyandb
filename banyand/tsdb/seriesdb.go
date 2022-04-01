@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -119,6 +120,7 @@ func (p Path) Prepand(entry Entry) Path {
 }
 
 type SeriesDatabase interface {
+	observability.Observable
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
 	Get(entity Entity) (Series, error)
@@ -248,6 +250,10 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) []blockDelegate {
 
 func (s *seriesDB) context() context.Context {
 	return context.WithValue(context.Background(), logger.ContextKey, s.l)
+}
+
+func (s *seriesDB) Stats() observability.Statistics {
+	return s.seriesMetadata.Stats()
 }
 
 func (s *seriesDB) Close() error {

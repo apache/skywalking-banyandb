@@ -24,7 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -54,16 +56,17 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 	id := uint16(segmentSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
 	timeRange := timestamp.NewTimeRange(startTime, segmentSize.NextTime(startTime), true, false)
 	l := logger.Fetch(ctx, "segment")
+	segCtx := context.WithValue(ctx, logger.ContextKey, l)
 	s = &segment{
 		id:              id,
 		path:            path,
 		suffix:          suffix,
 		l:               l,
-		blockController: newBlockController(id, path, timeRange, blockSize, l, blockQueue),
+		blockController: newBlockController(segCtx, id, path, timeRange, blockSize, l, blockQueue),
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange),
 	}
-	err = s.blockController.open(context.WithValue(ctx, logger.ContextKey, s.l))
+	err = s.blockController.open()
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +101,13 @@ func (s segment) String() string {
 	return s.Reporter.String()
 }
 
+func (s *segment) Stats() observability.Statistics {
+	return s.globalIndex.Stats()
+}
+
 type blockController struct {
 	sync.RWMutex
+	segCtx       context.Context
 	segID        uint16
 	location     string
 	segTimeRange timestamp.TimeRange
@@ -110,9 +118,10 @@ type blockController struct {
 	l *logger.Logger
 }
 
-func newBlockController(segID uint16, location string, segTimeRange timestamp.TimeRange,
+func newBlockController(segCtx context.Context, segID uint16, location string, segTimeRange timestamp.TimeRange,
 	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue) *blockController {
 	return &blockController{
+		segCtx:       segCtx,
 		segID:        segID,
 		location:     location,
 		blockSize:    blockSize,
@@ -140,7 +149,7 @@ func (bc *blockController) Current() bucket.Reporter {
 
 func (bc *blockController) Next() (bucket.Reporter, error) {
 	b := bc.Current().(*block)
-	reporter, err := bc.create(context.TODO(),
+	reporter, err := bc.create(
 		bc.blockSize.NextTime(b.Start))
 	if errors.Is(err, ErrEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
@@ -282,19 +291,19 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) open(ctx context.Context) error {
+func (bc *blockController) open() error {
 	err := WalkDir(
 		bc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
-			_, err := bc.load(ctx, suffix, absolutePath)
+			_, err := bc.load(suffix, absolutePath)
 			return err
 		})
 	if err != nil {
 		return err
 	}
 	if bc.Current() == nil {
-		b, err := bc.create(ctx, time.Now())
+		b, err := bc.create(time.Now())
 		if err != nil {
 			return err
 		}
@@ -305,7 +314,7 @@ func (bc *blockController) open(ctx context.Context) error {
 	return nil
 }
 
-func (bc *blockController) create(ctx context.Context, startTime time.Time) (*block, error) {
+func (bc *blockController) create(startTime time.Time) (*block, error) {
 	if startTime.Before(bc.segTimeRange.Start) {
 		startTime = bc.segTimeRange.Start
 	}
@@ -317,21 +326,26 @@ func (bc *blockController) create(ctx context.Context, startTime time.Time) (*bl
 	if err != nil {
 		return nil, err
 	}
-	return bc.load(ctx, suffix, segPath)
+	return bc.load(suffix, segPath)
 }
 
-func (bc *blockController) load(ctx context.Context, suffix, path string) (b *block, err error) {
+func (bc *blockController) load(suffix, path string) (b *block, err error) {
 	starTime, err := bc.startTime(suffix)
 	if err != nil {
 		return nil, err
 	}
-	if b, err = newBlock(ctx, blockOpts{
-		segID:     bc.segID,
-		path:      path,
-		startTime: starTime,
-		suffix:    suffix,
-		blockSize: bc.blockSize,
-	}); err != nil {
+	if b, err = newBlock(
+		common.SetPosition(bc.segCtx, func(p common.Position) common.Position {
+			p.Block = suffix
+			return p
+		}),
+		blockOpts{
+			segID:     bc.segID,
+			path:      path,
+			startTime: starTime,
+			suffix:    suffix,
+			blockSize: bc.blockSize,
+		}); err != nil {
 		return nil, err
 	}
 	bc.Lock()

@@ -29,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -39,12 +40,13 @@ import (
 )
 
 type block struct {
-	path   string
-	l      *logger.Logger
-	suffix string
-	ref    *z.Closer
-	lock   sync.RWMutex
-	closed *atomic.Bool
+	path     string
+	l        *logger.Logger
+	suffix   string
+	ref      *z.Closer
+	lock     sync.RWMutex
+	closed   *atomic.Bool
+	position common.Position
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
@@ -89,6 +91,10 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		Reporter:       bucket.NewTimeBasedReporter(timeRange),
 		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
+	}
+	position := ctx.Value(common.PositionKey)
+	if position != nil {
+		b.position = position.(common.Position)
 	}
 	return b, err
 }
@@ -170,6 +176,12 @@ func (b *block) isClosed() bool {
 
 func (b *block) String() string {
 	return b.Reporter.String()
+}
+
+func (b *block) stats() (names []string, stats []observability.Statistics) {
+	names = append(names, "main", "p-idx", "si-idx", "sl-idx")
+	stats = append(stats, b.store.Stats(), b.primaryIndex.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
+	return names, stats
 }
 
 type blockDelegate interface {

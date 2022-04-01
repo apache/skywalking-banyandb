@@ -17,7 +17,10 @@
 //
 package tsdb
 
-import "github.com/apache/skywalking-banyandb/api/common"
+import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
+)
 
 var _ Shard = (*ScopedShard)(nil)
 
@@ -62,6 +65,10 @@ var _ SeriesDatabase = (*scopedSeriesDatabase)(nil)
 type scopedSeriesDatabase struct {
 	scope     Entry
 	delegated SeriesDatabase
+}
+
+func (sdd *scopedSeriesDatabase) Stats() observability.Statistics {
+	return sdd.delegated.Stats()
 }
 
 func (sdd *scopedSeriesDatabase) Close() error {

@@ -25,6 +25,7 @@ import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -62,6 +63,7 @@ type Reader interface {
 
 // Store is a common kv storage with auto-generated key
 type Store interface {
+	observability.Observable
 	io.Closer
 	Writer
 	Reader
@@ -84,6 +86,7 @@ type TimeSeriesReader interface {
 
 // TimeSeriesStore is time series storage
 type TimeSeriesStore interface {
+	observability.Observable
 	io.Closer
 	TimeSeriesWriter
 	TimeSeriesReader
