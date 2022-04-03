@@ -20,6 +20,7 @@ package tsdb
 import (
 	"context"
 	"io"
+	"path"
 	"strconv"
 	"sync"
 	"time"
@@ -37,6 +38,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
+const (
+	componentMain              = "main"
+	componentPrimaryIdx        = "primary"
+	componentSecondInvertedIdx = "inverted"
+	componentSecondLSMIdx      = "lsm"
 )
 
 type block struct {
@@ -108,28 +116,28 @@ func (b *block) open() (err error) {
 	b.ref = z.NewCloser(1)
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
-		b.path+"/store",
+		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
-		kv.TSSWithLogger(b.l.Named("main-store")),
+		kv.TSSWithLogger(b.l.Named(componentMain)),
 	); err != nil {
 		return err
 	}
 	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   b.path + "/primary",
-		Logger: b.l.Named("primary-lsm"),
+		Path:   path.Join(b.path, componentPrimaryIdx),
+		Logger: b.l.Named(componentPrimaryIdx),
 	}); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
-		Path:   b.path + "/inverted",
-		Logger: b.l.Named("secondary-inverted"),
+		Path:   path.Join(b.path, componentSecondInvertedIdx),
+		Logger: b.l.Named(componentSecondInvertedIdx),
 	}); err != nil {
 		return err
 	}
 	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   b.path + "/lsm",
-		Logger: b.l.Named("secondary-lsm"),
+		Path:   path.Join(b.path, componentSecondLSMIdx),
+		Logger: b.l.Named(componentSecondLSMIdx),
 	}); err != nil {
 		return err
 	}
@@ -179,7 +187,7 @@ func (b *block) String() string {
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {
-	names = append(names, "main", "p-idx", "si-idx", "sl-idx")
+	names = append(names, componentMain, componentPrimaryIdx, componentSecondInvertedIdx, componentSecondLSMIdx)
 	stats = append(stats, b.store.Stats(), b.primaryIndex.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
 	return names, stats
 }
