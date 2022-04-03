@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
@@ -188,7 +189,7 @@ func (s *Server) Serve() run.StopNotify {
 	s.ser = grpclib.NewServer(opts...)
 
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
-	// measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
+	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
 	// register *Registry
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
