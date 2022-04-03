@@ -71,8 +71,7 @@ func (s *shard) stat() {
 	s.curry(mtBytes).WithLabelValues("series").Set(float64(seriesStat.MemBytes))
 	s.curry(maxMtBytes).WithLabelValues("series").Set(float64(seriesStat.MaxMemBytes))
 	segStats := observability.Statistics{}
-	blockStats := observability.Statistics{}
-	localIndexStats := observability.Statistics{}
+	blockStats := newBlockStat()
 	for _, seg := range s.segmentController.segments() {
 		segStat := seg.Stats()
 		segStats.MaxMemBytes += segStat.MaxMemBytes
@@ -83,23 +82,20 @@ func (s *shard) stat() {
 			}
 			names, bss := b.stats()
 			for i, bs := range bss {
-				if names[i] == "main" {
-					blockStats.MaxMemBytes += bs.MaxMemBytes
-					blockStats.MemBytes += bs.MemBytes
-					continue
+				bsc, ok := blockStats[names[i]]
+				if ok {
+					bsc.MaxMemBytes += bs.MaxMemBytes
+					bsc.MemBytes += bs.MemBytes
 				}
-				localIndexStats.MaxMemBytes += bs.MaxMemBytes
-				localIndexStats.MemBytes += bs.MemBytes
 			}
-
 		}
 	}
 	s.curry(mtBytes).WithLabelValues("global-index").Set(float64(segStats.MemBytes))
 	s.curry(maxMtBytes).WithLabelValues("global-index").Set(float64(segStats.MaxMemBytes))
-	s.curry(mtBytes).WithLabelValues("block").Set(float64(blockStats.MemBytes))
-	s.curry(maxMtBytes).WithLabelValues("block").Set(float64(blockStats.MaxMemBytes))
-	s.curry(mtBytes).WithLabelValues("local-index").Set(float64(localIndexStats.MemBytes))
-	s.curry(maxMtBytes).WithLabelValues("local-index").Set(float64(localIndexStats.MaxMemBytes))
+	for name, bs := range blockStats {
+		s.curry(mtBytes).WithLabelValues(name).Set(float64(bs.MemBytes))
+		s.curry(maxMtBytes).WithLabelValues(name).Set(float64(bs.MaxMemBytes))
+	}
 }
 
 func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
@@ -108,4 +104,13 @@ func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
 		"database": s.position.Database,
 		"shard":    s.position.Shard,
 	})
+}
+
+func newBlockStat() map[string]observability.Statistics {
+	return map[string]observability.Statistics{
+		componentMain:              {},
+		componentPrimaryIdx:        {},
+		componentSecondInvertedIdx: {},
+		componentSecondLSMIdx:      {},
+	}
 }
