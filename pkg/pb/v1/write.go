@@ -179,7 +179,7 @@ func (b *MeasureWriteRequestBuilder) TagFamily(tags ...interface{}) *MeasureWrit
 }
 
 func (b *MeasureWriteRequestBuilder) Fields(fields ...interface{}) *MeasureWriteRequestBuilder {
-	var fieldValues []*modelv1.FieldValue
+	fieldValues := make([]*modelv1.FieldValue, 0)
 	for _, field := range fields {
 		fieldValues = append(fieldValues, getField(field))
 	}
