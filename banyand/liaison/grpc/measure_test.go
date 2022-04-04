@@ -128,7 +128,7 @@ func queryMeasureCriteria(baseTs time.Time) *measurev1.QueryRequest {
 	return pbv1.NewMeasureQueryRequestBuilder().
 		Metadata("sw_metric", "service_cpm_minute").
 		TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
-		TagProjection("searchable", "trace_id").
+		TagProjection("default", "id").
 		Build()
 }
 
