@@ -14,17 +14,17 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
 	"context"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var TopNAggregationKeyPrefix = "/topnagg/"
@@ -39,7 +39,7 @@ func (e *etcdSchemaRegistry) GetTopNAggregation(ctx context.Context, metadata *c
 
 func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error) {
 	if opt.Group == "" {
-		return nil, errors.Wrap(ErrGroupAbsent, "list TopNAggregation")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, TopNAggregationKeyPrefix), func() proto.Message {
 		return &databasev1.TopNAggregation{}
@@ -54,7 +54,7 @@ func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOp
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
+func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation, allowOverwrite bool) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
@@ -62,7 +62,7 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 			Name:  topNAggregation.GetMetadata().GetName(),
 		},
 		Spec: topNAggregation,
-	})
+	}, allowOverwrite)
 }
 
 func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

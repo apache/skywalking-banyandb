@@ -14,14 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"time"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -44,7 +44,7 @@ func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.
 
 func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
 	if opt.Group == "" {
-		return nil, errors.Wrap(ErrGroupAbsent, "list measure")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, MeasureKeyPrefix), func() proto.Message {
 		return &databasev1.Measure{}
@@ -59,7 +59,7 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure, allowOverwrite bool) error {
 	if err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
@@ -67,7 +67,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
-	}); err != nil {
+	}, allowOverwrite); err != nil {
 		return err
 	}
 
@@ -77,14 +77,14 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 		Group: measure.Metadata.Group,
 	}
 	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
-	if errors.Is(err, ErrEntityNotFound) {
+	if schema.IsNotFound(err) {
 		if errIndexRule := e.UpdateIndexRule(ctx, &databasev1.IndexRule{
 			Metadata:  idIndexRuleMetadata,
 			Tags:      []string{TagTypeID},
 			Type:      databasev1.IndexRule_TYPE_TREE,
 			Location:  databasev1.IndexRule_LOCATION_SERIES,
 			UpdatedAt: timestamppb.Now(),
-		}); errIndexRule != nil {
+		}, false); errIndexRule != nil {
 			return errIndexRule
 		}
 	} else if err != nil {
@@ -111,7 +111,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 					BeginAt:   timestamppb.Now(),
 					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
 					UpdatedAt: timestamppb.Now(),
-				}); errIndexRule != nil {
+				}, true); errIndexRule != nil {
 					return errIndexRule
 				}
 			}

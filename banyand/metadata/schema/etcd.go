@@ -32,6 +32,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var (
@@ -42,7 +43,6 @@ var (
 	_ Group            = (*etcdSchemaRegistry)(nil)
 	_ Property         = (*etcdSchemaRegistry)(nil)
 
-	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	ErrConcurrentModification     = errors.New("concurrent modification of entities")
 
@@ -176,7 +176,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrEntityNotFound
+		return schema.ErrGRPCResourceNotFound
 	}
 	if resp.Count > 1 {
 		return ErrUnexpectedNumberOfEntities
@@ -192,7 +192,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata, allowOverwrite bool) error {
 	key, err := metadata.Key()
 	if err != nil {
 		return err
@@ -210,6 +210,9 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 	}
 	replace := getResp.Count > 0
 	if replace {
+		if !allowOverwrite {
+			return schema.ErrGRPCAlreadyExists
+		}
 		existingVal, innerErr := metadata.Unmarshal(getResp.Kvs[0].Value)
 		if innerErr != nil {
 			return innerErr

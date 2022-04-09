@@ -14,17 +14,17 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
 	"context"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var PropertyKeyPrefix = "/properties/"
@@ -39,7 +39,7 @@ func (e *etcdSchemaRegistry) GetProperty(ctx context.Context, metadata *property
 
 func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *commonv1.Metadata) ([]*propertyv1.Property, error) {
 	if container.Group == "" {
-		return nil, errors.Wrap(ErrGroupAbsent, "list Property")
+		return nil, schema.BadRequest("container.group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group, PropertyKeyPrefix+container.Name), func() proto.Message {
 		return &propertyv1.Property{}
@@ -54,7 +54,7 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *propertyv1.Property) error {
+func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *propertyv1.Property, allowOverwrite bool) error {
 	m := transformKey(property.GetMetadata())
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
@@ -63,7 +63,7 @@ func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *prope
 			Name:  m.GetName(),
 		},
 		Spec: property,
-	})
+	}, allowOverwrite)
 }
 
 func (e *etcdSchemaRegistry) DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata) (bool, error) {
