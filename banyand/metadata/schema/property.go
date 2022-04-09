@@ -24,7 +24,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var PropertyKeyPrefix = "/properties/"
@@ -39,7 +38,7 @@ func (e *etcdSchemaRegistry) GetProperty(ctx context.Context, metadata *property
 
 func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *commonv1.Metadata) ([]*propertyv1.Property, error) {
 	if container.Group == "" {
-		return nil, schema.BadRequest("container.group", "group should not be empty")
+		return nil, BadRequest("container.group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group, PropertyKeyPrefix+container.Name), func() proto.Message {
 		return &propertyv1.Property{}

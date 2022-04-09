@@ -32,7 +32,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 var (
@@ -176,7 +175,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return err
 	}
 	if resp.Count == 0 {
-		return schema.ErrGRPCResourceNotFound
+		return ErrGRPCResourceNotFound
 	}
 	if resp.Count > 1 {
 		return ErrUnexpectedNumberOfEntities
@@ -211,7 +210,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata, allo
 	replace := getResp.Count > 0
 	if replace {
 		if !allowOverwrite {
-			return schema.ErrGRPCAlreadyExists
+			return ErrGRPCAlreadyExists
 		}
 		existingVal, innerErr := metadata.Unmarshal(getResp.Kvs[0].Value)
 		if innerErr != nil {
