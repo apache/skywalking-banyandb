@@ -30,13 +30,13 @@ type propertyServer struct {
 }
 
 func (ps *propertyServer) Create(ctx context.Context, req *propertyv1.CreateRequest) (*propertyv1.CreateResponse, error) {
-	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
+	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty(), false); err != nil {
 		return nil, err
 	}
 	return &propertyv1.CreateResponse{}, nil
 }
 func (ps *propertyServer) Update(ctx context.Context, req *propertyv1.UpdateRequest) (*propertyv1.UpdateResponse, error) {
-	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
+	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty(), true); err != nil {
 		return nil, err
 	}
 	return &propertyv1.UpdateResponse{}, nil

@@ -48,22 +48,22 @@ var (
 
 func PreloadSchema(e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {
-		return e.UpdateGroup(context.TODO(), group.(*commonv1.Group))
+		return e.UpdateGroup(context.TODO(), group.(*commonv1.Group), true)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(measureDir, &databasev1.Measure{}, func(group proto.Message) error {
-		return e.UpdateMeasure(context.TODO(), group.(*databasev1.Measure))
+		return e.UpdateMeasure(context.TODO(), group.(*databasev1.Measure), true)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(group proto.Message) error {
-		return e.UpdateIndexRule(context.TODO(), group.(*databasev1.IndexRule))
+		return e.UpdateIndexRule(context.TODO(), group.(*databasev1.IndexRule), true)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(group proto.Message) error {
-		return e.UpdateIndexRuleBinding(context.TODO(), group.(*databasev1.IndexRuleBinding))
+		return e.UpdateIndexRuleBinding(context.TODO(), group.(*databasev1.IndexRuleBinding), true)
 	}); err != nil {
 		return errors.WithStack(err)
 	}

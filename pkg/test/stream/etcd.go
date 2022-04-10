@@ -50,14 +50,14 @@ func PreloadSchema(e schema.Registry) error {
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
 	}
-	if err := e.UpdateGroup(context.TODO(), g); err != nil {
+	if err := e.UpdateGroup(context.TODO(), g, true); err != nil {
 		return err
 	}
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.UpdateStream(context.Background(), s)
+	err := e.UpdateStream(context.Background(), s, true)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func PreloadSchema(e schema.Registry) error {
 	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
 		return err
 	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
+	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding, true)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func PreloadSchema(e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule)
+		err = e.UpdateIndexRule(context.Background(), &idxRule, true)
 		if err != nil {
 			return err
 		}
