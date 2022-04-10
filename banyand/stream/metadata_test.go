@@ -68,7 +68,7 @@ var _ = Describe("Metadata", func() {
 			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
 
-			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
+			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema, true)).Should(Succeed())
 
 			Eventually(func() bool {
 				group, ok := svcs.stream.schemaRepo.LoadGroup("default")
@@ -127,7 +127,7 @@ var _ = Describe("Metadata", func() {
 				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
 				entitySize := len(streamSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)).Should(Succeed())
+				Expect(svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema, true)).Should(Succeed())
 
 				Eventually(func() bool {
 					val, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
