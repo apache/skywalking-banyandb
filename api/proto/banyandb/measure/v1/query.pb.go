@@ -48,7 +48,7 @@ type DataPoint struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// timestamp is in the timeunit of nanoseconds.
+	// timestamp is in the timeunit of milliseconds.
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// tag_families contains tags selected in the projection
 	TagFamilies []*v1.TagFamily `protobuf:"bytes,2,rep,name=tag_families,json=tagFamilies,proto3" json:"tag_families,omitempty"`
@@ -166,7 +166,7 @@ type QueryRequest struct {
 
 	// metadata is required
 	Metadata *v11.Metadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.
+	// time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
 	TimeRange *v1.TimeRange `protobuf:"bytes,2,opt,name=time_range,json=timeRange,proto3" json:"time_range,omitempty"`
 	// tag_families are indexed.
 	Criteria []*v1.Criteria `protobuf:"bytes,4,rep,name=criteria,proto3" json:"criteria,omitempty"`

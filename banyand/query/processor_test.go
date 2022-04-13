@@ -46,6 +46,7 @@ import (
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -145,7 +146,7 @@ var dataFS embed.FS
 
 func setUpStreamQueryData(dataFile string, stream stream.Stream) (baseTime time.Time) {
 	var templates []interface{}
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(json.Unmarshal(content, &templates)).Should(Succeed())

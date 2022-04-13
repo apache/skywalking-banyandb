@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 //go:embed testdata/*.json
@@ -53,7 +54,7 @@ var dataFS embed.FS
 func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (baseTime time.Time) {
 	t := assert.New(testing)
 	var templates []interface{}
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	t.NoError(err)
 	t.NoError(json.Unmarshal(content, &templates))
@@ -194,7 +195,7 @@ func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, fun
 func setupMeasureQueryData(testing *testing.T, dataFile string, measure measure.Measure) (baseTime time.Time) {
 	t := assert.New(testing)
 	var templates []interface{}
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	t.NoError(err)
 	t.NoError(json.Unmarshal(content, &templates))
