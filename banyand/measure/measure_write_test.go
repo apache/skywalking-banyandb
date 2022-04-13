@@ -30,6 +30,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Write service_cpm_minute", func() {
@@ -70,7 +71,7 @@ var _ = Describe("Write service_cpm_minute", func() {
 var dataFS embed.FS
 
 func writeData(dataFile string, measure measure.Measure) (baseTime time.Time) {
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	writeDataWithBaseTime(baseTime, dataFile, measure)
 	return baseTime
 }

@@ -32,7 +32,7 @@ import "banyandb/model/v1/query.proto";
 message Element {
   // element_id could be span_id of a Span or segment_id of a Segment in the context of stream
   string element_id = 1;
-  // timestamp represents
+  // timestamp represents a millisecond
   // 1) either the start time of a Span/Segment,
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
@@ -41,7 +41,7 @@ message Element {
   // - duration
   // - service_name
   // - service_instance_id
-  // - end_time_nanoseconds
+  // - end_time_milliseconds
   repeated model.v1.TagFamily tag_families = 3;
 }
 
@@ -55,7 +55,7 @@ message QueryResponse {
 message QueryRequest {
   // metadata is required
   common.v1.Metadata metadata = 1;
-  // time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.
+  // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
   // In the context of stream, it represents the range of the `startTime` for spans/segments,
   // while in the context of Log, it means the range of the timestamp(s) for logs.
   // it is always recommended to specify time range for performance reason

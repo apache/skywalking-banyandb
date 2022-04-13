@@ -69,7 +69,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 	if err != nil {
 		return err
 	}
-	t := value.GetTimestamp().AsTime()
+	t := timestamp.MToN(value.GetTimestamp().AsTime())
 	wp, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(t, 0))
 	if err != nil {
 		if wp != nil {

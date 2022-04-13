@@ -789,7 +789,7 @@ var dataFS embed.FS
 
 func setupQueryData(dataFile string, stream *stream) (baseTime time.Time) {
 	var templates []interface{}
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())

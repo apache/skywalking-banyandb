@@ -48,7 +48,7 @@ type TopNList struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// timestamp is in the timeunit of nanoseconds.
+	// timestamp is in the timeunit of milliseconds.
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// items contains top-n items in a list
 	Items []*TopNList_Item `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
@@ -158,7 +158,7 @@ type TopNRequest struct {
 
 	// metadata is required
 	Metadata *v1.Metadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.
+	// time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
 	TimeRange *v11.TimeRange `protobuf:"bytes,2,opt,name=time_range,json=timeRange,proto3" json:"time_range,omitempty"`
 	// top_n set the how many items should be returned in each list.
 	TopN int32 `protobuf:"varint,3,opt,name=top_n,json=topN,proto3" json:"top_n,omitempty"`
