@@ -19,7 +19,6 @@ package timestamp_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -27,7 +26,7 @@ import (
 )
 
 func TestMToN(t *testing.T) {
-	m := time.Now()
+	m := timestamp.NowMilli()
 	n := timestamp.MToN(m)
 	assert.Equal(t, n.UnixMilli(), m.UnixMilli())
 	assert.GreaterOrEqual(t, n.Nanosecond(), m.Nanosecond())
