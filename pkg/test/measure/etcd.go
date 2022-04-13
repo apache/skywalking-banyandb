@@ -48,22 +48,50 @@ var (
 
 func PreloadSchema(e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {
-		return e.UpdateGroup(context.TODO(), group.(*commonv1.Group), true)
+		_, err := e.GetGroup(context.TODO(), group.(*commonv1.Group).GetMetadata().GetName())
+		if err != nil {
+			if schema.IsNotFound(err) {
+				return e.CreateGroup(context.TODO(), group.(*commonv1.Group))
+			}
+			return err
+		}
+		return e.UpdateGroup(context.TODO(), group.(*commonv1.Group))
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(group proto.Message) error {
-		return e.UpdateMeasure(context.TODO(), group.(*databasev1.Measure), true)
+	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure proto.Message) error {
+		_, err := e.GetMeasure(context.TODO(), measure.(*databasev1.Measure).GetMetadata())
+		if err != nil {
+			if schema.IsNotFound(err) {
+				return e.CreateMeasure(context.TODO(), measure.(*databasev1.Measure))
+			}
+			return err
+		}
+		return e.UpdateMeasure(context.TODO(), measure.(*databasev1.Measure))
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(group proto.Message) error {
-		return e.UpdateIndexRule(context.TODO(), group.(*databasev1.IndexRule), true)
+	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule proto.Message) error {
+		_, err := e.GetIndexRule(context.TODO(), indexRule.(*databasev1.IndexRule).GetMetadata())
+		if err != nil {
+			if schema.IsNotFound(err) {
+				return e.CreateIndexRule(context.TODO(), indexRule.(*databasev1.IndexRule))
+			}
+			return err
+		}
+		return e.UpdateIndexRule(context.TODO(), indexRule.(*databasev1.IndexRule))
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(group proto.Message) error {
-		return e.UpdateIndexRuleBinding(context.TODO(), group.(*databasev1.IndexRuleBinding), true)
+	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding proto.Message) error {
+		_, err := e.GetIndexRuleBinding(context.TODO(), indexRuleBinding.(*databasev1.IndexRuleBinding).GetMetadata())
+		if err != nil {
+			if schema.IsNotFound(err) {
+				return e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding.(*databasev1.IndexRuleBinding))
+			}
+			return err
+		}
+		return e.UpdateIndexRuleBinding(context.TODO(), indexRuleBinding.(*databasev1.IndexRuleBinding))
 	}); err != nil {
 		return errors.WithStack(err)
 	}

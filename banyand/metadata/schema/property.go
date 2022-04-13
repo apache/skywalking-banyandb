@@ -53,7 +53,19 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *propertyv1.Property, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) CreateProperty(ctx context.Context, property *propertyv1.Property) error {
+	m := transformKey(property.GetMetadata())
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindProperty,
+			Group: m.GetGroup(),
+			Name:  m.GetName(),
+		},
+		Spec: property,
+	})
+}
+
+func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *propertyv1.Property) error {
 	m := transformKey(property.GetMetadata())
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
@@ -62,7 +74,7 @@ func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *prope
 			Name:  m.GetName(),
 		},
 		Spec: property,
-	}, allowOverwrite)
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata) (bool, error) {

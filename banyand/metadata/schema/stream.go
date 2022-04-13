@@ -53,7 +53,7 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindStream,
@@ -61,7 +61,18 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 			Name:  stream.GetMetadata().GetName(),
 		},
 		Spec: stream,
-	}, allowOverwrite)
+	})
+}
+
+func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindStream,
+			Group: stream.GetMetadata().GetGroup(),
+			Name:  stream.GetMetadata().GetName(),
+		},
+		Spec: stream,
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

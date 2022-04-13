@@ -58,15 +58,15 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure, allowOverwrite bool) error {
-	if err := e.update(ctx, Metadata{
+func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
 			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
-	}, allowOverwrite); err != nil {
+	}); err != nil {
 		return err
 	}
 
@@ -77,13 +77,81 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	}
 	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
 	if IsNotFound(err) {
-		if errIndexRule := e.UpdateIndexRule(ctx, &databasev1.IndexRule{
+		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
 			Metadata:  idIndexRuleMetadata,
 			Tags:      []string{TagTypeID},
 			Type:      databasev1.IndexRule_TYPE_TREE,
 			Location:  databasev1.IndexRule_LOCATION_SERIES,
 			UpdatedAt: timestamppb.Now(),
-		}, false); errIndexRule != nil {
+		}); errIndexRule != nil {
+			return errIndexRule
+		}
+	} else if err != nil {
+		return err
+	}
+	for _, tfs := range measure.GetTagFamilies() {
+		for _, ts := range tfs.GetTags() {
+			if ts.Type == databasev1.TagType_TAG_TYPE_ID {
+				for _, e := range measure.Entity.TagNames {
+					if ts.Name == e {
+						continue
+					}
+				}
+				irb := &databasev1.IndexRuleBinding{
+					Metadata: &commonv1.Metadata{
+						Name:  TagTypeID + "_" + measure.Metadata.Name + "_" + ts.Name,
+						Group: measure.Metadata.Group,
+					},
+					Rules: []string{TagTypeID},
+					Subject: &databasev1.Subject{
+						Catalog: commonv1.Catalog_CATALOG_MEASURE,
+						Name:    measure.Metadata.Name,
+					},
+					BeginAt:   timestamppb.Now(),
+					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
+					UpdatedAt: timestamppb.Now(),
+				}
+				_, innerErr := e.GetIndexRuleBinding(ctx, irb.GetMetadata())
+				if innerErr == nil {
+					return e.UpdateIndexRuleBinding(ctx, irb)
+				}
+				if IsNotFound(innerErr) {
+					return e.CreateIndexRuleBinding(ctx, irb)
+				} else {
+					return innerErr
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if err := e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindMeasure,
+			Group: measure.GetMetadata().GetGroup(),
+			Name:  measure.GetMetadata().GetName(),
+		},
+		Spec: measure,
+	}); err != nil {
+		return err
+	}
+
+	// Add an index rule for the ID type tag
+	idIndexRuleMetadata := &commonv1.Metadata{
+		Name:  TagTypeID,
+		Group: measure.Metadata.Group,
+	}
+	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
+	if IsNotFound(err) {
+		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
+			Metadata:  idIndexRuleMetadata,
+			Tags:      []string{TagTypeID},
+			Type:      databasev1.IndexRule_TYPE_TREE,
+			Location:  databasev1.IndexRule_LOCATION_SERIES,
+			UpdatedAt: timestamppb.Now(),
+		}); errIndexRule != nil {
 			return errIndexRule
 		}
 	} else if err != nil {
@@ -110,7 +178,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 					BeginAt:   timestamppb.Now(),
 					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
 					UpdatedAt: timestamppb.Now(),
-				}, true); errIndexRule != nil {
+				}); errIndexRule != nil {
 					return errIndexRule
 				}
 			}

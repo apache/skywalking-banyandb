@@ -86,14 +86,24 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	return true, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind: KindGroup,
+			Name: group.GetMetadata().GetName(),
+		},
+		Spec: group,
+	})
+}
+
+func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
 			Name: group.GetMetadata().GetName(),
 		},
 		Spec: group,
-	}, allowOverwrite)
+	})
 }
 
 func formatGroupKey(group string) string {

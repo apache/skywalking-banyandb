@@ -191,7 +191,10 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
-func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata, allowOverwrite bool) error {
+// update will first ensure the existence of the entity with the metadata,
+// and overwrite the existing value if so.
+// Otherwise, it will return ErrGRPCResourceNotFound.
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
 	key, err := metadata.Key()
 	if err != nil {
 		return err
@@ -209,9 +212,6 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata, allo
 	}
 	replace := getResp.Count > 0
 	if replace {
-		if !allowOverwrite {
-			return ErrGRPCAlreadyExists
-		}
 		existingVal, innerErr := metadata.Unmarshal(getResp.Kvs[0].Value)
 		if innerErr != nil {
 			return innerErr
@@ -232,6 +232,35 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata, allo
 		if !txnResp.Succeeded {
 			return ErrConcurrentModification
 		}
+	} else {
+		return ErrGRPCResourceNotFound
+	}
+	e.notifyUpdate(metadata)
+	return nil
+}
+
+// create will first check existence of the entity with the metadata,
+// and put the value if it does not exist.
+// Otherwise, it will return ErrGRPCAlreadyExists.
+func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
+	key, err := metadata.Key()
+	if err != nil {
+		return err
+	}
+	getResp, err := e.kv.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	if getResp.Count > 1 {
+		return ErrUnexpectedNumberOfEntities
+	}
+	val, err := proto.Marshal(metadata.Spec.(proto.Message))
+	if err != nil {
+		return err
+	}
+	replace := getResp.Count > 0
+	if replace {
+		return ErrGRPCAlreadyExists
 	} else {
 		_, err = e.kv.Put(ctx, key, string(val))
 		if err != nil {

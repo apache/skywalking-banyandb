@@ -68,7 +68,7 @@ var _ = Describe("Metadata", func() {
 			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
 
-			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema, true)).Should(Succeed())
+			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
 
 			Eventually(func() bool {
 				group, ok := svcs.measure.LoadGroup("sw_metric")
@@ -127,7 +127,7 @@ var _ = Describe("Metadata", func() {
 				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
 				entitySize := len(measureSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema, true)).Should(Succeed())
+				Expect(svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)).Should(Succeed())
 
 				Eventually(func() bool {
 					val, err := svcs.measure.Measure(&commonv1.Metadata{

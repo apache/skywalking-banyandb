@@ -50,25 +50,53 @@ func PreloadSchema(e schema.Registry) error {
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
 	}
-	if err := e.UpdateGroup(context.TODO(), g, true); err != nil {
+
+	_, err := e.GetGroup(context.TODO(), g.GetMetadata().GetName())
+	if err != nil && schema.IsNotFound(err) {
+		if innerErr := e.CreateGroup(context.TODO(), g); innerErr != nil {
+			return innerErr
+		}
+	} else if err != nil {
 		return err
+	} else {
+		if innerErr := e.UpdateGroup(context.TODO(), g); innerErr != nil {
+			return innerErr
+		}
 	}
+
 	s := &databasev1.Stream{}
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.UpdateStream(context.Background(), s, true)
-	if err != nil {
+	_, err = e.GetStream(context.Background(), s.GetMetadata())
+	if err != nil && schema.IsNotFound(err) {
+		if innerErr := e.CreateStream(context.TODO(), s); innerErr != nil {
+			return innerErr
+		}
+	} else if err != nil {
 		return err
+	} else {
+		if innerErr := e.UpdateStream(context.TODO(), s); innerErr != nil {
+			return innerErr
+		}
 	}
 
 	indexRuleBinding := &databasev1.IndexRuleBinding{}
 	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
 		return err
 	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding, true)
-	if err != nil {
+
+	_, err = e.GetIndexRuleBinding(context.Background(), indexRuleBinding.GetMetadata())
+	if err != nil && schema.IsNotFound(err) {
+		if innerErr := e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding); innerErr != nil {
+			return innerErr
+		}
+	} else if err != nil {
 		return err
+	} else {
+		if innerErr := e.UpdateIndexRuleBinding(context.TODO(), indexRuleBinding); innerErr != nil {
+			return innerErr
+		}
 	}
 
 	entries, err := indexRuleStore.ReadDir(indexRuleDir)
@@ -85,7 +113,7 @@ func PreloadSchema(e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule, true)
+		err = e.CreateIndexRule(context.Background(), &idxRule)
 		if err != nil {
 			return err
 		}

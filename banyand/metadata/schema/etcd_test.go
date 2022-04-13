@@ -68,7 +68,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
 	}
-	if err := e.UpdateGroup(context.TODO(), g, false); err != nil {
+	if err := e.CreateGroup(context.TODO(), g); err != nil {
 		return err
 	}
 
@@ -76,7 +76,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.UpdateStream(context.Background(), s, false)
+	err := e.CreateStream(context.Background(), s)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func preloadSchema(e Registry) error {
 	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
 		return err
 	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding, false)
+	err = e.CreateIndexRuleBinding(context.Background(), indexRuleBinding)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func preloadSchema(e Registry) error {
 		if err != nil {
 			return err
 		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule, false)
+		err = e.CreateIndexRule(context.Background(), &idxRule)
 		if err != nil {
 			return err
 		}
@@ -399,7 +399,7 @@ func Test_Notify(t *testing.T) {
 				}
 
 				ir.Type = databasev1.IndexRule_TYPE_TREE
-				return r.UpdateIndexRule(ctx, ir, true)
+				return r.UpdateIndexRule(ctx, ir)
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 1) &&
@@ -417,7 +417,7 @@ func Test_Notify(t *testing.T) {
 					return err
 				}
 
-				return r.UpdateIndexRule(ctx, ir, true)
+				return r.UpdateIndexRule(ctx, ir)
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&
@@ -455,7 +455,7 @@ func Test_Notify(t *testing.T) {
 				}
 
 				irb.Rules = []string{"trace_id", "duration"}
-				return r.UpdateIndexRuleBinding(ctx, irb, true)
+				return r.UpdateIndexRuleBinding(ctx, irb)
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 1) &&
@@ -473,7 +473,7 @@ func Test_Notify(t *testing.T) {
 					return err
 				}
 
-				return r.UpdateIndexRuleBinding(ctx, irb, true)
+				return r.UpdateIndexRuleBinding(ctx, irb)
 			},
 			validationFunc: func(mocked *mockedEventHandler) bool {
 				return mocked.AssertNumberOfCalls(t, "OnAddOrUpdate", 0) &&

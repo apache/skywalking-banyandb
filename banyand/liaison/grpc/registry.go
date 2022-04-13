@@ -32,7 +32,7 @@ type streamRegistryServer struct {
 
 func (rs *streamRegistryServer) Create(ctx context.Context,
 	req *databasev1.StreamRegistryServiceCreateRequest) (*databasev1.StreamRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream(), false); err != nil {
+	if err := rs.schemaRegistry.StreamRegistry().CreateStream(ctx, req.GetStream()); err != nil {
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceCreateResponse{}, nil
@@ -40,7 +40,7 @@ func (rs *streamRegistryServer) Create(ctx context.Context,
 
 func (rs *streamRegistryServer) Update(ctx context.Context,
 	req *databasev1.StreamRegistryServiceUpdateRequest) (*databasev1.StreamRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream(), true); err != nil {
+	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream()); err != nil {
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceUpdateResponse{}, nil
@@ -87,7 +87,7 @@ type indexRuleBindingRegistryServer struct {
 func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
 	req *databasev1.IndexRuleBindingRegistryServiceCreateRequest) (
 	*databasev1.IndexRuleBindingRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding(), false); err != nil {
+	if err := rs.schemaRegistry.IndexRuleBindingRegistry().CreateIndexRuleBinding(ctx, req.GetIndexRuleBinding()); err != nil {
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceCreateResponse{}, nil
@@ -96,7 +96,7 @@ func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
 func (rs *indexRuleBindingRegistryServer) Update(ctx context.Context,
 	req *databasev1.IndexRuleBindingRegistryServiceUpdateRequest) (
 	*databasev1.IndexRuleBindingRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding(), true); err != nil {
+	if err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding()); err != nil {
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceUpdateResponse{}, nil
@@ -146,7 +146,7 @@ type indexRuleRegistryServer struct {
 
 func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleRegistryServiceCreateRequest) (
 	*databasev1.IndexRuleRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule(), false); err != nil {
+	if err := rs.schemaRegistry.IndexRuleRegistry().CreateIndexRule(ctx, req.GetIndexRule()); err != nil {
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceCreateResponse{}, nil
@@ -154,7 +154,7 @@ func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.I
 
 func (rs *indexRuleRegistryServer) Update(ctx context.Context, req *databasev1.IndexRuleRegistryServiceUpdateRequest) (
 	*databasev1.IndexRuleRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule(), true); err != nil {
+	if err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule()); err != nil {
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceUpdateResponse{}, nil
@@ -200,7 +200,7 @@ type measureRegistryServer struct {
 
 func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureRegistryServiceCreateRequest) (
 	*databasev1.MeasureRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure(), false); err != nil {
+	if err := rs.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, req.GetMeasure()); err != nil {
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceCreateResponse{}, nil
@@ -208,7 +208,7 @@ func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.Mea
 
 func (rs *measureRegistryServer) Update(ctx context.Context, req *databasev1.MeasureRegistryServiceUpdateRequest) (
 	*databasev1.MeasureRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure(), true); err != nil {
+	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure()); err != nil {
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceUpdateResponse{}, nil
@@ -254,7 +254,7 @@ type groupRegistryServer struct {
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
 	*databasev1.GroupRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup(), false); err != nil {
+	if err := rs.schemaRegistry.GroupRegistry().CreateGroup(ctx, req.GetGroup()); err != nil {
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceCreateResponse{}, nil
@@ -262,7 +262,7 @@ func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.Group
 
 func (rs *groupRegistryServer) Update(ctx context.Context, req *databasev1.GroupRegistryServiceUpdateRequest) (
 	*databasev1.GroupRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup(), true); err != nil {
+	if err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup()); err != nil {
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceUpdateResponse{}, nil
@@ -308,7 +308,7 @@ type topNAggregationRegistryServer struct {
 
 func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 	req *databasev1.TopNAggregationRegistryServiceCreateRequest) (*databasev1.TopNAggregationRegistryServiceCreateResponse, error) {
-	if err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation(), false); err != nil {
+	if err := ts.schemaRegistry.TopNAggregationRegistry().CreateTopNAggregation(ctx, req.GetTopNAggregation()); err != nil {
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceCreateResponse{}, nil
@@ -316,7 +316,7 @@ func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 
 func (ts *topNAggregationRegistryServer) Update(ctx context.Context,
 	req *databasev1.TopNAggregationRegistryServiceUpdateRequest) (*databasev1.TopNAggregationRegistryServiceUpdateResponse, error) {
-	if err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation(), true); err != nil {
+	if err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation()); err != nil {
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceUpdateResponse{}, nil

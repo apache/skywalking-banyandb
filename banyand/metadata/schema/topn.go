@@ -53,7 +53,18 @@ func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOp
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindTopNAggregation,
+			Group: topNAggregation.GetMetadata().GetGroup(),
+			Name:  topNAggregation.GetMetadata().GetName(),
+		},
+		Spec: topNAggregation,
+	})
+}
+
+func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
@@ -61,7 +72,7 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 			Name:  topNAggregation.GetMetadata().GetName(),
 		},
 		Spec: topNAggregation,
-	}, allowOverwrite)
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

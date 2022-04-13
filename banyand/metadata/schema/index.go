@@ -56,7 +56,18 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRuleBinding,
+			Name:  indexRuleBinding.GetMetadata().GetName(),
+			Group: indexRuleBinding.GetMetadata().GetGroup(),
+		},
+		Spec: indexRuleBinding,
+	})
+}
+
+func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
@@ -64,7 +75,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 			Group: indexRuleBinding.GetMetadata().GetGroup(),
 		},
 		Spec: indexRuleBinding,
-	}, allowOverwrite)
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -102,7 +113,18 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule, allowOverwrite bool) error {
+func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindIndexRule,
+			Name:  indexRule.GetMetadata().GetName(),
+			Group: indexRule.GetMetadata().GetGroup(),
+		},
+		Spec: indexRule,
+	})
+}
+
+func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
@@ -110,7 +132,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 			Group: indexRule.GetMetadata().GetGroup(),
 		},
 		Spec: indexRule,
-	}, allowOverwrite)
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
