@@ -113,9 +113,17 @@ func PreloadSchema(e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		err = e.CreateIndexRule(context.Background(), &idxRule)
-		if err != nil {
+		_, err = e.GetIndexRule(context.Background(), idxRule.GetMetadata())
+		if err != nil && schema.IsNotFound(err) {
+			if innerErr := e.CreateIndexRule(context.TODO(), &idxRule); innerErr != nil {
+				return innerErr
+			}
+		} else if err != nil {
 			return err
+		} else {
+			if innerErr := e.UpdateIndexRule(context.TODO(), &idxRule); innerErr != nil {
+				return innerErr
+			}
 		}
 	}
 
