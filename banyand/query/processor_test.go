@@ -395,7 +395,7 @@ var _ = Describe("Stream Query", func() {
 			Limit(10).
 			Offset(0).
 			Metadata("default", "sw").
-			TagsInTagFamily("searchable", "status_code", "=", "500", "duration", "<=", 100).
+			TagsInTagFamily("searchable", "status_code", "=", 500, "duration", "<=", 100).
 			TimeRange(sT, eT).
 			Projection("searchable", "trace_id").
 			Build()
