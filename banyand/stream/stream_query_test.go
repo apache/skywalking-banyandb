@@ -322,6 +322,54 @@ var _ = Describe("Write", func() {
 				),
 				Entry(
 
+					"filter by status_code",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "status_code",
+									Group: "default",
+									Id:    5,
+								},
+								Tags:     []string{"status_code"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"status_code": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_EQ,
+										Values: [][]byte{convert.Int64ToBytes(500)},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
 					"order by duration",
 					queryOpts{
 						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
