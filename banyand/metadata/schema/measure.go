@@ -14,14 +14,13 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -44,7 +43,7 @@ func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.
 
 func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
 	if opt.Group == "" {
-		return nil, errors.Wrap(ErrGroupAbsent, "list measure")
+		return nil, BadRequest("group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, MeasureKeyPrefix), func() proto.Message {
 		return &databasev1.Measure{}
@@ -57,6 +56,73 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 		entities = append(entities, message.(*databasev1.Measure))
 	}
 	return entities, nil
+}
+
+func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if err := e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindMeasure,
+			Group: measure.GetMetadata().GetGroup(),
+			Name:  measure.GetMetadata().GetName(),
+		},
+		Spec: measure,
+	}); err != nil {
+		return err
+	}
+
+	// Add an index rule for the ID type tag
+	idIndexRuleMetadata := &commonv1.Metadata{
+		Name:  TagTypeID,
+		Group: measure.Metadata.Group,
+	}
+	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
+	if IsNotFound(err) {
+		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
+			Metadata:  idIndexRuleMetadata,
+			Tags:      []string{TagTypeID},
+			Type:      databasev1.IndexRule_TYPE_TREE,
+			Location:  databasev1.IndexRule_LOCATION_SERIES,
+			UpdatedAt: timestamppb.Now(),
+		}); errIndexRule != nil {
+			return errIndexRule
+		}
+	} else if err != nil {
+		return err
+	}
+	for _, tfs := range measure.GetTagFamilies() {
+		for _, ts := range tfs.GetTags() {
+			if ts.Type == databasev1.TagType_TAG_TYPE_ID {
+				for _, e := range measure.Entity.TagNames {
+					if ts.Name == e {
+						continue
+					}
+				}
+				irb := &databasev1.IndexRuleBinding{
+					Metadata: &commonv1.Metadata{
+						Name:  TagTypeID + "_" + measure.Metadata.Name + "_" + ts.Name,
+						Group: measure.Metadata.Group,
+					},
+					Rules: []string{TagTypeID},
+					Subject: &databasev1.Subject{
+						Catalog: commonv1.Catalog_CATALOG_MEASURE,
+						Name:    measure.Metadata.Name,
+					},
+					BeginAt:   timestamppb.Now(),
+					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
+					UpdatedAt: timestamppb.Now(),
+				}
+				_, innerErr := e.GetIndexRuleBinding(ctx, irb.GetMetadata())
+				if innerErr == nil {
+					return e.UpdateIndexRuleBinding(ctx, irb)
+				}
+				if IsNotFound(innerErr) {
+					return e.CreateIndexRuleBinding(ctx, irb)
+				}
+				return innerErr
+			}
+		}
+	}
+	return nil
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
@@ -77,8 +143,8 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 		Group: measure.Metadata.Group,
 	}
 	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
-	if errors.Is(err, ErrEntityNotFound) {
-		if errIndexRule := e.UpdateIndexRule(ctx, &databasev1.IndexRule{
+	if IsNotFound(err) {
+		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
 			Metadata:  idIndexRuleMetadata,
 			Tags:      []string{TagTypeID},
 			Type:      databasev1.IndexRule_TYPE_TREE,

@@ -157,6 +157,7 @@ func (m Metadata) Equal(other proto.Message) bool {
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
+	CreateStream(ctx context.Context, stream *databasev1.Stream) error
 	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	RegisterHandler(Kind, EventHandler)
@@ -165,6 +166,7 @@ type Stream interface {
 type IndexRule interface {
 	GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
 	ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
+	CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
 	UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
 	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
@@ -172,6 +174,7 @@ type IndexRule interface {
 type IndexRuleBinding interface {
 	GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
 	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
+	CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
 	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
 	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
@@ -179,6 +182,7 @@ type IndexRuleBinding interface {
 type Measure interface {
 	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
+	CreateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	RegisterHandler(Kind, EventHandler)
@@ -189,12 +193,14 @@ type Group interface {
 	ListGroup(ctx context.Context) ([]*commonv1.Group, error)
 	// DeleteGroup delete all items belonging to the group
 	DeleteGroup(ctx context.Context, group string) (bool, error)
+	CreateGroup(ctx context.Context, group *commonv1.Group) error
 	UpdateGroup(ctx context.Context, group *commonv1.Group) error
 }
 
 type TopNAggregation interface {
 	GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error)
 	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
+	CreateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
 	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
 	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
@@ -202,6 +208,7 @@ type TopNAggregation interface {
 type Property interface {
 	GetProperty(ctx context.Context, metadata *propertyv1.Metadata) (*propertyv1.Property, error)
 	ListProperty(ctx context.Context, container *commonv1.Metadata) ([]*propertyv1.Property, error)
+	CreateProperty(ctx context.Context, property *propertyv1.Property) error
 	UpdateProperty(ctx context.Context, property *propertyv1.Property) error
 	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata) (bool, error)
 }
