@@ -65,8 +65,8 @@ func PreloadSchema(e schema.Registry) error {
 	}
 
 	s := &databasev1.Stream{}
-	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
-		return err
+	if unmarshalErr := protojson.Unmarshal([]byte(streamJSON), s); unmarshalErr != nil {
+		return unmarshalErr
 	}
 	_, err = e.GetStream(context.Background(), s.GetMetadata())
 	if err != nil && schema.IsNotFound(err) {
@@ -82,8 +82,8 @@ func PreloadSchema(e schema.Registry) error {
 	}
 
 	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
-		return err
+	if unmarshalErr := protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); unmarshalErr != nil {
+		return unmarshalErr
 	}
 
 	_, err = e.GetIndexRuleBinding(context.Background(), indexRuleBinding.GetMetadata())
