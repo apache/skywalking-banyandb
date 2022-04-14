@@ -261,12 +261,12 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 	replace := getResp.Count > 0
 	if replace {
 		return ErrGRPCAlreadyExists
-	} else {
-		_, err = e.kv.Put(ctx, key, string(val))
-		if err != nil {
-			return err
-		}
 	}
+	_, err = e.kv.Put(ctx, key, string(val))
+	if err != nil {
+		return err
+	}
+
 	e.notifyUpdate(metadata)
 	return nil
 }

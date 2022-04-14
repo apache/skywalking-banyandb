@@ -117,9 +117,8 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 				}
 				if IsNotFound(innerErr) {
 					return e.CreateIndexRuleBinding(ctx, irb)
-				} else {
-					return innerErr
 				}
+				return innerErr
 			}
 		}
 	}
