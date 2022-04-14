@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -30,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -66,7 +66,7 @@ var _ = Describe("Registry", func() {
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
-		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		Expect(errStatus.Code()).To(Equal(codes.NotFound))
 		By("Creating a new stream")
 		_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -96,7 +96,7 @@ var _ = Describe("Registry", func() {
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
-		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		Expect(errStatus.Code()).To(Equal(codes.NotFound))
 		By("Creating a new index-rule-binding")
 		_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -126,7 +126,7 @@ var _ = Describe("Registry", func() {
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
-		Expect(errStatus.Message()).To(Equal(schema.ErrEntityNotFound.Error()))
+		Expect(errStatus.Code()).To(Equal(codes.NotFound))
 		By("Creating a new index-rule")
 		_, err = client.Create(context.TODO(), &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
 		Expect(err).ShouldNot(HaveOccurred())

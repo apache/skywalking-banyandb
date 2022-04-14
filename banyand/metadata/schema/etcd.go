@@ -42,7 +42,6 @@ var (
 	_ Group            = (*etcdSchemaRegistry)(nil)
 	_ Property         = (*etcdSchemaRegistry)(nil)
 
-	ErrEntityNotFound             = errors.New("entity is not found")
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	ErrConcurrentModification     = errors.New("concurrent modification of entities")
 
@@ -176,7 +175,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrEntityNotFound
+		return ErrGRPCResourceNotFound
 	}
 	if resp.Count > 1 {
 		return ErrUnexpectedNumberOfEntities
@@ -192,6 +191,9 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	return nil
 }
 
+// update will first ensure the existence of the entity with the metadata,
+// and overwrite the existing value if so.
+// Otherwise, it will return ErrGRPCResourceNotFound.
 func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
 	key, err := metadata.Key()
 	if err != nil {
@@ -231,11 +233,40 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 			return ErrConcurrentModification
 		}
 	} else {
-		_, err = e.kv.Put(ctx, key, string(val))
-		if err != nil {
-			return err
-		}
+		return ErrGRPCResourceNotFound
 	}
+	e.notifyUpdate(metadata)
+	return nil
+}
+
+// create will first check existence of the entity with the metadata,
+// and put the value if it does not exist.
+// Otherwise, it will return ErrGRPCAlreadyExists.
+func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
+	key, err := metadata.Key()
+	if err != nil {
+		return err
+	}
+	getResp, err := e.kv.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	if getResp.Count > 1 {
+		return ErrUnexpectedNumberOfEntities
+	}
+	val, err := proto.Marshal(metadata.Spec.(proto.Message))
+	if err != nil {
+		return err
+	}
+	replace := getResp.Count > 0
+	if replace {
+		return ErrGRPCAlreadyExists
+	}
+	_, err = e.kv.Put(ctx, key, string(val))
+	if err != nil {
+		return err
+	}
+
 	e.notifyUpdate(metadata)
 	return nil
 }

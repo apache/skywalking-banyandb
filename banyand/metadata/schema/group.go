@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
@@ -31,8 +31,6 @@ import (
 var (
 	GroupsKeyPrefix  = "/groups/"
 	GroupMetadataKey = "/__meta_group__"
-
-	ErrGroupAbsent = errors.New("group is absent")
 )
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
@@ -86,6 +84,16 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	}
 
 	return true, nil
+}
+
+func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) error {
+	return e.create(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind: KindGroup,
+			Name: group.GetMetadata().GetName(),
+		},
+		Spec: group,
+	})
 }
 
 func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {

@@ -14,13 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
 	"context"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -39,7 +38,7 @@ func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.M
 
 func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
 	if opt.Group == "" {
-		return nil, errors.Wrap(ErrGroupAbsent, "list stream")
+		return nil, BadRequest("group", "group should not be empty")
 	}
 	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, StreamKeyPrefix), func() proto.Message {
 		return &databasev1.Stream{}
@@ -56,6 +55,17 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
 	return e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind:  KindStream,
+			Group: stream.GetMetadata().GetGroup(),
+			Name:  stream.GetMetadata().GetName(),
+		},
+		Spec: stream,
+	})
+}
+
+func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) error {
+	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindStream,
 			Group: stream.GetMetadata().GetGroup(),

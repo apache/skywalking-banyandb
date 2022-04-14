@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package grpc
 
 import (
@@ -30,7 +30,7 @@ type propertyServer struct {
 }
 
 func (ps *propertyServer) Create(ctx context.Context, req *propertyv1.CreateRequest) (*propertyv1.CreateResponse, error) {
-	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
+	if err := ps.schemaRegistry.PropertyRegistry().CreateProperty(ctx, req.GetProperty()); err != nil {
 		return nil, err
 	}
 	return &propertyv1.CreateResponse{}, nil
