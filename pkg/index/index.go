@@ -177,4 +177,6 @@ type Store interface {
 	io.Closer
 	Writer
 	Searcher
+	// Flush flushed memory data to disk
+	Flush() error
 }
