@@ -118,6 +118,14 @@ func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encodin
 	}
 }
 
+func TSSWithFlushCallback(callback func()) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.dbOpts.FlushCallBack = callback
+		}
+	}
+}
+
 type Iterator interface {
 	Next()
 	Rewind()

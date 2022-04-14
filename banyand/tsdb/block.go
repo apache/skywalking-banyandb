@@ -66,6 +66,7 @@ type block struct {
 	segID          uint16
 	blockID        uint16
 	encodingMethod EncodingMethod
+	flushCh        chan struct{}
 }
 
 type blockOpts struct {
@@ -119,6 +120,9 @@ func (b *block) open() (err error) {
 		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
+		kv.TSSWithFlushCallback(func() {
+
+		}),
 	); err != nil {
 		return err
 	}
@@ -143,6 +147,16 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.closed.Store(false)
+	b.flushCh = make(chan struct{})
+	go func() {
+		for {
+			_, more := <-b.flushCh
+			if !more {
+				return
+			}
+			b.flush()
+		}
+	}()
 	return nil
 }
 
@@ -164,6 +178,17 @@ func (b *block) incRef() {
 	b.ref.AddRunning(1)
 }
 
+func (b *block) flush() {
+	for i := 0; i < 10; i++ {
+		err := b.invertedIndex.Flush()
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Second)
+		b.l.Warn().Err(err).Int("retried", i).Msg("failed to flush inverted index")
+	}
+}
+
 func (b *block) close() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -176,6 +201,7 @@ func (b *block) close() {
 		_ = closer.Close()
 	}
 	b.closed.Store(true)
+	close(b.flushCh)
 }
 
 func (b *block) isClosed() bool {
