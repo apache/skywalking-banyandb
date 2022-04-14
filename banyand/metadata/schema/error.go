@@ -18,8 +18,6 @@
 package schema
 
 import (
-	"fmt"
-
 	"github.com/pkg/errors"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -48,12 +46,6 @@ func BadRequest(field, desc string) error {
 	}
 	br := &errdetails.BadRequest{}
 	br.FieldViolations = append(br.FieldViolations, v)
-	st, err := statusGRPCInvalidArgument.WithDetails(br)
-	if err != nil {
-		// If this errored, it will always error
-		// here, so better panic, so we can figure
-		// out why than have this silently passing.
-		panic(fmt.Sprintf("Unexpected error attaching metadata: %v", err))
-	}
+	st, _ := statusGRPCInvalidArgument.WithDetails(br)
 	return st.Err()
 }
