@@ -31,6 +31,8 @@ var (
 	ErrGRPCResourceNotFound    = statusGRPCResourceNotFound.Err()
 	statusGRPCAlreadyExists    = status.New(codes.AlreadyExists, "banyandb: resource already exists")
 	ErrGRPCAlreadyExists       = statusGRPCAlreadyExists.Err()
+	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
+	ErrGRPCDataLoss            = statusDataLoss.Err()
 )
 
 func IsNotFound(err error) bool {

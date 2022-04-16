@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"hash/crc32"
 
 	"google.golang.org/protobuf/proto"
 
@@ -93,6 +94,9 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 	if err := e.get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
 		return nil, err
 	}
+	if entity.Metadata.Id == 0 {
+		return nil, ErrGRPCDataLoss
+	}
 	return &entity, nil
 }
 
@@ -108,12 +112,21 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	}
 	entities := make([]*databasev1.IndexRule, 0, len(messages))
 	for _, message := range messages {
-		entities = append(entities, message.(*databasev1.IndexRule))
+		entity := message.(*databasev1.IndexRule)
+		if entity.Metadata.Id == 0 {
+			return nil, ErrGRPCDataLoss
+		}
+		entities = append(entities, entity)
 	}
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.Metadata.Id == 0 {
+		buf := []byte(indexRule.Metadata.Group)
+		buf = append(buf, indexRule.Metadata.Name...)
+		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,

@@ -78,7 +78,7 @@ var _ = Describe("Stream", func() {
 				return 0
 			}
 			return num
-		}).Should(Equal(1))
+		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
 		flags := []string{"--tls=true", "--stream-root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
@@ -98,7 +98,7 @@ var _ = Describe("Stream", func() {
 		streamWrite(conn)
 		Eventually(func() (int, error) {
 			return streamQuery(conn)
-		}).Should(Equal(1))
+		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	AfterEach(func() {
 		_ = conn.Close()
