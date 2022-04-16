@@ -32,6 +32,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 var (
@@ -316,6 +317,8 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 			message = &databasev1.IndexRuleBinding{}
 		case KindIndexRule:
 			message = &databasev1.IndexRule{}
+		case KindProperty:
+			message = &propertyv1.Property{}
 		}
 		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
 			e.notifyDelete(Metadata{
