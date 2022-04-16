@@ -19,16 +19,19 @@ package schema
 
 import (
 	"context"
+	"hash/crc32"
 
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/pkg/errors"
 )
 
 var (
 	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
 	IndexRuleKeyPrefix        = "/index-rules/"
+	ErrEmptyIndexRuleID       = errors.New("the index rule id is empty")
 )
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -93,6 +96,9 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 	if err := e.get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
 		return nil, err
 	}
+	if entity.Metadata.Id == 0 {
+		return nil, errors.WithMessagef(ErrEmptyIndexRuleID, "index rule: %v", metadata)
+	}
 	return &entity, nil
 }
 
@@ -108,12 +114,21 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	}
 	entities := make([]*databasev1.IndexRule, 0, len(messages))
 	for _, message := range messages {
-		entities = append(entities, message.(*databasev1.IndexRule))
+		entity := message.(*databasev1.IndexRule)
+		if entity.Metadata.Id == 0 {
+			return nil, errors.WithMessagef(ErrEmptyIndexRuleID, "index rule: %v", entity.Metadata)
+		}
+		entities = append(entities, entity)
 	}
 	return entities, nil
 }
 
 func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.Metadata.Id == 0 {
+		buf := []byte(indexRule.Metadata.Group)
+		buf = append(buf, indexRule.Metadata.Name...)
+		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
