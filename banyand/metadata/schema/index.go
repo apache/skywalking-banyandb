@@ -21,11 +21,11 @@ import (
 	"context"
 	"hash/crc32"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/pkg/errors"
 )
 
 var (
