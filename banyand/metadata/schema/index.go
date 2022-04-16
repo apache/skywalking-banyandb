@@ -21,7 +21,6 @@ import (
 	"context"
 	"hash/crc32"
 
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -31,7 +30,6 @@ import (
 var (
 	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
 	IndexRuleKeyPrefix        = "/index-rules/"
-	ErrEmptyIndexRuleID       = errors.New("the index rule id is empty")
 )
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -97,7 +95,7 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 		return nil, err
 	}
 	if entity.Metadata.Id == 0 {
-		return nil, errors.WithMessagef(ErrEmptyIndexRuleID, "index rule: %v", metadata)
+		return nil, ErrGRPCDataLoss
 	}
 	return &entity, nil
 }
@@ -116,7 +114,7 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	for _, message := range messages {
 		entity := message.(*databasev1.IndexRule)
 		if entity.Metadata.Id == 0 {
-			return nil, errors.WithMessagef(ErrEmptyIndexRuleID, "index rule: %v", entity.Metadata)
+			return nil, ErrGRPCDataLoss
 		}
 		entities = append(entities, entity)
 	}
