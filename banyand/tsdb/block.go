@@ -82,7 +82,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if err != nil {
 		return nil, err
 	}
-	id := uint16(opts.blockSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
+	id := GenerateInternalID(opts.blockSize.Unit, suffixInteger)
 	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
@@ -91,13 +91,14 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 			DecoderPool: encoding.NewPlainDecoderPool(0),
 		}
 	}
+	clock, _ := timestamp.GetClock(ctx)
 	b = &block{
 		segID:          opts.segID,
 		blockID:        id,
 		path:           opts.path,
 		l:              logger.Fetch(ctx, "block"),
 		TimeRange:      timeRange,
-		Reporter:       bucket.NewTimeBasedReporter(timeRange),
+		Reporter:       bucket.NewTimeBasedReporter(timeRange, clock),
 		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
 	}

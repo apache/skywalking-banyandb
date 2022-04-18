@@ -45,12 +45,14 @@ type Reporter interface {
 type timeBasedReporter struct {
 	timestamp.TimeRange
 	reporterStopCh chan struct{}
+	clock          timestamp.Clock
 }
 
-func NewTimeBasedReporter(timeRange timestamp.TimeRange) Reporter {
+func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) Reporter {
 	return &timeBasedReporter{
 		TimeRange:      timeRange,
 		reporterStopCh: make(chan struct{}),
+		clock:          clock,
 	}
 }
 
@@ -62,14 +64,14 @@ func (tr *timeBasedReporter) Report() Channel {
 	}
 	go func() {
 		defer close(ch)
-		ticker := time.NewTicker(interval)
+		ticker := tr.clock.Ticker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				status := Status{
 					Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
-					Volume:   int(time.Now().UnixNano() - tr.Start.UnixNano()),
+					Volume:   int(tr.clock.Now().UnixNano() - tr.Start.UnixNano()),
 				}
 				ch <- status
 				if status.Volume >= status.Capacity {
