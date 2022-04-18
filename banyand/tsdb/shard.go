@@ -119,7 +119,7 @@ func (s *shard) Index() IndexDatabase {
 func (s *shard) State() (shardState ShardState) {
 	for _, seg := range s.segmentController.segments() {
 		for _, b := range seg.blockController.blocks() {
-			shardState.OpenedBlocks = append(shardState.OpenedBlocks, BlockState{
+			shardState.Blocks = append(shardState.Blocks, BlockState{
 				ID: BlockID{
 					SegID:   b.segID,
 					BlockID: b.blockID,
@@ -128,6 +128,11 @@ func (s *shard) State() (shardState ShardState) {
 				Closed:    b.isClosed(),
 			})
 		}
+	}
+	all := s.segmentController.blockQueue.All()
+	shardState.OpenBlocks = make([]BlockID, len(all))
+	for i, v := range s.segmentController.blockQueue.All() {
+		shardState.OpenBlocks[i] = v.(BlockID)
 	}
 	return shardState
 }
@@ -143,8 +148,7 @@ func (s *shard) Close() error {
 type IntervalUnit int
 
 const (
-	MILLISECOND IntervalUnit = iota // only for testing
-	HOUR
+	HOUR IntervalUnit = iota
 	DAY
 )
 
@@ -154,9 +158,6 @@ func (iu IntervalUnit) String() string {
 		return "hour"
 	case DAY:
 		return "day"
-	case MILLISECOND:
-		return "millis"
-
 	}
 	panic("invalid interval unit")
 }
@@ -172,8 +173,6 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 		return current.Add(time.Hour * time.Duration(ir.Num))
 	case DAY:
 		return current.AddDate(0, 0, ir.Num)
-	case MILLISECOND:
-		return current.Add(time.Millisecond * time.Duration(ir.Num))
 	}
 	panic("invalid interval unit")
 }
@@ -184,8 +183,6 @@ func (ir IntervalRule) EstimatedDuration() time.Duration {
 		return time.Hour * time.Duration(ir.Num)
 	case DAY:
 		return 24 * time.Hour * time.Duration(ir.Num)
-	case MILLISECOND:
-		return time.Microsecond * time.Duration(ir.Num)
 	}
 	panic("invalid interval unit")
 }
@@ -198,18 +195,21 @@ type segmentController struct {
 	blockSize   IntervalRule
 	lst         []*segment
 	blockQueue  bucket.Queue
+	clock       timestamp.Clock
 
 	l *logger.Logger
 }
 
-func newSegmentController(shardCtx context.Context, location string,
-	segmentSize, blockSize IntervalRule, openedBlockSize int, l *logger.Logger) (*segmentController, error) {
+func newSegmentController(shardCtx context.Context, location string, segmentSize, blockSize IntervalRule,
+	openedBlockSize int, l *logger.Logger) (*segmentController, error) {
+	clock, _ := timestamp.GetClock(shardCtx)
 	sc := &segmentController{
 		shardCtx:    shardCtx,
 		location:    location,
 		segmentSize: segmentSize,
 		blockSize:   blockSize,
 		l:           l,
+		clock:       clock,
 	}
 	var err error
 	sc.blockQueue, err = bucket.NewQueue(openedBlockSize, func(id interface{}) {
@@ -266,7 +266,7 @@ func (sc *segmentController) segments() (ss []*segment) {
 func (sc *segmentController) Current() bucket.Reporter {
 	sc.RLock()
 	defer sc.RUnlock()
-	now := time.Now()
+	now := sc.clock.Now()
 	for _, s := range sc.lst {
 		if s.suffix == sc.Format(now) {
 			return s
@@ -293,6 +293,7 @@ func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) 
 	event := sc.l.Info()
 	if prev != nil {
 		event.Stringer("prev", prev)
+		prev.(*segment).blockManageStrategy.Close()
 	}
 	if next != nil {
 		event.Stringer("next", next)
@@ -306,8 +307,6 @@ func (sc *segmentController) Format(tm time.Time) string {
 		return tm.Format(segHourFormat)
 	case DAY:
 		return tm.Format(segDayFormat)
-	case MILLISECOND:
-		return tm.Format(millisecondFormat)
 	}
 	panic("invalid interval unit")
 }
@@ -318,8 +317,6 @@ func (sc *segmentController) Parse(value string) (time.Time, error) {
 		return time.ParseInLocation(segHourFormat, value, time.Local)
 	case DAY:
 		return time.ParseInLocation(segDayFormat, value, time.Local)
-	case MILLISECOND:
-		return time.ParseInLocation(millisecondFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
 }
@@ -339,7 +336,7 @@ func (sc *segmentController) open() error {
 		return err
 	}
 	if sc.Current() == nil {
-		_, err = sc.create(sc.Format(time.Now()))
+		_, err = sc.create(sc.Format(sc.clock.Now()))
 		if err != nil {
 			return err
 		}

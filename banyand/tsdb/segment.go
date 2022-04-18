@@ -47,16 +47,17 @@ type segment struct {
 	blockManageStrategy *bucket.Strategy
 }
 
-func openSegment(ctx context.Context, startTime time.Time, path, suffix string, segmentSize, blockSize IntervalRule, blockQueue bucket.Queue) (s *segment, err error) {
+func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
+	segmentSize, blockSize IntervalRule, blockQueue bucket.Queue) (s *segment, err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: fix id overflow
-	id := uint16(segmentSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
+	id := GenerateInternalID(segmentSize.Unit, suffixInteger)
 	timeRange := timestamp.NewTimeRange(startTime, segmentSize.NextTime(startTime), true, false)
 	l := logger.Fetch(ctx, "segment")
 	segCtx := context.WithValue(ctx, logger.ContextKey, l)
+	clock, segCtx := timestamp.GetClock(segCtx)
 	s = &segment{
 		id:              id,
 		path:            path,
@@ -64,7 +65,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 		l:               l,
 		blockController: newBlockController(segCtx, id, path, timeRange, blockSize, l, blockQueue),
 		TimeRange:       timeRange,
-		Reporter:        bucket.NewTimeBasedReporter(timeRange),
+		Reporter:        bucket.NewTimeBasedReporter(timeRange, clock),
 	}
 	err = s.blockController.open()
 	if err != nil {
@@ -87,7 +88,6 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string, 
 }
 
 func (s *segment) close() {
-	s.blockManageStrategy.Close()
 	s.blockController.close()
 	s.globalIndex.Close()
 	s.Stop()
@@ -114,12 +114,14 @@ type blockController struct {
 	blockSize    IntervalRule
 	lst          []*block
 	blockQueue   bucket.Queue
+	clock        timestamp.Clock
 
 	l *logger.Logger
 }
 
 func newBlockController(segCtx context.Context, segID uint16, location string, segTimeRange timestamp.TimeRange,
 	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue) *blockController {
+	clock, _ := timestamp.GetClock(segCtx)
 	return &blockController{
 		segCtx:       segCtx,
 		segID:        segID,
@@ -128,13 +130,14 @@ func newBlockController(segCtx context.Context, segID uint16, location string, s
 		segTimeRange: segTimeRange,
 		blockQueue:   blockQueue,
 		l:            l,
+		clock:        clock,
 	}
 }
 
 func (bc *blockController) Current() bucket.Reporter {
 	bc.RLock()
 	defer bc.RUnlock()
-	now := time.Now()
+	now := bc.clock.Now()
 	for _, s := range bc.lst {
 		if s.suffix == bc.Format(now) {
 			return s
@@ -162,11 +165,18 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 }
 
 func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
-	bc.l.Info().Stringer("prev", prev).Stringer("next", next).Msg("move to the next block")
-	bc.blockQueue.Push(BlockID{
-		SegID:   bc.segID,
-		BlockID: prev.(*block).blockID,
-	})
+	event := bc.l.Info()
+	if prev != nil {
+		event.Stringer("prev", prev)
+		bc.blockQueue.Push(BlockID{
+			SegID:   bc.segID,
+			BlockID: prev.(*block).blockID,
+		})
+	}
+	if next != nil {
+		event.Stringer("next", next)
+	}
+	event.Msg("move to the next block")
 }
 
 func (bc *blockController) Format(tm time.Time) string {
@@ -175,8 +185,6 @@ func (bc *blockController) Format(tm time.Time) string {
 		return tm.Format(blockHourFormat)
 	case DAY:
 		return tm.Format(blockDayFormat)
-	case MILLISECOND:
-		return tm.Format(millisecondFormat)
 	}
 	panic("invalid interval unit")
 }
@@ -187,8 +195,6 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 		return time.Parse(blockHourFormat, value)
 	case DAY:
 		return time.Parse(blockDayFormat, value)
-	case MILLISECOND:
-		return time.Parse(millisecondFormat, value)
 	}
 	panic("invalid interval unit")
 }
@@ -285,8 +291,6 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	case DAY:
 		return time.Date(startTime.Year(), startTime.Month(),
 			t.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
-	case MILLISECOND:
-		return time.ParseInLocation(millisecondFormat, suffix, startTime.Location())
 	}
 	panic("invalid interval unit")
 }
@@ -303,7 +307,7 @@ func (bc *blockController) open() error {
 		return err
 	}
 	if bc.Current() == nil {
-		b, err := bc.create(time.Now())
+		b, err := bc.create(bc.clock.Now())
 		if err != nil {
 			return err
 		}
