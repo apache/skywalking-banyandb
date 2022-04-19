@@ -182,7 +182,7 @@ func queryStreamCriteria(baseTs time.Time) *streamv1.QueryRequest {
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").
-		TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+		TimeRange(baseTs.Add(-10*time.Minute), baseTs.Add(10*time.Minute)).
 		Projection("searchable", "trace_id").
 		Build()
 }
