@@ -34,6 +34,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Measure", func() {
@@ -104,7 +105,7 @@ var _ = Describe("Measure", func() {
 func writeMeasureData() *measurev1.WriteRequest {
 	return pbv1.NewMeasureWriteRequestBuilder().
 		Metadata("sw_metric", "service_cpm_minute").
-		Timestamp(time.Now()).
+		Timestamp(timestamp.NowMilli()).
 		TagFamily(
 			pbv1.ID("1"),
 			"entity_1",
@@ -154,7 +155,7 @@ func measureWrite(conn *grpclib.ClientConn) {
 func measureQuery(conn *grpclib.ClientConn) (int, error) {
 	c := measurev1.NewMeasureServiceClient(conn)
 	ctx := context.Background()
-	resp, err := c.Query(ctx, queryMeasureCriteria(time.Now()))
+	resp, err := c.Query(ctx, queryMeasureCriteria(timestamp.NowMilli()))
 
 	return len(resp.GetDataPoints()), err
 }

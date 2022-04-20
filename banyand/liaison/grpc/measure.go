@@ -22,10 +22,13 @@ import (
 	"io"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type measureService struct {
@@ -41,6 +44,10 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		if err != nil {
 			return err
+		}
+		if errTime := timestamp.Check(writeRequest.DataPoint.Timestamp.AsTime()); errTime != nil {
+			ms.log.Error().Err(errTime).Msg("the data point time is invalid")
+			continue
 		}
 		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
@@ -63,6 +70,12 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 }
 
 func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+	if err := timestamp.Check(entityCriteria.GetTimeRange().Begin.AsTime()); err != nil {
+		return nil, errors.WithMessage(err, "the begin of time range is invalid")
+	}
+	if err := timestamp.Check(entityCriteria.GetTimeRange().End.AsTime()); err != nil {
+		return nil, errors.WithMessage(err, "the end of time range is invalid")
+	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
 	if errQuery != nil {
