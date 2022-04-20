@@ -22,10 +22,13 @@ import (
 	"io"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type streamService struct {
@@ -41,6 +44,10 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			return err
+		}
+		if errTime := timestamp.Check(writeEntity.GetElement().Timestamp.AsTime()); errTime != nil {
+			s.log.Error().Err(errTime).Msg("the element time is invalid")
+			continue
 		}
 		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
@@ -63,6 +70,12 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 }
 
 func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
+	if err := timestamp.Check(entityCriteria.GetTimeRange().Begin.AsTime()); err != nil {
+		return nil, errors.WithMessage(err, "the begin of time range is invalid")
+	}
+	if err := timestamp.Check(entityCriteria.GetTimeRange().End.AsTime()); err != nil {
+		return nil, errors.WithMessage(err, "the end of time range is invalid")
+	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {

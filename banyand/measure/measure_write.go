@@ -62,6 +62,10 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 }
 
 func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue, cb index.CallbackFn) error {
+	tp := value.GetTimestamp().AsTime()
+	if err := timestamp.Check(tp); err != nil {
+		return errors.WithMessage(err, "writing stream")
+	}
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
@@ -78,7 +82,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if err != nil {
 		return err
 	}
-	t := timestamp.MToN(value.GetTimestamp().AsTime())
+	t := timestamp.MToN(tp)
 	wp, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(t, 0))
 	if err != nil {
 		if wp != nil {

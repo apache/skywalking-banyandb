@@ -41,6 +41,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Stream", func() {
@@ -163,7 +164,7 @@ func writeStreamData() *streamv1.WriteRequest {
 	return pbv1.NewStreamWriteRequestBuilder().
 		ID("1").
 		Metadata("default", "sw").
-		Timestamp(time.Now()).
+		Timestamp(timestamp.NowMilli()).
 		TagFamily(bb).
 		TagFamily(
 			"trace_id-xxfff.111",
@@ -209,7 +210,7 @@ func streamWrite(conn *grpclib.ClientConn) {
 func streamQuery(conn *grpclib.ClientConn) (int, error) {
 	c := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
-	resp, err := c.Query(ctx, queryStreamCriteria(time.Now()))
+	resp, err := c.Query(ctx, queryStreamCriteria(timestamp.NowMilli()))
 
 	return len(resp.GetElements()), err
 }

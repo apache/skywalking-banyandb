@@ -18,9 +18,13 @@
 package timestamp
 
 import (
+	"math"
 	"time"
+
 	// link runtime pkg fastrand
 	_ "unsafe"
+
+	"github.com/pkg/errors"
 )
 
 var (
@@ -45,4 +49,35 @@ func MToN(ms time.Time) time.Time {
 // NowMilli returns a time based on a unix millisecond
 func NowMilli() time.Time {
 	return time.UnixMilli(time.Now().UnixMilli())
+}
+
+const (
+	// MinNanoTime is the minimum time that can be represented.
+	//
+	// 1677-09-21 00:12:43.145224192 +0000 UTC
+	MinNanoTime = int64(math.MinInt64)
+
+	// MaxNanoTime is the maximum time that can be represented.
+	//
+	// 2262-04-11 23:47:16.854775807 +0000 UTC
+	MaxNanoTime = int64(math.MaxInt64)
+)
+
+var (
+	minNanoTime = time.Unix(0, MinNanoTime).UTC()
+	maxNanoTime = time.Unix(0, MaxNanoTime).UTC()
+
+	ErrTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
+	ErrTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
+)
+
+// Check checks that a time is valid
+func Check(t time.Time) error {
+	if t.Before(minNanoTime) || t.After(maxNanoTime) {
+		return ErrTimeOutOfRange
+	}
+	if t.Nanosecond()%int(mSecond) > 0 {
+		return ErrTimeNotMillisecond
+	}
+	return nil
 }
