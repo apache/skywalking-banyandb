@@ -175,7 +175,7 @@ func (sr *schemaRepo) Watcher() {
 					break
 				}
 				time.Sleep(time.Second)
-				sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
+				sr.l.Err(err).Interface("event", evt).Int("round", i).Msg("fail to handle the metadata event. retry...")
 			}
 		case <-sr.workerStopCh:
 			return

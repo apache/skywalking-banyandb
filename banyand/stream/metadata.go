@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"path"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -201,7 +202,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 			Database: groupSchema.Metadata.Name,
 		}),
 		tsdb.DatabaseOpts{
-			Location: s.path,
+			Location: path.Join(s.path, groupSchema.Metadata.Name),
 			ShardNum: groupSchema.ResourceOpts.ShardNum,
 			EncodingMethod: tsdb.EncodingMethod{
 				EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
