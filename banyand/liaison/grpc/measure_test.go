@@ -50,7 +50,7 @@ var _ = Describe("Measure", func() {
 		metadataPath, deferMetadataFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 	})
-	FIt("is a plain server", func() {
+	It("is a plain server", func() {
 		By("Verifying an empty server")
 		flags := []string{"--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
 		gracefulStop = setup(flags)
