@@ -30,14 +30,18 @@ type Writer struct {
 
 // NewWriter create bit writer
 func NewWriter(buffer *bytes.Buffer) *Writer {
-	var bw Writer
+	bw := new(Writer)
 	bw.Reset(buffer)
-	return &bw
+	return bw
 }
 
 // Reset writes to a new writer
 func (w *Writer) Reset(buffer *bytes.Buffer) {
-	w.out = buffer
+	if buffer == nil {
+		w.out.Reset()
+	} else {
+		w.out = buffer
+	}
 	w.cache = 0
 	w.available = 8
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
@@ -205,8 +204,8 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 			Location: path.Join(s.path, groupSchema.Metadata.Name),
 			ShardNum: groupSchema.ResourceOpts.ShardNum,
 			EncodingMethod: tsdb.EncodingMethod{
-				EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
-				DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
+				EncoderPool: newEncoderPool(chunkSize, s.l),
+				DecoderPool: newDecoderPool(chunkSize, s.l),
 			},
 		})
 }

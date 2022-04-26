@@ -671,6 +671,7 @@ type Measure struct {
 	// entity indicates which tags will be to generate a series and shard a measure
 	Entity *Entity `protobuf:"bytes,4,opt,name=entity,proto3" json:"entity,omitempty"`
 	// interval indicates how frequently to send a data point
+	// valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
 	Interval string `protobuf:"bytes,5,opt,name=interval,proto3" json:"interval,omitempty"`
 	// updated_at indicates when the measure is updated
 	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`

@@ -46,3 +46,6 @@ build/release/
 # mock files
 *mock.go
 *mock_test.go
+
+# etcd unix sockets
+localhost:*

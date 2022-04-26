@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -27,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // a chunk is 1MB
@@ -44,6 +46,7 @@ type measure struct {
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
 	indexWriter            *index.Writer
+	interval               time.Duration
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {
@@ -70,10 +73,14 @@ func (s *measure) Close() error {
 	return s.indexWriter.Close()
 }
 
-func (s *measure) parseSpec() {
+func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
 	s.maxObservedModRevision = pbv1.ParseMaxModRevision(s.indexRules)
+	if s.schema.Interval != "" {
+		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
+	}
+	return err
 }
 
 type measureSpec struct {
@@ -88,7 +95,9 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		indexRules: spec.indexRules,
 		l:          l,
 	}
-	sm.parseSpec()
+	if err := sm.parseSpec(); err != nil {
+		return nil, err
+	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 
 	sm.db = db

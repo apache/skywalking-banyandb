@@ -103,6 +103,7 @@ message Measure {
     // entity indicates which tags will be to generate a series and shard a measure
     Entity entity = 4;
     // interval indicates how frequently to send a data point
+    // valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
     string interval = 5;
     // updated_at indicates when the measure is updated
     google.protobuf.Timestamp updated_at = 6;
