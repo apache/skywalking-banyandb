@@ -37,11 +37,10 @@ import (
 )
 
 var (
-	ErrMalformedElement = errors.New("element is malformed")
-)
+	ErrMalformedElement   = errors.New("element is malformed")
+	ErrMalformedFieldFlag = errors.New("field flag is malformed")
 
-const (
-	TagFlag byte = iota
+	TagFlag []byte = make([]byte, fieldFlagLength)
 )
 
 func (s *measure) Write(value *measurev1.DataPointValue) error {
@@ -129,7 +128,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			if data == nil {
 				continue
 			}
-			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), encoderFieldFlag(fieldSpec)), data)
+			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), encoderFieldFlag(fieldSpec, s.interval)), data)
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
@@ -196,8 +195,8 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func familyIdentity(name string, flag byte) []byte {
-	return bytes.Join([][]byte{[]byte(name), {flag}}, nil)
+func familyIdentity(name string, flag []byte) []byte {
+	return bytes.Join([][]byte{tsdb.Hash([]byte(name)), flag}, nil)
 }
 
 func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
@@ -222,10 +221,4 @@ func decodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *model
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}
 	}
 	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
-}
-
-func encoderFieldFlag(fieldSpec *databasev1.FieldSpec) byte {
-	encodingMethod := byte(fieldSpec.GetEncodingMethod().Number())
-	compressionMethod := byte(fieldSpec.GetCompressionMethod().Number())
-	return encodingMethod<<4 | compressionMethod
 }

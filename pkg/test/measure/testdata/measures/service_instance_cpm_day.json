@@ -42,6 +42,6 @@
       "entity_id"
     ]
   },
-  "interval": "1d",
+  "interval": "24h",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

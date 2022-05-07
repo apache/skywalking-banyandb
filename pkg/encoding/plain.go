@@ -31,59 +31,65 @@ import (
 )
 
 var (
-	encoderPool = sync.Pool{
+	plainEncoderPool = sync.Pool{
 		New: newPlainEncoder,
 	}
-	decoderPool = sync.Pool{
+	plainDecoderPool = sync.Pool{
 		New: func() interface{} {
 			return &plainDecoder{}
 		},
 	}
 )
 
-type plainEncoderPool struct {
+type plainEncoderPoolDelegator struct {
 	pool *sync.Pool
 	size int
 }
 
 func NewPlainEncoderPool(size int) SeriesEncoderPool {
-	return &plainEncoderPool{
-		pool: &encoderPool,
+	return &plainEncoderPoolDelegator{
+		pool: &plainEncoderPool,
 		size: size,
 	}
 }
 
-func (b *plainEncoderPool) Get(metadata []byte) SeriesEncoder {
+func (b *plainEncoderPoolDelegator) Get(metadata []byte) SeriesEncoder {
 	encoder := b.pool.Get().(*plainEncoder)
 	encoder.Reset(metadata)
 	encoder.valueSize = b.size
 	return encoder
 }
 
-func (b *plainEncoderPool) Put(encoder SeriesEncoder) {
-	b.pool.Put(encoder)
+func (b *plainEncoderPoolDelegator) Put(encoder SeriesEncoder) {
+	_, ok := encoder.(*plainEncoder)
+	if ok {
+		b.pool.Put(encoder)
+	}
 }
 
-type plainDecoderPool struct {
+type plainDecoderPoolDelegator struct {
 	pool *sync.Pool
 	size int
 }
 
 func NewPlainDecoderPool(size int) SeriesDecoderPool {
-	return &plainDecoderPool{
-		pool: &decoderPool,
+	return &plainDecoderPoolDelegator{
+		pool: &plainDecoderPool,
 		size: size,
 	}
 }
 
-func (b *plainDecoderPool) Get(_ []byte) SeriesDecoder {
+func (b *plainDecoderPoolDelegator) Get(_ []byte) SeriesDecoder {
 	decoder := b.pool.Get().(*plainDecoder)
 	decoder.valueSize = b.size
 	return decoder
 }
 
-func (b *plainDecoderPool) Put(decoder SeriesDecoder) {
-	b.pool.Put(decoder)
+func (b *plainDecoderPoolDelegator) Put(decoder SeriesDecoder) {
+	_, ok := decoder.(*plainDecoder)
+	if ok {
+		b.pool.Put(decoder)
+	}
 }
 
 var (

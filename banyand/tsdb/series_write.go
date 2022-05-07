@@ -175,7 +175,7 @@ func (d dataBucket) marshal() []byte {
 	}
 	return bytes.Join([][]byte{
 		d.seriesID.Marshal(),
-		hash(d.family),
+		d.family,
 	}, nil)
 }
 

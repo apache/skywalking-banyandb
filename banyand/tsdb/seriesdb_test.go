@@ -66,19 +66,19 @@ func TestNewPath(t *testing.T) {
 			want: Path{
 				isFull: true,
 				prefix: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					maxIntBytes,
@@ -104,8 +104,8 @@ func TestNewPath(t *testing.T) {
 				}, nil),
 				template: bytes.Join([][]byte{
 					zeroIntBytes,
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					zeroIntBytes,
@@ -124,17 +124,17 @@ func TestNewPath(t *testing.T) {
 			},
 			want: Path{
 				prefix: bytes.Join([][]byte{
-					hash([]byte("productpage")),
+					Hash([]byte("productpage")),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("productpage")),
+					Hash([]byte("productpage")),
 					zeroIntBytes,
 					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("productpage")),
+					Hash([]byte("productpage")),
 					zeroIntBytes,
-					hash(convert.Uint64ToBytes(0)),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					maxIntBytes,
@@ -153,17 +153,17 @@ func TestNewPath(t *testing.T) {
 			},
 			want: Path{
 				prefix: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 					zeroIntBytes,
 				}, nil),
 				mask: bytes.Join([][]byte{
@@ -185,22 +185,22 @@ func TestNewPath(t *testing.T) {
 			want: Path{
 				isFull: true,
 				prefix: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					maxIntBytes,
@@ -220,18 +220,18 @@ func TestNewPath(t *testing.T) {
 			},
 			scope: Entry("segment"),
 			want: Path{
-				prefix: hash([]byte("segment")),
+				prefix: Hash([]byte("segment")),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("segment")),
+					Hash([]byte("segment")),
 					zeroIntBytes,
 					zeroIntBytes,
 					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("segment")),
+					Hash([]byte("segment")),
 					zeroIntBytes,
-					hash([]byte("10.0.0.1")),
-					hash(convert.Uint64ToBytes(0)),
+					Hash([]byte("10.0.0.1")),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					maxIntBytes,
@@ -252,20 +252,20 @@ func TestNewPath(t *testing.T) {
 			scope: Entry("segment"),
 			want: Path{
 				prefix: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
 					zeroIntBytes,
 					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
 					zeroIntBytes,
-					hash(convert.Uint64ToBytes(0)),
+					Hash(convert.Uint64ToBytes(0)),
 				}, nil),
 				mask: bytes.Join([][]byte{
 					maxIntBytes,
@@ -286,20 +286,20 @@ func TestNewPath(t *testing.T) {
 			scope: Entry("segment"),
 			want: Path{
 				prefix: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 				}, nil),
 				seekKey: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 					zeroIntBytes,
 				}, nil),
 				template: bytes.Join([][]byte{
-					hash([]byte("segment")),
-					hash([]byte("productpage")),
-					hash([]byte("10.0.0.1")),
+					Hash([]byte("segment")),
+					Hash([]byte("productpage")),
+					Hash([]byte("10.0.0.1")),
 					zeroIntBytes,
 				}, nil),
 				mask: bytes.Join([][]byte{
@@ -510,7 +510,7 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 		},
 	}
 	for _, d := range data {
-		d.id = common.SeriesID(convert.BytesToUint64(hash(HashEntity(d.entity))))
+		d.id = common.SeriesID(convert.BytesToUint64(Hash(HashEntity(d.entity))))
 		series, err := db.Get(d.entity)
 		t.NoError(err)
 		t.Greater(uint(series.ID()), uint(0))

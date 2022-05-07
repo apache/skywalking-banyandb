@@ -38,19 +38,21 @@ import (
 )
 
 var _ = Describe("Measure", func() {
-	var rootPath, metadataPath string
-	var gracefulStop, deferRootFunc, deferMetadataFunc func()
+	var streamPath, measurePath, metadataPath string
+	var gracefulStop, deferStreamFunc, deferMeasureFunc, deferMetadataFunc func()
 	var conn *grpclib.ClientConn
 	BeforeEach(func() {
 		var err error
-		rootPath, deferRootFunc, err = test.NewSpace()
+		streamPath, deferStreamFunc, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		measurePath, deferMeasureFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 		metadataPath, deferMetadataFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--measure-root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
 		gracefulStop = setup(flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
@@ -75,7 +77,7 @@ var _ = Describe("Measure", func() {
 		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--measure-root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--tls=true", "--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -98,7 +100,8 @@ var _ = Describe("Measure", func() {
 		_ = conn.Close()
 		gracefulStop()
 		deferMetadataFunc()
-		deferRootFunc()
+		deferStreamFunc()
+		deferMeasureFunc()
 	})
 })
 

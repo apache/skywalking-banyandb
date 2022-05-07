@@ -81,7 +81,7 @@ func NewPath(entries []Entry) Path {
 			p.template = append(p.template, zeroIntBytes...)
 			continue
 		}
-		entry := hash(e)
+		entry := Hash(e)
 		if !encounterAny {
 			p.offset += 8
 		}
@@ -105,7 +105,7 @@ func (p *Path) extractPrefix() {
 }
 
 func (p Path) Prepand(entry Entry) Path {
-	e := hash(entry)
+	e := Hash(entry)
 	var prepand = func(src []byte, entry []byte) []byte {
 		dst := make([]byte, len(src)+len(entry))
 		copy(dst, entry)
@@ -156,7 +156,7 @@ func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
 	}
 	s.Lock()
 	defer s.Unlock()
-	seriesID = hash(key)
+	seriesID = Hash(key)
 	err = s.seriesMetadata.Put(key, seriesID)
 	if err != nil {
 		return nil, err
@@ -277,7 +277,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 func HashEntity(entity Entity) []byte {
 	result := make(Entry, 0, len(entity)*8)
 	for _, entry := range entity {
-		result = append(result, hash(entry)...)
+		result = append(result, Hash(entry)...)
 	}
 	return result
 }
@@ -286,7 +286,7 @@ func SeriesID(entity Entity) common.SeriesID {
 	return common.SeriesID(convert.Hash((HashEntity(entity))))
 }
 
-func hash(entry []byte) []byte {
+func Hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
 }
 

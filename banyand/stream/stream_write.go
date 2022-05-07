@@ -102,7 +102,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
-			builder.Family([]byte(sm.GetTagFamilies()[fi].GetName()), bb)
+			builder.Family(tsdb.Hash([]byte(sm.GetTagFamilies()[fi].GetName())), bb)
 		}
 		builder.Val([]byte(value.GetElementId()))
 		writer, errWrite := builder.Build()
