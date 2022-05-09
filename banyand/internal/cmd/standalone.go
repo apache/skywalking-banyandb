@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -102,6 +103,7 @@ func newStandaloneCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
 			if err := g.Run(); err != nil {

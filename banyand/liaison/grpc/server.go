@@ -144,11 +144,11 @@ func (s *Server) Name() string {
 
 func (s *Server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "The size of max receiving message")
-	fs.BoolVarP(&s.tls, "tls", "", false, "Connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.certFile, "cert-file", "", "", "The TLS cert file")
-	fs.StringVarP(&s.keyFile, "key-file", "", "", "The TLS key file")
-	fs.StringVarP(&s.addr, "addr", "", ":17912", "The address of banyand listens")
+	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "the size of max receiving message")
+	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
+	fs.StringVarP(&s.certFile, "cert-file", "", "", "the TLS cert file")
+	fs.StringVarP(&s.keyFile, "key-file", "", "", "the TLS key file")
+	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
 	return fs
 }
 
