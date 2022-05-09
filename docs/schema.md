@@ -15,7 +15,7 @@ In general, BanyanDB groups resources into several kinds:
 
 Every other resource should belong to a group.
 
-[Group Registration Operations](https://github.com/apache/skywalking-banyandb/blob/main/api/proto/banyandb/database/v1/docs.md#groupregistryservice)
+[Group Registration Operations](api-reference.md#groupregistryservice)
 
 ## Measure
 
@@ -29,13 +29,13 @@ A group of selected tags composite an `entity` that points out a specific time s
 
 Another option named `interval` plays a critical role in encoding. It indicates the time range between two adjacent data points in a time series and implies that all data points belonging to the same time series are distributed based on a fixed interval. A better practice for the naming measure is to append the interval literal to the tail, for example, `service_cpm_minute`.
 
-[Measure Registration Operations](https://github.com/apache/skywalking-banyandb/blob/main/api/proto/banyandb/database/v1/docs.md#measureregistryservice)
+[Measure Registration Operations](api-reference.md#measureregistryservice)
 
 ## Stream
 
 `Stream` shares many details with `Measure` except for abandoning `field`. Stream focus on the high throughput data collection, for example, tracing and logging. The database engine also supports compressing stream entries based on `entity`, but no encode process is involved.
 
-[Stream Registration Operations](https://github.com/apache/skywalking-banyandb/blob/main/api/proto/banyandb/database/v1/docs.md#streamregistryservice)
+[Stream Registration Operations](api-reference.md#streamregistryservice)
 
 ## Property
 
@@ -51,8 +51,8 @@ IndexRule supports selecting two distinct kinds of index structures. `Inverted` 
 
 IndexRule provides a `Global` location to place some indices on a higher layer of hierarchical structure. This option intends to optimize the full-scan operation for some querying cases of no time range specification, such as finding spans from a trace by `trace_id`.
 
-[IndexRule Registration Operations](https://github.com/apache/skywalking-banyandb/blob/main/api/proto/banyandb/database/v1/docs.md#indexruleregistryservice)
+[IndexRule Registration Operations](api-reference.md#indexruleregistryservice)
 
-[IndexRuleBinding Registration Operations](https://github.com/apache/skywalking-banyandb/blob/main/api/proto/banyandb/database/v1/docs.md#indexrulebindingregistryservice)
+[IndexRuleBinding Registration Operations](api-reference.md#indexrulebindingregistryservice)
 
 ## TopNAggregation (TBD)

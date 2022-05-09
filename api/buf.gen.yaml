@@ -27,4 +27,5 @@ plugins:
     opt: paths=source_relative
   - name: doc
     out: proto
-    opt: markdown,docs.md,source_relative
+    opt: markdown,api-reference.md
+    strategy: all

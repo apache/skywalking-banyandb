@@ -26,6 +26,7 @@ proto_dir := $(root_dir)/api/proto
 generate: $(BUF)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate
 	@echo "Protobuf schema files are compiled"
+	mv proto/api-reference.md $(root_dir)/docs
 
 lint: $(PROTOC)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
