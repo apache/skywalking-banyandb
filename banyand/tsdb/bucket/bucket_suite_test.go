@@ -31,7 +31,7 @@ func TestBucket(t *testing.T) {
 	BeforeSuite(func() {
 		Expect(logger.Init(logger.Logging{
 			Env:   "dev",
-			Level: "debug",
+			Level: "warn",
 		})).Should(Succeed())
 	})
 	RunSpecs(t, "Bucket Suite")

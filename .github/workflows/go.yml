@@ -64,7 +64,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     steps:
+      - name: Set timezone
+        run: sudo timedatectl set-timezone ${{ matrix.tz }}
       - name: Install Go
         uses: actions/setup-go@v2
         with:

@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -78,7 +79,7 @@ func (s *service) Validate() error {
 func (s *service) PreRun() error {
 	var err error
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.UseRandomListener(),
-		schema.RootDir(s.rootDir))
+		schema.RootDir(s.rootDir), schema.LoggerLevel(logger.GetLogger().GetLevel().String()))
 	if err != nil {
 		return err
 	}

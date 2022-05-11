@@ -22,9 +22,19 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func TestSchema(t *testing.T) {
 	RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Schema Suite")
 }
+
+// BeforeSuite - Init logger
+var _ = ginkgo.BeforeSuite(func() {
+	Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	})).To(Succeed())
+})

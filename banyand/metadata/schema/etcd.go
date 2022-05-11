@@ -62,6 +62,12 @@ func RootDir(rootDir string) RegistryOption {
 	}
 }
 
+func LoggerLevel(loggerLevel string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.loggerLevel = loggerLevel
+	}
+}
+
 func randomUnixDomainListener() (string, string) {
 	i := rand.Uint64()
 	return fmt.Sprintf("%s://localhost:%d%06d", unixDomainSockScheme, os.Getpid(), i),
@@ -98,6 +104,8 @@ type etcdSchemaRegistryConfig struct {
 	listenerClientURL string
 	// listenerPeerURL is the listener for peer
 	listenerPeerURL string
+	// loggerLevel defines log level
+	loggerLevel string
 }
 
 func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
@@ -347,6 +355,7 @@ func incrementLastByte(key string) string {
 
 func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
 	cfg := embed.NewConfig()
+	cfg.LogLevel = config.loggerLevel
 	// TODO: allow user to set path
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
 	cURL, _ := url.Parse(config.listenerClientURL)

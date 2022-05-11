@@ -89,7 +89,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	}))
 
 	tempDir, deferFunc := test.Space(t)
@@ -142,7 +142,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	}))
 
 	tempDir, deferFunc := test.Space(t)

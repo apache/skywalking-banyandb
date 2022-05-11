@@ -44,7 +44,7 @@ func TestStream(t *testing.T) {
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	})).To(Succeed())
 })
 

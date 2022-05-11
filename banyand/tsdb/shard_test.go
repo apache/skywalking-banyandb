@@ -42,6 +42,7 @@ var _ = Describe("Shard", func() {
 			tmp, deferFn, err = test.NewSpace()
 			Expect(err).NotTo(HaveOccurred())
 			clock = timestamp.NewMockClock()
+			clock.Set(time.Date(1970, 01, 01, 0, 0, 0, 0, time.Local))
 			Expect(err).NotTo(HaveOccurred())
 		})
 		AfterEach(func() {

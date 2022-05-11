@@ -150,10 +150,10 @@ func TestBus_PubAndSub(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		e := NewBus()
 		t.Run(tt.name, func(t *testing.T) {
 			wg := sync.WaitGroup{}
 			mll := make([]*mockListener, 0)
+			e := NewBus()
 			for _, l := range tt.listeners {
 				var ret chan Message
 				if len(l.ret) > 0 {
@@ -176,7 +176,7 @@ func TestBus_PubAndSub(t *testing.T) {
 						mm = append(mm, NewMessage(id, nil))
 					}
 					f, err := e.Publish(m.topic, mm...)
-					if (err != nil) != m.wantErr {
+					if err != nil && !m.wantErr {
 						t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
 						continue
 					}

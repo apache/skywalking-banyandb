@@ -37,6 +37,6 @@ func TestTsdb(t *testing.T) {
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	})).Should(Succeed())
 })

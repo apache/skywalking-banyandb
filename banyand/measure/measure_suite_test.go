@@ -45,7 +45,7 @@ func TestMeasure(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	})).To(gomega.Succeed())
 })
 

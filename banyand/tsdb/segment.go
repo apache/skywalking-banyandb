@@ -192,9 +192,9 @@ func (bc *blockController) Format(tm time.Time) string {
 func (bc *blockController) Parse(value string) (time.Time, error) {
 	switch bc.blockSize.Unit {
 	case HOUR:
-		return time.Parse(blockHourFormat, value)
+		return time.ParseInLocation(blockHourFormat, value, time.Local)
 	case DAY:
-		return time.Parse(blockDayFormat, value)
+		return time.ParseInLocation(blockDayFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
 }
