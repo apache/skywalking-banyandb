@@ -30,6 +30,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
@@ -38,6 +39,14 @@ import (
 // setUpMeasureAnalyzer creates a default analyzer for testing.
 // You have to close the underlying metadata after testmeasure
 func setUpMeasureAnalyzer() (*logical.MeasureAnalyzer, func(), error) {
+	err := logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	})
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
 	metadataService, err := metadata.NewService(context.TODO())
 	if err != nil {
 		return nil, func() {

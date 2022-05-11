@@ -64,7 +64,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     steps:
+      - uses: szenius/set-timezone@v1.0
+        with:
+          timezoneLinux: ${{ matrix.tz }}
       - name: Install Go
         uses: actions/setup-go@v2
         with:

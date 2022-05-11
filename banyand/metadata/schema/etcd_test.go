@@ -131,7 +131,7 @@ func useUnixDomain() RegistryOption {
 
 func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -223,7 +223,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 func Test_Etcd_Entity_List(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -305,7 +305,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 
 func Test_Etcd_Delete(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -374,7 +374,7 @@ func Test_Etcd_Delete(t *testing.T) {
 
 func Test_Notify(t *testing.T) {
 	req := require.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	req.NoError(err)
 	req.NotNil(registry)
 	defer registry.Close()

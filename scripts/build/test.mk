@@ -30,9 +30,15 @@ TEST_COVERAGE_EXTRA_OPTS ?=
 
 ##@ Test targets
 
+GINKGO := $(tool_bin)/ginkgo
+$(GINKGO):
+	@echo "Install ginkgo..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/onsi/ginkgo/v2/ginkgo@v2.1.4
+
 .PHONY: test
-test: generate ## Run all the unit tests
-	go test $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
+test: $(GINKGO) generate ## Run all the unit tests
+	$(GINKGO) $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
 
 .PHONY: test-race
 test-race: TEST_OPTS=-race

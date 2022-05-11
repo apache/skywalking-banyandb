@@ -33,6 +33,8 @@ type MockClock interface {
 	clock.Clock
 	// Add moves the current time of the mock clock forward by the specified duration.
 	Add(d time.Duration)
+	// Set sets the current time of the mock clock to a specific one.
+	Set(t time.Time)
 }
 
 // NewClock returns an instance of a real-time clock.
