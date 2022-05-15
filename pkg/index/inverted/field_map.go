@@ -74,6 +74,8 @@ func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
 }
 
 func (fm *fieldMap) Stats() (s observability.Statistics) {
+	fm.mutex.RLock()
+	defer fm.mutex.RUnlock()
 	for _, pv := range fm.repo {
 		// 8 is the size of key
 		s.MemBytes += 8
