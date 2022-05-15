@@ -57,8 +57,15 @@ var _ = Describe("Query service_cpm_minute", func() {
 		metadata *commonv1.Metadata,
 		entityID string,
 		expectedFields [][]int64,
-		queryFn func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error)) {
-
+		queryFn func(seriesSpan tsdb.SeriesSpan, idIndexRule *databasev1.IndexRule) (tsdb.Seeker, error)) {
+		indexRules := measure.GetIndexRules()
+		var idIndexRule *databasev1.IndexRule
+		for _, ir := range indexRules {
+			if ir.Metadata.Name == "id" {
+				idIndexRule = ir
+			}
+		}
+		Expect(idIndexRule).NotTo(BeNil())
 		shard, err := measure.Shard(0)
 		Expect(err).ShouldNot(HaveOccurred())
 		series, err := shard.Series().Get(tsdb.Entity{tsdb.Entry(entityID)})
@@ -68,13 +75,14 @@ var _ = Describe("Query service_cpm_minute", func() {
 			_ = seriesSpan.Close()
 		}(seriesSpan)
 		Expect(err).ShouldNot(HaveOccurred())
-		seeker, err := queryFn(seriesSpan)
+
+		seeker, err := queryFn(seriesSpan, idIndexRule)
 		Expect(err).ShouldNot(HaveOccurred())
 		iter, err := seeker.Seek()
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(len(iter)).To(Equal(1))
 		defer func(iterator tsdb.Iterator) {
-			_ = iterator.Close()
+			Expect(iterator.Close()).ShouldNot(HaveOccurred())
 		}(iter[0])
 		i := 0
 		for ; iter[0].Next(); i++ {
@@ -89,6 +97,7 @@ var _ = Describe("Query service_cpm_minute", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(value.GetValue().GetInt().Value).To(Equal(expectedFields[i][1]))
 		}
+		Expect(len(expectedFields)).To(Equal(i))
 	}
 
 	It("queries all service_cpm_minute_data", func() {
@@ -97,9 +106,9 @@ var _ = Describe("Query service_cpm_minute", func() {
 				Name:  "service_cpm_minute",
 				Group: "sw_metric",
 			},
-			"entry_1",
+			"entity_1",
 			[][]int64{{300, 5}, {50, 4}, {100, 1}},
-			func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error) {
+			func(seriesSpan tsdb.SeriesSpan, _ *databasev1.IndexRule) (tsdb.Seeker, error) {
 				return seriesSpan.SeekerBuilder().OrderByTime(modelv1.Sort_SORT_DESC).Build()
 			},
 		)
@@ -110,15 +119,10 @@ var _ = Describe("Query service_cpm_minute", func() {
 				Name:  "service_cpm_minute",
 				Group: "sw_metric",
 			},
-			"entry_1",
+			"entity_1",
 			[][]int64{{100, 1}},
-			func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error) {
-				return seriesSpan.SeekerBuilder().Filter(&databasev1.IndexRule{
-					Metadata: &commonv1.Metadata{
-						Id: 1,
-					},
-					Type: databasev1.IndexRule_TYPE_TREE,
-				}, tsdb.Condition{
+			func(seriesSpan tsdb.SeriesSpan, idIndexRule *databasev1.IndexRule) (tsdb.Seeker, error) {
+				return seriesSpan.SeekerBuilder().Filter(idIndexRule, tsdb.Condition{
 					"id": []index.ConditionValue{
 						{
 							Op:     modelv1.Condition_BINARY_OP_EQ,
@@ -136,15 +140,10 @@ var _ = Describe("Query service_cpm_minute", func() {
 				Name:  "service_cpm_minute",
 				Group: "sw_metric",
 			},
-			"entry_1",
+			"entity_1",
 			[][]int64{{200, 3}},
-			func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error) {
-				return seriesSpan.SeekerBuilder().Filter(&databasev1.IndexRule{
-					Metadata: &commonv1.Metadata{
-						Id: 1,
-					},
-					Type: databasev1.IndexRule_TYPE_TREE,
-				}, tsdb.Condition{
+			func(seriesSpan tsdb.SeriesSpan, idIndexRule *databasev1.IndexRule) (tsdb.Seeker, error) {
+				return seriesSpan.SeekerBuilder().Filter(idIndexRule, tsdb.Condition{
 					"id": []index.ConditionValue{
 						{
 							Op:     modelv1.Condition_BINARY_OP_EQ,
