@@ -165,7 +165,10 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}()
 	result := make([]*measurev1.DataPoint, 0)
 	for mIterator.Next() {
-		result = append(result, mIterator.Current()...)
+		current := mIterator.Current()
+		if len(current) > 0 {
+			result = append(result, current[0])
+		}
 	}
 	now := time.Now().UnixNano()
 	resp = bus.NewMessage(bus.MessageID(now), result)

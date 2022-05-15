@@ -164,6 +164,19 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 			tagLength:   []int{1},
 			fieldLength: 1,
 		},
+		{
+			name: "Group By without Field",
+			unresolvedPlan: logical.GroupBy(
+				logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					[]*logical.Field{}, true),
+				[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+				true,
+			),
+			wantLength:  1,
+			tagLength:   []int{1},
+			fieldLength: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -185,13 +198,15 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 			dataSize := 0
 			for iter.Next() {
 				dataPoints := iter.Current()
-				for _, dp := range dataPoints {
-					dataSize++
-					tester.Len(dp.GetFields(), tt.fieldLength)
-					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
-					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
-						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
-					}
+				if len(dataPoints) < 1 {
+					continue
+				}
+				dp := dataPoints[0]
+				dataSize++
+				tester.Len(dp.GetFields(), tt.fieldLength)
+				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
 				}
 			}
 			tester.Equal(dataSize, tt.wantLength)
