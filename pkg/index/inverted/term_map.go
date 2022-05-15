@@ -85,6 +85,8 @@ func (p *termMap) getEntry(key []byte) *index.PostingValue {
 }
 
 func (p *termMap) Stats() (s observability.Statistics) {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
 	for _, pv := range p.repo {
 		// 8 is the size of key
 		s.MemBytes += 8
