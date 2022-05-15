@@ -50,6 +50,7 @@ type Measure interface {
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
 	GetSchema() *databasev1.Measure
+	GetIndexRules() []*databasev1.IndexRule
 }
 
 var _ Measure = (*measure)(nil)

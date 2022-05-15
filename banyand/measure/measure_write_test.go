@@ -29,14 +29,47 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ = Describe("Write service_cpm_minute", func() {
+var _ = Describe("Write and Update service_cpm_minute", func() {
 	var svcs *services
 	var deferFn func()
 	var measure measure.Measure
+	var baseTime time.Time
+
+	var count = func() (num int) {
+		//Retrieve all shards
+		shards, err := measure.Shards(nil)
+		Expect(err).ShouldNot(HaveOccurred())
+		for _, shard := range shards {
+			sl, err := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry}))
+			Expect(err).ShouldNot(HaveOccurred())
+			for _, series := range sl {
+				seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
+				defer func(seriesSpan tsdb.SeriesSpan) {
+					_ = seriesSpan.Close()
+				}(seriesSpan)
+				Expect(err).ShouldNot(HaveOccurred())
+				seeker, err := seriesSpan.SeekerBuilder().OrderByTime(modelv1.Sort_SORT_ASC).Build()
+				Expect(err).ShouldNot(HaveOccurred())
+				iters, err := seeker.Seek()
+				Expect(err).ShouldNot(HaveOccurred())
+				for _, iter := range iters {
+					defer func(iterator tsdb.Iterator) {
+						Expect(iterator.Close()).ShouldNot(HaveOccurred())
+					}(iter)
+					for iter.Next() {
+						num++
+					}
+				}
+			}
+		}
+		return num
+	}
 
 	BeforeEach(func() {
 		svcs, deferFn = setUp()
@@ -50,21 +83,37 @@ var _ = Describe("Write service_cpm_minute", func() {
 	AfterEach(func() {
 		deferFn()
 	})
-	DescribeTable("writes", func(metadata *commonv1.Metadata, dataFile string) {
+	DescribeTable("writes", func(metadata *commonv1.Metadata, dataFile string, expectDatapointsNum int) {
 		var err error
 		measure, err = svcs.measure.Measure(metadata)
 		Expect(err).ShouldNot(HaveOccurred())
-		writeData(dataFile, measure)
+		baseTime = writeData(dataFile, measure)
+		Expect(count()).To(Equal(expectDatapointsNum))
+
 	},
 		Entry("service_cpm_minute", &commonv1.Metadata{
 			Name:  "service_cpm_minute",
 			Group: "sw_metric",
-		}, "service_cpm_minute_data.json"),
+		}, "service_cpm_minute_data.json", 3),
 		Entry("service_traffic", &commonv1.Metadata{
 			Name:  "service_traffic",
 			Group: "sw_metric",
-		}, "service_traffic_data.json"),
+		}, "service_traffic_data.json", 3),
 	)
+	It("updates", func() {
+		metadata := &commonv1.Metadata{
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
+		}
+		var err error
+		measure, err = svcs.measure.Measure(metadata)
+		Expect(err).ShouldNot(HaveOccurred())
+		baseTime = writeData("service_cpm_minute_data.json", measure)
+		Expect(count()).To(Equal(3))
+		writeDataWithBaseTime(baseTime, "service_cpm_minute_data1.json", measure)
+		Expect(count()).To(Equal(3))
+	})
+
 })
 
 //go:embed testdata/*.json
