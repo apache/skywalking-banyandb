@@ -22,7 +22,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -71,7 +72,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
 	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
-		return nil, errors.WithMessage(err, "the time range is invalid")
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)

@@ -22,7 +22,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -79,8 +80,8 @@ func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryR
 			End:   timestamppb.New(time.Unix(0, timestamp.MaxNanoTime)),
 		}
 	}
-	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
-		return nil, errors.WithMessage(err, "the time range is invalid")
+	if err := timestamp.CheckTimeRange(timeRange); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", timeRange, err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
