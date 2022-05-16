@@ -25,6 +25,9 @@ import (
 	_ "unsafe"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 var (
@@ -69,6 +72,7 @@ var (
 
 	ErrTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
 	ErrTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
+	ErrTimeEmpty          = errors.Errorf("time is empty")
 )
 
 // Check checks that a time is valid
@@ -80,4 +84,24 @@ func Check(t time.Time) error {
 		return ErrTimeNotMillisecond
 	}
 	return nil
+}
+
+// CheckPb checks that a protobuf timestamp is valid
+func CheckPb(t *timestamppb.Timestamp) error {
+	if t == nil {
+		return ErrTimeEmpty
+	}
+	return Check(t.AsTime())
+}
+
+// CheckTimeRange checks that a protobuf time range is valid
+func CheckTimeRange(timeRange *modelv1.TimeRange) error {
+	if timeRange == nil {
+		return ErrTimeEmpty
+	}
+	err := CheckPb(timeRange.Begin)
+	if err != nil {
+		return err
+	}
+	return CheckPb(timeRange.End)
 }

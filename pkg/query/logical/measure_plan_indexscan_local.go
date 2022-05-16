@@ -40,14 +40,15 @@ import (
 var _ UnresolvedPlan = (*unresolvedMeasureIndexScan)(nil)
 
 type unresolvedMeasureIndexScan struct {
-	startTime        time.Time
-	endTime          time.Time
-	metadata         *commonv1.Metadata
-	conditions       []Expr
-	projectionTags   [][]*Tag
-	projectionFields []*Field
-	entity           tsdb.Entity
-	groupByEntity    bool
+	startTime         time.Time
+	endTime           time.Time
+	metadata          *commonv1.Metadata
+	conditions        []Expr
+	projectionTags    [][]*Tag
+	projectionFields  []*Field
+	entity            tsdb.Entity
+	groupByEntity     bool
+	unresolvedOrderBy *UnresolvedOrderBy
 }
 
 func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
@@ -95,6 +96,12 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
+	// resolve sub-plan with the projected view of streamSchema
+	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.ProjTags(projTagsRefs...))
+	if err != nil {
+		return nil, err
+	}
+
 	return &localMeasureIndexScan{
 		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:               s,
@@ -104,12 +111,14 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		conditionMap:         localConditionMap,
 		entity:               uis.entity,
 		groupByEntity:        uis.groupByEntity,
+		orderBy:              orderBySubPlan,
 	}, nil
 }
 
 var _ Plan = (*localMeasureIndexScan)(nil)
 
 type localMeasureIndexScan struct {
+	*orderBy
 	timeRange            timestamp.TimeRange
 	schema               Schema
 	metadata             *commonv1.Metadata
@@ -148,7 +157,7 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (ex
 	if len(iters) == 1 || i.groupByEntity {
 		return newSeriesMIterator(iters, transformContext), nil
 	}
-	c := createComparator(modelv1.Sort_SORT_DESC)
+	c := createComparator(i.sort)
 	it := NewItemIter(iters, c)
 	return newIndexScanMIterator(it, transformContext), nil
 }
@@ -168,6 +177,20 @@ func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterato
 	builders = append(builders, func(builder tsdb.SeekerBuilder) {
 		builder.OrderByTime(modelv1.Sort_SORT_DESC)
 	})
+
+	if i.index != nil {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByIndex(i.index, i.sort)
+		})
+	} else {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			if i.sort == modelv1.Sort_SORT_UNSPECIFIED {
+				builder.OrderByTime(modelv1.Sort_SORT_DESC)
+			} else {
+				builder.OrderByTime(i.sort)
+			}
+		})
+	}
 
 	if i.conditionMap != nil && len(i.conditionMap) > 0 {
 		builders = append(builders, func(b tsdb.SeekerBuilder) {
@@ -228,20 +251,22 @@ func (i *localMeasureIndexScan) Equal(plan Plan) bool {
 		cmp.Equal(i.projectionFieldsRefs, other.projectionFieldsRefs) &&
 		cmp.Equal(i.schema, other.schema) &&
 		i.groupByEntity == other.groupByEntity &&
-		cmp.Equal(i.conditionMap, other.conditionMap)
+		cmp.Equal(i.conditionMap, other.conditionMap) &&
+		cmp.Equal(i.orderBy, other.orderBy)
 }
 
 func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
-	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool) UnresolvedPlan {
+	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool, unresolvedOrderBy *UnresolvedOrderBy) UnresolvedPlan {
 	return &unresolvedMeasureIndexScan{
-		startTime:        startTime,
-		endTime:          endTime,
-		metadata:         metadata,
-		conditions:       conditions,
-		projectionTags:   projectionTags,
-		projectionFields: projectionFields,
-		entity:           entity,
-		groupByEntity:    groupByEntity,
+		startTime:         startTime,
+		endTime:           endTime,
+		metadata:          metadata,
+		conditions:        conditions,
+		projectionTags:    projectionTags,
+		projectionFields:  projectionFields,
+		entity:            entity,
+		groupByEntity:     groupByEntity,
+		unresolvedOrderBy: unresolvedOrderBy,
 	}
 }
 
