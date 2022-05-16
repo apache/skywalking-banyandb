@@ -31,3 +31,7 @@ func TestMToN(t *testing.T) {
 	assert.Equal(t, n.UnixMilli(), m.UnixMilli())
 	assert.GreaterOrEqual(t, n.Nanosecond(), m.Nanosecond())
 }
+
+func TestDefaultTimeRange(t *testing.T) {
+	assert.NoError(t, timestamp.CheckTimeRange(timestamp.DefaultTimeRange))
+}

@@ -70,6 +70,14 @@ var (
 	minNanoTime = time.Unix(0, MinNanoTime).UTC()
 	maxNanoTime = time.Unix(0, MaxNanoTime).UTC()
 
+	MaxMilliTime       = time.UnixMilli(maxNanoTime.UnixMilli())
+	MaxMilliPbTime     = timestamppb.New(MaxMilliTime)
+	DefaultBeginPbTime = timestamppb.New(time.Unix(0, 0))
+	DefaultTimeRange   = &modelv1.TimeRange{
+		Begin: DefaultBeginPbTime,
+		End:   MaxMilliPbTime,
+	}
+
 	ErrTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
 	ErrTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
 	ErrTimeEmpty          = errors.Errorf("time is empty")
