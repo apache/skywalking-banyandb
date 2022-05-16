@@ -73,15 +73,14 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 }
 
 func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
-	timeRange := entityCriteria.GetTimeRange()
-	if timeRange == nil {
+	if timeRange := entityCriteria.GetTimeRange(); timeRange == nil {
 		entityCriteria.TimeRange = &modelv1.TimeRange{
 			Begin: timestamppb.New(time.Unix(0, 0)),
 			End:   timestamppb.New(time.Unix(0, timestamp.MaxNanoTime)),
 		}
 	}
-	if err := timestamp.CheckTimeRange(timeRange); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", timeRange, err)
+	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
