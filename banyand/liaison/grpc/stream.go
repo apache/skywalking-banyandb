@@ -24,10 +24,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -73,11 +71,9 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 }
 
 func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
-	if timeRange := entityCriteria.GetTimeRange(); timeRange == nil {
-		entityCriteria.TimeRange = &modelv1.TimeRange{
-			Begin: timestamppb.New(time.Unix(0, 0)),
-			End:   timestamppb.New(time.Unix(0, timestamp.MaxNanoTime)),
-		}
+	timeRange := entityCriteria.GetTimeRange()
+	if timeRange == nil {
+		entityCriteria.TimeRange = timestamp.DefaultTimeRange
 	}
 	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
