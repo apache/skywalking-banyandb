@@ -125,6 +125,13 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 		plan = Top(plan, criteria.GetTop())
 	}
 
+	// parse limit and offset
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = DefaultLimit
+	}
+	plan = MeasureLimit(plan, criteria.GetOffset(), limitParameter)
+
 	return plan.Analyze(s)
 }
 
@@ -216,6 +223,13 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 		}
 	}
 
+	// parse orderBy
+	queryOrder := criteria.GetOrderBy()
+	var unresolvedOrderBy *UnresolvedOrderBy
+	if queryOrder != nil {
+		unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
+	}
+
 	return MeasureIndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagExprs, entity, projTags, projFields, groupByEntity), nil
+		tagExprs, entity, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
 }

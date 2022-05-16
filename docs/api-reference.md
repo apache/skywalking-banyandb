@@ -2033,6 +2033,9 @@ QueryRequest is the request contract for query.
 | group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
 | agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
 | top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limit the result based on a particular field |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 
 
 

@@ -60,14 +60,14 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			name: "Single Index Search using id returns a result",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
-			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false, nil),
 			wantLength: 1,
 		},
 		{
 			name: "Single Index Search using id returns nothing",
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("unknown")),
-			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false, nil),
 			wantLength: 0,
 		},
 		{
@@ -75,7 +75,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, [][]*logical.Tag{{logical.NewTag("default", "id")}},
-				nil, false),
+				nil, false, nil),
 			wantLength: 1,
 			tagLength:  []int{1},
 		},
@@ -84,7 +84,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("1")),
 			}, tsdb.Entity{tsdb.AnyEntry}, nil,
-				[]*logical.Field{logical.NewField("total"), logical.NewField("value")}, false),
+				[]*logical.Field{logical.NewField("total"), logical.NewField("value")}, false, nil),
 			wantLength:  1,
 			fieldLength: 2,
 		},
@@ -153,7 +153,7 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 				logical.GroupBy(
 					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
 						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-						[]*logical.Field{logical.NewField("value")}, true),
+						[]*logical.Field{logical.NewField("value")}, true, nil),
 					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 					true,
 				),
@@ -169,7 +169,7 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 			unresolvedPlan: logical.GroupBy(
 				logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
 					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-					[]*logical.Field{}, true),
+					[]*logical.Field{}, true, nil),
 				[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 				true,
 			),
@@ -214,7 +214,7 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 	}
 }
 
-func TestMeasurePlanExecution_Top(t *testing.T) {
+func TestMeasurePlanExecution_Cursor(t *testing.T) {
 	tester := require.New(t)
 	measureSvc, metaService, deferFunc := setupMeasure(tester)
 	defer deferFunc()
@@ -242,7 +242,7 @@ func TestMeasurePlanExecution_Top(t *testing.T) {
 				logical.GroupBy(
 					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
 						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-						[]*logical.Field{logical.NewField("value")}, true),
+						[]*logical.Field{logical.NewField("value")}, true, nil),
 					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 					true,
 				),
@@ -262,7 +262,7 @@ func TestMeasurePlanExecution_Top(t *testing.T) {
 				logical.GroupBy(
 					logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
 						[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-						[]*logical.Field{logical.NewField("value")}, true),
+						[]*logical.Field{logical.NewField("value")}, true, nil),
 					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
 					true,
 				),
@@ -275,6 +275,52 @@ func TestMeasurePlanExecution_Top(t *testing.T) {
 			},
 			),
 			want: []int64{1, 3},
+		},
+		{
+			name: "order by time ASC",
+			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+				[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+				[]*logical.Field{logical.NewField("value")}, false,
+				logical.OrderBy("", modelv1.Sort_SORT_ASC)),
+			want: []int64{1, 1, 1, 5, 4, 5},
+		},
+		{
+			name: "order by time DESC",
+			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+				[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+				[]*logical.Field{logical.NewField("value")}, false,
+				logical.OrderBy("", modelv1.Sort_SORT_DESC)),
+			want: []int64{5, 4, 5, 1, 1, 1},
+		},
+		{
+			name: "limit 3, 2",
+			unresolvedPlan: logical.MeasureLimit(
+				logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					[]*logical.Field{logical.NewField("value")}, false,
+					logical.OrderBy("", modelv1.Sort_SORT_ASC)),
+				3, 2),
+			want: []int64{5, 4},
+		},
+		{
+			name: "limit 0, 100",
+			unresolvedPlan: logical.MeasureLimit(
+				logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					[]*logical.Field{logical.NewField("value")}, false,
+					logical.OrderBy("", modelv1.Sort_SORT_ASC)),
+				0, 100),
+			want: []int64{1, 1, 1, 5, 4, 5},
+		},
+		{
+			name: "limit 0, 4",
+			unresolvedPlan: logical.MeasureLimit(
+				logical.MeasureIndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry},
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					[]*logical.Field{logical.NewField("value")}, false,
+					logical.OrderBy("", modelv1.Sort_SORT_ASC)),
+				0, 4),
+			want: []int64{1, 1, 1, 5},
 		},
 	}
 

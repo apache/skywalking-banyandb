@@ -90,4 +90,10 @@ message QueryRequest {
   } 
   // top limit the result based on a particular field
   Top top = 9;
+  // offset is used to support pagination, together with the following limit
+  uint32 offset = 10;
+  // limit is used to impose a boundary on the number of records being returned
+  uint32 limit = 11;
+  // order_by is given to specify the sort for a tag.
+  model.v1.QueryOrder order_by = 12;
 }

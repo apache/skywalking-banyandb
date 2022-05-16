@@ -318,6 +318,20 @@ func (b *MeasureQueryRequestBuilder) Top(n int32, fieldName string, sort modelv1
 	return b
 }
 
+func (b *MeasureQueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *MeasureQueryRequestBuilder {
+	b.ec.OrderBy = &modelv1.QueryOrder{
+		IndexRuleName: indexRuleName,
+		Sort:          sort,
+	}
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) Limit(offset, limit uint32) *MeasureQueryRequestBuilder {
+	b.ec.Offset = offset
+	b.ec.Limit = limit
+	return b
+}
+
 func (b *MeasureQueryRequestBuilder) Build() *measurev1.QueryRequest {
 	return b.ec
 }

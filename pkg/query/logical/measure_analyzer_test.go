@@ -107,9 +107,11 @@ func TestMeasureAnalyzer_SimpleTimeScan(t *testing.T) {
 	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.NoError(err)
 	assert.NotNil(plan)
-	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata, nil,
-		tsdb.Entity{tsdb.AnyEntry},
-		nil, nil, false).
+	correctPlan, err := logical.MeasureLimit(
+		logical.MeasureIndexScan(sT, eT, metadata, nil,
+			tsdb.Entity{tsdb.AnyEntry},
+			nil, nil, false, nil),
+		0, logical.DefaultLimit).
 		Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
@@ -143,14 +145,16 @@ func TestMeasureAnalyzer_ComplexQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.MeasureIndexScan(sT, eT, metadata,
-		[]logical.Expr{
-			logical.Eq(logical.NewTagRef("default", "id"), logical.ID("aadxxx")),
-		}, tsdb.Entity{tsdb.Entry("abc")},
-		[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
-		[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
-		false,
-	).Analyze(schema)
+	correctPlan, err := logical.MeasureLimit(
+		logical.MeasureIndexScan(sT, eT, metadata,
+			[]logical.Expr{
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("aadxxx")),
+			}, tsdb.Entity{tsdb.Entry("abc")},
+			[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
+			[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
+			false,
+			nil,
+		), 0, logical.DefaultLimit).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
@@ -185,27 +189,76 @@ func TestMeasureAnalyzer_GroupByAndAggregation(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err := logical.Top(logical.Aggregation(
-		logical.GroupBy(
+	correctPlan, err := logical.MeasureLimit(
+		logical.Top(
+			logical.Aggregation(
+				logical.GroupBy(
+					logical.MeasureIndexScan(sT, eT, metadata,
+						[]logical.Expr{
+							logical.Eq(logical.NewTagRef("default", "id"), logical.ID("abdxx")),
+						}, tsdb.Entity{tsdb.Entry("abc")},
+						[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
+						[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
+						true,
+						nil,
+					),
+					[][]*logical.Tag{logical.NewTags("default", "entity_id")},
+					true,
+				),
+				logical.NewField("value"),
+				modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+				true,
+			), &measurev1.QueryRequest_Top{
+				Number:         10,
+				FieldName:      "value",
+				FieldValueSort: modelv1.Sort_SORT_DESC,
+			}), 0, logical.DefaultLimit).Analyze(schema)
+	assert.NoError(err)
+	assert.NotNil(correctPlan)
+	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
+}
+
+func TestMeasureAnalyzer_Paging(t *testing.T) {
+	assert := require.New(t)
+
+	ana, stopFunc, err := setUpMeasureAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
+
+	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
+
+	criteria := pb.NewMeasureQueryRequestBuilder().
+		Metadata("sw_metric", "service_cpm_minute").
+		TagProjection("default", "entity_id", "id").
+		TagsInTagFamily("default", "entity_id", "=", "abc", "id", "=", pb.TagTypeID("abdxx")).
+		FieldProjection("total", "value").
+		OrderBy("id", modelv1.Sort_SORT_DESC).
+		Limit(100, 10).
+		TimeRange(sT, eT).
+		Build()
+
+	metadata := criteria.GetMetadata()
+
+	schema, err := ana.BuildMeasureSchema(context.TODO(), metadata)
+	assert.NoError(err)
+
+	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
+	assert.NoError(err)
+	assert.NotNil(plan)
+
+	correctPlan, err :=
+		logical.MeasureLimit(
 			logical.MeasureIndexScan(sT, eT, metadata,
 				[]logical.Expr{
 					logical.Eq(logical.NewTagRef("default", "id"), logical.ID("abdxx")),
 				}, tsdb.Entity{tsdb.Entry("abc")},
 				[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
 				[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
-				true,
+				false,
+				logical.OrderBy("id", modelv1.Sort_SORT_DESC),
 			),
-			[][]*logical.Tag{logical.NewTags("default", "entity_id")},
-			true,
-		),
-		logical.NewField("value"),
-		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
-		true,
-	), &measurev1.QueryRequest_Top{
-		Number:         10,
-		FieldName:      "value",
-		FieldValueSort: modelv1.Sort_SORT_DESC,
-	}).Analyze(schema)
+			100, 10).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
