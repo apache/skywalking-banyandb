@@ -19,6 +19,8 @@ package logical
 
 import (
 	"fmt"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 type PlanType uint8
@@ -31,6 +33,7 @@ const (
 	PlanGroupBy
 	PlanAggregation
 	PlanTop
+	PlanTagFilter
 )
 
 type UnresolvedPlan interface {
@@ -59,4 +62,10 @@ type LiteralExpr interface {
 type ResolvableExpr interface {
 	Expr
 	Resolve(Schema) error
+}
+
+type ComparableExpr interface {
+	Expr
+	Compare(tagValue *modelv1.TagValue) (int, bool)
+	BelongTo(tagValue *modelv1.TagValue) bool
 }

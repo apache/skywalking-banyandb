@@ -13,7 +13,8 @@
     "db.type",
     "mq.broker",
     "mq.queue",
-    "mq.topic"
+    "mq.topic",
+    "extended_tags"
   ],
   "subject":{
     "catalog": "CATALOG_STREAM",

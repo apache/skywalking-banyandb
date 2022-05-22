@@ -24,13 +24,36 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var _ LiteralExpr = (*int64Literal)(nil)
+var _ ComparableExpr = (*int64Literal)(nil)
 
 type int64Literal struct {
 	int64
+}
+
+func (i *int64Literal) Compare(tagValue *modelv1.TagValue) (int, bool) {
+	intValue := tagValue.GetInt()
+	if intValue == nil {
+		return 0, false
+	}
+	return int(i.int64 - intValue.Value), true
+}
+
+func (i *int64Literal) BelongTo(tagValue *modelv1.TagValue) bool {
+	intValue := tagValue.GetInt()
+	if intValue != nil {
+		return i.int64 == intValue.Value
+
+	}
+	intArray := tagValue.GetIntArray()
+	if intArray == nil {
+		return false
+	}
+	return int64SliceContains(i.int64, intArray.Value)
 }
 
 func (i *int64Literal) Bytes() [][]byte {
@@ -58,9 +81,39 @@ func (i *int64Literal) String() string {
 }
 
 var _ LiteralExpr = (*int64ArrLiteral)(nil)
+var _ ComparableExpr = (*int64ArrLiteral)(nil)
 
 type int64ArrLiteral struct {
 	arr []int64
+}
+
+func (i *int64ArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
+	intArray := tagValue.GetIntArray()
+	if intArray == nil {
+		return 0, false
+	}
+	if int64SlicesEqual(i.arr, intArray.Value) {
+		return 0, true
+	}
+	return 0, false
+}
+
+func (i *int64ArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
+	intValue := tagValue.GetInt()
+	if intValue != nil {
+		return int64SliceContains(intValue.Value, i.arr)
+
+	}
+	intArray := tagValue.GetIntArray()
+	if intArray == nil {
+		return false
+	}
+	for _, v := range intArray.Value {
+		if !int64SliceContains(v, i.arr) {
+			return false
+		}
+	}
+	return true
 }
 
 func (i *int64ArrLiteral) Bytes() [][]byte {
@@ -94,9 +147,34 @@ func (i *int64ArrLiteral) String() string {
 }
 
 var _ LiteralExpr = (*strLiteral)(nil)
+var _ ComparableExpr = (*strLiteral)(nil)
 
 type strLiteral struct {
 	string
+}
+
+func (s *strLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
+	strValue := tagValue.GetStr()
+	if strValue == nil {
+		return 0, false
+	}
+	if strValue.Value == s.string {
+		return 0, true
+	}
+	return 0, false
+}
+
+func (s *strLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
+	strValue := tagValue.GetStr()
+	if strValue != nil {
+		return s.string == strValue.Value
+
+	}
+	strArray := tagValue.GetStrArray()
+	if strArray == nil {
+		return false
+	}
+	return stringSliceContains(s.string, strArray.Value)
 }
 
 func (s *strLiteral) Bytes() [][]byte {
@@ -124,9 +202,39 @@ func (s *strLiteral) String() string {
 }
 
 var _ LiteralExpr = (*strArrLiteral)(nil)
+var _ ComparableExpr = (*strArrLiteral)(nil)
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func (s *strArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
+	strArray := tagValue.GetStrArray()
+	if strArray == nil {
+		return 0, false
+	}
+	if stringSlicesEqual(s.arr, strArray.Value) {
+		return 0, true
+	}
+	return 0, false
+}
+
+func (s *strArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
+	strValue := tagValue.GetStr()
+	if strValue != nil {
+		return stringSliceContains(strValue.Value, s.arr)
+
+	}
+	strArray := tagValue.GetStrArray()
+	if strArray == nil {
+		return false
+	}
+	for _, v := range strArray.Value {
+		if !stringSliceContains(v, s.arr) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *strArrLiteral) Bytes() [][]byte {
@@ -187,4 +295,34 @@ func (s *idLiteral) DataType() int32 {
 
 func (s *idLiteral) String() string {
 	return s.string
+}
+
+func int64SlicesEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func int64SliceContains(a int64, slice []int64) bool {
+	for _, v := range slice {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContains(a string, slice []string) bool {
+	for _, v := range slice {
+		if v == a {
+			return true
+		}
+	}
+	return false
 }

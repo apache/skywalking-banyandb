@@ -80,8 +80,8 @@ func NewTagRef(familyName, tagName string) *TagRef {
 	}
 }
 
-// NewSearchableFieldRef is a short-handed method for creating a TagRef to the tag in the searchable family
-func NewSearchableFieldRef(tagName string) *TagRef {
+// NewSearchableTagRef is a short-handed method for creating a TagRef to the tag in the searchable family
+func NewSearchableTagRef(tagName string) *TagRef {
 	return &TagRef{
 		tag: NewTag("searchable", tagName),
 	}
@@ -166,6 +166,14 @@ func (b *binaryExpr) Resolve(s Schema) error {
 		)
 	}
 	return nil
+}
+
+func (b *binaryExpr) Execute(tag *modelv1.Tag) bool {
+	switch b.op {
+	case modelv1.Condition_BINARY_OP_EQ:
+
+	}
+	return false
 }
 
 func (b *binaryExpr) String() string {
