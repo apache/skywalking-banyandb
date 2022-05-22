@@ -119,28 +119,23 @@ func (g *top) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, 
 
 type topMIterator struct {
 	elements []TopElement
-	current  []*measurev1.DataPoint
+	index    int
 }
 
 func newTopMIterator(elements []TopElement) executor.MIterator {
 	return &topMIterator{
 		elements: elements,
+		index:    -1,
 	}
 }
 
 func (ami *topMIterator) Next() bool {
-	if ami.current != nil {
-		return false
-	}
-	ami.current = make([]*measurev1.DataPoint, 0, len(ami.elements))
-	for _, tn := range ami.elements {
-		ami.current = append(ami.current, tn.dp)
-	}
-	return true
+	ami.index++
+	return ami.index < len(ami.elements)
 }
 
 func (ami *topMIterator) Current() []*measurev1.DataPoint {
-	return ami.current
+	return []*measurev1.DataPoint{ami.elements[ami.index].dp}
 }
 
 func (ami *topMIterator) Close() error {
