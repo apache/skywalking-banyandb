@@ -16,6 +16,11 @@
 version: '2.1'
 
 services:
+  banyandb:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: banyandb
+
   oap:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
