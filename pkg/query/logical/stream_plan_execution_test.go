@@ -55,17 +55,17 @@ func TestPlanExecution_TableScan_Limit(t *testing.T) {
 	}{
 		{
 			name:           "Limit 1",
-			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
+			unresolvedPlan: logical.Limit(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 1),
 			wantLength:     1,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Limit(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     5,
 		},
 		{
 			name:           "Limit 10",
-			unresolvedPlan: logical.Limit(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
+			unresolvedPlan: logical.Limit(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 10),
 			wantLength:     5,
 		},
 	}
@@ -112,17 +112,17 @@ func TestPlanExecution_Offset(t *testing.T) {
 	}{
 		{
 			name:           "Offset 0",
-			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
+			unresolvedPlan: logical.Offset(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 0),
 			wantLength:     5,
 		},
 		{
 			name:           "Offset 3",
-			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
+			unresolvedPlan: logical.Offset(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 3),
 			wantLength:     2,
 		},
 		{
 			name:           "Limit 5",
-			unresolvedPlan: logical.Offset(logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
+			unresolvedPlan: logical.Offset(logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil), 5),
 			wantLength:     0,
 		},
 	}
@@ -148,7 +148,7 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 	tester := require.New(t)
 	streamSvc, metaService, deferFunc := setup(tester)
 	defer deferFunc()
-	_ = setupQueryData(t, "multiple_shards.json", streamSvc)
+	_ = setupQueryData(t, "global_index.json", streamSvc)
 
 	m := &commonv1.Metadata{
 		Name:  "sw",
@@ -162,21 +162,29 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 	tests := []struct {
 		name       string
 		traceID    string
+		expr       logical.Expr
 		wantLength int
 	}{
 		{
 			name:       "traceID = 1",
 			traceID:    "1",
-			wantLength: 1,
+			wantLength: 2,
 		},
 		{
 			name:       "traceID = 2",
 			traceID:    "2",
+			wantLength: 3,
+		},
+		{
+			name:       "traceID = 1 and spanID = 2",
+			traceID:    "1",
+			expr:       logical.Eq(logical.NewTagRef("searchable", "span_id"), logical.Str("2")),
 			wantLength: 1,
 		},
 		{
-			name:       "traceID = 3",
-			traceID:    "3",
+			name:       "traceID = 2 and spanID = 3",
+			traceID:    "1",
+			expr:       logical.Eq(logical.NewTagRef("searchable", "span_id"), logical.Str("2")),
 			wantLength: 1,
 		},
 	}
@@ -187,16 +195,23 @@ func TestPlanExecution_TraceIDFetch(t *testing.T) {
 			s, err := analyzer.BuildStreamSchema(context.TODO(), m)
 			tester.NoError(err)
 
-			p, err := logical.GlobalIndexScan(m, []logical.Expr{
+			exprs := []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "trace_id"), logical.Str(tt.traceID)),
-			}, logical.NewTags("searchable", "trace_id")).Analyze(s)
+			}
+			if tt.expr != nil {
+				exprs = append(exprs, tt.expr)
+			}
+			p, err := logical.GlobalIndexScan(m, exprs,
+				logical.NewTags("searchable", "trace_id"), logical.NewTags("searchable", "span_id")).
+				Analyze(s)
 			tester.NoError(err)
 			tester.NotNil(p)
 			entities, err := p.(executor.StreamExecutable).Execute(streamSvc)
 			tester.NoError(err)
 			for _, entity := range entities {
-				tester.Len(entity.GetTagFamilies(), 1)
+				tester.Len(entity.GetTagFamilies(), 2)
 				tester.Len(entity.GetTagFamilies()[0].GetTags(), 1)
+				tester.Len(entity.GetTagFamilies()[1].GetTags(), 1)
 				tester.Equal(entity.GetTagFamilies()[0].GetTags()[0].GetValue().GetStr().GetValue(), tt.traceID)
 			}
 			tester.Len(entities, tt.wantLength)
@@ -228,35 +243,35 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 	}{
 		{
 			name: "Single Index Search using POST without entity returns nothing",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("POST")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},
 		{
 			name: "Single Index Search using inverted index",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 3,
 		},
 		{
 			name: "Single Index Search using LSM tree index",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Lt(logical.NewTagRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Single Index Search without entity returns results",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 2,
 		},
 		{
 			name: "Multiple Index Search",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
 				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/home_id")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
@@ -264,7 +279,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 		},
 		{
 			name: "Multiple Index Search with a combination of numerical index and textual index",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
 				logical.Lt(logical.NewTagRef("searchable", "duration"), logical.Int(100)),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
@@ -272,7 +287,7 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 		},
 		{
 			name: "Multiple Index With One Empty Result(ChunkID)",
-			unresolvedPlan: logical.IndexScan(sT, eT, metadata, []logical.Expr{
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
 				logical.Eq(logical.NewTagRef("searchable", "http.method"), logical.Str("GET")),
 				logical.Eq(logical.NewTagRef("searchable", "endpoint_id"), logical.Str("/unknown")),
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
@@ -356,7 +371,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 			tester.NotNil(schema)
 
 			if tt.targetIndexRule == "" {
-				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				p, err := logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 					logical.OrderBy("", tt.sortDirection), logical.NewTags("searchable", "start_time")).
 					Analyze(schema)
 				tester.NoError(err)
@@ -368,7 +383,7 @@ func TestPlanExecution_OrderBy(t *testing.T) {
 
 				tester.True(logical.SortedByTimestamp(entities, tt.sortDirection))
 			} else {
-				p, err := logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+				p, err := logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
 					logical.OrderBy(tt.targetIndexRule, tt.sortDirection), logical.NewTags("searchable", tt.targetIndexRule)).
 					Analyze(schema)
 				tester.NoError(err)

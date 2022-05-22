@@ -127,94 +127,112 @@ func (s *Writer) bootIndexGenerator() {
 
 //TODO: should listen to pipeline in a distributed cluster
 func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRuleLocator, ref tsdb.GlobalItemID, value Value) error {
-	val, _, err := getIndexValue(ruleIndex, value)
+	values, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
 	}
-	indexShardID, err := partition.ShardID(val, s.shardNum)
-	if err != nil {
-		return err
+	var errWriting error
+	for _, val := range values {
+		indexShardID, err := partition.ShardID(val, s.shardNum)
+		if err != nil {
+			return err
+		}
+		shard, err := s.db.SupplyTSDB().Shard(common.ShardID(indexShardID))
+		if err != nil {
+			return err
+		}
+		builder := shard.Index().WriterBuilder()
+		indexWriter, err := builder.
+			Scope(scope).
+			GlobalItemID(ref).
+			Time(value.Timestamp).
+			Build()
+		if err != nil {
+			return err
+		}
+		rule := ruleIndex.Rule
+		switch rule.GetType() {
+		case databasev1.IndexRule_TYPE_INVERTED:
+			errWriting = multierr.Append(errWriting, indexWriter.WriteInvertedIndex(index.Field{
+				Key: index.FieldKey{
+					IndexRuleID: rule.GetMetadata().GetId(),
+				},
+				Term: val,
+			}))
+		case databasev1.IndexRule_TYPE_TREE:
+			errWriting = multierr.Append(errWriting, indexWriter.WriteLSMIndex(index.Field{
+				Key: index.FieldKey{
+					IndexRuleID: rule.GetMetadata().GetId(),
+				},
+				Term: val,
+			}))
+		}
 	}
-	shard, err := s.db.SupplyTSDB().Shard(common.ShardID(indexShardID))
-	if err != nil {
-		return err
-	}
-	builder := shard.Index().WriterBuilder()
-	indexWriter, err := builder.
-		Scope(scope).
-		GlobalItemID(ref).
-		Time(value.Timestamp).
-		Build()
-	if err != nil {
-		return err
-	}
-	rule := ruleIndex.Rule
-	switch rule.GetType() {
-	case databasev1.IndexRule_TYPE_INVERTED:
-		return indexWriter.WriteInvertedIndex(index.Field{
-			Key: index.FieldKey{
-				IndexRuleID: rule.GetMetadata().GetId(),
-			},
-			Term: val,
-		})
-	case databasev1.IndexRule_TYPE_TREE:
-		return indexWriter.WriteLSMIndex(index.Field{
-			Key: index.FieldKey{
-				IndexRuleID: rule.GetMetadata().GetId(),
-			},
-			Term: val,
-		})
-	}
-	return err
+	return errWriting
 }
 
 func writeLocalIndex(writer tsdb.Writer, ruleIndex *partition.IndexRuleLocator, value Value) (err error) {
-	val, _, err := getIndexValue(ruleIndex, value)
+	values, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
 	}
-	rule := ruleIndex.Rule
-	switch rule.GetType() {
-	case databasev1.IndexRule_TYPE_INVERTED:
-		return writer.WriteInvertedIndex(index.Field{
-			Key: index.FieldKey{
-				IndexRuleID: rule.GetMetadata().GetId(),
-			},
-			Term: val,
-		})
-	case databasev1.IndexRule_TYPE_TREE:
-		return writer.WriteLSMIndex(index.Field{
-			Key: index.FieldKey{
-				IndexRuleID: rule.GetMetadata().GetId(),
-			},
-			Term: val,
-		})
+	var errWriting error
+	for _, val := range values {
+		rule := ruleIndex.Rule
+		switch rule.GetType() {
+		case databasev1.IndexRule_TYPE_INVERTED:
+			errWriting = multierr.Append(errWriting, writer.WriteInvertedIndex(index.Field{
+				Key: index.FieldKey{
+					IndexRuleID: rule.GetMetadata().GetId(),
+				},
+				Term: val,
+			}))
+		case databasev1.IndexRule_TYPE_TREE:
+			errWriting = multierr.Append(errWriting, writer.WriteLSMIndex(index.Field{
+				Key: index.FieldKey{
+					IndexRuleID: rule.GetMetadata().GetId(),
+				},
+				Term: val,
+			}))
+		}
 	}
-	return err
+
+	return errWriting
 }
 
-func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val []byte, isInt bool, err error) {
-	val = make([]byte, 0, len(ruleIndex.TagIndices))
+var ErrUnsupportedIndexType = errors.New("unsupported index type")
+
+func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]byte, isInt bool, err error) {
+	val = make([][]byte, 0)
 	var existInt bool
-	for _, tIndex := range ruleIndex.TagIndices {
-		tag, err := partition.GetTagByOffset(value.TagFamilies, tIndex.FamilyOffset, tIndex.TagOffset)
-		if errors.Is(err, partition.ErrMalformedElement) {
-			continue
-		}
-		if err != nil {
-			return nil, false, errors.WithMessagef(err, "index rule:%v", ruleIndex.Rule.Metadata)
-		}
-		if tag.GetInt() != nil {
-			existInt = true
-		}
-		v, err := pbv1.MarshalIndexFieldValue(tag)
-		if err != nil {
-			return nil, false, err
-		}
-		val = append(val, v...)
+	if len(ruleIndex.TagIndices) != 1 {
+		return nil, false, errors.Wrap(ErrUnsupportedIndexType, "the index rule didn't support composited tags")
 	}
-	if len(ruleIndex.TagIndices) == 1 && existInt {
-		return val, true, nil
+	tIndex := ruleIndex.TagIndices[0]
+	tag, err := partition.GetTagByOffset(value.TagFamilies, tIndex.FamilyOffset, tIndex.TagOffset)
+
+	if errors.Is(err, partition.ErrMalformedElement) {
+		return val, false, nil
 	}
-	return val, false, nil
+	if err != nil {
+		return nil, false, errors.WithMessagef(err, "index rule:%v", ruleIndex.Rule.Metadata)
+	}
+	if tag.GetInt() != nil {
+		existInt = true
+	}
+	fv, err := pbv1.ParseIndexFieldValue(tag)
+	if err != nil {
+		return nil, false, err
+	}
+	v := fv.GetValue()
+	if v != nil {
+		val = append(val, v)
+		return val, existInt, nil
+	}
+	arr := fv.GetArr()
+	if arr != nil {
+		val = append(val, arr...)
+
+	}
+	return val, existInt, nil
 }

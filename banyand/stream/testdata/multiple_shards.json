@@ -31,7 +31,14 @@
       {"int":{"value": 30}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
-      {"int":{"value": 500}}
+      {"int":{"value": 500}},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"str_array":{"value": ["c"]}} 
     ]
   },
   {
@@ -44,7 +51,14 @@
       {"int":{"value": 60}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
-      {"int":{"value": 400}}
+      {"int":{"value": 400}},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"str_array":{"value": ["b", "c"]}} 
     ]
   },
   {
@@ -57,7 +71,14 @@
       {"int":{"value": 300}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
-      {"int":{"value": 500}}
+      {"int":{"value": 500}},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"str_array":{"value": ["a", "b", "c"]}} 
     ]
   }
   
