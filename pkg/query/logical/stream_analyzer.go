@@ -122,7 +122,7 @@ func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequ
 	// parse orderBy
 	queryOrder := criteria.GetOrderBy()
 	if queryOrder != nil {
-		if v, ok := plan.(*unresolvedStreamIndexScan); ok {
+		if v, ok := plan.(*unresolvedTagFilter); ok {
 			v.unresolvedOrderBy = OrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 		}
 	}
@@ -209,6 +209,6 @@ func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metad
 		}
 	}
 
-	return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+	return TagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
 		tagExprs, entity, nil, projTags...), nil
 }

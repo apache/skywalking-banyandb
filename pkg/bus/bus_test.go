@@ -169,23 +169,23 @@ func TestBus_PubAndSub(t *testing.T) {
 					t.Errorf("Subscribe() error = %v, wantErr %v", err, l.wantErr)
 				}
 			}
-			go func() {
-				for _, m := range tt.messages {
-					mm := make([]Message, 0)
-					for _, id := range m.messageIDS {
-						mm = append(mm, NewMessage(id, nil))
-					}
-					f, err := e.Publish(m.topic, mm...)
-					if err != nil && !m.wantErr {
-						t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
-						continue
-					}
-					if f == nil {
-						continue
-					}
+			for _, m := range tt.messages {
+				mm := make([]Message, 0)
+				for _, id := range m.messageIDS {
+					mm = append(mm, NewMessage(id, nil))
+				}
+				f, err := e.Publish(m.topic, mm...)
+				if err != nil && !m.wantErr {
+					t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
+					continue
+				}
+				if f == nil {
+					continue
+				}
+				go func(want []MessageID) {
 					ret, errRet := f.GetAll()
 					if errRet == ErrEmptyFuture {
-						continue
+						return
 					} else if errRet != nil {
 						t.Errorf("Publish()'s return message error = %v", err)
 					}
@@ -194,14 +194,14 @@ func TestBus_PubAndSub(t *testing.T) {
 						ids = append(ids, ret[i].ID())
 					}
 					ids = sortMessage(ids)
-					if !reflect.DeepEqual(ids, m.wantRet) {
-						t.Errorf("Publish()'s return = %v, want %v", ret, m.wantRet)
+					if !reflect.DeepEqual(ids, want) {
+						t.Errorf("Publish()'s return = %v, want %v", ret, want)
 					}
 					for i := 0; i < len(ret); i++ {
 						wg.Done()
 					}
-				}
-			}()
+				}(m.wantRet)
+			}
 			if waitTimeout(&wg, 10*time.Second) {
 				t.Error("message receiving is time out")
 			}

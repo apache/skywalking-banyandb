@@ -88,12 +88,12 @@ func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
 			case modelv1.Condition_BINARY_OP_NE:
 				root.addNot(key, root.newEq(key, cond.Values))
 			case modelv1.Condition_BINARY_OP_HAVING:
-				n := root.addOrNode(len(cond.Values))
+				n := root.addAndNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
 				}
 			case modelv1.Condition_BINARY_OP_NOT_HAVING:
-				n := root.newOrNode(len(cond.Values))
+				n := root.newAndNode(len(cond.Values))
 				for _, v := range cond.Values {
 					n.addEq(key, [][]byte{v})
 				}
@@ -160,8 +160,8 @@ func (n *node) addRangeLeaf(key FieldKey) *rangeOp {
 	return r
 }
 
-func (n *node) newOrNode(size int) *orNode {
-	return &orNode{
+func (n *node) newAndNode(size int) *andNode {
+	return &andNode{
 		node: &node{
 			searcher: n.searcher,
 			SubNodes: make([]Executor, 0, size),
@@ -169,8 +169,8 @@ func (n *node) newOrNode(size int) *orNode {
 	}
 }
 
-func (n *node) addOrNode(size int) *orNode {
-	on := n.newOrNode(size)
+func (n *node) addAndNode(size int) *andNode {
+	on := n.newAndNode(size)
 	n.SubNodes = append(n.SubNodes, on)
 	return on
 }
@@ -242,24 +242,6 @@ func (an *andNode) Execute() (posting.List, error) {
 func (an *andNode) MarshalJSON() ([]byte, error) {
 	data := make(map[string]interface{}, 1)
 	data["and"] = an.node.SubNodes
-	return json.Marshal(data)
-}
-
-type orNode struct {
-	*node
-}
-
-func (on *orNode) merge(list posting.List) error {
-	return on.value.Union(list)
-}
-
-func (on *orNode) Execute() (posting.List, error) {
-	return execute(on.node, on)
-}
-
-func (on *orNode) MarshalJSON() ([]byte, error) {
-	data := make(map[string]interface{}, 1)
-	data["or"] = on.node.SubNodes
 	return json.Marshal(data)
 }
 

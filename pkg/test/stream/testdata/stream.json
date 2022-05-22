@@ -53,6 +53,10 @@
           "type": "TAG_TYPE_INT"
         },
         {
+          "name": "span_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
           "name": "db.type",
           "type": "TAG_TYPE_STRING"
         },
@@ -71,6 +75,10 @@
         {
           "name": "mq.broker",
           "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "extended_tags",
+          "type": "TAG_TYPE_STRING_ARRAY"
         }
       ]
     }

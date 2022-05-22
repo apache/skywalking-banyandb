@@ -641,6 +641,152 @@ var _ = Describe("Write", func() {
 					},
 					false,
 				),
+				Entry(
+
+					"filter by extended tags c",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "extended_tags",
+									Group: "default",
+									Id:    11,
+								},
+								Tags:     []string{"extended_tags"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"extended_tags": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_HAVING,
+										Values: [][]byte{[]byte("c")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"3", "5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter by extended tags abc",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "extended_tags",
+									Group: "default",
+									Id:    11,
+								},
+								Tags:     []string{"extended_tags"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"extended_tags": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_HAVING,
+										Values: [][]byte{[]byte("c"), []byte("a"), []byte("b")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"5"},
+						},
+					},
+					false,
+				),
+				Entry(
+
+					"filter by extended tags bc",
+					queryOpts{
+						entity:   tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry},
+						duration: 1 * time.Hour,
+						buildFn: func(builder tsdb.SeekerBuilder) {
+							rule := &databasev1.IndexRule{
+								Metadata: &commonv1.Metadata{
+									Name:  "extended_tags",
+									Group: "default",
+									Id:    11,
+								},
+								Tags:     []string{"extended_tags"},
+								Type:     databasev1.IndexRule_TYPE_INVERTED,
+								Location: databasev1.IndexRule_LOCATION_SERIES,
+							}
+							builder.Filter(rule, tsdb.Condition{
+								"extended_tags": []index.ConditionValue{
+									{
+										Op:     modelv1.Condition_BINARY_OP_HAVING,
+										Values: [][]byte{[]byte("c"), []byte("b")},
+									},
+								},
+							})
+						},
+					},
+					shardsForTest{
+						{
+							id:       0,
+							location: l1,
+							elements: []string{"4"},
+						},
+						{
+							id:       1,
+							location: l2,
+						},
+						{
+							id:       1,
+							location: l3,
+						},
+						{
+							id:       1,
+							location: l4,
+							elements: []string{"5"},
+						},
+					},
+					false,
+				),
 			)
 		})
 	})

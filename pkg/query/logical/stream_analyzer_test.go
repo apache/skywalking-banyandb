@@ -29,6 +29,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
@@ -37,6 +38,14 @@ import (
 // setUpStreamAnalyzer creates a default analyzer for testing.
 // You have to close the underlying metadata after teststream
 func setUpStreamAnalyzer() (*logical.StreamAnalyzer, func(), error) {
+	err := logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	})
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
 	metadataService, err := metadata.NewService(context.TODO())
 	if err != nil {
 		return nil, func() {
@@ -101,7 +110,7 @@ func TestStreamAnalyzer_SimpleTimeScan(t *testing.T) {
 	assert.NotNil(plan)
 	correctPlan, err := logical.Limit(
 		logical.Offset(
-			logical.IndexScan(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
+			logical.TagFilter(sT, eT, metadata, nil, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			0),
 		20).
 		Analyze(schema)
@@ -141,10 +150,10 @@ func TestStreamAnalyzer_ComplexQuery(t *testing.T) {
 
 	correctPlan, err := logical.Limit(
 		logical.Offset(
-			logical.IndexScan(sT, eT, metadata,
+			logical.TagFilter(sT, eT, metadata,
 				[]logical.Expr{
-					logical.Eq(logical.NewSearchableFieldRef("mq.topic"), logical.Str("event_topic")),
-					logical.Eq(logical.NewSearchableFieldRef("http.method"), logical.Str("GET")),
+					logical.Eq(logical.NewSearchableTagRef("mq.topic"), logical.Str("event_topic")),
+					logical.Eq(logical.NewSearchableTagRef("http.method"), logical.Str("GET")),
 				}, tsdb.Entity{tsdb.Entry("my_app"), tsdb.AnyEntry, tsdb.AnyEntry},
 				logical.OrderBy("duration", modelv1.Sort_SORT_DESC),
 				logical.NewTags("searchable", "http.method", "service_id", "duration")),
@@ -180,8 +189,8 @@ func TestStreamAnalyzer_TraceIDQuery(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 	correctPlan, err := logical.Limit(
-		logical.Offset(logical.IndexScan(time.Now(), time.Now(), metadata, []logical.Expr{
-			logical.Eq(logical.NewSearchableFieldRef("trace_id"), logical.Str("123")),
+		logical.Offset(logical.TagFilter(time.Now(), time.Now(), metadata, []logical.Expr{
+			logical.Eq(logical.NewSearchableTagRef("trace_id"), logical.Str("123")),
 		}, nil, nil),
 			0),
 		100).Analyze(schema)
@@ -217,7 +226,7 @@ func TestStreamAnalyzer_OrderBy_IndexNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
-func TestStreamAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
+func TestStreamAnalyzer_OrderBy_TagNotDefined(t *testing.T) {
 	assert := require.New(t)
 
 	ana, stopFunc, err := setUpStreamAnalyzer()
@@ -243,7 +252,7 @@ func TestStreamAnalyzer_OrderBy_FieldNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
 
-func TestStreamAnalyzer_Projection_FieldNotDefined(t *testing.T) {
+func TestStreamAnalyzer_Projection_TagNotDefined(t *testing.T) {
 	assert := require.New(t)
 
 	ana, stopFunc, err := setUpStreamAnalyzer()
@@ -269,7 +278,7 @@ func TestStreamAnalyzer_Projection_FieldNotDefined(t *testing.T) {
 	assert.ErrorIs(err, logical.ErrTagNotDefined)
 }
 
-func TestStreamAnalyzer_Fields_IndexNotDefined(t *testing.T) {
+func TestStreamAnalyzer_Tags_IndexNotDefined(t *testing.T) {
 	assert := require.New(t)
 
 	ana, stopFunc, err := setUpStreamAnalyzer()
@@ -292,5 +301,5 @@ func TestStreamAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	assert.NoError(err)
 
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
-	assert.ErrorIs(err, logical.ErrIndexNotDefined)
+	assert.NoError(err)
 }

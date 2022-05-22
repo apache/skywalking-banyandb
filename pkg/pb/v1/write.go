@@ -19,7 +19,6 @@ package v1
 
 import (
 	"bytes"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -34,30 +33,108 @@ import (
 
 type ID string
 
-const strDelimiter = "\n"
+var strDelimiter = []byte("\n")
 
 var ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 
 func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
+	fv, err := ParseIndexFieldValue(tagValue)
+	if err != nil {
+		return nil, err
+	}
+	val := fv.GetValue()
+	if val != nil {
+		return val, nil
+	}
+	return fv.marshalArr(), nil
+}
+
+type FieldValue struct {
+	value    []byte
+	arr      [][]byte
+	splitter []byte
+}
+
+func newValue(value []byte) FieldValue {
+	return FieldValue{
+		value: value,
+	}
+}
+
+func newValueWithSplitter(splitter []byte) *FieldValue {
+	return &FieldValue{
+		splitter: splitter,
+	}
+}
+
+func appendValue(fv *FieldValue, value []byte) *FieldValue {
+	if fv == nil {
+		fv = &FieldValue{}
+	}
+	fv.arr = append(fv.arr, value)
+	return fv
+}
+
+func (fv FieldValue) GetValue() []byte {
+	if len(fv.value) < 1 {
+		return nil
+	}
+	return fv.value
+}
+func (fv FieldValue) GetArr() [][]byte {
+	if len(fv.arr) < 1 {
+		return nil
+	}
+	return fv.arr
+}
+
+func (fv *FieldValue) marshalArr() []byte {
+	switch len(fv.arr) {
+	case 0:
+		return nil
+	case 1:
+		return fv.arr[0]
+	}
+	n := len(fv.splitter) * (len(fv.arr) - 1)
+	for i := 0; i < len(fv.arr); i++ {
+		n += len(fv.arr[i])
+	}
+	buf := bytes.NewBuffer(nil)
+	buf.Grow(n)
+	buf.Write(fv.arr[0])
+	for _, v := range fv.arr[1:] {
+		if fv.splitter != nil {
+			buf.Write(fv.splitter)
+		}
+		buf.Write(v)
+	}
+	return buf.Bytes()
+}
+
+func ParseIndexFieldValue(tagValue *modelv1.TagValue) (FieldValue, error) {
 	switch x := tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Str:
-		return []byte(x.Str.GetValue()), nil
+		return newValue([]byte(x.Str.GetValue())), nil
 	case *modelv1.TagValue_Int:
-		return convert.Int64ToBytes(x.Int.GetValue()), nil
+		return newValue(convert.Int64ToBytes(x.Int.GetValue())), nil
 	case *modelv1.TagValue_StrArray:
-		return []byte(strings.Join(x.StrArray.GetValue(), strDelimiter)), nil
-	case *modelv1.TagValue_IntArray:
-		buf := bytes.NewBuffer(nil)
-		for _, i := range x.IntArray.GetValue() {
-			buf.Write(convert.Int64ToBytes(i))
+		fv := newValueWithSplitter(strDelimiter)
+		for _, v := range x.StrArray.GetValue() {
+			fv = appendValue(fv, []byte(v))
 		}
-		return buf.Bytes(), nil
+		return *fv, nil
+	case *modelv1.TagValue_IntArray:
+		var fv *FieldValue
+		for _, i := range x.IntArray.GetValue() {
+			fv = appendValue(fv, convert.Int64ToBytes(i))
+		}
+		return *fv, nil
 	case *modelv1.TagValue_BinaryData:
-		return x.BinaryData, nil
+		return newValue(x.BinaryData), nil
 	case *modelv1.TagValue_Id:
-		return []byte(x.Id.GetValue()), nil
+		return newValue([]byte(x.Id.GetValue())), nil
 	}
-	return nil, ErrUnsupportedTagForIndexField
+	return FieldValue{}, ErrUnsupportedTagForIndexField
 }
 
 type StreamWriteRequestBuilder struct {

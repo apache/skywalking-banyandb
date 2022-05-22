@@ -37,21 +37,21 @@ import (
 var _ Plan = (*globalIndexScan)(nil)
 
 type globalIndexScan struct {
-	schema              Schema
-	metadata            *commonv1.Metadata
-	globalIndexRule     *databasev1.IndexRule
-	expr                Expr
-	projectionFieldRefs [][]*TagRef
+	schema            Schema
+	metadata          *commonv1.Metadata
+	globalIndexRule   *databasev1.IndexRule
+	expr              Expr
+	projectionTagRefs [][]*TagRef
 }
 
 func (t *globalIndexScan) String() string {
-	if len(t.projectionFieldRefs) == 0 {
+	if len(t.projectionTagRefs) == 0 {
 		return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},condition=%s; projection=None",
 			t.metadata.GetGroup(), t.metadata.GetName(), t.expr.String())
 	}
 	return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		t.metadata.GetGroup(), t.metadata.GetName(),
-		t.expr.String(), formatTagRefs(", ", t.projectionFieldRefs...))
+		t.expr.String(), formatTagRefs(", ", t.projectionTagRefs...))
 }
 
 func (t *globalIndexScan) Children() []Plan {
@@ -73,7 +73,7 @@ func (t *globalIndexScan) Equal(plan Plan) bool {
 	other := plan.(*globalIndexScan)
 	return t.metadata.GetGroup() == other.metadata.GetGroup() &&
 		t.metadata.GetName() == other.metadata.GetName() &&
-		cmp.Equal(t.projectionFieldRefs, other.projectionFieldRefs) &&
+		cmp.Equal(t.projectionTagRefs, other.projectionTagRefs) &&
 		cmp.Equal(t.schema, other.schema) &&
 		cmp.Equal(t.globalIndexRule.GetMetadata().GetId(), other.globalIndexRule.GetMetadata().GetId()) &&
 		cmp.Equal(t.expr, other.expr)
@@ -126,7 +126,7 @@ func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, sh
 			if errInner != nil {
 				return errors.WithStack(errInner)
 			}
-			tagFamilies, errInner := projectItem(ec, item, t.projectionFieldRefs)
+			tagFamilies, errInner := projectItem(ec, item, t.projectionTagRefs)
 			if errInner != nil {
 				return errors.WithStack(errInner)
 			}

@@ -77,6 +77,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 				"mq.broker",
 				"mq.queue",
 				"mq.topic",
+				"extended_tags",
 			},
 		},
 		{

@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -36,98 +35,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ UnresolvedPlan = (*unresolvedStreamIndexScan)(nil)
-
-type unresolvedStreamIndexScan struct {
-	unresolvedOrderBy *UnresolvedOrderBy
-	startTime         time.Time
-	endTime           time.Time
-	metadata          *commonv1.Metadata
-	conditions        []Expr
-	projectionFields  [][]*Tag
-	entity            tsdb.Entity
-}
-
-func (uis *unresolvedStreamIndexScan) Analyze(s Schema) (Plan, error) {
-	localConditionMap := make(map[*databasev1.IndexRule][]Expr)
-	globalConditions := make([]interface{}, 0)
-	for _, cond := range uis.conditions {
-		if resolvable, ok := cond.(ResolvableExpr); ok {
-			err := resolvable.Resolve(s)
-			if err != nil {
-				return nil, err
-			}
-
-			if bCond, ok := cond.(*binaryExpr); ok {
-				tag := bCond.l.(*TagRef).tag
-				if defined, indexObj := s.IndexDefined(tag); defined {
-					if indexObj.GetLocation() == databasev1.IndexRule_LOCATION_SERIES {
-						if v, exist := localConditionMap[indexObj]; exist {
-							v = append(v, cond)
-							localConditionMap[indexObj] = v
-						} else {
-							localConditionMap[indexObj] = []Expr{cond}
-						}
-					} else if indexObj.GetLocation() == databasev1.IndexRule_LOCATION_GLOBAL {
-						globalConditions = append(globalConditions, indexObj, cond)
-					}
-				} else {
-					return nil, errors.Wrap(ErrIndexNotDefined, tag.GetCompoundName())
-				}
-			}
-		}
-	}
-
-	var projFieldsRefs [][]*TagRef
-	if len(uis.projectionFields) > 0 {
-		var err error
-		projFieldsRefs, err = s.CreateTagRef(uis.projectionFields...)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if len(globalConditions) > 0 {
-		if len(globalConditions)/2 > 1 {
-			return nil, ErrMultipleGlobalIndexes
-		}
-		return &globalIndexScan{
-			schema:              s,
-			projectionFieldRefs: projFieldsRefs,
-			metadata:            uis.metadata,
-			globalIndexRule:     globalConditions[0].(*databasev1.IndexRule),
-			expr:                globalConditions[1].(Expr),
-		}, nil
-	}
-
-	// resolve sub-plan with the projected view of streamSchema
-	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.ProjTags(projFieldsRefs...))
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &localIndexScan{
-		orderBy:             orderBySubPlan,
-		timeRange:           timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
-		schema:              s,
-		projectionFieldRefs: projFieldsRefs,
-		metadata:            uis.metadata,
-		conditionMap:        localConditionMap,
-		entity:              uis.entity,
-	}, nil
-}
-
 var _ Plan = (*localIndexScan)(nil)
 
 type localIndexScan struct {
 	*orderBy
-	timeRange           timestamp.TimeRange
-	schema              Schema
-	metadata            *commonv1.Metadata
-	conditionMap        map[*databasev1.IndexRule][]Expr
-	projectionFieldRefs [][]*TagRef
-	entity              tsdb.Entity
+	timeRange         timestamp.TimeRange
+	schema            Schema
+	metadata          *commonv1.Metadata
+	conditionMap      map[*databasev1.IndexRule][]Expr
+	projectionTagRefs [][]*TagRef
+	entity            tsdb.Entity
 }
 
 func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
@@ -157,7 +74,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 	it := NewItemIter(iters, c)
 	for it.HasNext() {
 		nextItem := it.Next()
-		tagFamilies, innerErr := projectItem(ec, nextItem, i.projectionFieldRefs)
+		tagFamilies, innerErr := projectItem(ec, nextItem, i.projectionTagRefs)
 		if innerErr != nil {
 			return nil, innerErr
 		}
@@ -216,13 +133,13 @@ func (i *localIndexScan) String() string {
 		}
 		exprStr = append(exprStr, fmt.Sprintf("(%s)", strings.Join(conditionStr, " AND ")))
 	}
-	if len(i.projectionFieldRefs) == 0 {
+	if len(i.projectionTagRefs) == 0 {
 		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=None",
 			i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(), strings.Join(exprStr, " AND "))
 	}
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		strings.Join(exprStr, " AND "), formatTagRefs(", ", i.projectionFieldRefs...))
+		strings.Join(exprStr, " AND "), formatTagRefs(", ", i.projectionTagRefs...))
 }
 
 func (i *localIndexScan) Type() PlanType {
@@ -234,10 +151,10 @@ func (i *localIndexScan) Children() []Plan {
 }
 
 func (i *localIndexScan) Schema() Schema {
-	if i.projectionFieldRefs == nil || len(i.projectionFieldRefs) == 0 {
+	if i.projectionTagRefs == nil || len(i.projectionTagRefs) == 0 {
 		return i.schema
 	}
-	return i.schema.ProjTags(i.projectionFieldRefs...)
+	return i.schema.ProjTags(i.projectionTagRefs...)
 }
 
 func (i *localIndexScan) Equal(plan Plan) bool {
@@ -251,32 +168,10 @@ func (i *localIndexScan) Equal(plan Plan) bool {
 		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
 		len(i.entity) == len(other.entity) &&
 		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
-		cmp.Equal(i.projectionFieldRefs, other.projectionFieldRefs) &&
+		cmp.Equal(i.projectionTagRefs, other.projectionTagRefs) &&
 		cmp.Equal(i.schema, other.schema) &&
 		cmp.Equal(i.conditionMap, other.conditionMap) &&
 		cmp.Equal(i.orderBy, other.orderBy)
-}
-
-func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
-	orderBy *UnresolvedOrderBy, projection ...[]*Tag) UnresolvedPlan {
-	return &unresolvedStreamIndexScan{
-		unresolvedOrderBy: orderBy,
-		startTime:         startTime,
-		endTime:           endTime,
-		metadata:          metadata,
-		conditions:        conditions,
-		projectionFields:  projection,
-		entity:            entity,
-	}
-}
-
-// GlobalIndexScan is a short-handed method for composing a globalIndexScan plan
-func GlobalIndexScan(metadata *commonv1.Metadata, conditions []Expr, projection ...[]*Tag) UnresolvedPlan {
-	return &unresolvedStreamIndexScan{
-		metadata:         metadata,
-		conditions:       conditions,
-		projectionFields: projection,
-	}
 }
 
 func exprToCondition(exprs []Expr) tsdb.Condition {
