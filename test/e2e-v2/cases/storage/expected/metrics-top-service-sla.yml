@@ -13,16 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-traces:
-{{- contains .traces }}
-- segmentid: {{ notEmpty .segmentid }}
-  endpointnames:
-  {{- contains .endpointnames }}
-    - POST:/info
-  {{- end }}
-  duration: {{ ge .duration 0 }}
-  start: "{{ notEmpty .start}}"
-  iserror: false
-  traceids:
-    - {{ (index .traceids 0) }}
+{{- contains . }}
+- name: e2e-service-provider
+  id: ""
+  value: '{{- gt .value "0" }}'
+  refid: ~
+- name: e2e-service-consumer
+  id: ""
+  value: '{{- gt .value "0" }}'
+  refid: ~
 {{- end }}

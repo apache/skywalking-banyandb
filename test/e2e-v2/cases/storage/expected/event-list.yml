@@ -13,16 +13,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-traces:
-{{- contains .traces }}
-- segmentid: {{ notEmpty .segmentid }}
-  endpointnames:
-  {{- contains .endpointnames }}
-    - POST:/info
+events:
+{{- contains .events }}
+- uuid: {{ notEmpty .uuid }}
+  source:
+    service: e2e-service-provider
+    serviceinstance: provider1
+    endpoint: ""
+  name: Start
+  type: Normal
+  message: Start Java Application
+  parameters:
+  {{- contains .parameters }}
+    - key: OPTS
+      value: {{ notEmpty .value }}
   {{- end }}
-  duration: {{ ge .duration 0 }}
-  start: "{{ notEmpty .start}}"
-  iserror: false
-  traceids:
-    - {{ (index .traceids 0) }}
+  starttime: {{ gt .starttime 0 }}
+  endtime: {{ gt .endtime 0 }}
+  layer: GENERAL
+- uuid: {{ notEmpty .uuid }}
+  source:
+    service: e2e-service-consumer
+    serviceinstance: consumer1
+    endpoint: ""
+  name: Start
+  type: Normal
+  message: Start Java Application
+  parameters:
+  {{- contains .parameters }}
+    - key: OPTS
+      value: {{ notEmpty .value }}
+  {{- end }}
+  starttime: {{ gt .starttime 0 }}
+  endtime: {{ gt .endtime 0 }}
+  layer: GENERAL
 {{- end }}

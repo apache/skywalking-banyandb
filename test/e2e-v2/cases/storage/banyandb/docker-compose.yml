@@ -17,104 +17,42 @@ version: '2.1'
 
 services:
   banyandb:
-    image: "skywalking-banyandb:${TAG}"
-    command: ["standalone", "--root-path", "/tmp/banyandb-data"]
-    expose:
-      - 17912
-    ports:
-      - 17912
-      - 6060
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: banyandb
     networks:
       - e2e
-    healthcheck:
-      test: ["CMD", "nc", "-zv", "127.0.0.1", "17912"]
-      interval: 5s
-      timeout: 60s
-      retries: 120
 
   oap:
-    # Pin OAP server
-    image: "quay.io/megrez/skywalking-oap:${SW_OAP_COMMIT}"
-    expose:
-      - 11800
-      - 12800
-      - 10051
-      - 5005
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: oap
+    environment:
+      SW_STORAGE: banyandb
     ports:
       - 12800
-    networks:
-      - e2e
-    volumes:
-      - ./../prepare/setup-oap/log4j2.xml:/skywalking/config/log4j2.xml
-    environment:
-      SW_CLUSTER_ZK_HOST_PORT: zk:2181
-      SW_CONFIG_ETCD_PERIOD: 1
-      SW_CONFIG_ETCD_ENDPOINTS: http://etcd:2379
-      SW_CLUSTER_ETCD_ENDPOINTS: http://etcd:2379
-      SW_STORAGE: banyandb
-      SW_STORAGE_BANYANDB_HOST: banyandb
-    healthcheck:
-      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800" ]
-      interval: 5s
-      timeout: 60s
-      retries: 120
     depends_on:
       banyandb:
         condition: service_healthy
 
   provider:
-    image: "ghcr.io/apache/skywalking/e2e-service-provider:latest"
-    volumes:
-      - ./../../../../../skywalking-agent:/sw-java-agent
-    environment:
-      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
-      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
-      SW_LOGGING_OUTPUT: CONSOLE
-      SW_AGENT_NAME: e2e-service-provider
-      SW_AGENT_INSTANCE_NAME: provider1
-      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
-      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
-    expose:
-      - 9090
-      - 5005
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: provider
     ports:
       - 9090
     networks:
       - e2e
-    healthcheck:
-      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090" ]
-      interval: 5s
-      timeout: 60s
-      retries: 120
     depends_on:
       oap:
         condition: service_healthy
 
   consumer:
-    image: "ghcr.io/apache/skywalking/e2e-service-consumer:latest"
-    volumes:
-      - ./../../../../../skywalking-agent:/sw-java-agent
-    networks:
-      - e2e
-    expose:
-      - 9092
-      - 5005
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: consumer
     ports:
       - 9092
-    environment:
-      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
-      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
-      SW_LOGGING_OUTPUT: CONSOLE
-      PROVIDER_URL: http://provider:9090
-      SW_AGENT_NAME: e2e-service-consumer
-      SW_AGENT_INSTANCE_NAME: consumer1
-      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
-      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
-    healthcheck:
-      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092" ]
-      interval: 5s
-      timeout: 60s
-      retries: 120
     depends_on:
       oap:
         condition: service_healthy

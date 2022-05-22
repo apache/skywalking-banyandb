@@ -13,16 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-traces:
-{{- contains .traces }}
-- segmentid: {{ notEmpty .segmentid }}
-  endpointnames:
-  {{- contains .endpointnames }}
-    - POST:/info
-  {{- end }}
-  duration: {{ ge .duration 0 }}
-  start: "{{ notEmpty .start}}"
-  iserror: false
-  traceids:
-    - {{ (index .traceids 0) }}
+{{- contains . }}
+- GENERAL
+- VIRTUAL_DATABASE
 {{- end }}

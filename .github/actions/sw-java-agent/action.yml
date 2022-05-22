@@ -23,7 +23,7 @@ inputs:
     description: >-
       The specific version of the Java Agent distribution to be downloaded.
     required: false
-    default: "8.9.0"
+    default: "8.10.0"
 runs:
   using: "composite"
   steps:
