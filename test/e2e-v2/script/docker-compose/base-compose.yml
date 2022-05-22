@@ -58,7 +58,7 @@ services:
       retries: 120
 
   ui:
-    image: skywalking/ui:latest
+    image: "ghcr.io/apache/skywalking/ui:${SW_OAP_COMMIT}"
     expose:
       - 8080
     networks:
@@ -67,16 +67,16 @@ services:
       - SW_OAP_ADDRESS=http://oap:12800
 
   provider:
-    image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java${SW_AGENT_JDK_VERSION}"
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:latest"
     volumes:
-      - ./../../java-test-service/e2e-service-provider/target/e2e-service-provider-2.0.0.jar:/services_provider.jar
-    command: [ "java", "-jar", "/services_provider.jar" ]
+      - ./../../../../skywalking-agent:/sw-java-agent
     networks:
       - e2e
     expose:
       - 9090
       - 5005
     environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       SW_AGENT_NAME: e2e-service-provider
@@ -90,16 +90,16 @@ services:
       retries: 120
 
   consumer:
-    image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java${SW_AGENT_JDK_VERSION}"
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:latest"
     volumes:
-      - ../../java-test-service/e2e-service-consumer/target/e2e-service-consumer-2.0.0.jar:/services_consumer.jar
-    command: ["java", "-jar", "/services_consumer.jar"]
+      - ./../../../../skywalking-agent:/sw-java-agent
     networks:
       - e2e
     expose:
       - 9092
       - 5005
     environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       PROVIDER_URL: http://provider:9090

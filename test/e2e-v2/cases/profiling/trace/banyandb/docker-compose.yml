@@ -39,7 +39,6 @@ services:
       service: oap
     environment:
       SW_STORAGE: banyandb
-      SW_STORAGE_BANYANDB_HOST: "banyandb"
     depends_on:
       banyandb:
         condition: service_healthy
