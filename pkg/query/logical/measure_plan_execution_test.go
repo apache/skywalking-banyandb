@@ -109,13 +109,15 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 			dataSize := 0
 			for iter.Next() {
 				dataPoints := iter.Current()
-				for _, dp := range dataPoints {
-					dataSize++
-					tester.Len(dp.GetFields(), tt.fieldLength)
-					tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
-					for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
-						tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
-					}
+				if len(dataPoints) < 1 {
+					continue
+				}
+				dp := dataPoints[0]
+				dataSize++
+				tester.Len(dp.GetFields(), tt.fieldLength)
+				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
 				}
 			}
 			tester.Equal(dataSize, tt.wantLength)
@@ -343,11 +345,13 @@ func TestMeasurePlanExecution_Cursor(t *testing.T) {
 			got := make([]int64, 0)
 			for iter.Next() {
 				dataPoints := iter.Current()
-				for _, dp := range dataPoints {
-					for _, f := range dp.Fields {
-						if f.Name == "value" {
-							got = append(got, f.Value.GetInt().Value)
-						}
+				if len(dataPoints) < 1 {
+					continue
+				}
+				dp := dataPoints[0]
+				for _, f := range dp.Fields {
+					if f.Name == "value" {
+						got = append(got, f.Value.GetInt().Value)
 					}
 				}
 			}
