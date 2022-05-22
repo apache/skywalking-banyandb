@@ -21,6 +21,7 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -31,12 +32,21 @@ type Executor interface {
 	run.PreRunner
 }
 
-func NewExecutor(_ context.Context, streamService stream.Service, metaService metadata.Service,
-	serviceRepo discovery.ServiceRepo, pipeline queue.Queue) (Executor, error) {
-	return &queryProcessor{
-		metaService:   metaService,
+func NewExecutor(_ context.Context, streamService stream.Service, measureService measure.Service,
+	metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue) (Executor, error) {
+
+	svc := &queryService{
+		metaService: metaService,
+		serviceRepo: serviceRepo,
+		pipeline:    pipeline,
+	}
+	svc.mqp = &measureQueryProcessor{
+		measureService: measureService,
+		queryService:   svc,
+	}
+	svc.sqp = &streamQueryProcessor{
 		streamService: streamService,
-		serviceRepo:   serviceRepo,
-		pipeline:      pipeline,
-	}, nil
+		queryService:  svc,
+	}
+	return svc, nil
 }

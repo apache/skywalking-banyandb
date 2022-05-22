@@ -54,10 +54,10 @@ func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
 		return nil, errors.Wrap(ErrIndexNotDefined, u.targetIndexRuleName)
 	}
 
-	projFieldSpecs, err := s.CreateRef(NewTags("", indexRule.GetTags()...))
+	projFieldSpecs, err := s.CreateTagRef(NewTags("", indexRule.GetTags()...))
 
 	if err != nil {
-		return nil, ErrFieldNotDefined
+		return nil, ErrTagNotDefined
 	}
 
 	return &orderBy{
@@ -74,7 +74,7 @@ type orderBy struct {
 	// while orderBySort describes the sort direction
 	sort modelv1.Sort
 	// TODO: support multiple tags. Currently only the first member will be used for sorting.
-	fieldRefs []*FieldRef
+	fieldRefs []*TagRef
 }
 
 func (o *orderBy) Equal(other interface{}) bool {

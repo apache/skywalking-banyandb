@@ -52,7 +52,7 @@ type Element struct {
 
 	// element_id could be span_id of a Span or segment_id of a Segment in the context of stream
 	ElementId string `protobuf:"bytes,1,opt,name=element_id,json=elementId,proto3" json:"element_id,omitempty"`
-	// timestamp represents
+	// timestamp represents a millisecond
 	// 1) either the start time of a Span/Segment,
 	// 2) or the timestamp of a log
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
@@ -61,7 +61,7 @@ type Element struct {
 	// - duration
 	// - service_name
 	// - service_instance_id
-	// - end_time_nanoseconds
+	// - end_time_milliseconds
 	TagFamilies []*v1.TagFamily `protobuf:"bytes,3,rep,name=tag_families,json=tagFamilies,proto3" json:"tag_families,omitempty"`
 }
 
@@ -175,7 +175,7 @@ type QueryRequest struct {
 
 	// metadata is required
 	Metadata *v11.Metadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.
+	// time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
 	// In the context of stream, it represents the range of the `startTime` for spans/segments,
 	// while in the context of Log, it means the range of the timestamp(s) for logs.
 	// it is always recommended to specify time range for performance reason

@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "name": "sw_metric"
+  },
+  "catalog": "CATALOG_MEASURE",
+  "resource_opts": {
+    "shard_num": 2,
+    "block_num": 12,
+    "ttl": "7d"
+  },
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

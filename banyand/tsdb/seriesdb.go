@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -58,6 +59,7 @@ func (e Entity) Prepend(entry Entry) Entity {
 
 type Path struct {
 	prefix   []byte
+	seekKey  []byte
 	mask     []byte
 	template []byte
 	isFull   bool
@@ -66,6 +68,7 @@ type Path struct {
 
 func NewPath(entries []Entry) Path {
 	p := Path{
+		seekKey:  make([]byte, 0),
 		mask:     make([]byte, 0),
 		template: make([]byte, 0),
 	}
@@ -78,7 +81,7 @@ func NewPath(entries []Entry) Path {
 			p.template = append(p.template, zeroIntBytes...)
 			continue
 		}
-		entry := hash(e)
+		entry := Hash(e)
 		if !encounterAny {
 			p.offset += 8
 		}
@@ -94,10 +97,15 @@ func NewPath(entries []Entry) Path {
 
 func (p *Path) extractPrefix() {
 	p.prefix = p.template[:p.offset]
+	p.seekKey = p.seekKey[:0]
+	p.seekKey = append(p.seekKey, p.prefix...)
+	for i := 0; i < len(p.template)-p.offset; i++ {
+		p.seekKey = append(p.seekKey, 0)
+	}
 }
 
 func (p Path) Prepand(entry Entry) Path {
-	e := hash(entry)
+	e := Hash(entry)
 	var prepand = func(src []byte, entry []byte) []byte {
 		dst := make([]byte, len(src)+len(entry))
 		copy(dst, entry)
@@ -112,6 +120,7 @@ func (p Path) Prepand(entry Entry) Path {
 }
 
 type SeriesDatabase interface {
+	observability.Observable
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
 	Get(entity Entity) (Series, error)
@@ -147,7 +156,7 @@ func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
 	}
 	s.Lock()
 	defer s.Unlock()
-	seriesID = hash(key)
+	seriesID = Hash(key)
 	err = s.seriesMetadata.Put(key, seriesID)
 	if err != nil {
 		return nil, err
@@ -199,7 +208,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	}
 	result := make([]Series, 0)
 	var err error
-	errScan := s.seriesMetadata.Scan(path.prefix, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+	errScan := s.seriesMetadata.Scan(path.prefix, path.seekKey, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
 		comparableKey := make([]byte, len(key))
 		for i, b := range key {
 			comparableKey[i] = path.mask[i] & b
@@ -243,6 +252,10 @@ func (s *seriesDB) context() context.Context {
 	return context.WithValue(context.Background(), logger.ContextKey, s.l)
 }
 
+func (s *seriesDB) Stats() observability.Statistics {
+	return s.seriesMetadata.Stats()
+}
+
 func (s *seriesDB) Close() error {
 	return s.seriesMetadata.Close()
 }
@@ -264,7 +277,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 func HashEntity(entity Entity) []byte {
 	result := make(Entry, 0, len(entity)*8)
 	for _, entry := range entity {
-		result = append(result, hash(entry)...)
+		result = append(result, Hash(entry)...)
 	}
 	return result
 }
@@ -273,7 +286,7 @@ func SeriesID(entity Entity) common.SeriesID {
 	return common.SeriesID(convert.Hash((HashEntity(entity))))
 }
 
-func hash(entry []byte) []byte {
+func Hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
 }
 

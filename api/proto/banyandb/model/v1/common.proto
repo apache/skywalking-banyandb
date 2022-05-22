@@ -24,6 +24,10 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/mo
 
 import "google/protobuf/struct.proto";
 
+message ID {
+    string value = 1;
+}
+
 message Str {
     string value = 1;
 }
@@ -48,6 +52,7 @@ message TagValue {
         Int int = 4;
         IntArray int_array = 5;
         bytes binary_data = 6;
+        ID id = 7;
     }
 }
 
@@ -62,4 +67,13 @@ message FieldValue {
         model.v1.Int int = 3;
         bytes binary_data = 4;
     }
+}
+
+enum AggregationFunction {
+    AGGREGATION_FUNCTION_UNSPECIFIED = 0;
+    AGGREGATION_FUNCTION_MEAN = 1;
+    AGGREGATION_FUNCTION_MAX = 2;
+    AGGREGATION_FUNCTION_MIN = 3;
+    AGGREGATION_FUNCTION_COUNT = 4;
+    AGGREGATION_FUNCTION_SUM = 5;
 }

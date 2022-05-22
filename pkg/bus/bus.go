@@ -158,12 +158,12 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 	if topic.ID == "" {
 		return nil, ErrTopicEmpty
 	}
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
 	cc, exit := b.topics[topic]
 	if !exit {
 		return nil, ErrTopicNotExist
 	}
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
 	var f Future
 	switch topic.Type {
 	case ChTypeUnidirectional:

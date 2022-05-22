@@ -33,15 +33,19 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 //go:embed testdata/*.json
@@ -50,7 +54,7 @@ var dataFS embed.FS
 func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (baseTime time.Time) {
 	t := assert.New(testing)
 	var templates []interface{}
-	baseTime = time.Now()
+	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	t.NoError(err)
 	t.NoError(json.Unmarshal(content, &templates))
@@ -85,7 +89,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	}))
 
 	tempDir, deferFunc := test.Space(t)
@@ -113,7 +117,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	err = teststream.PreloadSchema(metadataSvc.SchemaRegistry())
 	t.NoError(err)
 
-	err = streamSvc.FlagSet().Parse([]string{"--root-path=" + tempDir})
+	err = streamSvc.FlagSet().Parse([]string{"--stream-root-path=" + tempDir})
 	t.NoError(err)
 
 	// 2 - (StreamService).PreRun
@@ -133,4 +137,78 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 		deferFunc()
 		_ = os.RemoveAll(etcdRootDir)
 	}
+}
+
+func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, func()) {
+	t.NoError(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	}))
+
+	tempDir, deferFunc := test.Space(t)
+	// Init `Discovery` module
+	repo, err := discovery.NewServiceRepo(context.Background())
+	t.NoError(err)
+	// Init `Queue` module
+	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	t.NoError(err)
+
+	metadataSvc, err := metadata.NewService(context.TODO())
+	t.NoError(err)
+
+	etcdRootDir := testmeasure.RandomTempDir()
+	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir})
+	t.NoError(err)
+
+	measureSvc, err := measure.NewService(context.TODO(), metadataSvc, repo, pipeline)
+	t.NoError(err)
+
+	// 1 - (MeasureService).PreRun
+	err = metadataSvc.PreRun()
+	t.NoError(err)
+
+	err = testmeasure.PreloadSchema(metadataSvc.SchemaRegistry())
+	t.NoError(err)
+
+	err = measureSvc.FlagSet().Parse([]string{"--measure-root-path=" + tempDir})
+	t.NoError(err)
+
+	// 2 - (MeasureService).PreRun
+	err = measureSvc.PreRun()
+	t.NoError(err)
+
+	m, err := measureSvc.Measure(&commonv1.Metadata{
+		Name:  "service_cpm_minute",
+		Group: "sw_metric",
+	})
+	t.NoError(err)
+	t.NotNil(m)
+
+	return m, metadataSvc, func() {
+		_ = m.Close()
+		metadataSvc.GracefulStop()
+		deferFunc()
+		_ = os.RemoveAll(etcdRootDir)
+	}
+}
+
+func setupMeasureQueryData(testing *testing.T, dataFile string, measure measure.Measure) (baseTime time.Time) {
+	t := assert.New(testing)
+	var templates []interface{}
+	baseTime = timestamp.NowMilli()
+	content, err := dataFS.ReadFile("testdata/" + dataFile)
+	t.NoError(err)
+	t.NoError(json.Unmarshal(content, &templates))
+	for i, template := range templates {
+		rawDataPointValue, errMarshal := json.Marshal(template)
+		t.NoError(errMarshal)
+		dataPointValue := &measurev1.DataPointValue{}
+		if dataPointValue.Timestamp == nil {
+			dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
+		}
+		t.NoError(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue))
+		errInner := measure.Write(dataPointValue)
+		t.NoError(errInner)
+	}
+	return baseTime
 }

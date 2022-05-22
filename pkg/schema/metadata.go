@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package schema
 
 import (
@@ -148,27 +148,34 @@ func (sr *schemaRepo) Watcher() {
 	}()
 	for {
 		select {
-		case evt := <-sr.eventCh:
-			var err error
-			switch evt.Typ {
-			case EventAddOrUpdate:
-				switch evt.Kind {
-				case EventKindGroup:
-					_, err = sr.StoreGroup(evt.Metadata)
-				case EventKindResource:
-					_, err = sr.storeResource(evt.Metadata)
-				}
-			case EventDelete:
-				switch evt.Kind {
-				case EventKindGroup:
-					err = sr.deleteGroup(evt.Metadata)
-				case EventKindResource:
-					err = sr.deleteResource(evt.Metadata)
-				}
+		case evt, more := <-sr.eventCh:
+			if !more {
+				return
 			}
-			if err != nil {
-				sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
-				sr.eventCh <- evt
+			sr.l.Info().Interface("event", evt).Msg("received an event")
+			for i := 0; i < 10; i++ {
+				var err error
+				switch evt.Typ {
+				case EventAddOrUpdate:
+					switch evt.Kind {
+					case EventKindGroup:
+						_, err = sr.StoreGroup(evt.Metadata)
+					case EventKindResource:
+						_, err = sr.storeResource(evt.Metadata)
+					}
+				case EventDelete:
+					switch evt.Kind {
+					case EventKindGroup:
+						err = sr.deleteGroup(evt.Metadata)
+					case EventKindResource:
+						err = sr.deleteResource(evt.Metadata)
+					}
+				}
+				if err == nil {
+					break
+				}
+				time.Sleep(time.Second)
+				sr.l.Err(err).Interface("event", evt).Int("round", i).Msg("fail to handle the metadata event. retry...")
 			}
 		case <-sr.workerStopCh:
 			return

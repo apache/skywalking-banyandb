@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -172,7 +173,10 @@ type Searcher interface {
 }
 
 type Store interface {
+	observability.Observable
 	io.Closer
 	Writer
 	Searcher
+	// Flush flushed memory data to disk
+	Flush() error
 }

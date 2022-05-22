@@ -25,6 +25,7 @@ import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -57,11 +58,12 @@ type Reader interface {
 	// Get a value by its key
 	Get(key []byte) ([]byte, error)
 	GetAll(key []byte, applyFn func([]byte) error) error
-	Scan(prefix []byte, opt ScanOpts, f ScanFunc) error
+	Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error
 }
 
 // Store is a common kv storage with auto-generated key
 type Store interface {
+	observability.Observable
 	io.Closer
 	Writer
 	Reader
@@ -84,6 +86,7 @@ type TimeSeriesReader interface {
 
 // TimeSeriesStore is time series storage
 type TimeSeriesStore interface {
+	observability.Observable
 	io.Closer
 	TimeSeriesWriter
 	TimeSeriesReader
@@ -111,6 +114,14 @@ func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encodin
 				}, &decoderPoolDelegate{
 					decoderPool,
 				})
+		}
+	}
+}
+
+func TSSWithFlushCallback(callback func()) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.dbOpts.FlushCallBack = callback
 		}
 	}
 }

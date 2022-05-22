@@ -187,6 +187,10 @@ func (p *postingsList) Reset() {
 	p.bitmap.Clear()
 }
 
+func (p *postingsList) SizeInBytes() int64 {
+	return int64(p.bitmap.GetSizeInBytes())
+}
+
 type roaringIterator struct {
 	iter    roaring64.IntIterable64
 	current common.ItemID

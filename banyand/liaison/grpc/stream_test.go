@@ -33,6 +33,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -40,22 +41,25 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Stream", func() {
-	var rootPath, metadataPath string
-	var gracefulStop, deferRootFunc, deferMetadataFunc func()
+	var streamPath, measurePath, metadataPath string
+	var gracefulStop, deferStreamFunc, deferMeasureFunc, deferMetadataFunc func()
 	var conn *grpclib.ClientConn
 	BeforeEach(func() {
 		var err error
-		rootPath, deferRootFunc, err = test.NewSpace()
+		streamPath, deferStreamFunc, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		measurePath, deferMeasureFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 		metadataPath, deferMetadataFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
 		gracefulStop = setup(flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
@@ -77,10 +81,10 @@ var _ = Describe("Stream", func() {
 				return 0
 			}
 			return num
-		}).Should(Equal(1))
+		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--root-path=" + rootPath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--tls=true", "--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -97,13 +101,14 @@ var _ = Describe("Stream", func() {
 		streamWrite(conn)
 		Eventually(func() (int, error) {
 			return streamQuery(conn)
-		}).Should(Equal(1))
+		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	AfterEach(func() {
 		_ = conn.Close()
 		gracefulStop()
 		deferMetadataFunc()
-		deferRootFunc()
+		deferStreamFunc()
+		deferMeasureFunc()
 	})
 })
 
@@ -120,12 +125,16 @@ func setup(flags []string) func() {
 	// Init `Stream` module
 	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
+	// Init `Measure` module
+	measureSvc, err := measure.NewService(context.TODO(), metaSvc, repo, pipeline)
+	Expect(err).NotTo(HaveOccurred())
 	// Init `Query` module
-	q, err := query.NewExecutor(context.TODO(), streamSvc, metaSvc, repo, pipeline)
+	q, err := query.NewExecutor(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
+	preloadMeasureSvc := &preloadMeasureService{metaSvc: metaSvc}
 
 	return test.SetUpModules(
 		flags,
@@ -133,7 +142,9 @@ func setup(flags []string) func() {
 		pipeline,
 		metaSvc,
 		preloadStreamSvc,
+		preloadMeasureSvc,
 		streamSvc,
+		measureSvc,
 		q,
 		tcp,
 	)
@@ -144,19 +155,19 @@ type preloadStreamService struct {
 }
 
 func (p *preloadStreamService) Name() string {
-	return "preload-measure"
+	return "preload-stream"
 }
 
 func (p *preloadStreamService) PreRun() error {
 	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
-func writeData() *streamv1.WriteRequest {
+func writeStreamData() *streamv1.WriteRequest {
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	return pbv1.NewStreamWriteRequestBuilder().
 		ID("1").
 		Metadata("default", "sw").
-		Timestamp(time.Now()).
+		Timestamp(timestamp.NowMilli()).
 		TagFamily(bb).
 		TagFamily(
 			"trace_id-xxfff.111",
@@ -170,27 +181,27 @@ func writeData() *streamv1.WriteRequest {
 		Build()
 }
 
-func queryCriteria(baseTs time.Time) *streamv1.QueryRequest {
-	return pbv1.NewQueryRequestBuilder().
+func queryStreamCriteria(baseTs time.Time) *streamv1.QueryRequest {
+	return pbv1.NewStreamQueryRequestBuilder().
 		Limit(10).
 		Offset(0).
 		Metadata("default", "sw").
-		TimeRange(baseTs.Add(-1*time.Minute), baseTs.Add(1*time.Minute)).
+		TimeRange(baseTs.Add(-10*time.Minute), baseTs.Add(10*time.Minute)).
 		Projection("searchable", "trace_id").
 		Build()
 }
 
 func streamWrite(conn *grpclib.ClientConn) {
-	client := streamv1.NewStreamServiceClient(conn)
+	c := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	var writeClient streamv1.StreamService_WriteClient
 	Eventually(func(g Gomega) {
 		var err error
-		writeClient, err = client.Write(ctx)
+		writeClient, err = c.Write(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
 	}).Should(Succeed())
 	Eventually(func() error {
-		return writeClient.Send(writeData())
+		return writeClient.Send(writeStreamData())
 	}).ShouldNot(HaveOccurred())
 	Expect(writeClient.CloseSend()).Should(Succeed())
 	Eventually(func() error {
@@ -200,9 +211,9 @@ func streamWrite(conn *grpclib.ClientConn) {
 }
 
 func streamQuery(conn *grpclib.ClientConn) (int, error) {
-	client := streamv1.NewStreamServiceClient(conn)
+	c := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
-	resp, err := client.Query(ctx, queryCriteria(time.Now()))
+	resp, err := c.Query(ctx, queryStreamCriteria(timestamp.NowMilli()))
 
 	return len(resp.GetElements()), err
 }

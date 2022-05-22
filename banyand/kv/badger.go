@@ -27,6 +27,7 @@ import (
 	"github.com/dgraph-io/badger/v3/bydb"
 	"github.com/dgraph-io/badger/v3/y"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -45,6 +46,18 @@ type badgerTSS struct {
 	dbOpts  badger.Options
 	db      *badger.DB
 	badger.TSet
+}
+
+func (b *badgerTSS) Stats() (s observability.Statistics) {
+	return badgerStats(b.db)
+}
+
+func badgerStats(db *badger.DB) (s observability.Statistics) {
+	stat := db.Stats()
+	return observability.Statistics{
+		MemBytes:    stat.MemBytes,
+		MaxMemBytes: db.Opts().MemTableSize,
+	}
 }
 
 func (b *badgerTSS) Close() error {
@@ -110,13 +123,17 @@ type badgerDB struct {
 	db      *badger.DB
 }
 
+func (b *badgerDB) Stats() observability.Statistics {
+	return badgerStats(b.db)
+}
+
 func (b *badgerDB) Handover(iterator Iterator) error {
 	return b.db.HandoverIterator(&mergedIter{
 		delegated: iterator,
 	})
 }
 
-func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
+func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchSize = opt.PrefetchSize
 	opts.PrefetchValues = opt.PrefetchValues
@@ -125,12 +142,12 @@ func (b *badgerDB) Scan(key []byte, opt ScanOpts, f ScanFunc) error {
 	defer func() {
 		_ = it.Close()
 	}()
-	for it.Seek(y.KeyWithTs(key, math.MaxInt64)); it.Valid(); it.Next() {
+	for it.Seek(seekKey); it.Valid(); it.Next() {
 		k := y.ParseKey(it.Key())
-		if len(k) < len(key) {
+		if len(k) < len(seekKey) {
 			break
 		}
-		if !bytes.Equal(key, k[0:len(key)]) {
+		if !bytes.Equal(prefix, k[0:len(prefix)]) {
 			break
 		}
 		err := f(b.shardID, k, func() ([]byte, error) {

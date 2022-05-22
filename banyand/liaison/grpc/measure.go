@@ -18,13 +18,18 @@
 package grpc
 
 import (
+	"context"
 	"io"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type measureService struct {
@@ -40,6 +45,10 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		if err != nil {
 			return err
+		}
+		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
+			ms.log.Error().Err(errTime).Msg("the data point time is invalid")
+			continue
 		}
 		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
@@ -61,4 +70,24 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	}
 }
 
-//TODO: implement topN & Query
+func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
+	}
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
+	if errQuery != nil {
+		return nil, errQuery
+	}
+	msg, errFeat := feat.Get()
+	if errFeat != nil {
+		return nil, errFeat
+	}
+	queryMsg, ok := msg.Data().([]*measurev1.DataPoint)
+	if !ok {
+		return nil, ErrQueryMsg
+	}
+	return &measurev1.QueryResponse{DataPoints: queryMsg}, nil
+}
+
+//TODO: implement topN

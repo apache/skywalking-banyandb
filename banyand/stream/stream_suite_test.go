@@ -44,7 +44,7 @@ func TestStream(t *testing.T) {
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	})).To(Succeed())
 })
 
@@ -96,7 +96,7 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--root-path="+rootPath)
+	flags = append(flags, "--stream-root-path="+rootPath)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,

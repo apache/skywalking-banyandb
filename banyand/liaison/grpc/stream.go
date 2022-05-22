@@ -22,10 +22,14 @@ import (
 	"io"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type streamService struct {
@@ -41,6 +45,10 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			return err
+		}
+		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
+			s.log.Error().Err(errTime).Msg("the element time is invalid")
+			continue
 		}
 		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
@@ -63,6 +71,13 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 }
 
 func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
+	timeRange := entityCriteria.GetTimeRange()
+	if timeRange == nil {
+		entityCriteria.TimeRange = timestamp.DefaultTimeRange
+	}
+	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
+	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {

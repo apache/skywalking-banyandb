@@ -22,7 +22,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
@@ -37,33 +36,33 @@ var binaryOpFactory = map[modelv1.Condition_BinaryOp]func(l, r Expr) Expr{
 	modelv1.Condition_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
-var _ ResolvableExpr = (*FieldRef)(nil)
+var _ ResolvableExpr = (*TagRef)(nil)
 
-// FieldRef is the reference to the field
-// also it holds the definition/schema of the field
-type FieldRef struct {
+// TagRef is the reference to the field
+// also it holds the definition (derived from the streamSchema, measureSchema) of the tag
+type TagRef struct {
 	// tag defines the family name and name of the Tag
 	tag *Tag
-	// spec contains the index of the key in the schema, as well as the underlying FieldSpec
+	// spec contains the index of the key in the streamSchema/measureSchema, as well as the underlying tagSpec
 	Spec *tagSpec
 }
 
-func (f *FieldRef) Equal(expr Expr) bool {
-	if other, ok := expr.(*FieldRef); ok {
+func (f *TagRef) Equal(expr Expr) bool {
+	if other, ok := expr.(*TagRef); ok {
 		return other.tag.GetTagName() == f.tag.GetTagName() && other.Spec.spec.GetType() == f.Spec.spec.GetType()
 	}
 	return false
 }
 
-func (f *FieldRef) FieldType() databasev1.TagType {
+func (f *TagRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
-	return f.Spec.spec.GetType()
+	return int32(f.Spec.spec.GetType())
 }
 
-func (f *FieldRef) Resolve(s Schema) error {
-	specs, err := s.CreateRef([]*Tag{f.tag})
+func (f *TagRef) Resolve(s Schema) error {
+	specs, err := s.CreateTagRef([]*Tag{f.tag})
 	if err != nil {
 		return err
 	}
@@ -71,21 +70,59 @@ func (f *FieldRef) Resolve(s Schema) error {
 	return nil
 }
 
-func (f *FieldRef) String() string {
+func (f *TagRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.tag.GetCompoundName(), f.Spec.spec.GetType().String())
 }
 
-func NewFieldRef(familyName, tagName string) *FieldRef {
-	return &FieldRef{
+func NewTagRef(familyName, tagName string) *TagRef {
+	return &TagRef{
 		tag: NewTag(familyName, tagName),
 	}
 }
 
-// NewSearchableFieldRef is a short-hand method for creating a FieldRef to the tag in the searchable family
-func NewSearchableFieldRef(tagName string) *FieldRef {
-	return &FieldRef{
+// NewSearchableFieldRef is a short-handed method for creating a TagRef to the tag in the searchable family
+func NewSearchableFieldRef(tagName string) *TagRef {
+	return &TagRef{
 		tag: NewTag("searchable", tagName),
 	}
+}
+
+var _ ResolvableExpr = (*FieldRef)(nil)
+
+// FieldRef is the reference to the field
+// also it holds the definition (derived from measureSchema) of the field
+type FieldRef struct {
+	// field defines the name of the Field
+	field *Field
+	// spec contains the index of the key in the measureSchema, as well as the underlying FieldSpec
+	Spec *fieldSpec
+}
+
+func (f *FieldRef) String() string {
+	return fmt.Sprintf("#%s<%s>", f.Spec.spec.GetName(), f.Spec.spec.GetFieldType().String())
+}
+
+func (f *FieldRef) DataType() int32 {
+	if f.Spec == nil {
+		panic("should be resolved first")
+	}
+	return int32(f.Spec.spec.GetFieldType())
+}
+
+func (f *FieldRef) Equal(expr Expr) bool {
+	if other, ok := expr.(*FieldRef); ok {
+		return other.field.name == f.field.name && other.Spec.spec.GetFieldType() == f.Spec.spec.GetFieldType()
+	}
+	return false
+}
+
+func (f *FieldRef) Resolve(s Schema) error {
+	specs, err := s.CreateFieldRef(f.field)
+	if err != nil {
+		return err
+	}
+	f.Spec = specs[0].Spec
+	return nil
 }
 
 var _ ResolvableExpr = (*binaryExpr)(nil)
@@ -105,7 +142,7 @@ func (b *binaryExpr) Equal(expr Expr) bool {
 	return false
 }
 
-func (b *binaryExpr) FieldType() databasev1.TagType {
+func (b *binaryExpr) DataType() int32 {
 	panic("Boolean should be added")
 }
 
@@ -122,10 +159,10 @@ func (b *binaryExpr) Resolve(s Schema) error {
 			return err
 		}
 	}
-	if b.l.FieldType() != b.r.FieldType() {
-		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %s while right is %s",
-			b.l.FieldType().String(),
-			b.r.FieldType().String(),
+	if b.l.DataType() != b.r.DataType() {
+		return errors.Wrapf(ErrIncompatibleQueryCondition, "left is %d while right is %d",
+			b.l.DataType(),
+			b.r.DataType(),
 		)
 	}
 	return nil

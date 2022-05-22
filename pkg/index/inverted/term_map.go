@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -81,4 +82,15 @@ func (p *termMap) getEntry(key []byte) *index.PostingValue {
 		return nil
 	}
 	return v
+}
+
+func (p *termMap) Stats() (s observability.Statistics) {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	for _, pv := range p.repo {
+		// 8 is the size of key
+		s.MemBytes += 8
+		s.MemBytes += pv.Value.SizeInBytes()
+	}
+	return s
 }

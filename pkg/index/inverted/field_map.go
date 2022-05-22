@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
@@ -70,6 +71,17 @@ func (fm *fieldMap) put(fv index.Field, id common.ItemID) error {
 		pm = fm.createKey(fv)
 	}
 	return pm.value.put(fv.Term, id)
+}
+
+func (fm *fieldMap) Stats() (s observability.Statistics) {
+	fm.mutex.RLock()
+	defer fm.mutex.RUnlock()
+	for _, pv := range fm.repo {
+		// 8 is the size of key
+		s.MemBytes += 8
+		s.MemBytes += pv.value.Stats().MemBytes
+	}
+	return s
 }
 
 type termContainer struct {

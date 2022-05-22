@@ -48,7 +48,7 @@ type DataPointValue struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// timestamp is in the timeunit of nanoseconds.
+	// timestamp is in the timeunit of milliseconds.
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// the order of tag_families' items match the measure schema
 	TagFamilies []*v1.TagFamilyForWrite `protobuf:"bytes,2,rep,name=tag_families,json=tagFamilies,proto3" json:"tag_families,omitempty"`

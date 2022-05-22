@@ -45,6 +45,8 @@ func TagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, i
 		return databasev1.TagType_TAG_TYPE_STRING_ARRAY, false
 	case *modelv1.TagValue_BinaryData:
 		return databasev1.TagType_TAG_TYPE_DATA_BINARY, false
+	case *modelv1.TagValue_Id:
+		return databasev1.TagType_TAG_TYPE_ID, false
 	case *modelv1.TagValue_Null:
 		return databasev1.TagType_TAG_TYPE_UNSPECIFIED, true
 	}

@@ -29,48 +29,112 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ = Describe("Write", func() {
+var _ = Describe("Write and Update service_cpm_minute", func() {
 	var svcs *services
 	var deferFn func()
 	var measure measure.Measure
+	var baseTime time.Time
+
+	var count = func() (num int) {
+		//Retrieve all shards
+		shards, err := measure.Shards(nil)
+		Expect(err).ShouldNot(HaveOccurred())
+		for _, shard := range shards {
+			sl, err := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry}))
+			Expect(err).ShouldNot(HaveOccurred())
+			for _, series := range sl {
+				seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
+				defer func(seriesSpan tsdb.SeriesSpan) {
+					_ = seriesSpan.Close()
+				}(seriesSpan)
+				Expect(err).ShouldNot(HaveOccurred())
+				seeker, err := seriesSpan.SeekerBuilder().OrderByTime(modelv1.Sort_SORT_ASC).Build()
+				Expect(err).ShouldNot(HaveOccurred())
+				iters, err := seeker.Seek()
+				Expect(err).ShouldNot(HaveOccurred())
+				for _, iter := range iters {
+					defer func(iterator tsdb.Iterator) {
+						Expect(iterator.Close()).ShouldNot(HaveOccurred())
+					}(iter)
+					for iter.Next() {
+						num++
+					}
+				}
+			}
+		}
+		return num
+	}
 
 	BeforeEach(func() {
 		svcs, deferFn = setUp()
 		var err error
 		measure, err = svcs.measure.Measure(&commonv1.Metadata{
-			Name:  "cpm",
-			Group: "default",
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 	})
 	AfterEach(func() {
 		deferFn()
 	})
-	It("writes data", func() {
-		writeData("write_data.json", measure)
+	DescribeTable("writes", func(metadata *commonv1.Metadata, dataFile string, expectDatapointsNum int) {
+		var err error
+		measure, err = svcs.measure.Measure(metadata)
+		Expect(err).ShouldNot(HaveOccurred())
+		baseTime = writeData(dataFile, measure)
+		Expect(count()).To(Equal(expectDatapointsNum))
+
+	},
+		Entry("service_cpm_minute", &commonv1.Metadata{
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
+		}, "service_cpm_minute_data.json", 3),
+		Entry("service_traffic", &commonv1.Metadata{
+			Name:  "service_traffic",
+			Group: "sw_metric",
+		}, "service_traffic_data.json", 3),
+	)
+	It("updates", func() {
+		metadata := &commonv1.Metadata{
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
+		}
+		var err error
+		measure, err = svcs.measure.Measure(metadata)
+		Expect(err).ShouldNot(HaveOccurred())
+		baseTime = writeData("service_cpm_minute_data.json", measure)
+		Expect(count()).To(Equal(3))
+		writeDataWithBaseTime(baseTime, "service_cpm_minute_data1.json", measure)
+		Expect(count()).To(Equal(3))
 	})
+
 })
 
 //go:embed testdata/*.json
 var dataFS embed.FS
 
 func writeData(dataFile string, measure measure.Measure) (baseTime time.Time) {
+	baseTime = timestamp.NowMilli()
+	writeDataWithBaseTime(baseTime, dataFile, measure)
+	return baseTime
+}
+
+func writeDataWithBaseTime(baseTime time.Time, dataFile string, measure measure.Measure) time.Time {
 	var templates []interface{}
-	baseTime = time.Now()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
-	now := time.Now()
 	for i, template := range templates {
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
-		if dataPointValue.Timestamp == nil {
-			dataPointValue.Timestamp = timestamppb.New(now.Add(time.Duration(i) * time.Minute))
-		}
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		Expect(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue)).ShouldNot(HaveOccurred())
 		errInner := measure.Write(dataPointValue)
 		Expect(errInner).ShouldNot(HaveOccurred())

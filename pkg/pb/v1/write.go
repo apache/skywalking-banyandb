@@ -26,10 +26,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
+
+type ID string
 
 const strDelimiter = "\n"
 
@@ -51,6 +54,8 @@ func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
 		return buf.Bytes(), nil
 	case *modelv1.TagValue_BinaryData:
 		return x.BinaryData, nil
+	case *modelv1.TagValue_Id:
+		return []byte(x.Id.GetValue()), nil
 	}
 	return nil, ErrUnsupportedTagForIndexField
 }
@@ -126,6 +131,121 @@ func getTag(tag interface{}) *modelv1.TagValue {
 	case []byte:
 		return &modelv1.TagValue{
 			Value: &modelv1.TagValue_BinaryData{
+				BinaryData: t,
+			},
+		}
+	case ID:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Id{
+				Id: &modelv1.ID{
+					Value: string(t),
+				},
+			},
+		}
+	}
+	return nil
+}
+
+type MeasureWriteRequestBuilder struct {
+	ec *measurev1.WriteRequest
+}
+
+func NewMeasureWriteRequestBuilder() *MeasureWriteRequestBuilder {
+	return &MeasureWriteRequestBuilder{
+		ec: &measurev1.WriteRequest{
+			DataPoint: &measurev1.DataPointValue{
+				TagFamilies: make([]*modelv1.TagFamilyForWrite, 0),
+				Fields:      make([]*modelv1.FieldValue, 0),
+			},
+		},
+	}
+}
+
+func (b *MeasureWriteRequestBuilder) Metadata(group, name string) *MeasureWriteRequestBuilder {
+	b.ec.Metadata = &commonv1.Metadata{
+		Group: group,
+		Name:  name,
+	}
+	return b
+}
+
+func (b *MeasureWriteRequestBuilder) TagFamily(tags ...interface{}) *MeasureWriteRequestBuilder {
+	tagFamily := &modelv1.TagFamilyForWrite{}
+	for _, tag := range tags {
+		tagFamily.Tags = append(tagFamily.Tags, getTag(tag))
+	}
+	b.ec.DataPoint.TagFamilies = append(b.ec.DataPoint.TagFamilies, tagFamily)
+	return b
+}
+
+func (b *MeasureWriteRequestBuilder) Fields(fields ...interface{}) *MeasureWriteRequestBuilder {
+	fieldValues := make([]*modelv1.FieldValue, 0)
+	for _, field := range fields {
+		fieldValues = append(fieldValues, getField(field))
+	}
+	b.ec.DataPoint.Fields = append(b.ec.DataPoint.Fields, fieldValues...)
+	return b
+}
+
+func (b *MeasureWriteRequestBuilder) Timestamp(t time.Time) *MeasureWriteRequestBuilder {
+	b.ec.DataPoint.Timestamp = timestamppb.New(t)
+	return b
+}
+
+func (b *MeasureWriteRequestBuilder) Build() *measurev1.WriteRequest {
+	return b.ec
+}
+
+func getField(field interface{}) *modelv1.FieldValue {
+	if field == nil {
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Null{},
+		}
+	}
+	switch t := field.(type) {
+	case int8:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Int{
+				Int: &modelv1.Int{
+					Value: int64(t),
+				},
+			},
+		}
+	case int32:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Int{
+				Int: &modelv1.Int{
+					Value: int64(t),
+				},
+			},
+		}
+	case int64:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Int{
+				Int: &modelv1.Int{
+					Value: t,
+				},
+			},
+		}
+	case int:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Int{
+				Int: &modelv1.Int{
+					Value: int64(t),
+				},
+			},
+		}
+	case string:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Str{
+				Str: &modelv1.Str{
+					Value: t,
+				},
+			},
+		}
+	case []byte:
+		return &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_BinaryData{
 				BinaryData: t,
 			},
 		}

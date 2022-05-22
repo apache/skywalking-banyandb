@@ -29,7 +29,7 @@ import "banyandb/model/v1/query.proto";
 
 // DataPoint is stored in Measures
 message DataPoint {
-  // timestamp is in the timeunit of nanoseconds.
+  // timestamp is in the timeunit of milliseconds.
   google.protobuf.Timestamp timestamp = 1;
   // tag_families contains tags selected in the projection
   repeated model.v1.TagFamily tag_families = 2;
@@ -51,19 +51,52 @@ message QueryResponse {
 message QueryRequest {
   // metadata is required
   common.v1.Metadata metadata = 1;
-  // time_range is a range query with begin/end time of entities in the timeunit of nanoseconds.
+  // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
   model.v1.TimeRange time_range = 2;
-  message Criteria {
-    string tag_family_name = 1;
-    repeated model.v1.Condition conditions = 2;
-  }
-  // criteria select the data points.
-  repeated Criteria criteria = 4;
+  // tag_families are indexed.
+  repeated model.v1.Criteria criteria = 4;
   // tag_projection can be used to select tags of the data points in the response
   model.v1.TagProjection tag_projection = 5;
   message FieldProjection {
-    repeated string name = 1;
+    repeated string names = 1;
   }
   // field_projection can be used to select fields of the data points in the response
   FieldProjection field_projection = 6;
+  message GroupBy {
+    // tag_projection must be a subset of the tag_projection of QueryRequest
+    model.v1.TagProjection tag_projection = 1;
+    // field_name must be one of fields indicated by field_projection
+    string field_name = 2;
+  }
+  // group_by groups data points based on their field value for a specific tag and use field_name as the projection name
+  GroupBy group_by = 7;
+  message Aggregation {
+    model.v1.AggregationFunction function = 1;
+    // field_name must be one of files indicated by the field_projection
+    string field_name = 2; 
+  }
+  // agg aggregates data points based on a field
+  Aggregation agg = 8;
+  message Top {
+    // number set the how many items should be returned
+    int32 number = 1;
+    // field_name must be one of files indicated by the field_projection
+    string field_name = 2;
+    // field_value_sort indicates how to sort fields
+    // ASC: bottomN
+    // DESC: topN
+    // UNSPECIFIED: topN
+    model.v1.Sort field_value_sort = 3;
+  } 
+  // top limits the result based on a particular field.
+  // If order_by is specificed, top sorts the dataset based on order_by's output
+  Top top = 9;
+  // offset is used to support pagination, together with the following limit.
+  // If top is sepcificed, offset processes the dataset based on top's output
+  uint32 offset = 10;
+  // limit is used to impose a boundary on the number of records being returned.
+  // If top is sepcificed, limit processes the dataset based on top's output
+  uint32 limit = 11;
+  // order_by is given to specify the sort for a tag.
+  model.v1.QueryOrder order_by = 12;
 }

@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
@@ -34,6 +35,14 @@ type store struct {
 	lsm          kv.Store
 	termMetadata metadata.Term
 	l            *logger.Logger
+}
+
+func (*store) Flush() error {
+	panic("do not call flush here. LSM index is using its own controller to flush memory data")
+}
+
+func (s *store) Stats() observability.Statistics {
+	return s.lsm.Stats()
 }
 
 func (s *store) Close() error {

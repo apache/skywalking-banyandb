@@ -49,7 +49,7 @@ type ElementValue struct {
 
 	// element_id could be span_id of a Span or segment_id of a Segment in the context of stream
 	ElementId string `protobuf:"bytes,1,opt,name=element_id,json=elementId,proto3" json:"element_id,omitempty"`
-	// timestamp_nanoseconds is in the timeunit of nanoseconds. It represents
+	// timestamp is in the timeunit of milliseconds. It represents
 	// 1) either the start time of a Span/Segment,
 	// 2) or the timestamp of a log
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`

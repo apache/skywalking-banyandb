@@ -19,6 +19,7 @@ package stream
 
 import (
 	"encoding/base64"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,6 +28,9 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = Describe("Write", func() {
@@ -191,6 +195,45 @@ var _ = Describe("Write", func() {
 			})
 		}
 	})
+	It("Same millisecond data", func() {
+		ele := getEle(
+			"trace_id-xxfff.111323",
+			0,
+			"webapp_id",
+			"10.0.0.1_id",
+			"/home_id",
+			300,
+			1622933202000000000,
+		)
+		err := s.Write(ele)
+		Expect(err).ShouldNot(HaveOccurred())
+		err = s.Write(ele)
+		Expect(err).ShouldNot(HaveOccurred())
+		entity := tsdb.Entity{tsdb.Entry("webapp_id"), tsdb.Entry("10.0.0.1_id"), tsdb.Entry(convert.Int64ToBytes(0))}
+		Eventually(func() int {
+			ss, err := s.Shards(entity)
+			Expect(err).ShouldNot(HaveOccurred())
+			eleSize := 0
+			for _, shard := range ss {
+				series, errInternal := shard.Series().Get(entity)
+				Expect(errInternal).ShouldNot(HaveOccurred())
+				ts, errInternal := series.Span(timestamp.NewInclusiveTimeRangeDuration(ele.Timestamp.AsTime(), 1*time.Hour))
+				Expect(errInternal).ShouldNot(HaveOccurred())
+				sb, errInternal := ts.SeekerBuilder().Build()
+				Expect(errInternal).ShouldNot(HaveOccurred())
+				iters, errInternal := sb.Seek()
+				Expect(errInternal).ShouldNot(HaveOccurred())
+				for _, iter := range iters {
+					for iter.Next() {
+						eleSize++
+					}
+					iter.Close()
+				}
+				ts.Close()
+			}
+			return eleSize
+		}).Should(Equal(2))
+	})
 })
 
 func getEle(tags ...interface{}) *streamv1.ElementValue {
@@ -201,7 +244,7 @@ func getEle(tags ...interface{}) *streamv1.ElementValue {
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	e := &streamv1.ElementValue{
 		ElementId: "1231.dfd.123123ssf",
-		Timestamp: timestamppb.Now(),
+		Timestamp: timestamppb.New(timestamp.NowMilli()),
 		TagFamilies: []*modelv1.TagFamilyForWrite{
 			{
 				Tags: []*modelv1.TagValue{

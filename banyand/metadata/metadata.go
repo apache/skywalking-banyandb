@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -45,6 +46,8 @@ type Repo interface {
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
 	MeasureRegistry() schema.Measure
 	GroupRegistry() schema.Group
+	TopNAggregationRegistry() schema.TopNAggregation
+	PropertyRegistry() schema.Property
 }
 
 type Service interface {
@@ -76,7 +79,7 @@ func (s *service) Validate() error {
 func (s *service) PreRun() error {
 	var err error
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.UseRandomListener(),
-		schema.RootDir(s.rootDir))
+		schema.RootDir(s.rootDir), schema.LoggerLevel(logger.GetLogger().GetLevel().String()))
 	if err != nil {
 		return err
 	}
@@ -118,6 +121,14 @@ func (s *service) MeasureRegistry() schema.Measure {
 }
 
 func (s *service) GroupRegistry() schema.Group {
+	return s.schemaRegistry
+}
+
+func (s *service) TopNAggregationRegistry() schema.TopNAggregation {
+	return s.schemaRegistry
+}
+
+func (s *service) PropertyRegistry() schema.Property {
 	return s.schemaRegistry
 }
 

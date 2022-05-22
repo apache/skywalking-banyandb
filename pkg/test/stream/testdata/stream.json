@@ -50,7 +50,7 @@
         },
         {
           "name": "status_code",
-          "type": "TAG_TYPE_STRING"
+          "type": "TAG_TYPE_INT"
         },
         {
           "name": "db.type",

@@ -49,11 +49,10 @@ const (
 	blockTemplate       = rootPrefix + blockPathPrefix + "-%s"
 	globalIndexTemplate = rootPrefix + "index"
 
-	segHourFormat     = "2006010215"
-	segDayFormat      = "20060102"
-	millisecondFormat = "20060102150405000"
-	blockHourFormat   = "15"
-	blockDayFormat    = "0102"
+	segHourFormat   = "2006010215"
+	segDayFormat    = "20060102"
+	blockHourFormat = "15"
+	blockDayFormat  = "0102"
 
 	dirPerm = 0700
 )
@@ -104,13 +103,18 @@ type BlockID struct {
 	BlockID uint16
 }
 
+func GenerateInternalID(unit IntervalUnit, suffix int) uint16 {
+	return uint16(unit)<<12 | ((uint16(suffix) << 4) >> 4)
+}
+
 type BlockState struct {
 	ID        BlockID
 	TimeRange timestamp.TimeRange
 	Closed    bool
 }
 type ShardState struct {
-	OpenedBlocks []BlockState
+	Blocks     []BlockState
+	OpenBlocks []BlockID
 }
 
 type database struct {
@@ -154,14 +158,14 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, err
 	}
 	segmentSize := opts.SegmentSize
-	if segmentSize.Unit == MILLISECOND {
+	if segmentSize.Num == 0 {
 		segmentSize = IntervalRule{
 			Unit: DAY,
 			Num:  1,
 		}
 	}
 	blockSize := opts.BlockSize
-	if blockSize.Unit == MILLISECOND {
+	if blockSize.Num == 0 {
 		blockSize = IntervalRule{
 			Unit: HOUR,
 			Num:  2,

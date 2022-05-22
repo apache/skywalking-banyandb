@@ -124,5 +124,6 @@ func (s *Strategy) Run() {
 }
 
 func (s *Strategy) Close() {
+	s.ctrl.OnMove(s.current, nil)
 	close(s.stopCh)
 }

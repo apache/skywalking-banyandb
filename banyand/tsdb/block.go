@@ -20,6 +20,7 @@ package tsdb
 import (
 	"context"
 	"io"
+	"path"
 	"strconv"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -38,13 +40,21 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	componentMain              = "main"
+	componentPrimaryIdx        = "primary"
+	componentSecondInvertedIdx = "inverted"
+	componentSecondLSMIdx      = "lsm"
+)
+
 type block struct {
-	path   string
-	l      *logger.Logger
-	suffix string
-	ref    *z.Closer
-	lock   sync.RWMutex
-	closed *atomic.Bool
+	path     string
+	l        *logger.Logger
+	suffix   string
+	ref      *z.Closer
+	lock     sync.RWMutex
+	closed   *atomic.Bool
+	position common.Position
 
 	store         kv.TimeSeriesStore
 	primaryIndex  index.Store
@@ -56,6 +66,7 @@ type block struct {
 	segID          uint16
 	blockID        uint16
 	encodingMethod EncodingMethod
+	flushCh        chan struct{}
 }
 
 type blockOpts struct {
@@ -71,7 +82,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if err != nil {
 		return nil, err
 	}
-	id := uint16(opts.blockSize.Unit)<<12 | ((uint16(suffixInteger) << 4) >> 4)
+	id := GenerateInternalID(opts.blockSize.Unit, suffixInteger)
 	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
 	encodingMethodObject := ctx.Value(encodingMethodKey)
 	if encodingMethodObject == nil {
@@ -80,15 +91,20 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 			DecoderPool: encoding.NewPlainDecoderPool(0),
 		}
 	}
+	clock, _ := timestamp.GetClock(ctx)
 	b = &block{
 		segID:          opts.segID,
 		blockID:        id,
 		path:           opts.path,
 		l:              logger.Fetch(ctx, "block"),
 		TimeRange:      timeRange,
-		Reporter:       bucket.NewTimeBasedReporter(timeRange),
+		Reporter:       bucket.NewTimeBasedReporter(timeRange, clock),
 		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
+	}
+	position := ctx.Value(common.PositionKey)
+	if position != nil {
+		b.position = position.(common.Position)
 	}
 	return b, err
 }
@@ -102,33 +118,46 @@ func (b *block) open() (err error) {
 	b.ref = z.NewCloser(1)
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
-		b.path+"/store",
+		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
-		kv.TSSWithLogger(b.l.Named("main-store")),
+		kv.TSSWithLogger(b.l.Named(componentMain)),
+		kv.TSSWithFlushCallback(func() {
+
+		}),
 	); err != nil {
 		return err
 	}
 	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   b.path + "/primary",
-		Logger: b.l.Named("primary-lsm"),
+		Path:   path.Join(b.path, componentPrimaryIdx),
+		Logger: b.l.Named(componentPrimaryIdx),
 	}); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
-		Path:   b.path + "/inverted",
-		Logger: b.l.Named("secondary-inverted"),
+		Path:   path.Join(b.path, componentSecondInvertedIdx),
+		Logger: b.l.Named(componentSecondInvertedIdx),
 	}); err != nil {
 		return err
 	}
 	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   b.path + "/lsm",
-		Logger: b.l.Named("secondary-lsm"),
+		Path:   path.Join(b.path, componentSecondLSMIdx),
+		Logger: b.l.Named(componentSecondLSMIdx),
 	}); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.closed.Store(false)
+	b.flushCh = make(chan struct{})
+	go func() {
+		for {
+			_, more := <-b.flushCh
+			if !more {
+				return
+			}
+			b.flush()
+		}
+	}()
 	return nil
 }
 
@@ -150,6 +179,17 @@ func (b *block) incRef() {
 	b.ref.AddRunning(1)
 }
 
+func (b *block) flush() {
+	for i := 0; i < 10; i++ {
+		err := b.invertedIndex.Flush()
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Second)
+		b.l.Warn().Err(err).Int("retried", i).Msg("failed to flush inverted index")
+	}
+}
+
 func (b *block) close() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -162,6 +202,7 @@ func (b *block) close() {
 		_ = closer.Close()
 	}
 	b.closed.Store(true)
+	close(b.flushCh)
 }
 
 func (b *block) isClosed() bool {
@@ -170,6 +211,12 @@ func (b *block) isClosed() bool {
 
 func (b *block) String() string {
 	return b.Reporter.String()
+}
+
+func (b *block) stats() (names []string, stats []observability.Statistics) {
+	names = append(names, componentMain, componentPrimaryIdx, componentSecondInvertedIdx, componentSecondLSMIdx)
+	stats = append(stats, b.store.Stats(), b.primaryIndex.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
+	return names, stats
 }
 
 type blockDelegate interface {

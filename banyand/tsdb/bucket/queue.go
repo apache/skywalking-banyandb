@@ -29,6 +29,7 @@ type EvictFn func(id interface{})
 type Queue interface {
 	Push(id interface{})
 	Len() int
+	All() []interface{}
 }
 
 const (
@@ -112,6 +113,16 @@ func (q *lruQueue) Len() int {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	return q.recent.Len() + q.frequent.Len()
+}
+
+func (q *lruQueue) All() []interface{} {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	all := make([]interface{}, q.recent.Len()+q.frequent.Len()+q.recentEvict.Len())
+	copy(all, q.recent.Keys())
+	copy(all[q.recent.Len():], q.frequent.Keys())
+	copy(all[q.recent.Len()+q.frequent.Len():], q.recentEvict.Keys())
+	return all
 }
 
 func (q *lruQueue) ensureSpace(recentEvict bool) {

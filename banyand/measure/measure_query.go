@@ -50,6 +50,7 @@ type Measure interface {
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
 	GetSchema() *databasev1.Measure
+	GetIndexRules() []*databasev1.IndexRule
 }
 
 var _ Measure = (*measure)(nil)
@@ -91,7 +92,7 @@ func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
 }
 
 func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
-	familyRawBytes, err := item.Family(string(familyIdentity(family, TagFlag)))
+	familyRawBytes, err := item.Family(familyIdentity(family, TagFlag))
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,7 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 			break
 		}
 	}
-	bytes, err := item.Family(string(familyIdentity(name, encoderFieldFlag(fieldSpec))))
+	bytes, err := item.Family(familyIdentity(name, encoderFieldFlag(fieldSpec, s.interval)))
 	if err != nil {
 		return nil, err
 	}

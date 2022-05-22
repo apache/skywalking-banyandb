@@ -19,14 +19,16 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/prof"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -59,17 +61,22 @@ func newStandaloneCmd() *cobra.Command {
 	}
 	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate metadata service")
+		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	q, err := query.NewExecutor(ctx, streamSvc, metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate trace series")
+		l.Fatal().Err(err).Msg("failed to initiate measure service")
+	}
+	q, err := query.NewExecutor(ctx, streamSvc, measureSvc, metaSvc, repo, pipeline)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
-	profSvc := prof.NewProfService()
+	profSvc := observability.NewProfService()
+	metricSvc := observability.NewMetricService()
 
 	// Meta the run Group units.
 	g.Register(
@@ -77,9 +84,11 @@ func newStandaloneCmd() *cobra.Command {
 		repo,
 		pipeline,
 		metaSvc,
+		measureSvc,
 		streamSvc,
 		q,
 		tcp,
+		metricSvc,
 		profSvc,
 	)
 	logging := logger.Logging{}
@@ -94,6 +103,7 @@ func newStandaloneCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
 			if err := g.Run(); err != nil {

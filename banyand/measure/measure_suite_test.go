@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package measure_test
 
 import (
@@ -45,7 +45,7 @@ func TestMeasure(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "info",
+		Level: "warn",
 	})).To(gomega.Succeed())
 })
 
@@ -76,7 +76,7 @@ func setUp() (*services, func()) {
 	repo := discovery.NewMockServiceRepo(ctrl)
 	repo.EXPECT().NodeID().AnyTimes()
 	// Both PreRun and Serve phases send events
-	repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 1)
+	repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 7)
 	repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 2)
 
 	// Init Pipeline
@@ -98,7 +98,7 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--root-path="+rootPath)
+	flags = append(flags, "--measure-root-path="+rootPath)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,

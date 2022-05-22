@@ -26,6 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	test "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
@@ -34,6 +35,10 @@ func Test_service_RulesBySubject(t *testing.T) {
 		subject *commonv1.Metadata
 	}
 	is := assert.New(t)
+	is.NoError(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	}))
 	ctx := context.TODO()
 	s, _ := NewService(ctx)
 	is.NotNil(s)
@@ -43,7 +48,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	err = s.PreRun()
 	is.NoError(err)
 	defer func() {
-		// s.GracefulStop()
+		s.GracefulStop()
 		_ = os.RemoveAll(rootDir)
 	}()
 

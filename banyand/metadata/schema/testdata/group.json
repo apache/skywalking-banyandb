@@ -5,16 +5,7 @@
   "catalog": "CATALOG_STREAM",
   "resource_opts": {
     "shard_num": 2,
-    "interval_rules": [
-      {
-        "interval": "1d",
-        "block_num": "12",
-        "ttl": {
-          "val": 7,
-          "unit": "DURATION_UNIT_DAY"
-        }
-      }
-    ]
+    "ttl": "7d"
   },
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

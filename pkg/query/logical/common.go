@@ -28,6 +28,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+var (
+	ErrTagNotDefined              = errors.New("tag is not defined")
+	ErrFieldNotDefined            = errors.New("field is not defined")
+	ErrInvalidConditionType       = errors.New("invalid pair type")
+	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
+	ErrIndexNotDefined            = errors.New("index is not define for the tag")
+	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
+)
+
 var ErrInvalidData = errors.New("data is invalid")
 
 type (
@@ -45,11 +54,11 @@ func createComparator(sortDirection modelv1.Sort) comparator {
 	}
 }
 
-// projectItem parses the item within the ExecutionContext.
+// projectItem parses the item within the StreamExecutionContext.
 // projectionFieldRefs must be prepared before calling this method, projectionFieldRefs should be a list of
 // tag list where the inner list must exist in the same tag family.
 // Strict order can be guaranteed in the result.
-func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*FieldRef) ([]*modelv1.TagFamily, error) {
+func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*TagRef) ([]*modelv1.TagFamily, error) {
 	tagFamily := make([]*modelv1.TagFamily, len(projectionFieldRefs))
 	for i, refs := range projectionFieldRefs {
 		if len(refs) == 0 {

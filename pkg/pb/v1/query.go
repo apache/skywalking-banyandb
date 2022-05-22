@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -41,19 +42,19 @@ var (
 	}
 )
 
-type QueryRequestBuilder struct {
+type StreamQueryRequestBuilder struct {
 	ec *streamv1.QueryRequest
 }
 
-func NewQueryRequestBuilder() *QueryRequestBuilder {
-	return &QueryRequestBuilder{
+func NewStreamQueryRequestBuilder() *StreamQueryRequestBuilder {
+	return &StreamQueryRequestBuilder{
 		ec: &streamv1.QueryRequest{
 			Projection: &modelv1.TagProjection{},
 		},
 	}
 }
 
-func (b *QueryRequestBuilder) Metadata(group, name string) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) Metadata(group, name string) *StreamQueryRequestBuilder {
 	b.ec.Metadata = &commonv1.Metadata{
 		Group: group,
 		Name:  name,
@@ -61,17 +62,19 @@ func (b *QueryRequestBuilder) Metadata(group, name string) *QueryRequestBuilder 
 	return b
 }
 
-func (b *QueryRequestBuilder) Limit(limit uint32) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) Limit(limit uint32) *StreamQueryRequestBuilder {
 	b.ec.Limit = limit
 	return b
 }
 
-func (b *QueryRequestBuilder) Offset(offset uint32) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) Offset(offset uint32) *StreamQueryRequestBuilder {
 	b.ec.Offset = offset
 	return b
 }
 
-func (b *QueryRequestBuilder) FieldsInTagFamily(tagFamilyName string, items ...interface{}) *QueryRequestBuilder {
+type TagTypeID string
+
+func (b *StreamQueryRequestBuilder) TagsInTagFamily(tagFamilyName string, items ...interface{}) *StreamQueryRequestBuilder {
 	if len(items)%3 != 0 {
 		panic("expect 3 to be a factor of the length of items")
 	}
@@ -144,11 +147,15 @@ func buildTagValue(value interface{}) *modelv1.TagValue {
 		return &modelv1.TagValue{
 			Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}},
 		}
+	case TagTypeID:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Id{Id: &modelv1.ID{Value: string(v)}},
+		}
 	}
 	panic("not supported")
 }
 
-func (b *QueryRequestBuilder) Projection(tagFamily string, projections ...string) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) Projection(tagFamily string, projections ...string) *StreamQueryRequestBuilder {
 	b.ec.Projection.TagFamilies = append(b.ec.Projection.GetTagFamilies(), &modelv1.TagProjection_TagFamily{
 		Name: tagFamily,
 		Tags: projections,
@@ -156,7 +163,7 @@ func (b *QueryRequestBuilder) Projection(tagFamily string, projections ...string
 	return b
 }
 
-func (b *QueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *StreamQueryRequestBuilder {
 	b.ec.OrderBy = &modelv1.QueryOrder{
 		IndexRuleName: indexRuleName,
 		Sort:          sort,
@@ -164,7 +171,7 @@ func (b *QueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *
 	return b
 }
 
-func (b *QueryRequestBuilder) TimeRange(sT, eT time.Time) *QueryRequestBuilder {
+func (b *StreamQueryRequestBuilder) TimeRange(sT, eT time.Time) *StreamQueryRequestBuilder {
 	b.ec.TimeRange = &modelv1.TimeRange{
 		Begin: timestamppb.New(sT),
 		End:   timestamppb.New(eT),
@@ -172,7 +179,7 @@ func (b *QueryRequestBuilder) TimeRange(sT, eT time.Time) *QueryRequestBuilder {
 	return b
 }
 
-func (b *QueryRequestBuilder) Build() *streamv1.QueryRequest {
+func (b *StreamQueryRequestBuilder) Build() *streamv1.QueryRequest {
 	return b.ec
 }
 
@@ -219,4 +226,145 @@ func (qeb *QueryResponseElementBuilder) FieldsInTagFamily(tagFamily string, item
 
 func (qeb *QueryResponseElementBuilder) Build() *streamv1.Element {
 	return qeb.elem
+}
+
+type MeasureQueryRequestBuilder struct {
+	ec *measurev1.QueryRequest
+}
+
+func NewMeasureQueryRequestBuilder() *MeasureQueryRequestBuilder {
+	return &MeasureQueryRequestBuilder{
+		ec: &measurev1.QueryRequest{
+			TagProjection:   &modelv1.TagProjection{},
+			FieldProjection: &measurev1.QueryRequest_FieldProjection{},
+		},
+	}
+}
+
+func (b *MeasureQueryRequestBuilder) Metadata(group, name string) *MeasureQueryRequestBuilder {
+	b.ec.Metadata = &commonv1.Metadata{
+		Group: group,
+		Name:  name,
+	}
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) TagsInTagFamily(tagFamilyName string, items ...interface{}) *MeasureQueryRequestBuilder {
+	if len(items)%3 != 0 {
+		panic("expect 3 to be a factor of the length of items")
+	}
+
+	criteriaConditions := make([]*modelv1.Condition, len(items)/3)
+	for i := 0; i < len(items)/3; i++ {
+		key, op, values := items[i*3+0], items[i*3+1], items[i*3+2]
+		criteriaConditions[i] = &modelv1.Condition{
+			Name:  key.(string),
+			Op:    binaryOpsMap[op.(string)],
+			Value: buildTagValue(values),
+		}
+	}
+
+	b.ec.Criteria = append(b.ec.Criteria, &modelv1.Criteria{
+		TagFamilyName: tagFamilyName,
+		Conditions:    criteriaConditions,
+	})
+
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) TagProjection(tagFamily string, projections ...string) *MeasureQueryRequestBuilder {
+	b.ec.TagProjection.TagFamilies = append(b.ec.TagProjection.GetTagFamilies(), &modelv1.TagProjection_TagFamily{
+		Name: tagFamily,
+		Tags: projections,
+	})
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) FieldProjection(projections ...string) *MeasureQueryRequestBuilder {
+	b.ec.FieldProjection.Names = append(b.ec.FieldProjection.Names, projections...)
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) GroupBy(tagFamily string, projections ...string) *GroupByBuilder {
+	b.ec.GroupBy = &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{
+					Name: tagFamily,
+					Tags: projections,
+				},
+			},
+		},
+	}
+	return &GroupByBuilder{
+		builder: b,
+	}
+}
+
+func (b *MeasureQueryRequestBuilder) TimeRange(sT, eT time.Time) *MeasureQueryRequestBuilder {
+	b.ec.TimeRange = &modelv1.TimeRange{
+		Begin: timestamppb.New(sT),
+		End:   timestamppb.New(eT),
+	}
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) Top(n int32, fieldName string, sort modelv1.Sort) *MeasureQueryRequestBuilder {
+	b.ec.Top = &measurev1.QueryRequest_Top{
+		Number:         n,
+		FieldName:      fieldName,
+		FieldValueSort: sort,
+	}
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) OrderBy(indexRuleName string, sort modelv1.Sort) *MeasureQueryRequestBuilder {
+	b.ec.OrderBy = &modelv1.QueryOrder{
+		IndexRuleName: indexRuleName,
+		Sort:          sort,
+	}
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) Limit(offset, limit uint32) *MeasureQueryRequestBuilder {
+	b.ec.Offset = offset
+	b.ec.Limit = limit
+	return b
+}
+
+func (b *MeasureQueryRequestBuilder) Build() *measurev1.QueryRequest {
+	return b.ec
+}
+
+type GroupByBuilder struct {
+	builder *MeasureQueryRequestBuilder
+}
+
+func (b *GroupByBuilder) Max(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX)
+}
+
+func (b *GroupByBuilder) Min(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN)
+}
+
+func (b *GroupByBuilder) Mean(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN)
+}
+
+func (b *GroupByBuilder) Count(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT)
+}
+
+func (b *GroupByBuilder) Sum(fieldName string) *MeasureQueryRequestBuilder {
+	return b.aggregate(fieldName, modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM)
+}
+
+func (b *GroupByBuilder) aggregate(fieldName string, aggregationFunc modelv1.AggregationFunction) *MeasureQueryRequestBuilder {
+	b.builder.ec.GroupBy.FieldName = fieldName
+	b.builder.ec.Agg = &measurev1.QueryRequest_Aggregation{
+		FieldName: fieldName,
+		Function:  aggregationFunc,
+	}
+	return b.builder
 }

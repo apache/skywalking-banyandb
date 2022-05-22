@@ -68,7 +68,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
 	}
-	if err := e.UpdateGroup(context.TODO(), g); err != nil {
+	if err := e.CreateGroup(context.TODO(), g); err != nil {
 		return err
 	}
 
@@ -76,7 +76,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.UpdateStream(context.Background(), s)
+	err := e.CreateStream(context.Background(), s)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func preloadSchema(e Registry) error {
 	if err = protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); err != nil {
 		return err
 	}
-	err = e.UpdateIndexRuleBinding(context.Background(), indexRuleBinding)
+	err = e.CreateIndexRuleBinding(context.Background(), indexRuleBinding)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func preloadSchema(e Registry) error {
 		if err != nil {
 			return err
 		}
-		err = e.UpdateIndexRule(context.Background(), &idxRule)
+		err = e.CreateIndexRule(context.Background(), &idxRule)
 		if err != nil {
 			return err
 		}
@@ -131,7 +131,7 @@ func useUnixDomain() RegistryOption {
 
 func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -223,7 +223,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 func Test_Etcd_Entity_List(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -305,7 +305,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 
 func Test_Etcd_Delete(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -374,7 +374,7 @@ func Test_Etcd_Delete(t *testing.T) {
 
 func Test_Notify(t *testing.T) {
 	req := require.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir())
+	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
 	req.NoError(err)
 	req.NotNil(registry)
 	defer registry.Close()
