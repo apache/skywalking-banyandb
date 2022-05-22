@@ -31,13 +31,18 @@ concurrency:
 jobs:
   StoragePlugins:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
-    name: Storage
+    name: Storage E2E
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       matrix:
-        config-file:
-          - storage/banyandb/e2e.yaml
+        test:
+          - name: BanyanDB
+            config: storage/banyandb/e2e.yaml
+          - name: Trace Profiling BanyanDB
+            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
+          - name: eBPF Profiling BanyanDB
+            config: test/e2e-v2/cases/profiling/ebpf/banyandb/e2e.yaml
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -61,10 +66,13 @@ jobs:
         run: |
           make docker || make docker
           docker image ls
-      - name: Run E2E Test
-        uses: ./.github/actions/infra-e2e-test
+      - if: env.SKIP_CI != 'true'
+        name: Download SkyWalking Java Agent
+        uses: ./.github/actions/sw-java-agent
+      - name: ${{ matrix.test.name }}
+        uses: apache/skywalking-infra-e2e@main
         with:
-          config-file: ${{ matrix.config-file }}
+          e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
 
   Storage:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
