@@ -38,7 +38,7 @@ services:
       oap:
         condition: service_healthy
       agent:
-        condition: service_started
+        condition: service_completed_successfully
     ports:
       - 9090
 
@@ -52,7 +52,7 @@ services:
       banyandb:
         condition: service_healthy
       agent:
-        condition: service_started
+        condition: service_completed_successfully
     ports:
       - 12800
 
