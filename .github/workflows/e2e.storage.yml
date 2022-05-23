@@ -67,9 +67,6 @@ jobs:
         run: |
           make docker || make docker
           docker image ls
-      - if: env.SKIP_CI != 'true'
-        name: Download SkyWalking Java Agent
-        uses: ./.github/actions/sw-java-agent
       - name: ${{ matrix.test.name }}
         uses: apache/skywalking-infra-e2e@main
         with:
