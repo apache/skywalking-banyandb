@@ -54,7 +54,7 @@ services:
       oap:
         condition: service_healthy
       agent:
-        condition: service_completed_successfully
+        condition: service_started
 
   consumer:
     extends:
@@ -68,7 +68,7 @@ services:
       provider:
         condition: service_healthy
       agent:
-        condition: service_completed_successfully
+        condition: service_started
 
 networks:
   e2e:
