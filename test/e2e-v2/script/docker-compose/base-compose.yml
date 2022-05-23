@@ -33,7 +33,7 @@ services:
     image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8"
     networks:
       - e2e
-    command: cp -r /skywalking/agent/ skywalking-java-agent/ && sh
+    command: bash -c "cp -r /skywalking/agent/ skywalking-java-agent/ && sleep 3600"
     volumes:
       - sw_agent:/skywalking-java-agent
 
