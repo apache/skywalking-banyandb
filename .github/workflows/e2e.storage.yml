@@ -70,7 +70,7 @@ jobs:
           make docker || make docker
           docker image ls
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@main
+        uses: apache/skywalking-infra-e2e@1e522c30ea4467d34dcfe34f14829a7b990932ea
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
 
