@@ -28,6 +28,14 @@ services:
       interval: 5s
       timeout: 60s
       retries: 120
+  
+  agent:
+    image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8"
+    networks:
+      - e2e
+    command: ["cp", "-r", "/skywalking/agent/", "/skywalking-java-agent/"]
+    volumes:
+      - sw_agent:/skywalking-java-agent
 
   oap:
     image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
@@ -69,14 +77,14 @@ services:
   provider:
     image: "ghcr.io/apache/skywalking/e2e-service-provider:latest"
     volumes:
-      - ./../../../../skywalking-agent:/sw-java-agent
+      - sw_agent:/sw-java-agent
     networks:
       - e2e
     expose:
       - 9090
       - 5005
     environment:
-      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       SW_AGENT_NAME: e2e-service-provider
@@ -92,14 +100,14 @@ services:
   consumer:
     image: "ghcr.io/apache/skywalking/e2e-service-consumer:latest"
     volumes:
-      - ./../../../../skywalking-agent:/sw-java-agent
+      - sw_agent:/sw-java-agent
     networks:
       - e2e
     expose:
       - 9092
       - 5005
     environment:
-      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/skywalking-agent.jar
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       PROVIDER_URL: http://provider:9090
@@ -115,3 +123,6 @@ services:
 
 networks:
   e2e:
+
+volumes:
+  sw_agent:

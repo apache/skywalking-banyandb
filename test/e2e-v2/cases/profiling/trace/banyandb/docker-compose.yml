@@ -23,6 +23,13 @@ services:
     networks:
       - e2e
 
+  agent:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: agent
+    networks:
+      - e2e
+
   provider:
     extends:
       file: ../../../../script/docker-compose/base-compose.yml
@@ -30,6 +37,8 @@ services:
     depends_on:
       oap:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
     ports:
       - 9090
 
@@ -42,8 +51,13 @@ services:
     depends_on:
       banyandb:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
     ports:
       - 12800
 
 networks:
   e2e:
+
+volumes:
+  sw_agent:

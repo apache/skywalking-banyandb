@@ -35,6 +35,13 @@ services:
       banyandb:
         condition: service_healthy
 
+  agent:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: agent
+    networks:
+      - e2e
+
   provider:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
@@ -46,6 +53,8 @@ services:
     depends_on:
       oap:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
 
   consumer:
     extends:
@@ -58,6 +67,11 @@ services:
         condition: service_healthy
       provider:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
 
 networks:
   e2e:
+
+volumes:
+  sw_agent:
