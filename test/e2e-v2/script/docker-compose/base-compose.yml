@@ -75,7 +75,7 @@ services:
       - SW_OAP_ADDRESS=http://oap:12800
 
   provider:
-    image: "ghcr.io/apache/skywalking/e2e-service-provider:latest"
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}"
     volumes:
       - sw_agent:/sw-java-agent
     networks:
@@ -98,7 +98,7 @@ services:
       retries: 120
 
   consumer:
-    image: "ghcr.io/apache/skywalking/e2e-service-consumer:latest"
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}"
     volumes:
       - sw_agent:/sw-java-agent
     networks:
