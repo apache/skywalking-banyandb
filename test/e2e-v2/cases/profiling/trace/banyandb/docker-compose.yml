@@ -25,7 +25,7 @@ services:
 
   agent:
     extends:
-      file: ../../../script/docker-compose/base-compose.yml
+      file: ../../../../script/docker-compose/base-compose.yml
       service: agent
     networks:
       - e2e
