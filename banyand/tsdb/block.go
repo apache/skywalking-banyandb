@@ -116,13 +116,23 @@ func (b *block) open() (err error) {
 		return nil
 	}
 	b.ref = z.NewCloser(1)
+	b.flushCh = make(chan struct{})
+	go func() {
+		for {
+			_, more := <-b.flushCh
+			if !more {
+				return
+			}
+			b.flush()
+		}
+	}()
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
 		kv.TSSWithFlushCallback(func() {
-
+			b.flushCh <- struct{}{}
 		}),
 	); err != nil {
 		return err
@@ -148,16 +158,7 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.closed.Store(false)
-	b.flushCh = make(chan struct{})
-	go func() {
-		for {
-			_, more := <-b.flushCh
-			if !more {
-				return
-			}
-			b.flush()
-		}
-	}()
+
 	return nil
 }
 

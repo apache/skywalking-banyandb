@@ -38,22 +38,18 @@ import (
 )
 
 var _ = Describe("Measure", func() {
-	var streamPath, measurePath, metadataPath string
-	var gracefulStop, deferStreamFunc, deferMeasureFunc, deferMetadataFunc func()
+	var path string
+	var gracefulStop, deferFunc func()
 	var conn *grpclib.ClientConn
 	BeforeEach(func() {
 		var err error
-		streamPath, deferStreamFunc, err = test.NewSpace()
-		Expect(err).NotTo(HaveOccurred())
-		measurePath, deferMeasureFunc, err = test.NewSpace()
-		Expect(err).NotTo(HaveOccurred())
-		metadataPath, deferMetadataFunc, err = test.NewSpace()
+		path, deferFunc, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
-		gracefulStop = setup(flags)
+		flags := []string{"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path}
+		gracefulStop = setup(true, flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
 		Expect(err).NotTo(HaveOccurred())
@@ -64,7 +60,7 @@ var _ = Describe("Measure", func() {
 		_ = conn.Close()
 		gracefulStop()
 		By("Verifying an existing server")
-		gracefulStop = setup(flags)
+		gracefulStop = setup(false, flags)
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() int {
@@ -77,7 +73,7 @@ var _ = Describe("Measure", func() {
 		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--stream-root-path=" + streamPath, "--measure-root-path=" + measurePath, "--metadata-root-path=" + metadataPath}
+		flags := []string{"--tls=true", "--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -86,7 +82,7 @@ var _ = Describe("Measure", func() {
 		flags = append(flags, "--key-file="+keyFile)
 		addr := "localhost:17913"
 		flags = append(flags, "--addr="+addr)
-		gracefulStop = setup(flags)
+		gracefulStop = setup(true, flags)
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		Expect(err).NotTo(HaveOccurred())
 		conn, err = grpclib.Dial(addr, grpclib.WithTransportCredentials(creds))
@@ -99,9 +95,7 @@ var _ = Describe("Measure", func() {
 	AfterEach(func() {
 		_ = conn.Close()
 		gracefulStop()
-		deferMetadataFunc()
-		deferStreamFunc()
-		deferMeasureFunc()
+		deferFunc()
 	})
 })
 

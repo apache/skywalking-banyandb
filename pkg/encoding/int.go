@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/apache/skywalking-banyandb/pkg/bit"
 	"github.com/apache/skywalking-banyandb/pkg/buffer"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -144,9 +146,12 @@ func (ie *intEncoder) Append(ts uint64, value []byte) {
 		ie.num++
 	}
 	ie.prevTime = ts
-	ie.bw.WriteBool(len(value) > 0)
+	l := len(value)
+	ie.bw.WriteBool(l > 0)
 	ie.values.Write(convert.BytesToUint64(value))
 	ie.num++
+	itemsNum.With(prometheus.Labels{"type": "int"}).Inc()
+	rawSize.With(prometheus.Labels{"type": "int"}).Add(float64(l + 8))
 }
 
 func (ie *intEncoder) IsFull() bool {
@@ -165,7 +170,9 @@ func (ie *intEncoder) Encode() ([]byte, error) {
 	buffWriter := buffer.NewBufferWriter(ie.buff)
 	buffWriter.PutUint64(ie.startTime)
 	buffWriter.PutUint16(uint16(ie.size))
-	return buffWriter.Bytes(), nil
+	bb := buffWriter.Bytes()
+	encodedSize.With(prometheus.Labels{"type": "int"}).Add(float64(len(bb)))
+	return bb, nil
 }
 
 func (ie *intEncoder) StartTime() uint64 {

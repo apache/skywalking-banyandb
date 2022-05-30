@@ -26,6 +26,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/apache/skywalking-banyandb/pkg/buffer"
 )
@@ -158,7 +159,11 @@ func (t *plainEncoder) Encode() ([]byte, error) {
 	result := buffer.NewBufferWriter(bytes.NewBuffer(make([]byte, 0, len(dst)+2)))
 	result.Write(dst)
 	result.PutUint16(uint16(l))
-	return result.Bytes(), nil
+	dd := result.Bytes()
+	itemsNum.With(prometheus.Labels{"type": "plain"}).Inc()
+	rawSize.With(prometheus.Labels{"type": "plain"}).Add(float64(l))
+	encodedSize.With(prometheus.Labels{"type": "plain"}).Add(float64(len(dd)))
+	return dd, nil
 }
 
 func compressBound(srcSize int) int {

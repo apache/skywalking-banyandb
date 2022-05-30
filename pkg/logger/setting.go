@@ -23,46 +23,68 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
 )
 
-var (
-	root *Logger
-	once sync.Once
-)
+var root = rootLogger{}
 
-// GetLogger return logger with a scope
-func GetLogger(scope ...string) *Logger {
-	if len(scope) < 1 {
-		return root
-	}
-	module := strings.Join(scope, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+type rootLogger struct {
+	done uint32
+	m    sync.Mutex
+	l    *Logger
 }
 
-// Bootstrap logging for system boot
-func Bootstrap() (err error) {
-	once.Do(func() {
-		root, err = getLogger(Logging{
+func (rl *rootLogger) verify() {
+	if atomic.LoadUint32(&root.done) == 0 {
+		rl.setDefault()
+	}
+}
+
+func (rl *rootLogger) setDefault() {
+	rl.m.Lock()
+	defer rl.m.Unlock()
+	if rl.done == 0 {
+		defer atomic.StoreUint32(&rl.done, 1)
+		var err error
+		rl.l, err = getLogger(Logging{
 			Env:   "dev",
 			Level: "debug",
 		})
-	})
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func (rl *rootLogger) set(cfg Logging) error {
+	rl.m.Lock()
+	defer rl.m.Unlock()
+	var err error
+	rl.l, err = getLogger(cfg)
 	if err != nil {
 		return err
 	}
+	atomic.StoreUint32(&rl.done, 1)
 	return nil
+}
+
+// GetLogger return logger with a scope
+func GetLogger(scope ...string) *Logger {
+	root.verify()
+	if len(scope) < 1 {
+		return root.l
+	}
+	module := strings.Join(scope, ".")
+	subLogger := root.l.Logger.With().Str("module", module).Logger()
+	return &Logger{module: module, Logger: &subLogger}
 }
 
 // Init initializes a rs/zerolog logger from user config
 func Init(cfg Logging) (err error) {
-	once.Do(func() {
-		root, err = getLogger(cfg)
-	})
-	if err != nil {
+	if err != root.set(cfg) {
 		return err
 	}
 	return nil

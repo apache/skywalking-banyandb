@@ -44,10 +44,10 @@ type encoderPool struct {
 	l           *logger.Logger
 }
 
-func newEncoderPool(size int, l *logger.Logger) encoding.SeriesEncoderPool {
+func newEncoderPool(plainSize, intSize int, l *logger.Logger) encoding.SeriesEncoderPool {
 	return &encoderPool{
-		intPool:     encoding.NewIntEncoderPool(size, intervalFn),
-		defaultPool: encoding.NewPlainEncoderPool(size),
+		intPool:     encoding.NewIntEncoderPool(intSize, intervalFn),
+		defaultPool: encoding.NewPlainEncoderPool(plainSize),
 		l:           l,
 	}
 }
@@ -75,10 +75,10 @@ type decoderPool struct {
 	l           *logger.Logger
 }
 
-func newDecoderPool(size int, l *logger.Logger) encoding.SeriesDecoderPool {
+func newDecoderPool(plainSize, intSize int, l *logger.Logger) encoding.SeriesDecoderPool {
 	return &decoderPool{
-		intPool:     encoding.NewIntDecoderPool(size, intervalFn),
-		defaultPool: encoding.NewPlainDecoderPool(size),
+		intPool:     encoding.NewIntDecoderPool(intSize, intervalFn),
+		defaultPool: encoding.NewPlainDecoderPool(plainSize),
 		l:           l,
 	}
 }

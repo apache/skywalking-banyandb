@@ -20,10 +20,13 @@ package grpc
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -197,6 +200,7 @@ func (s *Server) Serve() run.StopNotify {
 	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
 	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
+	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
 	go func() {
@@ -209,5 +213,19 @@ func (s *Server) Serve() run.StopNotify {
 
 func (s *Server) GracefulStop() {
 	s.log.Info().Msg("stopping")
-	s.ser.GracefulStop()
+	stopped := make(chan struct{})
+	go func() {
+		s.ser.GracefulStop()
+		close(stopped)
+	}()
+
+	t := time.NewTimer(10 * time.Second)
+	select {
+	case <-t.C:
+		s.ser.Stop()
+		s.log.Info().Msg("force stopped")
+	case <-stopped:
+		t.Stop()
+		s.log.Info().Msg("stopped gracefully")
+	}
 }

@@ -38,6 +38,12 @@ type streamService struct {
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
+	reply := func() error {
+		if err := stream.Send(&streamv1.WriteResponse{}); err != nil {
+			return err
+		}
+		return nil
+	}
 	for {
 		writeEntity, err := stream.Recv()
 		if err == io.EOF {
@@ -48,11 +54,17 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 			s.log.Error().Err(errTime).Msg("the element time is invalid")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
 			continue
 		}
 		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
 			s.log.Error().Err(err).Msg("failed to navigate to the write target")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
 			continue
 		}
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
@@ -62,9 +74,13 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		})
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
-			return errWritePub
+			s.log.Error().Err(errWritePub).Msg("failed to send a message")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
+			continue
 		}
-		if errSend := stream.Send(&streamv1.WriteResponse{}); errSend != nil {
+		if errSend := reply(); errSend != nil {
 			return errSend
 		}
 	}

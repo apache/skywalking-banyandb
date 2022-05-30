@@ -44,7 +44,6 @@ var (
 )
 
 func newStandaloneCmd() *cobra.Command {
-	_ = logger.Bootstrap()
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	repo, err := discovery.NewServiceRepo(ctx)
@@ -115,7 +114,7 @@ func newStandaloneCmd() *cobra.Command {
 	}
 
 	standaloneCmd.Flags().StringVarP(&logging.Env, "logging.env", "", "dev", "the logging")
-	standaloneCmd.Flags().StringVarP(&logging.Level, "logging.level", "", "debug", "the level of logging")
+	standaloneCmd.Flags().StringVarP(&logging.Level, "logging.level", "", "info", "the level of logging")
 	standaloneCmd.Flags().AddFlagSet(g.RegisterFlags().FlagSet)
 	return standaloneCmd
 }

@@ -17,9 +17,31 @@
 
 package encoding
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
 
 var ErrEncodeEmpty = errors.New("encode an empty value")
+
+var (
+	rawSize = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name:        "banyand_encoding_raw_size",
+		Help:        "The raw size of series",
+		ConstLabels: prometheus.Labels{"model": "encoding"},
+	}, []string{"type"})
+	encodedSize = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name:        "banyand_encoding_encoded_size",
+		Help:        "The encoded size of series",
+		ConstLabels: prometheus.Labels{"model": "encoding"},
+	}, []string{"type"})
+	itemsNum = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name:        "banyand_encoding_items_num",
+		Help:        "The number of items in a encoded series",
+		ConstLabels: prometheus.Labels{"model": "encoding"},
+	}, []string{"type"})
+)
 
 type SeriesEncoderPool interface {
 	Get(metadata []byte) SeriesEncoder

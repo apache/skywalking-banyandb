@@ -44,7 +44,7 @@ type Logger struct {
 
 func (l *Logger) Named(name string) *Logger {
 	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.Logger.With().Str("module", module).Logger()
+	subLogger := root.l.With().Str("module", module).Logger()
 	return &Logger{module: module, Logger: &subLogger}
 }
 

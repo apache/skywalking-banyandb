@@ -38,6 +38,12 @@ type measureService struct {
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
+	reply := func() error {
+		if err := measure.Send(&measurev1.WriteResponse{}); err != nil {
+			return err
+		}
+		return nil
+	}
 	for {
 		writeRequest, err := measure.Recv()
 		if err == io.EOF {
@@ -48,11 +54,17 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 			ms.log.Error().Err(errTime).Msg("the data point time is invalid")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
 			continue
 		}
 		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
 			ms.log.Error().Err(err).Msg("failed to navigate to the write target")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
 			continue
 		}
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &measurev1.InternalWriteRequest{
@@ -62,9 +74,13 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		})
 		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			return errWritePub
+			ms.log.Error().Err(errWritePub).Msg("failed to send a message")
+			if errResp := reply(); errResp != nil {
+				return errResp
+			}
+			continue
 		}
-		if errSend := measure.Send(&measurev1.WriteResponse{}); errSend != nil {
+		if errSend := reply(); errSend != nil {
 			return errSend
 		}
 	}

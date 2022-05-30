@@ -197,15 +197,15 @@ func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (re
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{
-			Module:   "stream",
+			Module:   "measure",
 			Database: groupSchema.Metadata.Name,
 		}),
 		tsdb.DatabaseOpts{
 			Location: path.Join(s.path, groupSchema.Metadata.Name),
 			ShardNum: groupSchema.ResourceOpts.ShardNum,
 			EncodingMethod: tsdb.EncodingMethod{
-				EncoderPool: newEncoderPool(chunkSize, s.l),
-				DecoderPool: newDecoderPool(chunkSize, s.l),
+				EncoderPool: newEncoderPool(plainChunkSize, intChunkSize, s.l),
+				DecoderPool: newDecoderPool(plainChunkSize, intChunkSize, s.l),
 			},
 		})
 }
