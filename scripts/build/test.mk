@@ -16,7 +16,7 @@
 # under the License.
 #
 
-TEST_OPTS ?=
+TEST_OPTS ?= -v
 TEST_EXTRA_OPTS ?=
 TEST_TAGS ?= $(BUILD_TAGS)
 TEST_PKG_LIST ?= ./...

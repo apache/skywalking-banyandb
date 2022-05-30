@@ -64,3 +64,4 @@ $(PROTOC_GEN_GO_GRPC):
 .PHONY: clean
 clean:
 	git clean -Xdf
+	find . -type s -name 'localhost:*' -delete

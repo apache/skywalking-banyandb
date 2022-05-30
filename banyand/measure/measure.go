@@ -31,8 +31,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// a chunk is 1MB
-const chunkSize = 1 << 20
+const (
+	plainChunkSize = 1 << 20
+	intChunkSize   = 120
+)
 
 type measure struct {
 	name     string
