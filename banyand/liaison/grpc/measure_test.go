@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -50,8 +51,9 @@ var _ = Describe("Measure", func() {
 		By("Verifying an empty server")
 		flags := []string{"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path}
 		gracefulStop = setup(true, flags)
+		credentials := insecure.NewCredentials()
 		var err error
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(credentials))
 		Expect(err).NotTo(HaveOccurred())
 		measureWrite(conn)
 		Eventually(func() (int, error) {
@@ -61,7 +63,7 @@ var _ = Describe("Measure", func() {
 		gracefulStop()
 		By("Verifying an existing server")
 		gracefulStop = setup(false, flags)
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(credentials))
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() int {
 			num, err := measureQuery(conn)

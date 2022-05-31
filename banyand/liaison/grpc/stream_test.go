@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
@@ -58,7 +59,7 @@ var _ = Describe("Stream", func() {
 		flags := []string{"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path}
 		gracefulStop = setup(true, flags)
 		var err error
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		streamWrite(conn)
 		Eventually(func() (int, error) {
@@ -68,7 +69,7 @@ var _ = Describe("Stream", func() {
 		gracefulStop()
 		By("Verifying an existing server")
 		gracefulStop = setup(false, flags)
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() int {
 			num, err := streamQuery(conn)
