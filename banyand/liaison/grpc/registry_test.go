@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -44,7 +45,7 @@ var _ = Describe("Registry", func() {
 	BeforeEach(func() {
 		gracefulStop = setupForRegistry()
 		var err error
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithInsecure())
+		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("manages the stream", func() {
