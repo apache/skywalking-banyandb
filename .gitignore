@@ -23,8 +23,7 @@
 *.dylib
 bin
 include
-build/bin
-build/release/
+build/
 
 # Test binary, build with `go test -c`
 *.test
