@@ -145,8 +145,7 @@ include scripts/build/help.mk
 
 RELEASE_SCRIPTS := $(mk_dir)/scripts/release.sh
 
-release-binary: clean ## Package binary archive
-	$(MAKE) -C banyand all
+release-binary: release ## Package binary archive
 	${RELEASE_SCRIPTS} -b
 
 release-source: clean ## Package source archive
@@ -156,8 +155,8 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k bin
 	${RELEASE_SCRIPTS} -k src
 
-release: release-binary release-source release-sign ## Generate release package
+release-assembly: release-binary release-source release-sign ## Generate release package
 
 
 .PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
-.PHONY: release-binary release-source release-sign release
+.PHONY: release-binary release-source release-sign release-assembly

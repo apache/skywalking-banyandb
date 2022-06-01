@@ -27,7 +27,6 @@ RELEASE_VERSION=${RELEASE_TAG#"v"}
 
 binary(){
     pushd ${ROOTDIR}
-    make -C banyand build
     bindir=${BUILDDIR}/binary
     rm -rf ${bindir}
     mkdir -p ${bindir}

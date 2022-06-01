@@ -21,7 +21,7 @@ export VERSION=<the version to release>
 git clone git@github.com:apache/skywalking-banyandb && cd skywalking-banyandb
 git tag -a "v$VERSION" -m "Release Apache SkyWalking BanyanDB $VERSION"
 git push --tags
-make clean && make release
+make clean && make release-assembly
 ```
 
 The `skywalking-banyandb-${VERSION}-bin.tgz`, `skywalking-banyandb-${VERSION}-src.tgz`, and their corresponding `asc`, `sha512`. **In total, six files should be automatically generated in the directory.**
@@ -38,30 +38,28 @@ cp skywalking-banyandb/build/release/skywalking-banyandb*.tgz.sha512 skywalking/
 cd skywalking/banyandb && svn add "$VERSION" && svn commit -m "Draft Apache SkyWalking BanyanDB release $VERSION"
 ```
 
-## Make the internal announcement
+## Call for vote in dev@ mailing list
 
-Send an announcement email to dev@ mailing list.
+Call for vote in `dev@skywalking.apache.org`
 
 ```text
-Subject: [ANNOUNCEMENT] SkyWalking BanyanDB $VERSION test build available
+Subject: [VOTE] Release Apache SkyWalking BanyanDB version $VERSION
 
 Content:
 
-The test build of SkyWalking BanyanDB $VERSION is now available.
-
-We welcome any comments you may have, and will take all feedback into
-account if a quality vote is called for this build.
+Hi the SkyWalking Community:
+This is a call for vote to release Apache SkyWalking BanyanDB version $VERSION.
 
 Release notes:
 
- * https://github.com/apache/skywalking-banyandb/blob/$VERSION/CHANGES.md
+ * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/CHANGES.md
 
 Release Candidate:
 
  * https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION
  * sha512 checksums
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-bin-x.x.x.tgz
    - sha512xxxxyyyzzz apache-skywalking-banyandb-src-x.x.x.tgz
+   - sha512xxxxyyyzzz apache-skywalking-banyandb-bin-x.x.x.tgz
 
 Release Tag :
 
@@ -77,55 +75,7 @@ Keys to verify the Release Candidate :
 
 Guide to build the release from source :
 
- * https://github.com/apache/skywalking-banyandb/blob/$VERSION/docs/release.md
-
-A vote regarding the quality of this test build will be initiated
-within the next couple of days.
-```
-
-## Wait at least 48 hours for test responses
-
-Any PMC, committer or contributor can test features for releasing, and feedback.
-Based on that, PMC will decide whether to start a vote or not.
-
-## Call for vote in dev@ mailing list
-
-Call for vote in `dev@skywalking.apache.org`
-
-```text
-Subject: [VOTE] Release Apache SkyWalking BanyanDB version $VERSION
-
-Content:
-
-Hi the SkyWalking Community:
-This is a call for vote to release Apache SkyWalking BanyanDB version $VERSION.
-
-Release notes:
-
- * https://github.com/apache/skywalking-banyandb/blob/$VERSION/CHANGES.md
-
-Release Candidate:
-
- * https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION
- * sha512 checksums
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-src-x.x.x.tgz
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-bin-x.x.x.tgz
-
-Release Tag :
-
- * (Git Tag) $VERSION
-
-Release Commit Hash :
-
- * https://github.com/apache/skywalking-banyandb/tree/<Git Commit Hash>
-
-Keys to verify the Release Candidate :
-
- * https://dist.apache.org/repos/dist/release/skywalking/KEYS
-
-Guide to build the release from source :
-
- * https://github.com/apache/skywalking-banyandb/blob/$VERSION/docs/release.md
+ * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/release.md
 
 Voting will start now and will remain open for at least 72 hours, all PMC members are required to give their votes.
 
@@ -210,14 +160,14 @@ Vote result should follow these:
 
     Download Links: https://skywalking.apache.org/downloads/
 
-    Release Notes : https://github.com/apache/skywalking-banyandb/blob/$VERSION/CHANGES.md
+    Release Notes : https://github.com/apache/skywalking-banyandb/blob/v$VERSION/CHANGES.md
 
     Website: https://skywalking.apache.org/
 
     SkyWalking BanyanDB Resources:
     - Issue: https://github.com/apache/skywalking/issues
     - Mailing list: dev@skywalkiing.apache.org
-    - Documents: https://github.com/apache/skywalking-banyandb/blob/$VERSION/README.md
+    - Documents: https://github.com/apache/skywalking-banyandb/blob/v$VERSION/README.md
 
     The Apache SkyWalking Team
     ```
