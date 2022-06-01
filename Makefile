@@ -27,6 +27,7 @@ PROJECTS := banyand
 clean: TARGET=clean
 clean: PROJECTS:=$(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
+	find . -type s -name 'localhost:*' -delete
 
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
@@ -135,8 +136,27 @@ default:
 	done
 
 nuke:
-	git clean -xdf
+	git clean -Xdf
+	find . -type s -name 'localhost:*' -delete
 
 include scripts/build/help.mk
 
+##@ release
+
+RELEASE_SCRIPTS := $(mk_dir)/scripts/release.sh
+
+release-binary: release ## Package binary archive
+	${RELEASE_SCRIPTS} -b
+
+release-source: clean ## Package source archive
+	${RELEASE_SCRIPTS} -s
+
+release-sign: ## Sign artifacts
+	${RELEASE_SCRIPTS} -k bin
+	${RELEASE_SCRIPTS} -k src
+
+release-assembly: release-binary release-source release-sign ## Generate release package
+
+
 .PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
+.PHONY: release-binary release-source release-sign release-assembly
