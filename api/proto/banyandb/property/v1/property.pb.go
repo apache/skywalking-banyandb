@@ -48,7 +48,7 @@ type Metadata struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// container is created when it recevies the first property
+	// container is created when it receives the first property
 	Container *v1.Metadata `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
 	// id identifies a property
 	Id string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`

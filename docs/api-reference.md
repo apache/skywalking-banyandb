@@ -2332,7 +2332,7 @@ Metadata is for multi-tenant use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | container is created when it recevies the first property |
+| container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | container is created when it receives the first property |
 | id | [string](#string) |  | id identifies a property |
 
 
@@ -2466,7 +2466,7 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| contaner | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 
 
 
