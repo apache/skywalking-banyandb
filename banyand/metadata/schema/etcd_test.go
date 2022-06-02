@@ -34,6 +34,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 const indexRuleDir = "testdata/index_rules"
@@ -123,15 +124,19 @@ func useRandomTempDir() RegistryOption {
 	}
 }
 
-func useUnixDomain() RegistryOption {
+func useRandomPort() RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL, config.listenerPeerURL = randomUnixDomainListener()
+		ports, err := test.AllocateFreePorts(2)
+		if err != nil {
+			panic("fail to find free ports")
+		}
+		config.listenerClientURL, config.listenerPeerURL = fmt.Sprintf("http://127.0.0.1:%d", ports[0]), fmt.Sprintf("http://127.0.0.1:%d", ports[1])
 	}
 }
 
 func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
+	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -223,7 +228,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 func Test_Etcd_Entity_List(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
+	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -305,7 +310,7 @@ func Test_Etcd_Entity_List(t *testing.T) {
 
 func Test_Etcd_Delete(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
+	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir(), LoggerLevel("warn"))
 	tester.NoError(err)
 	tester.NotNil(registry)
 	defer registry.Close()
@@ -374,7 +379,7 @@ func Test_Etcd_Delete(t *testing.T) {
 
 func Test_Notify(t *testing.T) {
 	req := require.New(t)
-	registry, err := NewEtcdSchemaRegistry(useUnixDomain(), useRandomTempDir(), LoggerLevel("warn"))
+	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir(), LoggerLevel("warn"))
 	req.NoError(err)
 	req.NotNil(registry)
 	defer registry.Close()

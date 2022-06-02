@@ -32,7 +32,6 @@ PROJECTS := banyand
 clean: TARGET=clean
 clean: PROJECTS:=$(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
-	find . -type s -name 'localhost:*' -delete
 
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
@@ -142,7 +141,6 @@ default:
 
 nuke:
 	git clean -Xdf
-	find . -type s -name 'localhost:*' -delete
 
 include scripts/build/help.mk
 

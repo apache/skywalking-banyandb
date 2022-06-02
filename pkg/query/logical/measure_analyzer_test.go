@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 )
 
@@ -52,9 +53,15 @@ func setUpMeasureAnalyzer() (*logical.MeasureAnalyzer, func(), error) {
 		return nil, func() {
 		}, err
 	}
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
 
 	rootDir := testmeasure.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
+	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
 
 	if err != nil {
 		return nil, func() {

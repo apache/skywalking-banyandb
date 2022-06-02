@@ -116,6 +116,9 @@ func setUpServices() (*services, func()) {
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--measure-root-path="+rootPath)
 	flags = append(flags, "--stream-root-path="+rootPath)
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	executor, err := query.NewExecutor(context.TODO(), streamService, measureService, metadataService, repo, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 	moduleDeferFunc := test.SetUpModules(

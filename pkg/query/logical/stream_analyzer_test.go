@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
@@ -51,9 +52,15 @@ func setUpStreamAnalyzer() (*logical.StreamAnalyzer, func(), error) {
 		return nil, func() {
 		}, err
 	}
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	if err != nil {
+		return nil, func() {
+		}, err
+	}
 
 	rootDir := teststream.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
+	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
 
 	if err != nil {
 		return nil, func() {
