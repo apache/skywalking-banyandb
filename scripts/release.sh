@@ -20,46 +20,51 @@ set -ex
 SCRIPTDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ROOTDIR=${SCRIPTDIR}/..
 BUILDDIR=${ROOTDIR}/build
-BANYAND_BUILDDIR=${ROOTDIR}/banyand/build
 
 RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 RELEASE_VERSION=${RELEASE_TAG#"v"}
 
+SOURCE_FILE=${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-src.tgz
+
 binary(){
-    pushd ${ROOTDIR}
-    bindir=${BUILDDIR}/binary
-    rm -rf ${bindir}
-    mkdir -p ${bindir}
+    if [ ! -f "${SOURCE_FILE}" ]; then
+        echo "$FILE exists."
+        exit 1
+    fi
+    tmpdir=`mktemp -d`
+    trap "rm -rf ${tmpdir}" EXIT
+    pushd ${tmpdir}
+    tar -xvf ${SOURCE_FILE}
+    make release
+    bindir=./build
     # Copy relevant files
-    cp -Rfv ${BANYAND_BUILDDIR}/bin ${bindir}
-    cp -Rfv ${ROOTDIR}/CHANGES.md ${bindir}
-    cp -Rfv ${ROOTDIR}/README.md ${bindir}
-    cp -Rfv ${ROOTDIR}/dist/* ${bindir}
+    cp -Rfv ./banyand/build ${bindir}
+    cp -Rfv ./CHANGES.md ${bindir}
+    cp -Rfv ./README.md ${bindir}
+    cp -Rfv ./dist/* ${bindir}
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bin.tgz -C ${bindir} .
-    rm -rf ${bindir}
     popd
 }
 
 source(){
     # Package
-    rm -rf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-src.tgz
+    mkdir -p ${BUILDDIR}
+    rm -rf ${SOURCE_FILE}
     pushd ${ROOTDIR}
+    echo "RELEASE_VERSION=${RELEASE_VERSION}" >> .env
     tar \
-        --exclude=".DS_Store" \
-        --exclude=".git" \
-        --exclude=".github" \
-        --exclude=".gitignore" \
-        --exclude=".asf.yaml" \
-        --exclude=".idea" \
-        --exclude=".vscode" \
-        --exclude="bin"  \
-        --exclude="banyand/build/bin"  \
-        --exclude="build"  \
-        --exclude="*.test"  \
-        --exclude="*.out"  \
-        -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-src.tgz \
-        .
+    --exclude=".DS_Store" \
+    --exclude=".git" \
+    --exclude=".github" \
+    --exclude=".gitignore" \
+    --exclude=".asf.yaml" \
+    --exclude=".idea" \
+    --exclude=".vscode" \
+    --exclude="./build" \
+    --exclude="bin" \
+    -czf ${SOURCE_FILE} \
+    .
     popd
 }
 
@@ -67,8 +72,8 @@ sign(){
     type=$1
     pushd ${BUILDDIR}
     gpg --batch --yes --armor --detach-sig skywalking-banyandb-${RELEASE_VERSION}-${type}.tgz
-	shasum -a 512 skywalking-banyandb-${RELEASE_VERSION}-${type}.tgz > skywalking-banyandb-${RELEASE_VERSION}-${type}.tgz.sha512
-	popd
+    shasum -a 512 skywalking-banyandb-${RELEASE_VERSION}-${type}.tgz > skywalking-banyandb-${RELEASE_VERSION}-${type}.tgz.sha512
+    popd
 }
 
 parseCmdLine(){
@@ -86,7 +91,7 @@ parseCmdLine(){
             \?) usage ;;
         esac
     done
-	return 0
+    return 0
 }
 
 
@@ -101,7 +106,7 @@ Parameters:
     -s  Assemble the source package
     -h  Show this help.
 EOF
-exit 1
+    exit 1
 }
 
 #
@@ -113,4 +118,4 @@ ret=0
 parseCmdLine "$@"
 ret=$?
 [ $ret -ne 0 ] && exit $ret
-echo "Done release [RELEASE_VERSION] (exit $ret)"
+echo "Done release ${RELEASE_VERSION} (exit $ret)"

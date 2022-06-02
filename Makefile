@@ -20,6 +20,11 @@ mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
 mk_dir   := $(dir $(mk_path))
 tool_bin := $(mk_dir)bin
 
+ifneq (,$(wildcard $(mk_dir).env))
+include $(mk_dir).env
+export
+endif
+
 PROJECTS := banyand
 
 ##@ Build targets
@@ -145,7 +150,7 @@ include scripts/build/help.mk
 
 RELEASE_SCRIPTS := $(mk_dir)/scripts/release.sh
 
-release-binary: release ## Package binary archive
+release-binary: release-source ## Package binary archive
 	${RELEASE_SCRIPTS} -b
 
 release-source: clean ## Package source archive
@@ -155,7 +160,7 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k bin
 	${RELEASE_SCRIPTS} -k src
 
-release-assembly: release-binary release-source release-sign ## Generate release package
+release-assembly: release-binary release-sign ## Generate release package
 
 
 .PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
