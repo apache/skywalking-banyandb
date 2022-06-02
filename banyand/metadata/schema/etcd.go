@@ -43,8 +43,6 @@ var (
 
 	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	ErrConcurrentModification     = errors.New("concurrent modification of entities")
-
-	unixDomainSockScheme = "unix"
 )
 
 type HasMetadata interface {
