@@ -97,6 +97,9 @@ func setUp() (*services, func()) {
 	rootPath, deferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--stream-root-path="+rootPath)
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,

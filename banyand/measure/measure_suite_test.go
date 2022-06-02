@@ -86,7 +86,6 @@ func setUp() (*services, func()) {
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Measure Service
 	measureService, err := measure.NewService(context.TODO(), metadataService, repo, pipeline)
@@ -99,6 +98,9 @@ func setUp() (*services, func()) {
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--measure-root-path="+rootPath)
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetUpModules(
 		flags,
 		repo,

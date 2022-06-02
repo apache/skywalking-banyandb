@@ -160,7 +160,10 @@ func setupForRegistry() func() {
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--metadata-root-path="+metaPath)
+	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
+	Expect(err).NotTo(HaveOccurred())
+	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
+		"--etcd-listen-peer-url="+listenPeerURL)
 	deferFunc := test.SetUpModules(
 		flags,
 		repo,
