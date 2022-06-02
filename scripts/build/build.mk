@@ -33,8 +33,14 @@ SOURCE_DIR := $(if $(SUB_DIR),$(SUB_DIR)/$(NAME),$(NAME))
 
 # Retrieve git versioning details so we can add to our binary assets
 VERSION_PATH    := github.com/apache/skywalking-banyandb/pkg/version
+ifdef RELEASE_VERSION
+VERSION_STRING := $(RELEASE_VERSION)
+GIT_BRANCH_NAME := release
+else
 VERSION_STRING  := $(shell git describe --tags --long $(shell git rev-list --tags --max-count=1))
 GIT_BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD)
+endif
+
 GO_LINK_VERSION := -X ${VERSION_PATH}.build=${VERSION_STRING}-${GIT_BRANCH_NAME}
 
 ##@ Build targets
