@@ -23,11 +23,11 @@ import (
 )
 
 // AllocateFreePorts finds n available ports
-// Copies from https://github.com/tendermint/tendermint/issues/3682
+// Copied from https://github.com/tendermint/tendermint/issues/3682
 func AllocateFreePorts(n int) ([]int, error) {
 	ports := make([]int, n)
 
-	for k, _ := range ports {
+	for k := range ports {
 		addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
 		if err != nil {
 			return ports, err
