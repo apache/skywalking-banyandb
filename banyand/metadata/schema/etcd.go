@@ -19,8 +19,6 @@ package schema
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -68,15 +66,8 @@ func LoggerLevel(loggerLevel string) RegistryOption {
 	}
 }
 
-func randomUnixDomainListener() (string, string) {
-	i := rand.Uint64()
-	return fmt.Sprintf("%s://localhost:%d%06d", unixDomainSockScheme, os.Getpid(), i),
-		fmt.Sprintf("%s://localhost:%d%06d", unixDomainSockScheme, os.Getpid(), i+1)
-}
-
-func UseRandomListener() RegistryOption {
+func ConfigureListener(lc, lp string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		lc, lp := randomUnixDomainListener()
 		config.listenerClientURL = lc
 		config.listenerPeerURL = lp
 	}

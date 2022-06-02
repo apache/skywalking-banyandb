@@ -59,13 +59,17 @@ type Service interface {
 }
 
 type service struct {
-	schemaRegistry schema.Registry
-	rootDir        string
+	schemaRegistry  schema.Registry
+	rootDir         string
+	listenClientURL string
+	listenPeerURL   string
 }
 
 func (s *service) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVarP(&s.rootDir, "metadata-root-path", "", "/tmp", "the root path of metadata")
+	fs.StringVarP(&s.listenClientURL, "etcd-listen-client-url", "", "http://localhost:2379", "A URL to listen on for client traffic")
+	fs.StringVarP(&s.listenPeerURL, "etcd-listen-peer-url", "", "http://localhost:2380", "A URL to listen on for peer traffic")
 	return fs
 }
 
@@ -78,7 +82,8 @@ func (s *service) Validate() error {
 
 func (s *service) PreRun() error {
 	var err error
-	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.UseRandomListener(),
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
+		schema.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 		schema.RootDir(s.rootDir), schema.LoggerLevel(logger.GetLogger().GetLevel().String()))
 	if err != nil {
 		return err
