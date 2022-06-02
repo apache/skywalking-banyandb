@@ -56,7 +56,7 @@ message GetResponse {
 }
 
 message ListRequest {
-    banyandb.common.v1.Metadata contaner = 1;
+    banyandb.common.v1.Metadata container = 1;
 }
 
 message ListResponse {

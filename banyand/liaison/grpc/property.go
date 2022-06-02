@@ -60,7 +60,7 @@ func (ps *propertyServer) Get(ctx context.Context, req *propertyv1.GetRequest) (
 	}, nil
 }
 func (ps *propertyServer) List(ctx context.Context, req *propertyv1.ListRequest) (*propertyv1.ListResponse, error) {
-	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, req.GetContaner())
+	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, req.GetContainer())
 	if err != nil {
 		return nil, err
 	}

@@ -28,7 +28,7 @@ import "banyandb/model/v1/query.proto";
 
 // Metadata is for multi-tenant use
 message Metadata {
-    // container is created when it recevies the first property
+    // container is created when it receives the first property
     common.v1.Metadata container = 1;
     // id identifies a property
     string id = 2; 
