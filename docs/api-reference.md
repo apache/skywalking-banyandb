@@ -14,6 +14,13 @@
     - [Node](#banyandb-database-v1-Node)
     - [Shard](#banyandb-database-v1-Shard)
   
+- [banyandb/database/v1/event.proto](#banyandb_database_v1_event-proto)
+    - [EntityEvent](#banyandb-database-v1-EntityEvent)
+    - [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator)
+    - [ShardEvent](#banyandb-database-v1-ShardEvent)
+  
+    - [Action](#banyandb-database-v1-Action)
+  
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
     - [ID](#banyandb-model-v1-ID)
@@ -57,13 +64,6 @@
     - [IndexRule.Location](#banyandb-database-v1-IndexRule-Location)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
-  
-- [banyandb/database/v1/event.proto](#banyandb_database_v1_event-proto)
-    - [EntityEvent](#banyandb-database-v1-EntityEvent)
-    - [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator)
-    - [ShardEvent](#banyandb-database-v1-ShardEvent)
-  
-    - [Action](#banyandb-database-v1-Action)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
@@ -324,6 +324,86 @@ Metadata is for multi-tenant, multi-model use
 
 
  
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_database_v1_event-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/database/v1/event.proto
+
+
+
+<a name="banyandb-database-v1-EntityEvent"></a>
+
+### EntityEvent
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| subject | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| entity_locator | [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator) | repeated |  |
+| action | [Action](#banyandb-database-v1-Action) |  |  |
+| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-EntityEvent-TagLocator"></a>
+
+### EntityEvent.TagLocator
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| family_offset | [uint32](#uint32) |  |  |
+| tag_offset | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ShardEvent"></a>
+
+### ShardEvent
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard | [Shard](#banyandb-database-v1-Shard) |  |  |
+| action | [Action](#banyandb-database-v1-Action) |  |  |
+| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-database-v1-Action"></a>
+
+### Action
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACTION_UNSPECIFIED | 0 |  |
+| ACTION_PUT | 1 |  |
+| ACTION_DELETE | 2 |  |
+
 
  
 
@@ -952,86 +1032,6 @@ Type determine the index structure under the hood
 | TAG_TYPE_INT_ARRAY | 4 |  |
 | TAG_TYPE_DATA_BINARY | 5 |  |
 | TAG_TYPE_ID | 6 |  |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_database_v1_event-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/event.proto
-
-
-
-<a name="banyandb-database-v1-EntityEvent"></a>
-
-### EntityEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| subject | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| entity_locator | [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator) | repeated |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-EntityEvent-TagLocator"></a>
-
-### EntityEvent.TagLocator
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| family_offset | [uint32](#uint32) |  |  |
-| tag_offset | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-ShardEvent"></a>
-
-### ShardEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard | [Shard](#banyandb-database-v1-Shard) |  |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Action"></a>
-
-### Action
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ACTION_UNSPECIFIED | 0 |  |
-| ACTION_PUT | 1 |  |
-| ACTION_DELETE | 2 |  |
 
 
  
