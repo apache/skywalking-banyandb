@@ -17,13 +17,6 @@
 # under the License.
 #
 
-version: v1beta1
-build:
-  roots:
-    - ./proto
-lint:
-  use:
-    - DEFAULT
-breaking:
-  use:
-    - FILE
+version: v1
+directories:
+  - proto
