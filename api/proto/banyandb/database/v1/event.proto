@@ -25,7 +25,6 @@ package banyandb.database.v1;
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/database.proto";
-import "banyandb/database/v1/schema.proto";
 
 enum Action {
     ACTION_UNSPECIFIED = 0;
