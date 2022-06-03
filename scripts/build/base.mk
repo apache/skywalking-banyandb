@@ -53,7 +53,7 @@ PROTOC_GEN_GO := $(tool_bin)/protoc-gen-go
 $(PROTOC_GEN_GO):
 	@echo "Install protoc gen go..."
 	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1
+	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
 
 PROTOC_GEN_GO_GRPC := $(tool_bin)/protoc-gen-go-grpc
 $(PROTOC_GEN_GO_GRPC):
