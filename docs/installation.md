@@ -11,7 +11,7 @@
 
 Users who want to build a binary from sources have to set up:
 
-* Go >= 1.17
+* Go >= 1.18
 * Linux or MacOS
 * GNU make
 
