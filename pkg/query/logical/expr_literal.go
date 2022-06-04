@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/google/go-cmp/cmp"
+	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -53,7 +53,7 @@ func (i *int64Literal) BelongTo(tagValue *modelv1.TagValue) bool {
 	if intArray == nil {
 		return false
 	}
-	return int64SliceContains(i.int64, intArray.Value)
+	return slices.Contains(intArray.Value, i.int64)
 }
 
 func (i *int64Literal) Bytes() [][]byte {
@@ -92,7 +92,7 @@ func (i *int64ArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
 	if intArray == nil {
 		return 0, false
 	}
-	if int64SlicesEqual(i.arr, intArray.Value) {
+	if slices.Equal(i.arr, intArray.Value) {
 		return 0, true
 	}
 	return 0, false
@@ -101,15 +101,14 @@ func (i *int64ArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
 func (i *int64ArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
 	intValue := tagValue.GetInt()
 	if intValue != nil {
-		return int64SliceContains(intValue.Value, i.arr)
-
+		return slices.Contains(i.arr, intValue.Value)
 	}
 	intArray := tagValue.GetIntArray()
 	if intArray == nil {
 		return false
 	}
 	for _, v := range intArray.Value {
-		if !int64SliceContains(v, i.arr) {
+		if !slices.Contains(i.arr, v) {
 			return false
 		}
 	}
@@ -126,7 +125,7 @@ func (i *int64ArrLiteral) Bytes() [][]byte {
 
 func (i *int64ArrLiteral) Equal(expr Expr) bool {
 	if other, ok := expr.(*int64ArrLiteral); ok {
-		return cmp.Equal(other.arr, i.arr)
+		return slices.Equal(other.arr, i.arr)
 	}
 
 	return false
@@ -174,7 +173,7 @@ func (s *strLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
 	if strArray == nil {
 		return false
 	}
-	return stringSliceContains(s.string, strArray.Value)
+	return slices.Contains(strArray.Value, s.string)
 }
 
 func (s *strLiteral) Bytes() [][]byte {
@@ -222,15 +221,14 @@ func (s *strArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
 func (s *strArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
 	strValue := tagValue.GetStr()
 	if strValue != nil {
-		return stringSliceContains(strValue.Value, s.arr)
-
+		return slices.Contains(s.arr, strValue.Value)
 	}
 	strArray := tagValue.GetStrArray()
 	if strArray == nil {
 		return false
 	}
 	for _, v := range strArray.Value {
-		if !stringSliceContains(v, s.arr) {
+		if !slices.Contains(s.arr, v) {
 			return false
 		}
 	}
@@ -247,7 +245,7 @@ func (s *strArrLiteral) Bytes() [][]byte {
 
 func (s *strArrLiteral) Equal(expr Expr) bool {
 	if other, ok := expr.(*strArrLiteral); ok {
-		return cmp.Equal(other.arr, s.arr)
+		return slices.Equal(other.arr, s.arr)
 	}
 
 	return false
@@ -295,34 +293,4 @@ func (s *idLiteral) DataType() int32 {
 
 func (s *idLiteral) String() string {
 	return s.string
-}
-
-func int64SlicesEqual(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func int64SliceContains(a int64, slice []int64) bool {
-	for _, v := range slice {
-		if v == a {
-			return true
-		}
-	}
-	return false
-}
-
-func stringSliceContains(a string, slice []string) bool {
-	for _, v := range slice {
-		if v == a {
-			return true
-		}
-	}
-	return false
 }

@@ -16,7 +16,7 @@
 # under the License.
 #
 
-GOLANGCI_VERSION := v1.39.0
+GOLANGCI_VERSION := v1.46.2
 
 LINT_OPTS ?= --timeout 1m0s
 

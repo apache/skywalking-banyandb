@@ -24,7 +24,7 @@ tool_include := "$(root_dir)/include"
 uname_os := $(shell uname -s)
 uname_arch := $(shell uname -m)
 
-buf_version ?= v1.0.0
+buf_version ?= v1.5.0
 
 ## Tools
 BUF := $(tool_bin)/buf
@@ -36,7 +36,7 @@ $(BUF):
 	@rm -f $(tool_bin)/buf
 	@rm -f $(tool_bin)/protoc-gen-buf-breaking
 	@rm -f $(tool_bin)/protoc-gen-buf-lint
-	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1
+	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
 	@GOBIN=$(tool_bin) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
 	@GOBIN=$(tool_bin) go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v1.5.1
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/buf@$(buf_version)
@@ -53,7 +53,7 @@ PROTOC_GEN_GO := $(tool_bin)/protoc-gen-go
 $(PROTOC_GEN_GO):
 	@echo "Install protoc gen go..."
 	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1
+	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
 
 PROTOC_GEN_GO_GRPC := $(tool_bin)/protoc-gen-go-grpc
 $(PROTOC_GEN_GO_GRPC):
