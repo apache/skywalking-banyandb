@@ -35,6 +35,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/prometheus/client_golang v1.12.2
 	go.uber.org/atomic v1.9.0
+	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f
 )
 
 require (
