@@ -40,15 +40,19 @@ build: install
 
 .PHONY: test
 test:
-	@echo "No to test"
+	@echo "No test"
 
 .PHONY: release
 release: build
 
 .PHONY: lint
 lint:
-	@echo "No to lint"
+	@echo "No lint"
 
 .PHONY: docker
 docker: build
 	@echo "BanyanD will embed the UI"
+
+.PHONY: docker.push
+docker.push:
+	@echo "No push"
