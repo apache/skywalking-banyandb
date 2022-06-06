@@ -27,8 +27,7 @@ install:
 	yarn install 
 
 .PHONY: generate
-generate:
-	@echo "No to generate"
+generate: build
  
 .PHONY: all
 all: build
