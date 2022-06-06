@@ -25,13 +25,15 @@ include $(mk_dir).env
 export
 endif
 
-PROJECTS := banyand
+PROJECTS := ui banyand bydbctl
 
 ##@ Build targets
 
 clean: TARGET=clean
 clean: PROJECTS:=$(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
+	rm -rf build
+	rm -f .env
 
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg

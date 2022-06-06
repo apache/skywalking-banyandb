@@ -16,12 +16,43 @@
 # under the License.
 #
 
-MOCKGEN := $(tool_bin)/mockgen
-$(MOCKGEN):
-	@echo "Install mock generate tool..."
-	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install github.com/golang/mock/mockgen@v1.6.0
+NAME := ui
+
+include ../scripts/build/base.mk
+include ../scripts/build/docker.mk
+include ../scripts/build/help.mk
 
 .PHONY: generate
-generate: $(MOCKGEN)
-	@PATH=$(tool_bin):$$PATH; go generate ./...
+generate:
+	@echo "No to generate"
+
+.PHONY: all
+all: build
+
+.PHONY: install
+install:
+	yarn install
+
+.PHONY: build
+build: install
+	@echo "Building $(NAME)"
+	yarn build
+	@echo "Done building $(NAME)"
+
+.PHONY: test
+test:
+	@echo "No to test"
+
+.PHONY: release
+release: build
+
+.PHONY: generate
+generate: build
+
+.PHONY: lint
+lint:
+	@echo "No to lint"
+
+.PHONY: docker
+docker:
+	@echo "BanyanD will embed the UI"

@@ -79,6 +79,9 @@ header: # `header` section is configurations for source codes license header.
     - '**/*.pem'
     - '**/.gitignore'
     - 'scripts/license.tpl'
+    - 'ui/dist'
+    - 'ui/node_modules'
+    - 'ui/yarn.lock'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

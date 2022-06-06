@@ -44,8 +44,8 @@ linters-settings:
 run:
   deadline: 10m
   skip-dirs:
-    - config
     - docs
+    - ui
 issues:
   exclude:
     # staticcheck
