@@ -17,6 +17,7 @@
 #
 
 NAME := bydbctl
+IMG_NAME := skywalking-bydbctl
 
 BUILD_DIR ?= build/bin
 
@@ -27,18 +28,23 @@ include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
 
+DOCKER_BUILD_ARGS := --build-arg BASE_IMAGE=golang:${go_version}
+
 .PHONY: all
 all: build
 
 .PHONY: build
 build: 
 	@echo "Building binary"
-	go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) $(MODULE_PATH)/bydbctl/cmd/bydbctl/$*
+	go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
 	chmod +x $(BUILD_DIR)/$(NAME)
 	@echo "Done building $(NAME)"
 
 BUILDS := darwin-amd64 darwin-arm64 linux-386 linux-amd64 linux-arm64 windows-386 windows-amd64
-BUILD_RULE = GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v --ldflags '$(GO_LINK_VERSION)' -o $(BUILD_DIR)/$(NAME)-$(VERSION_STRING)-$(GOOS)-$(GOARCH) $(MODULE_PATH)/bydbctl/cmd/bydbctl/$*
+BUILD_RULE = GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -v --ldflags '$(GO_LINK_VERSION)' \
+		-o $(BUILD_DIR)/$(NAME)-$(VERSION_STRING)-$(GOOS)-$(GOARCH) \
+		github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
 
 .PHONY: $(BUILDS)
 $(BUILDS): GOOS = $(word 1,$(subst -, ,$@))

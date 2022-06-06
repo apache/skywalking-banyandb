@@ -25,6 +25,7 @@ uname_os := $(shell uname -s)
 uname_arch := $(shell uname -m)
 
 buf_version ?= v1.5.0
+go_version ?= 1.18
 
 MODULE_PATH ?= $(shell go mod edit -json | jq -r .Module.Path)
 

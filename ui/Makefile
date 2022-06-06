@@ -17,21 +17,21 @@
 #
 
 NAME := ui
+DIST_INDEX := dist/index.html
 
 include ../scripts/build/base.mk
-include ../scripts/build/docker.mk
 include ../scripts/build/help.mk
+
+.PHONY: install
+install:
+	yarn install 
 
 .PHONY: generate
 generate:
 	@echo "No to generate"
-
+ 
 .PHONY: all
 all: build
-
-.PHONY: install
-install:
-	yarn install
 
 .PHONY: build
 build: install
@@ -46,13 +46,10 @@ test:
 .PHONY: release
 release: build
 
-.PHONY: generate
-generate: build
-
 .PHONY: lint
 lint:
 	@echo "No to lint"
 
 .PHONY: docker
-docker:
+docker: build
 	@echo "BanyanD will embed the UI"

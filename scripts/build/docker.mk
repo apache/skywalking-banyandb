@@ -16,27 +16,32 @@
 # under the License.
 #
 
-# The hub of the docker image. The default value is skywalking-banyandd.
-# For github registry, it would be ghcr.io/apache/skywalking-banyandb
-HUB ?= skywalking-banyandb
+# The hub of the docker image. The default value is skywalking-.
+# For github registry, it would be ghcr.io/apache/skywalking-
+HUB ?= apache
+
+ifndef IMG_NAME
+$(error The IMG_NAME variable should be set)
+endif
 
 # The tag of the docker image. The default value if latest.
-# For github actions, ${{ github.sha }} can be used for every commit.
 TAG ?= latest
+
+IMG := $(HUB)/$(IMG_NAME):$(TAG)
+
+DOCKER_BUILD_ARGS ?= ""
 
 # Disable cache in CI environment
 ifeq (true,$(CI))
-	BUILD_ARGS := --no-cache --load
+	DOCKER_BUILD_ARGS := --no-cache --load
 endif
-
-BUILD_ARGS := $(BUILD_ARGS) --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:1.18
 
 .PHONY: docker
 docker:
-	@echo "Build Skywalking/BanyanDB Docker Image"
-	@time docker buildx build $(BUILD_ARGS) -t $(HUB):$(TAG) -f Dockerfile ..
+	@echo "Build $(IMG)"
+	@time docker buildx build $(DOCKER_BUILD_ARGS) -t $(IMG) -f Dockerfile ..
 
 .PHONY: docker.push
 docker.push:
-	@echo "Push Skywalking/BanyanDB Docker Image"
-	@time docker push $(HUB):$(TAG)
+	@echo "Push $(IMG)"
+	@time docker push $(IMG)

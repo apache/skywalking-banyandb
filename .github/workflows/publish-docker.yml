@@ -23,7 +23,7 @@ on:
       - main
 
 env:
-  HUB: ghcr.io/apache/skywalking-banyandb
+  HUB: ghcr.io/apache
 
 jobs:
   build:

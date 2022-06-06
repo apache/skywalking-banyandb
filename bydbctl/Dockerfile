@@ -29,15 +29,9 @@ FROM base AS builder
 
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out make -C banyand all
-
-FROM $CERT_IMAGE AS certs
-RUN apk add --no-cache ca-certificates
-RUN update-ca-certificates
+            BUILD_DIR=/out make -C bydbctl build
 
 FROM busybox:stable-glibc
 
-COPY --from=builder /out/banyand-server /banyand-server
-COPY --from=certs /etc/ssl/certs /etc/ssl/certs
-
-ENTRYPOINT ["/banyand-server"]
+COPY --from=builder /out/bydbctl /bydbctl
+ENTRYPOINT ["/bydbctl"]

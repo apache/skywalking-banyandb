@@ -18,3 +18,4 @@
 # Binaries for programs and plugins
 dist/*
 node_modules
+*.lock
