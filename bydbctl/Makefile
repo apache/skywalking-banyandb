@@ -23,12 +23,6 @@ BUILD_DIR ?= build/bin
 
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
-include ../scripts/build/docker.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/help.mk
-
-DOCKER_BUILD_ARGS := --build-arg BASE_IMAGE=golang:${go_version}
 
 .PHONY: all
 all: build
@@ -54,3 +48,9 @@ $(BUILDS):
 
 .PHONY: release 
 release: $(BUILDS)
+
+DOCKER_BUILD_ARGS := --build-arg BASE_IMAGE=golang:${go_version}
+include ../scripts/build/docker.mk
+include ../scripts/build/test.mk
+include ../scripts/build/lint.mk
+include ../scripts/build/help.mk

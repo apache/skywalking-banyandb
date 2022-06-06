@@ -33,7 +33,7 @@ DOCKER_BUILD_ARGS ?= ""
 
 # Disable cache in CI environment
 ifeq (true,$(CI))
-	DOCKER_BUILD_ARGS := --no-cache --load
+	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
 endif
 
 .PHONY: docker
