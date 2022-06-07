@@ -17,7 +17,7 @@ version: '2.1'
 
 services:
   banyandb:
-    image: "skywalking-banyandb:${TAG}"
+    image: "apache/skywalking-banyandb:${TAG}"
     networks:
       - e2e
     expose:
