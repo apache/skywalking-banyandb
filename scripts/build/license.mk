@@ -14,9 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-# Binaries for programs and plugins
-dist
-node_modules
-yarn.lock
-package-lock.json
+LICENSE_EYE := $(tool_bin)/license-eye
+$(LICENSE_EYE):
+	@echo "Install license-eye..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/apache/skywalking-eyes/cmd/license-eye@5f15d230a1914858ebccba7664026ffc7288b670
