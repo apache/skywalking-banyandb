@@ -107,11 +107,7 @@ pre-push: generate lint license-check check ## Check source files before pushing
 
 ##@ License targets
 
-LICENSE_EYE := $(tool_bin)/license-eye
-$(LICENSE_EYE):
-	@echo "Install license-eye..."
-	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install github.com/apache/skywalking-eyes/cmd/license-eye@db412b1a98b090485f6fa5e45e61e00b04c03ba5
+include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) header check
@@ -119,8 +115,15 @@ license-check: $(LICENSE_EYE) ## Check license header
 license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
-license-dep: $(LICENSE_EYE) ## Fix license header issues
+
+license-dep: $(LICENSE_EYE)
+license-dep: TARGET=license-dep
+license-dep: PROJECTS:=ui
+license-dep: default ## Fix license header issues
+	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
+	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
+	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 
 ##@ Docker targets
 

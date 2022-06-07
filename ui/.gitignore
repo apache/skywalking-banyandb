@@ -18,4 +18,5 @@
 # Binaries for programs and plugins
 dist/*
 node_modules
-*.lock
+yarn.lock
+package-lock.json

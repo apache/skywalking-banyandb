@@ -62,42 +62,12 @@ header: # `header` section is configurations for source codes license header.
 
   paths-ignore: # `paths-ignore` are the path list that will be ignored by license-eye.
     - 'dist'
-    - 'licenses'
-    - '**/*.md'
-    - '**/testdata/**'
-    - '**/go.mod'
-    - '**/go.sum'
-    - 'LICENSE'
-    - 'NOTICE'
-    - '**/build/**'
-    - '**/*.bin'
-    - '**/*.json'
-    - '**/*_mock.go'
-    - '**/*_mock_test.go'
-    - '**/*.pb.go'
-    - '**/*.textproto'
-    - '**/*.pem'
-    - '**/.gitignore'
-    - 'ui/dist'
-    - 'ui/node_modules'
-    - 'ui/yarn.lock'
-    - 'ui/LICENSE.tpl'
+    - 'node_modules'
+    - 'yarn.lock'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
 dependency:
   files:
-    - go.mod
-  licenses:
-    - name: github.com/chzyer/logex
-      version: v1.1.10
-      license: MIT
-    - name: github.com/kr/logfmt
-      version: v0.0.0-20140226030751-b84e30acd515
-      license: MIT
-    - name: github.com/pascaldekloe/goe
-      version: v0.0.0-20180627143212-57f6aae5913c
-      license: CC0-1.0
-    - name: github.com/RoaringBitmap/real-roaring-datasets
-      version: v0.0.0-20190726190000-eb7c87156f76
-      license: Apache-2.0
+    - package.json
+  

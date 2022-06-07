@@ -20,6 +20,7 @@ NAME := ui
 DIST_INDEX := dist/index.html
 
 include ../scripts/build/base.mk
+include ../scripts/build/license.mk
 include ../scripts/build/help.mk
 
 .PHONY: install
@@ -56,3 +57,7 @@ docker: build
 .PHONY: docker.push
 docker.push:
 	@echo "No push"
+
+license-dep:$(LICENSE_EYE)
+	@rm -rf licenses
+	$(LICENSE_EYE) dep resolve -o ui-licenses -s LICENSE.tpl
