@@ -81,6 +81,10 @@ func (s *store) Write(field index.Field, chunkID common.ItemID) error {
 }
 
 func (s *store) Flush() error {
+	state := s.memTable.Stats()
+	if state.MemBytes <= 0 {
+		return nil
+	}
 	s.rwMutex.Lock()
 	defer s.rwMutex.Unlock()
 	if s.immutableMemTable == nil {
