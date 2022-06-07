@@ -26,13 +26,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
-	"github.com/apache/skywalking-banyandb/banyand/webapp"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -77,7 +77,7 @@ func newStandaloneCmd() *cobra.Command {
 	}
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
-	webapp := webapp.NewService()
+	httpServer := http.NewService()
 
 	// Meta the run Group units.
 	g.Register(
@@ -91,7 +91,7 @@ func newStandaloneCmd() *cobra.Command {
 		tcp,
 		metricSvc,
 		profSvc,
-		webapp,
+		httpServer,
 	)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{

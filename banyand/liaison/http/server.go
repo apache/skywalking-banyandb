@@ -1,26 +1,9 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
-// license agreements. See the NOTICE file distributed with
-// this work for additional information regarding copyright
-// ownership. Apache Software Foundation (ASF) licenses this file to you under
-// the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
-package webapp
+package http
 
 import (
 	"fmt"
 	"io/fs"
-	"net/http"
+	stdhttp "net/http"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -45,14 +28,14 @@ func NewService() ServiceRepo {
 
 type service struct {
 	listenAddr string
-	mux        *http.ServeMux
+	mux        *stdhttp.ServeMux
 	stopCh     chan struct{}
 	l          *logger.Logger
 }
 
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
-	flagSet.StringVar(&p.listenAddr, "webapp-listener-addr", ":17913", "listen addr for webapp")
+	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
 	return flagSet
 }
 
@@ -61,7 +44,7 @@ func (p *service) Validate() error {
 }
 
 func (p *service) Name() string {
-	return "webapp"
+	return "liaison-http"
 }
 
 func (p *service) PreRun() error {
@@ -70,19 +53,20 @@ func (p *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	p.mux = http.NewServeMux()
-	httpFS := http.FS(fSys)
-	fileServer := http.FileServer(http.FS(fSys))
+	p.mux = stdhttp.NewServeMux()
+	httpFS := stdhttp.FS(fSys)
+	fileServer := stdhttp.FileServer(stdhttp.FS(fSys))
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Handle("/", intercept404(fileServer, serveIndex))
+	//TODO: add grpc gateway handler
 	return nil
 }
 
 func (p *service) Serve() run.StopNotify {
 
 	go func() {
-		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start metric server")
-		_ = http.ListenAndServe(p.listenAddr, p.mux)
+		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
+		_ = stdhttp.ListenAndServe(p.listenAddr, p.mux)
 		p.stopCh <- struct{}{}
 	}()
 
@@ -93,8 +77,8 @@ func (p *service) GracefulStop() {
 	close(p.stopCh)
 }
 
-func intercept404(handler, on404 http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func intercept404(handler, on404 stdhttp.Handler) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hookedWriter := &hookedResponseWriter{ResponseWriter: w}
 		handler.ServeHTTP(hookedWriter, r)
 
@@ -105,12 +89,12 @@ func intercept404(handler, on404 http.Handler) http.Handler {
 }
 
 type hookedResponseWriter struct {
-	http.ResponseWriter
+	stdhttp.ResponseWriter
 	got404 bool
 }
 
 func (hrw *hookedResponseWriter) WriteHeader(status int) {
-	if status == http.StatusNotFound {
+	if status == stdhttp.StatusNotFound {
 		hrw.got404 = true
 	} else {
 		hrw.ResponseWriter.WriteHeader(status)
@@ -125,29 +109,29 @@ func (hrw *hookedResponseWriter) Write(p []byte) (int, error) {
 	return hrw.ResponseWriter.Write(p)
 }
 
-func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func serveFileContents(file string, files stdhttp.FileSystem) stdhttp.HandlerFunc {
+	return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(stdhttp.StatusNotFound)
 			fmt.Fprint(w, "404 not found")
 
 			return
 		}
 		index, err := files.Open(file)
 		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(stdhttp.StatusNotFound)
 			fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		fi, err := index.Stat()
 		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(stdhttp.StatusNotFound)
 			fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
+		stdhttp.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
 	}
 }
