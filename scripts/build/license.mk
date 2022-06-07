@@ -16,20 +16,8 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
-
-IMG_NAME := skywalking-banyandb
-
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-
-DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
-
-include ../scripts/build/docker.mk
-include ../scripts/build/help.mk
+LICENSE_EYE := $(tool_bin)/license-eye
+$(LICENSE_EYE):
+	@echo "Install license-eye..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/apache/skywalking-eyes/cmd/license-eye@5f15d230a1914858ebccba7664026ffc7288b670

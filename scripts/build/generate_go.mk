@@ -16,6 +16,12 @@
 # under the License.
 #
 
+MOCKGEN := $(tool_bin)/mockgen
+$(MOCKGEN):
+	@echo "Install mock generate tool..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/golang/mock/mockgen@v1.6.0
+
 .PHONY: generate
-generate: $(MOCKGEN) $(PROTOC)
+generate: $(MOCKGEN)
 	@PATH=$(tool_bin):$$PATH; go generate ./...

@@ -16,20 +16,48 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
-
-IMG_NAME := skywalking-banyandb
+NAME := ui
+DIST_INDEX := dist/index.html
 
 include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-
-DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
-
-include ../scripts/build/docker.mk
+include ../scripts/build/license.mk
 include ../scripts/build/help.mk
+
+.PHONY: install
+install:
+	yarn install 
+
+.PHONY: generate
+generate: build
+ 
+.PHONY: all
+all: build
+
+.PHONY: build
+build: install
+	@echo "Building $(NAME)"
+	yarn build
+	@echo "Done building $(NAME)"
+
+.PHONY: test
+test:
+	@echo "No test"
+
+.PHONY: release
+release: build
+
+.PHONY: lint
+lint:
+	@echo "No lint"
+
+.PHONY: docker
+docker: build
+	@echo "BanyanD will embed the UI"
+
+.PHONY: docker.push
+docker.push:
+	@echo "No push"
+
+license-dep:$(LICENSE_EYE)
+	@rm -rf licenses
+	$(LICENSE_EYE) dep resolve -o ui-licenses -s LICENSE.tpl

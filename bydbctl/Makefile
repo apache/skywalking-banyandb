@@ -16,20 +16,41 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
+NAME := bydbctl
+IMG_NAME := skywalking-bydbctl
 
-IMG_NAME := skywalking-banyandb
+BUILD_DIR ?= build/bin
 
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
+
+.PHONY: all
+all: build
+
+.PHONY: build
+build: 
+	@echo "Building binary"
+	go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
+	chmod +x $(BUILD_DIR)/$(NAME)
+	@echo "Done building $(NAME)"
+
+BUILDS := darwin-amd64 darwin-arm64 linux-386 linux-amd64 linux-arm64 windows-386 windows-amd64
+BUILD_RULE = GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -v --ldflags '$(GO_LINK_VERSION)' \
+		-o $(BUILD_DIR)/$(NAME)-$(VERSION_STRING)-$(GOOS)-$(GOARCH) \
+		github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
+
+.PHONY: $(BUILDS)
+$(BUILDS): GOOS = $(word 1,$(subst -, ,$@))
+$(BUILDS): GOARCH = $(word 2,$(subst -, ,$@))
+$(BUILDS):
+	$(BUILD_RULE)
+
+.PHONY: release 
+release: $(BUILDS)
+
+DOCKER_BUILD_ARGS := --build-arg BASE_IMAGE=golang:${go_version}
+include ../scripts/build/docker.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
-
-DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
-
-include ../scripts/build/docker.mk
 include ../scripts/build/help.mk

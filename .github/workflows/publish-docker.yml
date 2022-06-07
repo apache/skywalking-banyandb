@@ -23,10 +23,10 @@ on:
       - main
 
 env:
-  HUB: ghcr.io/apache/skywalking-banyandb
+  HUB: ghcr.io/apache
 
 jobs:
-  build:
+  push-banyandb-image:
     if: github.repository == 'apache/skywalking-banyandb'
     runs-on: ubuntu-latest
     permissions:
@@ -38,6 +38,11 @@ jobs:
     env:
       TAG: ${{ github.sha }}
     steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.15
+      - name: Install yarn
+        run: corepack enable
       - name: Install Go
         uses: actions/setup-go@v2
         with:

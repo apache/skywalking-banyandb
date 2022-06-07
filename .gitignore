@@ -23,7 +23,7 @@
 *.dylib
 bin
 include
-build
+/build
 target
 
 # Test binary, build with `go test -c`
@@ -46,6 +46,3 @@ target
 # mock files
 *mock.go
 *mock_test.go
-
-# etcd unix sockets
-localhost:*

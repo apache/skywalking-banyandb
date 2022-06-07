@@ -52,7 +52,7 @@ source(){
     mkdir -p ${BUILDDIR}
     rm -rf ${SOURCE_FILE}
     pushd ${ROOTDIR}
-    echo "RELEASE_VERSION=${RELEASE_VERSION}" >> .env
+    echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
     tar \
     --exclude=".DS_Store" \
     --exclude=".git" \

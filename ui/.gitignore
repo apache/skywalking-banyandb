@@ -14,22 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
-
-IMG_NAME := skywalking-banyandb
-
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-
-DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
-
-include ../scripts/build/docker.mk
-include ../scripts/build/help.mk
+# Binaries for programs and plugins
+dist
+node_modules
+yarn.lock
+package-lock.json

@@ -62,29 +62,12 @@ header: # `header` section is configurations for source codes license header.
 
   paths-ignore: # `paths-ignore` are the path list that will be ignored by license-eye.
     - 'dist'
-    - 'licenses'
-    - '**/*.md'
-    - '**/testdata/**'
-    - '**/go.mod'
-    - '**/go.sum'
-    - 'LICENSE'
-    - 'NOTICE'
-    - '**/build/**'
-    - '**/*.bin'
-    - '**/*.json'
-    - '**/*_mock.go'
-    - '**/*_mock_test.go'
-    - '**/*.pb.go'
-    - '**/*.textproto'
-    - '**/*.pem'
-    - '**/.gitignore'
-    - 'ui/dist'
-    - 'ui/node_modules'
-    - 'ui/yarn.lock'
-    - 'ui/LICENSE.tpl'
+    - 'node_modules'
+    - 'yarn.lock'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
 dependency:
   files:
-    - go.mod
+    - package.json
+  

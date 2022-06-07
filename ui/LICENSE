@@ -1,0 +1,15 @@
+========================================================================
+UI related licenses
+========================================================================
+
+The following components are used in UI.See project link for details.
+The text of each license is also included at licenses/ui-licenses/LICENSE-[project].txt.
+ 
+
+========================================================================
+MIT licenses
+========================================================================
+
+    core-js 3.22.8 MIT
+    vue-router 3.5.4 MIT
+    vue 2.6.14 MIT

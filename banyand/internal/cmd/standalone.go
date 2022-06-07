@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -76,6 +77,7 @@ func newStandaloneCmd() *cobra.Command {
 	}
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
+	httpServer := http.NewService()
 
 	// Meta the run Group units.
 	g.Register(
@@ -89,6 +91,7 @@ func newStandaloneCmd() *cobra.Command {
 		tcp,
 		metricSvc,
 		profSvc,
+		httpServer,
 	)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{
