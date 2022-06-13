@@ -17,10 +17,19 @@
  * under the License.
  */
 
-const fs = require("fs");
+const path = require('path');
+const fs = require('fs');
+const jsonfile = require('jsonfile');
+const packageJsonPath = path.join(process.cwd(), 'package.json')
 
-const nvmVersion = fs.readFileSync(".node-version").toString().trim();
-const desired = `v${nvmVersion}`;
+fs.accessSync(packageJsonPath);
+const engines = jsonfile.readFileSync(packageJsonPath).engines;
+if (!engines) {
+  console.error('✘ No engines found in package.json');
+  process.exit(1); 
+}
+const nodeVersion = engines['node']
+const desired = `v${nodeVersion}`
 const running = process.version;
 
 if (!running.startsWith(desired)) {
