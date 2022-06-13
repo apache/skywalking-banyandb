@@ -92,6 +92,8 @@ check: clean
 		echo "Upgrade go to $(CONFIGURED_GO_VERSION)+"; \
 		exit 1; \
 	esac
+	$(MAKE) -C ui check-version
+	$(MAKE) license-dep
 	$(MAKE) format
 	mkdir -p /tmp/artifacts
 	git diff >/tmp/artifacts/check.diff 2>&1

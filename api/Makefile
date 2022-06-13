@@ -19,6 +19,7 @@
 NAME := api
 
 include ../scripts/build/base.mk
+include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
 
 proto_dir := $(root_dir)/api/proto
@@ -59,3 +60,4 @@ generate: $(BUF)
 
 lint: $(PROTOC)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
+	$(MAKE) lint-desperated

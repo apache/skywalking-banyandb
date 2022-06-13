@@ -23,6 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
+// NewRoot returns the root command
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,

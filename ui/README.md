@@ -1,19 +1,23 @@
 # frontend
 
 ## Project setup
-```
-yarn install
+
+```shell
+npm install
 ```
 
 ### Compiles and hot-reloads for development
-```
-yarn serve
+
+```shell
+npm run serve
 ```
 
 ### Compiles and minifies for production
-```
-yarn build
+
+```shell
+npm run build
 ```
 
 ### Customize configuration
+
 See [Configuration Reference](https://cli.vuejs.org/config/).

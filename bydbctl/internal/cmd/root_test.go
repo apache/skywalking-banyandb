@@ -23,6 +23,5 @@ import (
 
 var _ = Describe("Root", func() {
 	It("foo", func() {
-
 	})
 })

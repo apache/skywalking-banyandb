@@ -25,9 +25,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-type SeriesID uint64
-type ShardID uint32
-type ItemID uint64
+type (
+	SeriesID uint64
+	ShardID  uint32
+	ItemID   uint64
+)
 
 func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
