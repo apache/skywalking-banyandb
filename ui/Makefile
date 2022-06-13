@@ -24,11 +24,12 @@ include ../scripts/build/license.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
 
-check-version:
+.PHONY: check-version
+check-version: install
 	@node tools/checkversion
 
 .PHONY: install
-install: check-version
+install:
 	npm install 
 
 .PHONY: generate
