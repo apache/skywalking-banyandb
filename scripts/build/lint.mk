@@ -26,6 +26,15 @@ LINTER := $(tool_bin)/golangci-lint
 $(LINTER):
 	@wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(root_dir)/bin $(GOLANGCI_VERSION)
 
+REVIVE := $(tool_bin)/revive
+$(REVIVE):
+	@GOBIN=$(tool_bin) go install github.com/mgechev/revive@latest
+
 .PHONY: lint
-lint: $(LINTER) ## Run all the linters
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/golangci.yml
+lint: $(LINTER) $(REVIVE) ## Run all linters
+	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
+	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...
+
+.PHONY: lint-desperated
+lint-desperated: $(LINTER)
+	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/desperated-golangci.yml

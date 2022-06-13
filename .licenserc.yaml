@@ -80,8 +80,9 @@ header: # `header` section is configurations for source codes license header.
     - '**/.gitignore'
     - 'ui/dist'
     - 'ui/node_modules'
-    - 'ui/yarn.lock'
+    - 'ui/package-lock.json'
     - 'ui/LICENSE.tpl'
+    - 'ui/.node-version'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

@@ -23,3 +23,6 @@ include ../scripts/build/generate_go.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
+
+lint: $(PROTOC)
+	$(MAKE) lint-desperated

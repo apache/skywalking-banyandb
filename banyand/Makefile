@@ -29,6 +29,9 @@ include ../scripts/build/build.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 
+lint: $(PROTOC)
+	$(MAKE) lint-desperated
+
 DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
 
 include ../scripts/build/docker.mk
