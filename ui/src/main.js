@@ -19,10 +19,21 @@
 
 import Vue from 'vue'
 import './plugins/axios'
+import { Button, Container, Header, Main, Menu, MenuItem, Image } from 'element-ui'
 import App from './App.vue'
 import router from './router'
 
+
 Vue.config.productionTip = false
+
+Vue.use(Button)
+Vue.use(Container)
+Vue.use(Header)
+Vue.use(Main)
+Vue.use(Menu)
+Vue.use(MenuItem)
+Vue.use(Image)
+
 
 new Vue({
   router,

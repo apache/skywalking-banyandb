@@ -18,9 +18,11 @@
 -->
 
 <template>
-  <h1 class="home">
+  <div>
+    <h1 class="home">
     This is the home page
-  </h1>
+    </h1>
+  </div>
 </template>
 
 <script>

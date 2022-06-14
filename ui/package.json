@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "core-js": "^3.6.5",
+    "element-ui": "^2.15.9",
     "vue": "^2.6.11",
     "vue-router": "^3.2.0"
   },
@@ -19,6 +20,9 @@
     "@vue/cli-plugin-router": "~4.5.0",
     "@vue/cli-service": "~4.5.0",
     "axios": "^0.18.0",
+    "babel-plugin-component": "^1.1.1",
+    "sass": "^1.52.3",
+    "sass-loader": "^7.3.1",
     "vue-cli-plugin-axios": "~0.0.4",
     "vue-template-compiler": "^2.6.11"
   }

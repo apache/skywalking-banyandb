@@ -21,26 +21,31 @@ import Vue from 'vue'
 import VueRouter from 'vue-router'
 import Home from '../views/Home.vue'
 import About from '../views/About.vue'
-import Laws from '../views/Laws.vue'
 import NotFound from '../views/NotFound.vue'
+
 
 Vue.use(VueRouter)
 
 const routes = [
   {
-    path: '/',
+    path: '/home',
     name: 'Home',
     component: Home,
+  },
+  {
+    path: '/database',
+    name: 'Database',
+    component: () => import('../views/Database.vue')
+  },
+  {
+    path: '/structure',
+    name: 'Structure',
+    component: () => import('../views/Structure.vue')
   },
   {
     path: '/about',
     name: 'About',
     component: About,
-  },
-  {
-    path: '/laws',
-    name: 'Laws',
-    component: Laws,
   },
   {
     // will match everything
