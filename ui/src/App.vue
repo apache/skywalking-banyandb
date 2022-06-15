@@ -20,8 +20,8 @@
 <template>
   <div id="app">
     <el-container>
-      <el-header>
-        <header-component></header-component>
+      <el-header v-if="show">
+        <header-component :active="activePath"></header-component>
       </el-header>
       <el-main>
         <router-view />
@@ -35,12 +35,31 @@ import HeaderComponent from "./components/HeaderComponent.vue";
 export default {
   data() {
     return {
-
+      activePath: "",
+      show: true,
     }
   },
   components: {
     HeaderComponent
-  }
+  },
+  beforeCreate() {
+    this.$loading.create()
+  },
+  created() {
+    let route = this.$route
+    let path = this.$route.path
+    let name = this.$route.name
+    if (name == "NotFound") {
+      this.show = false
+    } else {
+      this.activePath = path
+    }
+    console.log(route)
+    console.log(path)
+  },
+  mounted() {
+    this.$loading.close()
+  },
 }
 </script>
 

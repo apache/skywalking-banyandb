@@ -19,9 +19,11 @@
 
 import Vue from 'vue'
 import './plugins/axios'
-import { Button, Container, Header, Main, Menu, MenuItem, Image } from 'element-ui'
+import { Button, Container, Header, Main, Aside, Menu, MenuItem, Image, Loading } from 'element-ui'
 import App from './App.vue'
 import router from './router'
+import './assets/custom.scss'
+import './assets/main.scss'
 
 
 Vue.config.productionTip = false
@@ -30,9 +32,24 @@ Vue.use(Button)
 Vue.use(Container)
 Vue.use(Header)
 Vue.use(Main)
+Vue.use(Aside)
 Vue.use(Menu)
 Vue.use(MenuItem)
 Vue.use(Image)
+Vue.prototype.$loading = Loading
+Vue.prototype.$loading.create = () => {
+  Vue.prototype.$loading.instance = Loading.service({
+    text: '拼命加载中',
+    spinner: 'el-icon-loading',
+    background: 'rgba(0, 0, 0, 0.8)',
+  })
+}
+Vue.prototype.$loading.close = () => {
+  Vue.nextTick(() => {
+    // 以服务的方式调用的 Loading 需要异步关闭
+    Vue.prototype.$loading.instance.close()
+  })
+}
 
 
 new Vue({

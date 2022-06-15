@@ -1,0 +1,44 @@
+@import './custom.scss';
+
+/* ==================
+     flex layout
+==================== */
+.flex {display: flex;}
+.row {flex-direction: row;}
+.column {flex-direction: column;}
+.align-item-center {align-items: center;}
+.align-content-center {align-content: center;}
+.align-start {align-items: flex-start;}
+.align-end {align-items: flex-end;}
+.justify-center {justify-content: center;}
+.justify-around {justify-content: space-around;}
+.justify-between {justify-content: space-between;}
+.justify-start {justify-content: flex-start;}
+.justify-end {justify-content: flex-end;}
+.center {align-items: center; justify-content: center;}
+
+/* ==================
+     border line
+==================== */
+.bd-top {border-top: 1px solid var(--color-first-border)}
+.bd-bottom {border-bottom: 1px solid var(--color-first-border)}
+.bd-left {border-left: 1px solid var(--color-first-border);}
+.bd-right {border-right: 1px solid var(--color-first-border)}
+
+/* ==================
+     font style
+==================== */
+.text-overflow-hidden {text-overflow: ellipsis; white-space: nowrap; overflow: hidden;}
+.text-tips {font-size: var(--size-mini);}
+.text-normal {font-size: var(--size-lt);}
+.text-title {font-size: var(--size-title);}
+.text-big {font-size: var(--size-big);}
+.text-main-color {color: var(--color-main-font);}
+.text-general-color {color: var(--color-general-font);}
+.text-line-mini {line-height: 10px;}
+.text-line-normal {line-height: 20px;}
+.text-center {text-align: center;}
+.text-justify {text-align: justify;}
+.text-family {font-family: var(--font-family-main);}
+.text-weight-mini {font-weight: var(--weight-mini);}
+.text-weight-lt {font-weight: var(--weight-lt);}

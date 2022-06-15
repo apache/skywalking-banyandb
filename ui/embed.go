@@ -20,5 +20,5 @@ package ui
 import "embed"
 
 // DistContent contains ui distributed pages
-//go:embed dist
+// go:embed dist
 var DistContent embed.FS

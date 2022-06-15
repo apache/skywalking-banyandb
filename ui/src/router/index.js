@@ -22,11 +22,16 @@ import VueRouter from 'vue-router'
 import Home from '../views/Home.vue'
 import About from '../views/About.vue'
 import NotFound from '../views/NotFound.vue'
-
+import Database from '../views/Database.vue'
+import Structure from '../views/Structure.vue'
 
 Vue.use(VueRouter)
 
 const routes = [
+  {
+    path: '/',
+    redirect: '/home'
+  },
   {
     path: '/home',
     name: 'Home',
@@ -35,12 +40,12 @@ const routes = [
   {
     path: '/database',
     name: 'Database',
-    component: () => import('../views/Database.vue')
+    component: Database,
   },
   {
     path: '/structure',
     name: 'Structure',
-    component: () => import('../views/Structure.vue')
+    component: Structure,
   },
   {
     path: '/about',
