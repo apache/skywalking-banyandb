@@ -25,6 +25,7 @@ package banyandb.stream.v1;
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "validate/validate.proto";
 
 // Element represents
 // (stream context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
@@ -54,7 +55,7 @@ message QueryResponse {
 // QueryRequest is the request contract for query.
 message QueryRequest {
   // metadata is required
-  common.v1.Metadata metadata = 1;
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
   // In the context of stream, it represents the range of the `startTime` for spans/segments,
   // while in the context of Log, it means the range of the timestamp(s) for logs.

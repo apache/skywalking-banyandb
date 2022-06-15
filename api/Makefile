@@ -40,6 +40,7 @@ $(BUF):
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/buf@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@$(buf_version)
+	@GOBIN=$(tool_bin) go install github.com/envoyproxy/protoc-gen-validate@v0.6.7
 
 PROTOC_GEN_GO := $(tool_bin)/protoc-gen-go
 $(PROTOC_GEN_GO):

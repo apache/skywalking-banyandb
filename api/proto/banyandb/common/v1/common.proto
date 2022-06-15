@@ -23,6 +23,7 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/co
 package banyandb.common.v1;
 
 import "google/protobuf/timestamp.proto";
+import "validate/validate.proto";
 
 enum Catalog {
     CATALOG_UNSPECIFIED = 0;
@@ -33,9 +34,9 @@ enum Catalog {
 // Metadata is for multi-tenant, multi-model use
 message Metadata {
     // group contains a set of options, like retention policy, max
-    string group = 1;
+    string group = 1 [(validate.rules).string.min_len = 1];
     // name of the entity
-    string name = 2;
+    string name = 2 [(validate.rules).string.min_len = 1];
     uint32 id = 3;
     // readonly. create_revision is the revision of last creation on this key.
     int64 create_revision = 4;
