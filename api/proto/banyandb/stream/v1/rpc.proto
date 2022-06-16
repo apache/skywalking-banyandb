@@ -24,8 +24,14 @@ package banyandb.stream.v1;
 
 import "banyandb/stream/v1/query.proto";
 import "banyandb/stream/v1/write.proto";
+import "google/api/annotations.proto";
 
 service StreamService {
-  rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse);
+  rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse){
+    option(google.api.http) = {
+      post:"/stream/data"
+      body:"*"
+    };
+  };
   rpc Write(stream banyandb.stream.v1.WriteRequest) returns (stream banyandb.stream.v1.WriteResponse);
 }

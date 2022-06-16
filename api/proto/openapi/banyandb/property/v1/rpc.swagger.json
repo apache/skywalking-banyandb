@@ -1,0 +1,240 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "banyandb/property/v1/rpc.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "PropertyService"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {},
+  "definitions": {
+    "banyandbcommonv1Metadata": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "type": "string",
+          "title": "group contains a set of options, like retention policy, max"
+        },
+        "name": {
+          "type": "string",
+          "title": "name of the entity"
+        },
+        "id": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "createRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "readonly. create_revision is the revision of last creation on this key."
+        },
+        "modRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "readonly. mod_revision is the revision of last modification on this key."
+        }
+      },
+      "title": "Metadata is for multi-tenant, multi-model use"
+    },
+    "banyandbpropertyv1Metadata": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/definitions/banyandbcommonv1Metadata",
+          "title": "container is created when it receives the first property"
+        },
+        "id": {
+          "type": "string",
+          "title": "id identifies a property"
+        }
+      },
+      "title": "Metadata is for multi-tenant use"
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "protobufNullValue": {
+      "type": "string",
+      "enum": [
+        "NULL_VALUE"
+      ],
+      "default": "NULL_VALUE",
+      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\n The JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1CreateResponse": {
+      "type": "object"
+    },
+    "v1DeleteResponse": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1GetResponse": {
+      "type": "object",
+      "properties": {
+        "property": {
+          "$ref": "#/definitions/v1Property"
+        }
+      }
+    },
+    "v1ID": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "v1Int": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1IntArray": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "int64"
+          }
+        }
+      }
+    },
+    "v1ListResponse": {
+      "type": "object",
+      "properties": {
+        "property": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Property"
+          }
+        }
+      }
+    },
+    "v1Property": {
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/banyandbpropertyv1Metadata",
+          "title": "metadata is the identity of a property"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Tag"
+          },
+          "title": "tag stores the content of a property"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "title": "updated_at indicates when the property is updated"
+        }
+      },
+      "title": "Property stores the user defined data"
+    },
+    "v1Str": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "v1StrArray": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1Tag": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/v1TagValue"
+        }
+      },
+      "description": "Pair is the building block of a record which is equivalent to a key-value pair.\nIn the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.\nBesides, other tags are organized in key-value pair in the underlying storage layer.\nOne should notice that the values can be a multi-value."
+    },
+    "v1TagValue": {
+      "type": "object",
+      "properties": {
+        "null": {
+          "type": "string"
+        },
+        "str": {
+          "$ref": "#/definitions/v1Str"
+        },
+        "strArray": {
+          "$ref": "#/definitions/v1StrArray"
+        },
+        "int": {
+          "$ref": "#/definitions/v1Int"
+        },
+        "intArray": {
+          "$ref": "#/definitions/v1IntArray"
+        },
+        "binaryData": {
+          "type": "string",
+          "format": "byte"
+        },
+        "id": {
+          "$ref": "#/definitions/v1ID"
+        }
+      }
+    },
+    "v1UpdateResponse": {
+      "type": "object"
+    }
+  }
+}

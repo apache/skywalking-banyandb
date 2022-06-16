@@ -24,6 +24,7 @@ package banyandb.database.v1;
 
 import "banyandb/database/v1/schema.proto";
 import "banyandb/common/v1/common.proto";
+import "google/api/annotations.proto";
 
 message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
@@ -64,11 +65,33 @@ message StreamRegistryServiceListResponse {
 }
 
 service StreamRegistryService {
-  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse);
-  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse);
-  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse);
-  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse);
-  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse);
+  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/stream/schema"
+      body:"*"
+    };
+  };
+  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/stream/schema"
+      body:"*"
+    };
+  };
+  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/stream/schema/{metadata.name}"
+    };
+  };
+  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/stream/schema/{metadata.name}"
+    };
+  };
+  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/stream/schema/{group}"
+    };
+  };
 }
 
 message IndexRuleBindingRegistryServiceCreateRequest {
