@@ -21,11 +21,16 @@ DIST_INDEX := dist/index.html
 
 include ../scripts/build/base.mk
 include ../scripts/build/license.mk
+include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
+
+.PHONY: check-version
+check-version: install
+	@node tools/checkversion
 
 .PHONY: install
 install:
-	yarn install 
+	npm install 
 
 .PHONY: generate
 generate: build
@@ -36,7 +41,7 @@ all: build
 .PHONY: build
 build: install
 	@echo "Building $(NAME)"
-	yarn build
+	npm run build
 	@echo "Done building $(NAME)"
 
 .PHONY: test
@@ -45,10 +50,6 @@ test:
 
 .PHONY: release
 release: build
-
-.PHONY: lint
-lint:
-	@echo "No lint"
 
 .PHONY: docker
 docker: build

@@ -63,7 +63,7 @@ header: # `header` section is configurations for source codes license header.
   paths-ignore: # `paths-ignore` are the path list that will be ignored by license-eye.
     - 'dist'
     - 'node_modules'
-    - 'yarn.lock'
+    - 'package-lock.json'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

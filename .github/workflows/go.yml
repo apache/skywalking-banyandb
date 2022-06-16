@@ -30,8 +30,6 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
-      - name: Install yarn
-        run: corepack enable
       - name: Install Go
         uses: actions/setup-go@v2
         with:
@@ -67,8 +65,6 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
-      - name: Install yarn
-        run: corepack enable
       - name: Install Go
         uses: actions/setup-go@v2
         with:
@@ -103,8 +99,6 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
-      - name: Install yarn
-        run: corepack enable
       - name: Install Go
         uses: actions/setup-go@v2
         with:

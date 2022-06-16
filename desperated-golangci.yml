@@ -43,9 +43,6 @@ linters-settings:
     check-shadowing: true
 run:
   deadline: 10m
-  skip-dirs:
-    - docs
-    - ui
 issues:
   exclude:
     # staticcheck
