@@ -46,7 +46,6 @@ Vue.prototype.$loading.create = () => {
 }
 Vue.prototype.$loading.close = () => {
   Vue.nextTick(() => {
-    // 以服务的方式调用的 Loading 需要异步关闭
     Vue.prototype.$loading.instance.close()
   })
 }
