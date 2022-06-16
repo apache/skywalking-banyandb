@@ -29,3 +29,9 @@ plugins:
     out: proto
     opt: markdown,api-reference.md
     strategy: all
+  - name: validate
+    out: proto
+    opt:
+      - lang=go
+      - paths=source_relative
+      - validate_out="lang=go:./proto"

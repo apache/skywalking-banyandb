@@ -24,6 +24,7 @@ package banyandb.property.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/property/v1/property.proto";
+import "validate/validate.proto";
 
 message CreateRequest {
     banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];

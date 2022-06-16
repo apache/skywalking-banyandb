@@ -56,7 +56,7 @@ message TopNRequest {
     // top_n set the how many items should be returned in each list.
     int32 top_n = 3 [(validate.rules).int32.gt = 0];
     // agg aggregates lists grouped by field names in the time_range
-    model.v1.AggregationFunction agg = 4 [(validate.rules).message.required = true];
+    model.v1.AggregationFunction agg = 4 [(validate.rules).enum.defined_only = true];
     // criteria select counters.
     repeated model.v1.Condition conditions = 5;
     // field_value_sort indicates how to sort fields

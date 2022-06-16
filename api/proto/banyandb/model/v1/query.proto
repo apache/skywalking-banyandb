@@ -24,6 +24,7 @@ package banyandb.model.v1;
 
 import "google/protobuf/timestamp.proto";
 import "banyandb/model/v1/common.proto";
+import "validate/validate.proto";
 
 // Pair is the building block of a record which is equivalent to a key-value pair.
 // In the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.
