@@ -34,7 +34,7 @@ enum Catalog {
 // Metadata is for multi-tenant, multi-model use
 message Metadata {
     // group contains a set of options, like retention policy, max
-    string group = 1 [(validate.rules).string.min_len = 1];
+    string group = 1;
     // name of the entity
     string name = 2 [(validate.rules).string.min_len = 1];
     uint32 id = 3;

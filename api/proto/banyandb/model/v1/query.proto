@@ -90,7 +90,7 @@ message TagProjection {
         string name = 1;
         repeated string tags = 2;
     }
-    repeated TagFamily tag_families = 1;
+    repeated TagFamily tag_families = 1 [(validate.rules).repeated.min_items = 1];
 }
 
 // TimeRange is a range query for uint64,

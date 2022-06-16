@@ -30,9 +30,9 @@ import "validate/validate.proto";
 //DataPointValue is the data point for writing. It only contains values.
 message DataPointValue {
   // timestamp is in the timeunit of milliseconds.
-  google.protobuf.Timestamp timestamp = 1;
+  google.protobuf.Timestamp timestamp = 1 [(validate.rules).timestamp.required = true];
   // the order of tag_families' items match the measure schema
-  repeated model.v1.TagFamilyForWrite tag_families = 2;
+  repeated model.v1.TagFamilyForWrite tag_families = 2 [(validate.rules).repeated.min_items = 1];
   // the order of fields match the measure schema
   repeated model.v1.FieldValue fields = 3;
 }

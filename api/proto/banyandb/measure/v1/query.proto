@@ -53,11 +53,11 @@ message QueryRequest {
   // metadata is required
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
-  model.v1.TimeRange time_range = 2;
+  model.v1.TimeRange time_range = 2 [(validate.rules).message.required = true];
   // tag_families are indexed.
   repeated model.v1.Criteria criteria = 4;
   // tag_projection can be used to select tags of the data points in the response
-  model.v1.TagProjection tag_projection = 5;
+  model.v1.TagProjection tag_projection = 5 [(validate.rules).message.required = true];
   message FieldProjection {
     repeated string names = 1;
   }

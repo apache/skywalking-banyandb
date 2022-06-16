@@ -70,5 +70,5 @@ message QueryRequest {
   // tag_families are indexed.
   repeated model.v1.Criteria criteria = 6;
   // projection can be used to select the key names of the element in the response
-  model.v1.TagProjection projection = 7;
+  model.v1.TagProjection projection = 7 [(validate.rules).message.required = true];
 }
