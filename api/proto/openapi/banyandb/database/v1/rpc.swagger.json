@@ -24,6 +24,7 @@
       "name": "TopNAggregationRegistryService"
     }
   ],
+  "basePath": "/api",
   "consumes": [
     "application/json"
   ],
@@ -31,7 +32,7 @@
     "application/json"
   ],
   "paths": {
-    "/stream/schema": {
+    "/v1/stream/schema": {
       "post": {
         "operationId": "StreamRegistryService_Create",
         "responses": {
@@ -93,7 +94,7 @@
         ]
       }
     },
-    "/stream/schema/{group}": {
+    "/v1/stream/schema/{group}": {
       "get": {
         "operationId": "StreamRegistryService_List",
         "responses": {
@@ -123,7 +124,7 @@
         ]
       }
     },
-    "/stream/schema/{metadata.name}": {
+    "/v1/stream/schema/{metadata.name}": {
       "get": {
         "operationId": "StreamRegistryService_Get",
         "responses": {

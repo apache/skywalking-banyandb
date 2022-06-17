@@ -29,7 +29,7 @@ import "google/api/annotations.proto";
 service StreamService {
   rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse){
     option(google.api.http) = {
-      post:"/stream/data"
+      post:"/v1/stream/data"
       body:"*"
     };
   };

@@ -21,22 +21,19 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net/http"
+	stdhttp "net/http"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/ui"
-
-	//"io/fs"
-	stdhttp "net/http"
-	"strings"
-
-	//"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	//"github.com/apache/skywalking-banyandb/ui"
-	"google.golang.org/grpc"
 )
 
 type ServiceRepo interface {
@@ -56,15 +53,16 @@ func NewService() ServiceRepo {
 
 type service struct {
 	listenAddr string
-	//mux        *stdhttp.ServeMux
-	mux    *runtime.ServeMux
-	stopCh chan struct{}
-	l      *logger.Logger
+	grpcAddr   string
+	mux        *chi.Mux
+	stopCh     chan struct{}
+	l          *logger.Logger
 }
 
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
+	flagSet.StringVar(&p.grpcAddr, "grcp-addr", "localhost:17912", "the grpc addr")
 	return flagSet
 }
 
@@ -78,23 +76,25 @@ func (p *service) Name() string {
 
 func (p *service) PreRun() error {
 	p.l = logger.GetLogger(p.Name())
+	p.mux = chi.NewRouter()
+
 	fSys, err := fs.Sub(ui.DistContent, "dist")
-	//p.mux = stdhttp.NewServeMux()
-	p.mux = runtime.NewServeMux()
+	if err != nil {
+		return err
+	}
 	httpFS := stdhttp.FS(fSys)
 	fileServer := stdhttp.FileServer(stdhttp.FS(fSys))
 	serveIndex := serveFileContents("index.html", httpFS)
-	//p.mux.Handle("/", intercept404(fileServer, serveIndex)) // original method should be replaced.
-	err = p.mux.HandlePath("GET", "/", intercept404(fileServer, serveIndex))
+	p.mux.Mount("/", intercept404(fileServer, serveIndex))
+
+	gwMux := runtime.NewServeMux()
+
+	err = pb.RegisterStreamRegistryServiceHandlerFromEndpoint(context.Background(), gwMux, p.grpcAddr,
+		[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())})
 	if err != nil {
 		return err
 	}
-	//TODO: add grpc gateway handler // written by Mr Gao
-	//err := pb.RegisterStreamRegistryServiceHandlerFromEndpoint(context.Background(), p.mux, "17912", []grpc.DialOption{grpc.WithInsecure()})
-	err = pb.RegisterStreamRegistryServiceHandlerFromEndpoint(context.Background(), p.mux, "17912", []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())})
-	if err != nil {
-		return err
-	}
+	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (p *service) GracefulStop() {
 	close(p.stopCh)
 }
 
-func intercept404(handler, on404 stdhttp.Handler) stdhttp.Handler {
+func intercept404(handler, on404 stdhttp.Handler) stdhttp.HandlerFunc {
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hookedWriter := &hookedResponseWriter{ResponseWriter: w}
 		handler.ServeHTTP(hookedWriter, r)

@@ -25,4 +25,5 @@ breaking:
   use:
     - FILE
 deps:
-  - buf.build/googleapis/googleapis
+  - buf.build/googleapis/googleapis:49e6a7ed565e4318817623413ca6b791d35085c8
+  - buf.build/grpc-ecosystem/grpc-gateway:3849b8a0cf8a66fe2799ff9dc1857f0097d13411

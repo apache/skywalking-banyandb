@@ -16,7 +16,7 @@
     "application/json"
   ],
   "paths": {
-    "/stream/data": {
+    "/v1/stream/data": {
       "post": {
         "operationId": "StreamService_Query",
         "responses": {
