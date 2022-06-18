@@ -20,7 +20,7 @@ package logical
 import (
 	"fmt"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 var _ ResolvableExpr = (*TagRef)(nil)
@@ -114,5 +114,5 @@ func (f *FieldRef) Resolve(s Schema) error {
 
 type FieldSpec struct {
 	FieldIdx int
-	Spec     *database_v1.FieldSpec
+	Spec     *databasev1.FieldSpec
 }

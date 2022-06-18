@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package measure
 
 import (
@@ -57,10 +58,10 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 	}
 }
 
-func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
-	switch m.Kind {
+func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
+	switch metadata.Kind {
 	case schema.KindGroup:
-		g := m.Spec.(*commonv1.Group)
+		g := metadata.Spec.(*commonv1.Group)
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
@@ -73,10 +74,10 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: m.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
-		irb, ok := m.Spec.(*databasev1.IndexRuleBinding)
+		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
 		if !ok {
 			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
 			return
@@ -85,7 +86,7 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			stm, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  irb.GetSubject().GetName(),
-				Group: m.Group,
+				Group: metadata.Group,
 			})
 			cancel()
 			if err != nil {
@@ -100,8 +101,8 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 		}
 	case schema.KindIndexRule:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		subjects, err := sr.metadata.Subjects(ctx, m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
-		cancel()
+		defer cancel()
+		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
 		if err != nil {
 			sr.l.Error().Err(err).Msg("fail to get subjects(measure)")
 			return
@@ -113,14 +114,20 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 				Metadata: sub.(*databasev1.Measure).GetMetadata(),
 			})
 		}
+	case schema.KindTopNAggregation:
+		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+			Typ:      resourceSchema.EventAddOrUpdate,
+			Kind:     resourceSchema.EventKindResource,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+		})
 	default:
 	}
 }
 
-func (sr *schemaRepo) OnDelete(m schema.Metadata) {
-	switch m.Kind {
+func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
+	switch metadata.Kind {
 	case schema.KindGroup:
-		g := m.Spec.(*commonv1.Group)
+		g := metadata.Spec.(*commonv1.Group)
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
@@ -133,27 +140,35 @@ func (sr *schemaRepo) OnDelete(m schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: m.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
-		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
-				Name:  m.Name,
-				Group: m.Group,
+			defer cancel()
+			m, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+				Name:  metadata.Name,
+				Group: metadata.Group,
 			})
-			cancel()
 			if err != nil {
 				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
+			// we should update instead of delete
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventDelete,
+				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm.GetMetadata(),
+				Metadata: m.GetMetadata(),
 			})
 		}
 	case schema.KindIndexRule:
+	case schema.KindTopNAggregation:
+		// we should update instead of delete
+		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+			Typ:      resourceSchema.EventAddOrUpdate,
+			Kind:     resourceSchema.EventKindResource,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+		})
 	default:
 	}
 }
@@ -188,8 +203,9 @@ func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, 
 func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.ResourceSpec) (resourceSchema.Resource, error) {
 	measureSchema := spec.Schema.(*databasev1.Measure)
 	return openMeasure(shardNum, db, measureSpec{
-		schema:     measureSchema,
-		indexRules: spec.IndexRules,
+		schema:           measureSchema,
+		indexRules:       spec.IndexRules,
+		topNAggregations: spec.Aggregations,
 	}, s.l)
 }
 

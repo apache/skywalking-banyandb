@@ -316,7 +316,7 @@ func TestNewPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := NewPath(tt.entity)
 			if tt.scope != nil {
-				got = got.Prepand(tt.scope)
+				got = got.Prepend(tt.scope)
 			}
 			tester.Equal(tt.want, got)
 		})

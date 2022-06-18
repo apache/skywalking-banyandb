@@ -98,6 +98,8 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 		m = &databasev1.IndexRule{}
 	case KindProperty:
 		m = &propertyv1.Property{}
+	case KindTopNAggregation:
+		m = &databasev1.TopNAggregation{}
 	default:
 		return nil, ErrUnsupportedEntityType
 	}
@@ -131,6 +133,11 @@ func (m Metadata) Key() (string, error) {
 		}), nil
 	case KindProperty:
 		return formatPropertyKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		}), nil
+	case KindTopNAggregation:
+		return formatTopNAggregationKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil

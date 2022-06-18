@@ -39,9 +39,10 @@ var (
 	ErrMalformedElement   = errors.New("element is malformed")
 	ErrMalformedFieldFlag = errors.New("field flag is malformed")
 
-	TagFlag []byte = make([]byte, fieldFlagLength)
+	TagFlag = make([]byte, fieldFlagLength)
 )
 
+// Write is for testing
 func (s *measure) Write(value *measurev1.DataPointValue) error {
 	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)
 	if err != nil {
@@ -50,6 +51,15 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 	waitCh := make(chan struct{})
 	err = s.write(shardID, tsdb.HashEntity(entity), value, func() {
 		close(waitCh)
+	})
+	if err != nil {
+		close(waitCh)
+		return err
+	}
+	// send to stream processor
+	err = s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
+		Metadata:  s.GetMetadata(),
+		DataPoint: value,
 	})
 	if err != nil {
 		close(waitCh)
@@ -72,7 +82,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if fLen > len(sm.TagFamilies) {
 		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
 	}
-	shard, err := s.db.SupplyTSDB().Shard(shardID)
+	shard, err := s.databaseSupplier.SupplyTSDB().Shard(shardID)
 	if err != nil {
 		return err
 	}
@@ -113,7 +123,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			if data == nil {
 				continue
 			}
-			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), encoderFieldFlag(fieldSpec, s.interval)), data)
+			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), EncoderFieldFlag(fieldSpec, s.interval)), data)
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
@@ -153,12 +163,11 @@ type writeCallback struct {
 	schemaRepo *schemaRepo
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) *writeCallback {
-	wcb := &writeCallback{
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
+	return &writeCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
 	}
-	return wcb
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
@@ -196,7 +205,7 @@ func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
 	return nil
 }
 
-func decodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
+func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
 	switch fieldSpec.GetFieldType() {
 	case databasev1.FieldType_FIELD_TYPE_STRING:
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}
