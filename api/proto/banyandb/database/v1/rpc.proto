@@ -84,17 +84,17 @@ service StreamRegistryService {
   };
   rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse){
     option(google.api.http) = {
-      delete:"/v1/stream/schema/{metadata.name}"
+      delete:"/v1/stream/schema/{metadata.group}/{metadata.name}"
     };
   };
   rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse){
     option(google.api.http) = {
-      get:"/v1/stream/schema/{metadata.name}"
+      get:"/v1/stream/schema/{metadata.group}/{metadata.name}"
     };
   };
   rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse){
     option(google.api.http) = {
-      get:"/v1/stream/schema/{group}"
+      get:"/v1/stream/schema-group/{group}"
     };
   };
 }

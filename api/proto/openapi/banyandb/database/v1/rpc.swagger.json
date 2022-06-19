@@ -94,7 +94,7 @@
         ]
       }
     },
-    "/v1/stream/schema/{group}": {
+    "/v1/stream/schema-group/{group}": {
       "get": {
         "operationId": "StreamRegistryService_List",
         "responses": {
@@ -124,7 +124,7 @@
         ]
       }
     },
-    "/v1/stream/schema/{metadata.name}": {
+    "/v1/stream/schema/{metadata.group}/{metadata.name}": {
       "get": {
         "operationId": "StreamRegistryService_Get",
         "responses": {
@@ -143,17 +143,17 @@
         },
         "parameters": [
           {
-            "name": "metadata.name",
-            "description": "name of the entity",
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
             "in": "path",
             "required": true,
             "type": "string"
           },
           {
-            "name": "metadata.group",
-            "description": "group contains a set of options, like retention policy, max",
-            "in": "query",
-            "required": false,
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
             "type": "string"
           },
           {
@@ -202,17 +202,17 @@
         },
         "parameters": [
           {
-            "name": "metadata.name",
-            "description": "name of the entity",
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
             "in": "path",
             "required": true,
             "type": "string"
           },
           {
-            "name": "metadata.group",
-            "description": "group contains a set of options, like retention policy, max",
-            "in": "query",
-            "required": false,
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
             "type": "string"
           },
           {

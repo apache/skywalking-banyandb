@@ -100,7 +100,7 @@ func local_request_StreamRegistryService_Update_0(ctx context.Context, marshaler
 }
 
 var (
-	filter_StreamRegistryService_Delete_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "name": 1}, Base: []int{1, 1, 1, 0}, Check: []int{0, 1, 2, 3}}
+	filter_StreamRegistryService_Delete_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "group": 1, "name": 2}, Base: []int{1, 1, 1, 2, 0, 0}, Check: []int{0, 1, 2, 2, 3, 4}}
 )
 
 func request_StreamRegistryService_Delete_0(ctx context.Context, marshaler runtime.Marshaler, client StreamRegistryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
@@ -113,6 +113,16 @@ func request_StreamRegistryService_Delete_0(ctx context.Context, marshaler runti
 		err error
 		_   = err
 	)
+
+	val, ok = pathParams["metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.group", err)
+	}
 
 	val, ok = pathParams["metadata.name"]
 	if !ok {
@@ -147,6 +157,16 @@ func local_request_StreamRegistryService_Delete_0(ctx context.Context, marshaler
 		_   = err
 	)
 
+	val, ok = pathParams["metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.group", err)
+	}
+
 	val, ok = pathParams["metadata.name"]
 	if !ok {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "metadata.name")
@@ -170,7 +190,7 @@ func local_request_StreamRegistryService_Delete_0(ctx context.Context, marshaler
 }
 
 var (
-	filter_StreamRegistryService_Get_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "name": 1}, Base: []int{1, 1, 1, 0}, Check: []int{0, 1, 2, 3}}
+	filter_StreamRegistryService_Get_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "group": 1, "name": 2}, Base: []int{1, 1, 1, 2, 0, 0}, Check: []int{0, 1, 2, 2, 3, 4}}
 )
 
 func request_StreamRegistryService_Get_0(ctx context.Context, marshaler runtime.Marshaler, client StreamRegistryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
@@ -183,6 +203,16 @@ func request_StreamRegistryService_Get_0(ctx context.Context, marshaler runtime.
 		err error
 		_   = err
 	)
+
+	val, ok = pathParams["metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.group", err)
+	}
 
 	val, ok = pathParams["metadata.name"]
 	if !ok {
@@ -216,6 +246,16 @@ func local_request_StreamRegistryService_Get_0(ctx context.Context, marshaler ru
 		err error
 		_   = err
 	)
+
+	val, ok = pathParams["metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.group", err)
+	}
 
 	val, ok = pathParams["metadata.name"]
 	if !ok {
@@ -352,7 +392,7 @@ func RegisterStreamRegistryServiceHandlerServer(ctx context.Context, mux *runtim
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Delete", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.name}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Delete", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.group}/{metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -376,7 +416,7 @@ func RegisterStreamRegistryServiceHandlerServer(ctx context.Context, mux *runtim
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Get", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.name}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Get", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.group}/{metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -400,7 +440,7 @@ func RegisterStreamRegistryServiceHandlerServer(ctx context.Context, mux *runtim
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema/{group}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema-group/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -505,7 +545,7 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Delete", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.name}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Delete", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.group}/{metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -526,7 +566,7 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Get", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.name}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Get", runtime.WithHTTPPathPattern("/v1/stream/schema/{metadata.group}/{metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -547,7 +587,7 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema/{group}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema-group/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -571,11 +611,11 @@ var (
 
 	pattern_StreamRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "stream", "schema"}, ""))
 
-	pattern_StreamRegistryService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "stream", "schema", "metadata.name"}, ""))
+	pattern_StreamRegistryService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "metadata.group", "metadata.name"}, ""))
 
-	pattern_StreamRegistryService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "stream", "schema", "metadata.name"}, ""))
+	pattern_StreamRegistryService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "metadata.group", "metadata.name"}, ""))
 
-	pattern_StreamRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "stream", "schema", "group"}, ""))
+	pattern_StreamRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "stream", "schema-group", "group"}, ""))
 )
 
 var (
