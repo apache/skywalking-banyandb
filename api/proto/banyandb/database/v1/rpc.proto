@@ -230,11 +230,33 @@ message MeasureRegistryServiceListResponse {
 }
 
 service MeasureRegistryService {
-  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse);
-  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse);
-  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse);
-  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse);
-  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse);
+  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/measure/schema"
+      body:"*"
+    };
+  };
+  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/measure/schema"
+      body:"*"
+    };
+  };
+  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/measure/schema-group/{group}"
+    };
+  };
 }
 
 message GroupRegistryServiceCreateRequest {

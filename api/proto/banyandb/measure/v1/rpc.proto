@@ -25,9 +25,15 @@ package banyandb.measure.v1;
 import "banyandb/measure/v1/query.proto";
 import "banyandb/measure/v1/write.proto";
 import "banyandb/measure/v1/topn.proto";
+import "google/api/annotations.proto";
 
 service MeasureService {
-  rpc Query(banyandb.measure.v1.QueryRequest) returns (banyandb.measure.v1.QueryResponse);
+  rpc Query(banyandb.measure.v1.QueryRequest) returns (banyandb.measure.v1.QueryResponse){
+    option(google.api.http) = {
+      post:"/v1/measure/data"
+      body:"*"
+    };
+  };
   rpc Write(stream banyandb.measure.v1.WriteRequest) returns (stream banyandb.measure.v1.WriteResponse);
   rpc TopN(banyandb.measure.v1.TopNRequest) returns (banyandb.measure.v1.TopNResponse);
 }

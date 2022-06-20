@@ -32,6 +32,218 @@
     "application/json"
   ],
   "paths": {
+    "/v1/measure/schema": {
+      "post": {
+        "operationId": "MeasureRegistryService_Create",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceCreateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceCreateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "MeasureRegistryService"
+        ]
+      },
+      "put": {
+        "operationId": "MeasureRegistryService_Update",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceUpdateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceUpdateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "MeasureRegistryService"
+        ]
+      }
+    },
+    "/v1/measure/schema-group/{group}": {
+      "get": {
+        "operationId": "MeasureRegistryService_List",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceListResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "MeasureRegistryService"
+        ]
+      }
+    },
+    "/v1/measure/schema/{metadata.group}/{metadata.name}": {
+      "get": {
+        "operationId": "MeasureRegistryService_Get",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceGetResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "MeasureRegistryService"
+        ]
+      },
+      "delete": {
+        "operationId": "MeasureRegistryService_Delete",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MeasureRegistryServiceDeleteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "MeasureRegistryService"
+        ]
+      }
+    },
     "/v1/stream/schema": {
       "post": {
         "operationId": "StreamRegistryService_Create",
@@ -670,6 +882,14 @@
       },
       "title": "Measure intends to store data point"
     },
+    "v1MeasureRegistryServiceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "measure": {
+          "$ref": "#/definitions/v1Measure"
+        }
+      }
+    },
     "v1MeasureRegistryServiceCreateResponse": {
       "type": "object"
     },
@@ -697,6 +917,14 @@
           "items": {
             "$ref": "#/definitions/v1Measure"
           }
+        }
+      }
+    },
+    "v1MeasureRegistryServiceUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "measure": {
+          "$ref": "#/definitions/v1Measure"
         }
       }
     },

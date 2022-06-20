@@ -15,7 +15,40 @@
   "produces": [
     "application/json"
   ],
-  "paths": {},
+  "paths": {
+    "/v1/measure/data": {
+      "post": {
+        "operationId": "MeasureService_Query",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1QueryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1QueryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "MeasureService"
+        ]
+      }
+    }
+  },
   "definitions": {
     "ConditionBinaryOp": {
       "type": "string",
@@ -338,6 +371,61 @@
         }
       },
       "description": "QueryOrder means a Sort operation to be done for a given index rule.\nThe index_rule_name refers to the name of a index rule bound to the subject."
+    },
+    "v1QueryRequest": {
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/v1Metadata",
+          "title": "metadata is required"
+        },
+        "timeRange": {
+          "$ref": "#/definitions/v1TimeRange",
+          "description": "time_range is a range query with begin/end time of entities in the timeunit of milliseconds."
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Criteria"
+          },
+          "description": "tag_families are indexed."
+        },
+        "tagProjection": {
+          "$ref": "#/definitions/v1TagProjection",
+          "title": "tag_projection can be used to select tags of the data points in the response"
+        },
+        "fieldProjection": {
+          "$ref": "#/definitions/QueryRequestFieldProjection",
+          "title": "field_projection can be used to select fields of the data points in the response"
+        },
+        "groupBy": {
+          "$ref": "#/definitions/QueryRequestGroupBy",
+          "title": "group_by groups data points based on their field value for a specific tag and use field_name as the projection name"
+        },
+        "agg": {
+          "$ref": "#/definitions/QueryRequestAggregation",
+          "title": "agg aggregates data points based on a field"
+        },
+        "top": {
+          "$ref": "#/definitions/QueryRequestTop",
+          "title": "top limits the result based on a particular field.\nIf order_by is specificed, top sorts the dataset based on order_by's output"
+        },
+        "offset": {
+          "type": "integer",
+          "format": "int64",
+          "title": "offset is used to support pagination, together with the following limit.\nIf top is sepcificed, offset processes the dataset based on top's output"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "int64",
+          "title": "limit is used to impose a boundary on the number of records being returned.\nIf top is sepcificed, limit processes the dataset based on top's output"
+        },
+        "orderBy": {
+          "$ref": "#/definitions/v1QueryOrder",
+          "description": "order_by is given to specify the sort for a tag."
+        }
+      },
+      "description": "QueryRequest is the request contract for query."
     },
     "v1QueryResponse": {
       "type": "object",
