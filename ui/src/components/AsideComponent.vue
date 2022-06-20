@@ -18,7 +18,8 @@
 -->
 
 <template>
-    <el-menu default-active="2" class="el-menu-vertical-demo" style="height: 100%" @open="handleOpen" @close="handleClose">
+    <el-menu default-active="2" class="el-menu-vertical-demo" active-text-color="#6E38F7" style="height: 100%"
+        :collapse="isCollapse" :collapse-transition="false">
         <el-submenu index="1">
             <template slot="title">
                 <i class="el-icon-location"></i>
@@ -51,3 +52,18 @@
         </el-menu-item>
     </el-menu>
 </template>
+
+<script>
+import { mapState } from 'vuex'
+export default {
+    data() {
+        return {
+        }
+    },
+    computed: {
+        ...mapState({
+            isCollapse: (state) => state.aside.isCollapse
+        })
+    }
+}
+</script>

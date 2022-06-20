@@ -19,7 +19,7 @@
 
 <template>
     <el-container>
-        <el-aside width="200px" class="bd-top">
+        <el-aside :width="fatherWidth" class="bd-top">
             <aside-component></aside-component>
         </el-aside>
         <el-main>
@@ -32,12 +32,18 @@
 
 <script>
 import AsideComponent from '../components/AsideComponent.vue'
+import { mapState } from 'vuex'
 export default {
     name: 'Database',
     data() {
         return {
 
         }
+    },
+    computed: {
+        ...mapState({
+            fatherWidth: (state) => state.aside.fatherWidth
+        })
     },
     components: {
         AsideComponent

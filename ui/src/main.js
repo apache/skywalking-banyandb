@@ -22,6 +22,7 @@ import './plugins/axios'
 import { Button, Container, Header, Main, Aside, Menu, MenuItem, Image, Loading } from 'element-ui'
 import App from './App.vue'
 import router from './router'
+import store from './store'
 import './assets/custom.scss'
 import './assets/main.scss'
 
@@ -53,5 +54,6 @@ Vue.prototype.$loading.close = () => {
 
 new Vue({
   router,
+  store,
   render: h => h(App)
 }).$mount('#app')

@@ -21,7 +21,7 @@
   <div id="app">
     <el-container>
       <el-header v-if="show">
-        <header-component :active="activePath"></header-component>
+        <header-component :active="activePath" :showButton="showButton"></header-component>
       </el-header>
       <el-main>
         <router-view />
@@ -37,6 +37,7 @@ export default {
     return {
       activePath: "",
       show: true,
+      showButton: true,
     }
   },
   components: {
@@ -46,7 +47,6 @@ export default {
     this.$loading.create()
   },
   created() {
-    let route = this.$route
     let path = this.$route.path
     let name = this.$route.name
     if (name == "NotFound") {
@@ -54,8 +54,11 @@ export default {
     } else {
       this.activePath = path
     }
-    console.log(route)
-    console.log(path)
+    if (name == "Database") {
+      this.$store.commit('changeShowButton', true)
+    }else {
+      this.$store.commit('changeShowButton', false)
+    }
   },
   mounted() {
     this.$loading.close()
