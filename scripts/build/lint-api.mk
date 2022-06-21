@@ -29,7 +29,7 @@ $(LINTER):
 .PHONY: lint
 lint: $(LINTER)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/desperated-golangci.yml
+	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/deprecated-golangci.yml
 
 .PHONY: format
 format: $(LINTER)
