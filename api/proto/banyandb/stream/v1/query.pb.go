@@ -24,15 +24,13 @@
 package v1
 
 import (
-	reflect "reflect"
-	sync "sync"
-
+	v11 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-
-	v11 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	reflect "reflect"
+	sync "sync"
 )
 
 const (

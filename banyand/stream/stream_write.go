@@ -31,9 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	ErrMalformedElement = errors.New("element is malformed")
-)
+var ErrMalformedElement = errors.New("element is malformed")
 
 func (s *stream) Write(value *streamv1.ElementValue) error {
 	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)

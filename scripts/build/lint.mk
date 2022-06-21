@@ -35,6 +35,6 @@ lint: $(LINTER) $(REVIVE) ## Run all linters
 	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
 	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...
 
-.PHONY: lint-desperated
-lint-desperated: $(LINTER)
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/desperated-golangci.yml
+.PHONY: format
+format: $(LINTER)
+	$(LINTER) run --fix -c $(root_dir)/.golangci-format.yml

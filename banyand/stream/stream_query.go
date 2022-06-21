@@ -32,9 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
-var (
-	ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
-)
+var ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
 
 type Query interface {
 	Stream(stream *commonv1.Metadata) (Stream, error)

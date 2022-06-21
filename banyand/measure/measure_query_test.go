@@ -53,11 +53,12 @@ var _ = Describe("Query service_cpm_minute", func() {
 		deferFn()
 	})
 
-	var runTest = func(
+	runTest := func(
 		metadata *commonv1.Metadata,
 		entityID string,
 		expectedFields [][]int64,
-		queryFn func(seriesSpan tsdb.SeriesSpan, idIndexRule *databasev1.IndexRule) (tsdb.Seeker, error)) {
+		queryFn func(seriesSpan tsdb.SeriesSpan, idIndexRule *databasev1.IndexRule) (tsdb.Seeker, error),
+	) {
 		indexRules := measure.GetIndexRules()
 		var idIndexRule *databasev1.IndexRule
 		for _, ir := range indexRules {
@@ -176,11 +177,12 @@ var _ = Describe("Query service_traffic", func() {
 		deferFn()
 	})
 
-	var runTest = func(
+	runTest := func(
 		metadata *commonv1.Metadata,
 		id tsdb.Entry,
 		serviceIDs sort.StringSlice,
-		queryFn func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error)) {
+		queryFn func(seriesSpan tsdb.SeriesSpan) (tsdb.Seeker, error),
+	) {
 		shards, err := measure.Shards([]tsdb.Entry{id})
 		Expect(err).ShouldNot(HaveOccurred())
 		got := make(sort.StringSlice, 0, len(serviceIDs))

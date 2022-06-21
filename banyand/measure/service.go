@@ -68,6 +68,7 @@ func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
 	}
 	return sm, nil
 }
+
 func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }

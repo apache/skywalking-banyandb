@@ -66,9 +66,7 @@ func (p *preloadStreamService) PreRun() error {
 	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }
 
-var (
-	_ types.GomegaMatcher = (*binaryDataChecker)(nil)
-)
+var _ types.GomegaMatcher = (*binaryDataChecker)(nil)
 
 type binaryDataChecker struct {
 	shouldHaveBinaryData bool

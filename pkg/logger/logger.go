@@ -25,8 +25,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var ContextKey = contextKey{}
-var ErrNoLoggerInContext = errors.New("no logger in context")
+var (
+	ContextKey           = contextKey{}
+	ErrNoLoggerInContext = errors.New("no logger in context")
+)
 
 type contextKey struct{}
 

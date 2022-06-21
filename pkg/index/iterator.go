@@ -32,9 +32,11 @@ import (
 
 type CompositePostingValueFn = func(term, value []byte, delegated kv.Iterator) (*PostingValue, error)
 
-var _ FieldIterator = (*FieldIteratorTemplate)(nil)
-var DefaultUpper = convert.Uint64ToBytes(math.MaxUint64)
-var DefaultLower = convert.Uint64ToBytes(0)
+var (
+	_            FieldIterator = (*FieldIteratorTemplate)(nil)
+	DefaultUpper               = convert.Uint64ToBytes(math.MaxUint64)
+	DefaultLower               = convert.Uint64ToBytes(0)
+)
 
 type FieldIteratorTemplate struct {
 	delegated *delegateIterator
@@ -87,7 +89,8 @@ func (f *FieldIteratorTemplate) Close() error {
 }
 
 func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
-	metadata metadata.Term, fn CompositePostingValueFn) (*FieldIteratorTemplate, error) {
+	metadata metadata.Term, fn CompositePostingValueFn,
+) (*FieldIteratorTemplate, error) {
 	if termRange.Upper == nil {
 		termRange.Upper = DefaultUpper
 	}

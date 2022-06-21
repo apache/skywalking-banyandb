@@ -39,6 +39,8 @@ require (
 	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f
 )
 
+require golang.org/x/xerrors v0.0.0-20220517211312-f3a8303e98df // indirect
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.2.0 // indirect

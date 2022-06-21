@@ -24,8 +24,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
-var _ Plan = (*measureLimit)(nil)
-var _ UnresolvedPlan = (*measureLimit)(nil)
+var (
+	_ Plan           = (*measureLimit)(nil)
+	_ UnresolvedPlan = (*measureLimit)(nil)
+)
 
 type measureLimit struct {
 	*parent

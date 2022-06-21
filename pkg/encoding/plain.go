@@ -100,7 +100,7 @@ var (
 	_              SeriesDecoder = (*plainDecoder)(nil)
 )
 
-//plainEncoder backport to reduced value
+// plainEncoder backport to reduced value
 type plainEncoder struct {
 	tsBuff    *buffer.Writer
 	valBuff   *buffer.Writer
@@ -181,7 +181,7 @@ const (
 
 var ErrInvalidValue = errors.New("invalid encoded value")
 
-//plainDecoder decodes encoded time index
+// plainDecoder decodes encoded time index
 type plainDecoder struct {
 	ts        []byte
 	val       []byte

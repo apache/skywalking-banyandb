@@ -103,7 +103,7 @@ func (s *store) Flush() error {
 func (s *store) Stats() (stat observability.Statistics) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
-	//TODO: add MaxMem
+	// TODO: add MaxMem
 	main := s.memTable.Stats()
 	stat.MemBytes += main.MemBytes
 	if s.immutableMemTable != nil {
@@ -169,7 +169,8 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv1.Sort) (index.FieldIterator, error) {
+	order modelv1.Sort,
+) (index.FieldIterator, error) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
 	tt := []*memTable{s.memTable, s.immutableMemTable}

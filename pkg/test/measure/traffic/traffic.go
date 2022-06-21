@@ -36,9 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	l = logger.GetLogger("test_measure_traffic")
-)
+var l = logger.GetLogger("test_measure_traffic")
 
 type TestCase struct {
 	Addr                string

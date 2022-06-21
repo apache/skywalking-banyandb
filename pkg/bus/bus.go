@@ -27,11 +27,13 @@ import (
 
 // Payload represents a simple data
 type Payload interface{}
-type MessageID uint64
-type Future interface {
-	Get() (Message, error)
-	GetAll() ([]Message, error)
-}
+type (
+	MessageID uint64
+	Future    interface {
+		Get() (Message, error)
+		GetAll() ([]Message, error)
+	}
+)
 
 // Message is send on the bus to all subscribed listeners
 type Message struct {
@@ -51,7 +53,7 @@ func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, payload: data}
 }
 
-//MessageListener is the signature of functions that can handle an EventMessage.
+// MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
 	Rev(message Message) Message
 }
@@ -105,8 +107,7 @@ var (
 	ErrEmptyFuture   = errors.New("can't invoke Get() on an empty future")
 )
 
-type emptyFuture struct {
-}
+type emptyFuture struct{}
 
 func (e *emptyFuture) Get() (Message, error) {
 	return Message{}, ErrEmptyFuture

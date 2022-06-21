@@ -28,8 +28,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var _ LiteralExpr = (*int64Literal)(nil)
-var _ ComparableExpr = (*int64Literal)(nil)
+var (
+	_ LiteralExpr    = (*int64Literal)(nil)
+	_ ComparableExpr = (*int64Literal)(nil)
+)
 
 type int64Literal struct {
 	int64
@@ -47,7 +49,6 @@ func (i *int64Literal) BelongTo(tagValue *modelv1.TagValue) bool {
 	intValue := tagValue.GetInt()
 	if intValue != nil {
 		return i.int64 == intValue.Value
-
 	}
 	intArray := tagValue.GetIntArray()
 	if intArray == nil {
@@ -80,8 +81,10 @@ func (i *int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
 
-var _ LiteralExpr = (*int64ArrLiteral)(nil)
-var _ ComparableExpr = (*int64ArrLiteral)(nil)
+var (
+	_ LiteralExpr    = (*int64ArrLiteral)(nil)
+	_ ComparableExpr = (*int64ArrLiteral)(nil)
+)
 
 type int64ArrLiteral struct {
 	arr []int64
@@ -145,8 +148,10 @@ func (i *int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
 
-var _ LiteralExpr = (*strLiteral)(nil)
-var _ ComparableExpr = (*strLiteral)(nil)
+var (
+	_ LiteralExpr    = (*strLiteral)(nil)
+	_ ComparableExpr = (*strLiteral)(nil)
+)
 
 type strLiteral struct {
 	string
@@ -167,7 +172,6 @@ func (s *strLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
 	strValue := tagValue.GetStr()
 	if strValue != nil {
 		return s.string == strValue.Value
-
 	}
 	strArray := tagValue.GetStrArray()
 	if strArray == nil {
@@ -200,8 +204,10 @@ func (s *strLiteral) String() string {
 	return s.string
 }
 
-var _ LiteralExpr = (*strArrLiteral)(nil)
-var _ ComparableExpr = (*strArrLiteral)(nil)
+var (
+	_ LiteralExpr    = (*strArrLiteral)(nil)
+	_ ComparableExpr = (*strArrLiteral)(nil)
+)
 
 type strArrLiteral struct {
 	arr []string

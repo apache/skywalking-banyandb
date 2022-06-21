@@ -34,8 +34,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var maxIntBytes = convert.Uint64ToBytes(math.MaxUint64)
-var zeroIntBytes = convert.Uint64ToBytes(0)
+var (
+	maxIntBytes  = convert.Uint64ToBytes(math.MaxUint64)
+	zeroIntBytes = convert.Uint64ToBytes(0)
+)
 
 var AnyEntry = Entry(nil)
 
@@ -106,7 +108,7 @@ func (p *Path) extractPrefix() {
 
 func (p Path) Prepand(entry Entry) Path {
 	e := Hash(entry)
-	var prepand = func(src []byte, entry []byte) []byte {
+	prepand := func(src []byte, entry []byte) []byte {
 		dst := make([]byte, len(src)+len(entry))
 		copy(dst, entry)
 		copy(dst[len(entry):], src)
@@ -134,8 +136,10 @@ type blockDatabase interface {
 	block(id GlobalItemID) blockDelegate
 }
 
-var _ SeriesDatabase = (*seriesDB)(nil)
-var _ blockDatabase = (*seriesDB)(nil)
+var (
+	_ SeriesDatabase = (*seriesDB)(nil)
+	_ blockDatabase  = (*seriesDB)(nil)
+)
 
 type seriesDB struct {
 	sync.Mutex
@@ -235,7 +239,7 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 }
 
 func (s *seriesDB) span(timeRange timestamp.TimeRange) []blockDelegate {
-	//TODO: return correct blocks
+	// TODO: return correct blocks
 	result := make([]blockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		for _, b := range s.blockController.span(timeRange) {

@@ -171,7 +171,6 @@ func (b *binaryExpr) Resolve(s Schema) error {
 func (b *binaryExpr) Execute(tag *modelv1.Tag) bool {
 	switch b.op {
 	case modelv1.Condition_BINARY_OP_EQ:
-
 	}
 	return false
 }

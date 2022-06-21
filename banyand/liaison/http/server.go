@@ -41,9 +41,7 @@ type ServiceRepo interface {
 	run.Service
 }
 
-var (
-	_ ServiceRepo = (*service)(nil)
-)
+var _ ServiceRepo = (*service)(nil)
 
 func NewService() ServiceRepo {
 	return &service{
@@ -99,7 +97,6 @@ func (p *service) PreRun() error {
 }
 
 func (p *service) Serve() run.StopNotify {
-
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		_ = stdhttp.ListenAndServe(p.listenAddr, p.mux)

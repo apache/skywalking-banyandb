@@ -108,7 +108,6 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *streamAnalyzeContext) (P
 
 	// resolve sub-plan with the projected view of streamSchema
 	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(ctx.s.ProjTags(ctx.projTagsRefs...))
-
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +124,8 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *streamAnalyzeContext) (P
 }
 
 func TagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
-	orderBy *UnresolvedOrderBy, projection ...[]*Tag) UnresolvedPlan {
+	orderBy *UnresolvedOrderBy, projection ...[]*Tag,
+) UnresolvedPlan {
 	return &unresolvedTagFilter{
 		unresolvedOrderBy: orderBy,
 		startTime:         startTime,

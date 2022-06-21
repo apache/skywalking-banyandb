@@ -100,9 +100,7 @@ func (b *intDecoderPoolDelegator) Put(decoder SeriesDecoder) {
 	}
 }
 
-var (
-	_ SeriesEncoder = (*intEncoder)(nil)
-)
+var _ SeriesEncoder = (*intEncoder)(nil)
 
 type ParseInterval = func(key []byte) time.Duration
 
