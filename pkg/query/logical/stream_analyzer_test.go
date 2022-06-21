@@ -59,8 +59,10 @@ func setUpStreamAnalyzer() (*logical.StreamAnalyzer, func(), error) {
 	}
 
 	rootDir := teststream.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir,
-		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
+	err = metadataService.FlagSet().Parse([]string{
+		"--metadata-root-path=" + rootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+	})
 
 	if err != nil {
 		return nil, func() {

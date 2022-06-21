@@ -47,8 +47,7 @@ type IndexWriterBuilder interface {
 	Build() (IndexWriter, error)
 }
 
-type IndexSeekBuilder interface {
-}
+type IndexSeekBuilder interface{}
 
 var _ IndexDatabase = (*indexDB)(nil)
 

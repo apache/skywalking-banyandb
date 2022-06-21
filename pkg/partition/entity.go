@@ -27,9 +27,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-var (
-	ErrMalformedElement = errors.New("element is malformed")
-)
+var ErrMalformedElement = errors.New("element is malformed")
 
 type EntityLocator []TagLocator
 

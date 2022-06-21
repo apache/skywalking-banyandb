@@ -44,7 +44,8 @@ func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duratio
 		if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
 			resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 				&grpc_health_v1.HealthCheckRequest{
-					Service: ""})
+					Service: "",
+				})
 			return err
 		}); err != nil {
 			return err

@@ -127,6 +127,5 @@ var _ = Describe("Series", func() {
 				Entry("is they are exclusive", false, false, false),
 			)
 		})
-
 	})
 })

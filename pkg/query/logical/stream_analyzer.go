@@ -28,9 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var (
-	DefaultLimit uint32 = 100
-)
+var DefaultLimit uint32 = 100
 
 type Tag struct {
 	familyName, name string
@@ -81,13 +79,11 @@ func (a *StreamAnalyzer) BuildStreamSchema(ctx context.Context, metadata *common
 		return nil, err
 	}
 	stream, err := a.metadataRepoImpl.StreamRegistry().GetStream(ctx, metadata)
-
 	if err != nil {
 		return nil, err
 	}
 
 	indexRules, err := a.metadataRepoImpl.IndexRules(context.TODO(), metadata)
-
 	if err != nil {
 		return nil, err
 	}

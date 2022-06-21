@@ -48,7 +48,8 @@ type shard struct {
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
-	root string, segmentSize, blockSize IntervalRule, openedBlockSize int) (Shard, error) {
+	root string, segmentSize, blockSize IntervalRule, openedBlockSize int,
+) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
 		return nil, errors.Wrapf(err, "make the directory of the shard %d ", int(id))
@@ -201,7 +202,8 @@ type segmentController struct {
 }
 
 func newSegmentController(shardCtx context.Context, location string, segmentSize, blockSize IntervalRule,
-	openedBlockSize int, l *logger.Logger) (*segmentController, error) {
+	openedBlockSize int, l *logger.Logger,
+) (*segmentController, error) {
 	clock, _ := timestamp.GetClock(shardCtx)
 	sc := &segmentController{
 		shardCtx:    shardCtx,

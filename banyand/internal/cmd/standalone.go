@@ -40,9 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var (
-	g = run.Group{Name: "standalone"}
-)
+var g = run.Group{Name: "standalone"}
 
 func newStandaloneCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
