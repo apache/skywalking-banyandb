@@ -28,45 +28,43 @@ import (
 
 type equalityChecker func(a, b proto.Message) bool
 
-var (
-	checkerMap = map[Kind]equalityChecker{
-		KindIndexRuleBinding: func(a, b proto.Message) bool {
-			return cmp.Equal(a, b,
-				protocmp.IgnoreUnknown(),
-				protocmp.IgnoreFields(&databasev1.IndexRuleBinding{}, "updated_at"),
-				protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-				protocmp.Transform(),
-			)
-		},
-		KindIndexRule: func(a, b proto.Message) bool {
-			return cmp.Equal(a, b,
-				protocmp.IgnoreUnknown(),
-				protocmp.IgnoreFields(&databasev1.IndexRule{}, "updated_at"),
-				protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-				protocmp.Transform(),
-			)
-		},
-		KindMeasure: func(a, b proto.Message) bool {
-			return cmp.Equal(a, b,
-				protocmp.IgnoreUnknown(),
-				protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
-				protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-				protocmp.Transform(),
-			)
-		},
-		KindStream: func(a, b proto.Message) bool {
-			return cmp.Equal(a, b,
-				protocmp.IgnoreUnknown(),
-				protocmp.IgnoreFields(&databasev1.Stream{}, "updated_at"),
-				protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-				protocmp.Transform())
-		},
-		KindGroup: func(a, b proto.Message) bool {
-			return cmp.Equal(a, b,
-				protocmp.IgnoreUnknown(),
-				protocmp.IgnoreFields(&databasev1.Stream{}, "updated_at"),
-				protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-				protocmp.Transform())
-		},
-	}
-)
+var checkerMap = map[Kind]equalityChecker{
+	KindIndexRuleBinding: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.IndexRuleBinding{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform(),
+		)
+	},
+	KindIndexRule: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.IndexRule{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform(),
+		)
+	},
+	KindMeasure: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform(),
+		)
+	},
+	KindStream: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.Stream{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform())
+	},
+	KindGroup: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.Stream{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform())
+	},
+}

@@ -55,8 +55,7 @@ type MIterator interface {
 
 var EmptyMIterator = emptyMIterator{}
 
-type emptyMIterator struct {
-}
+type emptyMIterator struct{}
 
 func (ei emptyMIterator) Next() bool {
 	return false

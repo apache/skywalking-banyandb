@@ -106,8 +106,10 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	t.NoError(err)
 
 	etcdRootDir := teststream.RandomTempDir()
-	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir,
-		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
+	err = metadataSvc.FlagSet().Parse([]string{
+		"--metadata-root-path=" + etcdRootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+	})
 	t.NoError(err)
 
 	streamSvc, err := stream.NewService(context.TODO(), metadataSvc, repo, pipeline)
@@ -162,8 +164,10 @@ func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, fun
 	t.NoError(err)
 
 	etcdRootDir := teststream.RandomTempDir()
-	err = metadataSvc.FlagSet().Parse([]string{"--metadata-root-path=" + etcdRootDir,
-		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
+	err = metadataSvc.FlagSet().Parse([]string{
+		"--metadata-root-path=" + etcdRootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+	})
 	t.NoError(err)
 
 	measureSvc, err := measure.NewService(context.TODO(), metadataSvc, repo, pipeline)

@@ -125,7 +125,7 @@ func (s *Writer) bootIndexGenerator() {
 	}()
 }
 
-//TODO: should listen to pipeline in a distributed cluster
+// TODO: should listen to pipeline in a distributed cluster
 func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRuleLocator, ref tsdb.GlobalItemID, value Value) error {
 	values, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
@@ -232,7 +232,6 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 	arr := fv.GetArr()
 	if arr != nil {
 		val = append(val, arr...)
-
 	}
 	return val, existInt, nil
 }

@@ -143,5 +143,4 @@ var _ = Describe("Metadata", func() {
 			})
 		})
 	})
-
 })

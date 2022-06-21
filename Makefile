@@ -63,35 +63,18 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 ##@ Code quality targets
 
 lint: TARGET=lint
-lint: PROJECTS:=api $(PROJECTS) pkg
+lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 lint: default ## Run the linters on all projects
 
 ##@ Code style targets
 
-# The goimports tool does not arrange imports in 3 blocks if there are already more than three blocks.
-# To avoid that, before running it, we collapse all imports in one block, then run the formatter.
-format: ## Format all Go code
-	@for f in `find . -name '*.go'`; do \
-	    awk '/^import \($$/,/^\)$$/{if($$0=="")next}{print}' $$f > /tmp/fmt; \
-	    mv /tmp/fmt $$f; \
-	done
-	@goimports -w -local github.com/apache/skywalking-banyandb .
-
-# Enforce go version matches what's in go.mod when running `make check` assuming the following:
-# * 'go version' returns output like "go version go1.17 darwin/amd64"
-# * go.mod contains a line like "go 1.17"
-CONFIGURED_GO_VERSION := $(shell sed -ne '/^go /s/.* //gp' go.mod)
-EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
-GO_VERSION := $(shell go version)
+format: TARGET=format
+format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+format: default ## Run the linters on all projects
 
 ## Check that the status is consistent with CI.
 check: clean
-# case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
-	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
-		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \
-		echo "Upgrade go to $(CONFIGURED_GO_VERSION)+"; \
-		exit 1; \
-	esac
+	$(MAKE) -C scripts/ci/check test
 	$(MAKE) -C ui check-version
 	$(MAKE) license-dep
 	$(MAKE) format

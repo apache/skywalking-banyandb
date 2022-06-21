@@ -48,7 +48,8 @@ type segment struct {
 }
 
 func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
-	segmentSize, blockSize IntervalRule, blockQueue bucket.Queue) (s *segment, err error) {
+	segmentSize, blockSize IntervalRule, blockQueue bucket.Queue,
+) (s *segment, err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
 		return nil, err
@@ -120,7 +121,8 @@ type blockController struct {
 }
 
 func newBlockController(segCtx context.Context, segID uint16, location string, segTimeRange timestamp.TimeRange,
-	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue) *blockController {
+	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue,
+) *blockController {
 	clock, _ := timestamp.GetClock(segCtx)
 	return &blockController{
 		segCtx:       segCtx,

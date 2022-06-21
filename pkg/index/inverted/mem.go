@@ -99,7 +99,8 @@ func newFieldIterator(keys [][]byte, fValue *termMap) index.FieldIterator {
 }
 
 func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
-	order modelv1.Sort) (iter index.FieldIterator, err error) {
+	order modelv1.Sort,
+) (iter index.FieldIterator, err error) {
 	fieldsValues, ok := m.fields.get(fieldKey)
 	if !ok {
 		return nil, nil

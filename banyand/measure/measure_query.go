@@ -33,9 +33,7 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-var (
-	ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
-)
+var ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
 
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)

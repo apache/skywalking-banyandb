@@ -256,7 +256,8 @@ func (i *localMeasureIndexScan) Equal(plan Plan) bool {
 }
 
 func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
-	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool, unresolvedOrderBy *UnresolvedOrderBy) UnresolvedPlan {
+	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool, unresolvedOrderBy *UnresolvedOrderBy,
+) UnresolvedPlan {
 	return &unresolvedMeasureIndexScan{
 		startTime:         startTime,
 		endTime:           endTime,

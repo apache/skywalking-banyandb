@@ -83,8 +83,10 @@ func (w *writerBuilder) Val(val []byte) WriterBuilder {
 	return w
 }
 
-var ErrNoTime = errors.New("no time specified")
-var ErrNoVal = errors.New("no value specified")
+var (
+	ErrNoTime = errors.New("no time specified")
+	ErrNoVal  = errors.New("no value specified")
+)
 
 var ErrDuplicatedFamily = errors.New("duplicated family")
 

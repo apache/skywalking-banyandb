@@ -81,6 +81,7 @@ func (fv FieldValue) GetValue() []byte {
 	}
 	return fv.value
 }
+
 func (fv FieldValue) GetArr() [][]byte {
 	if len(fv.arr) < 1 {
 		return nil

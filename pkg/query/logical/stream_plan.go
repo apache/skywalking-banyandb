@@ -24,8 +24,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 )
 
-var _ Plan = (*limit)(nil)
-var _ UnresolvedPlan = (*limit)(nil)
+var (
+	_ Plan           = (*limit)(nil)
+	_ UnresolvedPlan = (*limit)(nil)
+)
 
 type parent struct {
 	unresolvedInput UnresolvedPlan
@@ -95,8 +97,10 @@ func Limit(input UnresolvedPlan, num uint32) UnresolvedPlan {
 	}
 }
 
-var _ Plan = (*offset)(nil)
-var _ UnresolvedPlan = (*offset)(nil)
+var (
+	_ Plan           = (*offset)(nil)
+	_ UnresolvedPlan = (*offset)(nil)
+)
 
 type offset struct {
 	*parent

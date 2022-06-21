@@ -141,7 +141,8 @@ type aggGroupMIterator struct {
 func newAggGroupMIterator(
 	prev executor.MIterator,
 	aggregationFieldRef *FieldRef,
-	aggrFunc aggregation.Int64Func) executor.MIterator {
+	aggrFunc aggregation.Int64Func,
+) executor.MIterator {
 	return &aggGroupMIterator{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
@@ -174,7 +175,7 @@ func (ami *aggGroupMIterator) Current() []*measurev1.DataPoint {
 		return nil
 	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
-		&measurev1.DataPoint_Field{
+		{
 			Name: ami.aggregationFieldRef.field.name,
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
@@ -203,7 +204,8 @@ type aggAllMIterator struct {
 func newAggAllMIterator(
 	prev executor.MIterator,
 	aggregationFieldRef *FieldRef,
-	aggrFunc aggregation.Int64Func) executor.MIterator {
+	aggrFunc aggregation.Int64Func,
+) executor.MIterator {
 	return &aggAllMIterator{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
@@ -237,7 +239,7 @@ func (ami *aggAllMIterator) Next() bool {
 		return false
 	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
-		&measurev1.DataPoint_Field{
+		{
 			Name: ami.aggregationFieldRef.field.name,
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{

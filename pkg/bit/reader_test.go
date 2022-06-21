@@ -41,7 +41,6 @@ func TestReader(t *testing.T) {
 
 	eq(a, true)(r.ReadBool())
 	eq(a, false)(r.ReadBool())
-
 }
 
 func eq(a *assert.Assertions, expected interface{}) func(interface{}, error) {

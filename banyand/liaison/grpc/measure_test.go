@@ -52,8 +52,10 @@ var _ = Describe("Measure", func() {
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
-			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL}
+		flags := []string{
+			"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
+			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+		}
 		gracefulStop = setup(true, flags)
 		credentials := insecure.NewCredentials()
 		var err error
@@ -79,10 +81,12 @@ var _ = Describe("Measure", func() {
 		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--stream-root-path=" + path, "--measure-root-path=" + path,
+		flags := []string{
+			"--tls=true", "--stream-root-path=" + path, "--measure-root-path=" + path,
 			"--metadata-root-path=" + path, "--stream-root-path=" + path, "--measure-root-path=" + path,
 			"--metadata-root-path=" + path, "--etcd-listen-client-url=" + listenClientURL,
-			"--etcd-listen-peer-url=" + listenPeerURL}
+			"--etcd-listen-peer-url=" + listenPeerURL,
+		}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")

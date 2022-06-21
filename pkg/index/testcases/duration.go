@@ -32,12 +32,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
-var (
-	duration = index.FieldKey{
-		//duration
-		IndexRuleID: 3,
-	}
-)
+var duration = index.FieldKey{
+	// duration
+	IndexRuleID: 3,
+}
 
 type SimpleStore interface {
 	index.FieldIterable

@@ -59,8 +59,10 @@ var _ = Describe("Stream", func() {
 	})
 	It("is a plain server", func() {
 		By("Verifying an empty server")
-		flags := []string{"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
-			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL}
+		flags := []string{
+			"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
+			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+		}
 		gracefulStop = setup(true, flags)
 		var err error
 		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
@@ -85,9 +87,11 @@ var _ = Describe("Stream", func() {
 		}, defaultEventallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
-		flags := []string{"--tls=true", "--stream-root-path=" + path, "--measure-root-path=" + path,
+		flags := []string{
+			"--tls=true", "--stream-root-path=" + path, "--measure-root-path=" + path,
 			"--metadata-root-path=" + path, "--etcd-listen-client-url=" + listenClientURL,
-			"--etcd-listen-peer-url=" + listenPeerURL}
+			"--etcd-listen-peer-url=" + listenPeerURL,
+		}
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -158,7 +162,6 @@ func setup(loadMetadata bool, flags []string) func() {
 		q,
 		tcp,
 	)
-
 }
 
 type preloadStreamService struct {
