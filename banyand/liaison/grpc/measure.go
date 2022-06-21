@@ -106,4 +106,4 @@ func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.Que
 	return &measurev1.QueryResponse{DataPoints: queryMsg}, nil
 }
 
-//TODO: implement topN
+// TODO: implement topN

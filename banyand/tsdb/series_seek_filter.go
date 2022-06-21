@@ -54,7 +54,7 @@ func (s *seekerBuilder) buildConditions() ([]condWithIRT, error) {
 	conditions := make([]condWithIRT, 0, len(s.conditions))
 	for _, condition := range s.conditions {
 		if len(condition.condition) > 1 {
-			//TODO:// should support composite index rule
+			// TODO:// should support composite index rule
 			return nil, ErrUnsupportedIndexRule
 		}
 		cond := make(index.Condition)

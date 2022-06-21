@@ -60,8 +60,10 @@ func setUpMeasureAnalyzer() (*logical.MeasureAnalyzer, func(), error) {
 	}
 
 	rootDir := testmeasure.RandomTempDir()
-	err = metadataService.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir,
-		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL})
+	err = metadataService.FlagSet().Parse([]string{
+		"--metadata-root-path=" + rootDir,
+		"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
+	})
 
 	if err != nil {
 		return nil, func() {
@@ -254,18 +256,17 @@ func TestMeasureAnalyzer_Paging(t *testing.T) {
 	assert.NoError(err)
 	assert.NotNil(plan)
 
-	correctPlan, err :=
-		logical.MeasureLimit(
-			logical.MeasureIndexScan(sT, eT, metadata,
-				[]logical.Expr{
-					logical.Eq(logical.NewTagRef("default", "id"), logical.ID("abdxx")),
-				}, tsdb.Entity{tsdb.Entry("abc")},
-				[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
-				[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
-				false,
-				logical.OrderBy("id", modelv1.Sort_SORT_DESC),
-			),
-			100, 10).Analyze(schema)
+	correctPlan, err := logical.MeasureLimit(
+		logical.MeasureIndexScan(sT, eT, metadata,
+			[]logical.Expr{
+				logical.Eq(logical.NewTagRef("default", "id"), logical.ID("abdxx")),
+			}, tsdb.Entity{tsdb.Entry("abc")},
+			[][]*logical.Tag{logical.NewTags("default", "entity_id", "id")},
+			[]*logical.Field{logical.NewField("total"), logical.NewField("value")},
+			false,
+			logical.OrderBy("id", modelv1.Sort_SORT_DESC),
+		),
+		100, 10).Analyze(schema)
 	assert.NoError(err)
 	assert.NotNil(correctPlan)
 	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")

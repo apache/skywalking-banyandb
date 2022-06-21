@@ -33,8 +33,8 @@ type Executor interface {
 }
 
 func NewExecutor(_ context.Context, streamService stream.Service, measureService measure.Service,
-	metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue) (Executor, error) {
-
+	metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue,
+) (Executor, error) {
 	svc := &queryService{
 		metaService: metaService,
 		serviceRepo: serviceRepo,

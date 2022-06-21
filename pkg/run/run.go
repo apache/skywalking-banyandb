@@ -59,11 +59,11 @@ type Unit interface {
 // their own configuration through the use of flags.
 // If a Unit's Validate returns an error it will stop the Group immediately.
 type Config interface {
-	//Unit for Group registration and identification
+	// Unit for Group registration and identification
 	Unit
-	//FlagSet returns an object's FlagSet
+	// FlagSet returns an object's FlagSet
 	FlagSet() *FlagSet
-	//Validate checks an object's stored values
+	// Validate checks an object's stored values
 	Validate() error
 }
 
@@ -71,7 +71,7 @@ type Config interface {
 // a pre run stage before starting the Group Services.
 // If a Unit's PreRun returns an error it will stop the Group immediately.
 type PreRunner interface {
-	//Unit for Group registration and identification
+	// Unit for Group registration and identification
 	Unit
 	PreRun() error
 }

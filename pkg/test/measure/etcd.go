@@ -45,10 +45,8 @@ const (
 	indexRuleBindingDir = "testdata/index_rule_bindings"
 )
 
-var (
-	//go:embed testdata/*
-	store embed.FS
-)
+//go:embed testdata/*
+var store embed.FS
 
 func PreloadSchema(e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {

@@ -54,7 +54,6 @@ type shardStruct struct {
 type shardsForTest []shardStruct
 
 var _ = Describe("Write", func() {
-
 	Context("Select shard", func() {
 		var (
 			s       *stream
@@ -819,7 +818,7 @@ var _ = Describe("Write", func() {
 					itemIDs, err := shard.Index().Seek(index.Field{
 						Key: index.FieldKey{
 							SeriesID: tsdb.GlobalSeriesID(tsdb.Entry(s.name)),
-							//trace_id
+							// trace_id
 							IndexRuleID: 10,
 						},
 						Term: []byte(traceID),
@@ -897,7 +896,6 @@ var _ = Describe("Write", func() {
 			),
 		)
 	})
-
 })
 
 type queryOpts struct {

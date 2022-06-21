@@ -42,7 +42,7 @@ var _ = Describe("Shard", func() {
 			tmp, deferFn, err = test.NewSpace()
 			Expect(err).NotTo(HaveOccurred())
 			clock = timestamp.NewMockClock()
-			clock.Set(time.Date(1970, 01, 01, 0, 0, 0, 0, time.Local))
+			clock.Set(time.Date(1970, 0o1, 0o1, 0, 0, 0, 0, time.Local))
 			Expect(err).NotTo(HaveOccurred())
 		})
 		AfterEach(func() {
@@ -72,7 +72,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -86,7 +86,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -108,7 +108,7 @@ var _ = Describe("Shard", func() {
 			}, defaultEventallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 			}))
 			By("01/01 22:00 3rd block is opened")
@@ -120,7 +120,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -134,7 +134,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
 				},
@@ -146,7 +146,7 @@ var _ = Describe("Shard", func() {
 			}).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -162,7 +162,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -176,7 +176,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
 				},
@@ -199,11 +199,11 @@ var _ = Describe("Shard", func() {
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 			}))
 			By("01/02 22:00 5th block is opened")
@@ -215,7 +215,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -229,7 +229,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
 				},
@@ -243,7 +243,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
 				},
@@ -255,7 +255,7 @@ var _ = Describe("Shard", func() {
 			}, defaultEventallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
@@ -272,7 +272,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 					Closed:    true,
@@ -287,7 +287,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
 				},
@@ -301,7 +301,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
 				},
@@ -326,11 +326,11 @@ var _ = Describe("Shard", func() {
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 			}))
 			Eventually(func() []tsdb.BlockState {
@@ -339,7 +339,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
@@ -354,7 +354,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
 				},
@@ -368,7 +368,7 @@ var _ = Describe("Shard", func() {
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 00),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
 				},

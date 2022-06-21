@@ -52,13 +52,11 @@ func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *comm
 		return nil, err
 	}
 	measure, err := a.metadataRepoImpl.MeasureRegistry().GetMeasure(ctx, metadata)
-
 	if err != nil {
 		return nil, err
 	}
 
 	indexRules, err := a.metadataRepoImpl.IndexRules(context.TODO(), metadata)
-
 	if err != nil {
 		return nil, err
 	}
