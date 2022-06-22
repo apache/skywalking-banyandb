@@ -70,6 +70,9 @@ lint: default ## Run the linters on all projects
 tidy:
 	go mod tidy
 
+tidy:
+	go mod tidy
+
 format: TARGET=format
 format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 format: tidy
@@ -154,5 +157,5 @@ release-sign: ## Sign artifacts
 release-assembly: release-binary release-sign ## Generate release package
 
 
-.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
+.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check tidy format license-check license-fix pre-commit nuke
 .PHONY: release-binary release-source release-sign release-assembly
