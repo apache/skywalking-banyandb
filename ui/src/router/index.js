@@ -36,27 +36,42 @@ const routes = [
     path: '/home',
     name: 'Home',
     component: Home,
+    meta: {
+      keepAlive: false,
+    }
   },
   {
     path: '/database',
     name: 'Database',
     component: Database,
+    meta: {
+      keepAlive: true,
+    }
   },
   {
     path: '/structure',
     name: 'Structure',
     component: Structure,
+    meta: {
+      keepAlive: false,
+    }
   },
   {
     path: '/about',
     name: 'About',
     component: About,
+    meta: {
+      keepAlive: false,
+    }
   },
   {
     // will match everything
     path: '*',
     name: 'NotFound',
     component: NotFound,
+    meta: {
+      keepAlive: false,
+    }
   },
 ]
 

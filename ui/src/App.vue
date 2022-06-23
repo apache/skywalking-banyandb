@@ -24,7 +24,10 @@
         <header-component :active="activePath" :showButton="showButton"></header-component>
       </el-header>
       <el-main>
-        <router-view />
+        <keep-alive>
+          <router-view v-if="$route.meta.keepAlive"/>
+        </keep-alive>
+          <router-view v-if="!$route.meta.keepAlive"></router-view>
       </el-main>
     </el-container>
   </div>
@@ -56,7 +59,7 @@ export default {
     }
     if (name == "Database") {
       this.$store.commit('changeShowButton', true)
-    }else {
+    } else {
       this.$store.commit('changeShowButton', false)
     }
   },

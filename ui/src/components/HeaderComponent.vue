@@ -27,8 +27,11 @@
             </el-image>
             <div class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</div>
             <div class="flex center pointer icon-size" @click="changeAsideWidth" v-if="showButton">
-                <i class="el-icon-s-fold icon" v-if="!isCollapse"></i>
-                <i class="el-icon-s-unfold icon" v-else></i>
+                <el-tooltip class="item" effect="dark" :content="!isCollapse ? 'Collapse menu' : 'Expand menu'" placement="bottom">
+                    <i class="el-icon-s-fold icon" v-if="!isCollapse"></i>
+                    <i class="el-icon-s-unfold icon" v-else></i>
+                </el-tooltip>
+
             </div>
             <div v-else class="icon-size"></div>
         </div>

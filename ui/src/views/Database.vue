@@ -23,6 +23,7 @@
             <aside-component></aside-component>
         </el-aside>
         <el-main>
+            <tag-navigation-component></tag-navigation-component>
             <h1>
                 this is database
             </h1>
@@ -31,7 +32,8 @@
 </template>
 
 <script>
-import AsideComponent from '../components/AsideComponent.vue'
+import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
+import TagNavigationComponent from '../components/databaseComponents/TagNavigationComponent.vue'
 import { mapState } from 'vuex'
 export default {
     name: 'Database',
@@ -46,8 +48,15 @@ export default {
         })
     },
     components: {
-        AsideComponent
-    }
+        AsideComponent,
+        TagNavigationComponent
+    },
+    activated() {
+        console.log('this component is activated!')
+    },
+    deactivated() {
+        console.log('this component is deactivated!')
+    },
 }
 </script>
 

@@ -19,7 +19,7 @@
 
 import Vue from 'vue'
 import './plugins/axios'
-import { Button, Container, Header, Main, Aside, Menu, MenuItem, Image, Loading } from 'element-ui'
+import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip } from 'element-ui'
 import App from './App.vue'
 import router from './router'
 import store from './store'
@@ -36,7 +36,10 @@ Vue.use(Main)
 Vue.use(Aside)
 Vue.use(Menu)
 Vue.use(MenuItem)
+Vue.use(MenuItemGroup)
+Vue.use(Submenu)
 Vue.use(Image)
+Vue.use(Tooltip)
 Vue.prototype.$loading = Loading
 Vue.prototype.$loading.create = () => {
   Vue.prototype.$loading.instance = Loading.service({
