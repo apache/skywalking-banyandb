@@ -67,9 +67,12 @@ lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 lint: default ## Run the linters on all projects
 
 ##@ Code style targets
+tidy:
+	go mod tidy
 
 format: TARGET=format
 format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+format: tidy
 format: default ## Run the linters on all projects
 
 ## Check that the status is consistent with CI.

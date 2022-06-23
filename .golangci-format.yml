@@ -20,6 +20,9 @@ run:
   - ".*\\.pb\\.gw\\.go"
   - ".*\\.gen\\.go"
   - ".*_mock\\.go"
+  skip-dirs:
+  - node_modules
+  - dist
 
 linters:
   disable-all: true

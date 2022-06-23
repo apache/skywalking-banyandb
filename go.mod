@@ -37,6 +37,7 @@ require (
 	github.com/prometheus/client_golang v1.12.2
 	go.uber.org/atomic v1.9.0
 	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f
+	golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3
 )
 
 require golang.org/x/xerrors v0.0.0-20220517211312-f3a8303e98df // indirect
