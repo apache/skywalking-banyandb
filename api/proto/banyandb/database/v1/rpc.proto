@@ -138,11 +138,33 @@ message IndexRuleBindingRegistryServiceListResponse {
 }
 
 service IndexRuleBindingRegistryService {
-  rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse);
-  rpc Update(IndexRuleBindingRegistryServiceUpdateRequest) returns (IndexRuleBindingRegistryServiceUpdateResponse);
-  rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse);
-  rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse);
-  rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse);
+  rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/index-rule-binding/schema"
+      body:"*"
+    };
+  };
+  rpc Update(IndexRuleBindingRegistryServiceUpdateRequest) returns (IndexRuleBindingRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/index-rule-binding/schema/{index_rule_binding.metadata.group}/{index_rule_binding.metadata.name}"
+      body:"*"
+    };
+  };
+  rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/index-rule-binding/schema/lists/{group}"
+    };
+  };
 }
 
 message IndexRuleRegistryServiceCreateRequest {
@@ -184,11 +206,33 @@ message IndexRuleRegistryServiceListResponse {
 }
 
 service IndexRuleRegistryService {
-  rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse);
-  rpc Update(IndexRuleRegistryServiceUpdateRequest) returns (IndexRuleRegistryServiceUpdateResponse);
-  rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse);
-  rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse);
-  rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse);
+  rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/index-rule/schema"
+      body:"*"
+    };
+  };
+  rpc Update(IndexRuleRegistryServiceUpdateRequest) returns (IndexRuleRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/index-rule/schema/{index_rule.metadata.group}/{index_rule.metadata.name}"
+      body:"*"
+    };
+  };
+  rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/index-rule/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/index-rule/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/index-rule/schema/lists/{group}"
+    };
+  };
 }
 
 message MeasureRegistryServiceCreateRequest {
@@ -299,11 +343,33 @@ message GroupRegistryServiceListResponse {
 }
 
 service GroupRegistryService {
-  rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse);
-  rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse);
-  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse);
-  rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse);
-  rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse);
+  rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/group/schema"
+      body:"*"
+    };
+  };
+  rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/group/schema/{group.metadata.group}/{group.metadata.name}"
+      body:"*"
+    };
+  };
+  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/group/schema/{group}"
+    };
+  };
+  rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/group/schema/{group}"
+    };
+  };
+  rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/group/schema/lists"
+    };
+  };
 }
 
 message TopNAggregationRegistryServiceCreateRequest {

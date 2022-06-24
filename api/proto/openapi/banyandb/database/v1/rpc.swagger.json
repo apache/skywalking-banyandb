@@ -32,6 +32,763 @@
     "application/json"
   ],
   "paths": {
+    "/v1/group/schema": {
+      "post": {
+        "operationId": "GroupRegistryService_Create",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceCreateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceCreateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "GroupRegistryService"
+        ]
+      }
+    },
+    "/v1/group/schema/lists": {
+      "get": {
+        "operationId": "GroupRegistryService_List",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceListResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "GroupRegistryService"
+        ]
+      }
+    },
+    "/v1/group/schema/{group.metadata.group}/{group.metadata.name}": {
+      "put": {
+        "operationId": "GroupRegistryService_Update",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceUpdateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group.metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "group.metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "type": "object",
+                  "properties": {
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "format": "int64"
+                        },
+                        "createRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. create_revision is the revision of last creation on this key."
+                        },
+                        "modRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. mod_revision is the revision of last modification on this key."
+                        }
+                      },
+                      "title": "metadata define the group's identity"
+                    },
+                    "catalog": {
+                      "$ref": "#/definitions/v1Catalog",
+                      "title": "catalog denotes which type of data the group contains"
+                    },
+                    "resourceOpts": {
+                      "$ref": "#/definitions/v1ResourceOpts",
+                      "title": "resourceOpts indicates the structure of the underlying kv storage"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "title": "updated_at indicates when resources of the group are updated"
+                    }
+                  },
+                  "title": "Group is an internal object for Group management"
+                }
+              }
+            }
+          }
+        ],
+        "tags": [
+          "GroupRegistryService"
+        ]
+      }
+    },
+    "/v1/group/schema/{group}": {
+      "get": {
+        "operationId": "GroupRegistryService_Get",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceGetResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "GroupRegistryService"
+        ]
+      },
+      "delete": {
+        "operationId": "GroupRegistryService_Delete",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GroupRegistryServiceDeleteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "GroupRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule-binding/schema": {
+      "post": {
+        "operationId": "IndexRuleBindingRegistryService_Create",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceCreateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceCreateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "IndexRuleBindingRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule-binding/schema/lists/{group}": {
+      "get": {
+        "operationId": "IndexRuleBindingRegistryService_List",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceListResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "IndexRuleBindingRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule-binding/schema/{indexRuleBinding.metadata.group}/{indexRuleBinding.metadata.name}": {
+      "put": {
+        "operationId": "IndexRuleBindingRegistryService_Update",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceUpdateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "indexRuleBinding.metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "indexRuleBinding.metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "indexRuleBinding": {
+                  "type": "object",
+                  "properties": {
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "format": "int64"
+                        },
+                        "createRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. create_revision is the revision of last creation on this key."
+                        },
+                        "modRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. mod_revision is the revision of last modification on this key."
+                        }
+                      },
+                      "title": "metadata is the identity of this binding"
+                    },
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "rules refers to the IndexRule"
+                    },
+                    "subject": {
+                      "$ref": "#/definitions/v1Subject",
+                      "title": "subject indicates the subject of binding action"
+                    },
+                    "beginAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "title": "begin_at_nanoseconds is the timestamp, after which the binding will be active"
+                    },
+                    "expireAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "title": "expire_at_nanoseconds it the timestamp, after which the binding will be inactive\nexpire_at_nanoseconds must be larger than begin_at_nanoseconds"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "title": "updated_at indicates when the IndexRuleBinding is updated"
+                    }
+                  },
+                  "description": "IndexRuleBinding is a bridge to connect severalIndexRules to a subject\nThis binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies\nto control how to generate time series indices."
+                }
+              }
+            }
+          }
+        ],
+        "tags": [
+          "IndexRuleBindingRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}": {
+      "get": {
+        "operationId": "IndexRuleBindingRegistryService_Get",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceGetResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "IndexRuleBindingRegistryService"
+        ]
+      },
+      "delete": {
+        "operationId": "IndexRuleBindingRegistryService_Delete",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleBindingRegistryServiceDeleteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "IndexRuleBindingRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule/schema": {
+      "post": {
+        "operationId": "IndexRuleRegistryService_Create",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceCreateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceCreateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "IndexRuleRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule/schema/lists/{group}": {
+      "get": {
+        "operationId": "IndexRuleRegistryService_List",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceListResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "IndexRuleRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule/schema/{indexRule.metadata.group}/{indexRule.metadata.name}": {
+      "put": {
+        "operationId": "IndexRuleRegistryService_Update",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceUpdateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "indexRule.metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "indexRule.metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "indexRule": {
+                  "type": "object",
+                  "properties": {
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "format": "int64"
+                        },
+                        "createRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. create_revision is the revision of last creation on this key."
+                        },
+                        "modRevision": {
+                          "type": "string",
+                          "format": "int64",
+                          "description": "readonly. mod_revision is the revision of last modification on this key."
+                        }
+                      },
+                      "title": "metadata define the rule's identity"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "tags are the combination that refers to an indexed object\nIf the elements in tags are more than 1, the object will generate a multi-tag index\nCaveat: All tags in a multi-tag MUST have an identical IndexType"
+                    },
+                    "type": {
+                      "$ref": "#/definitions/v1IndexRuleType",
+                      "description": "type is the IndexType of this IndexObject."
+                    },
+                    "location": {
+                      "$ref": "#/definitions/v1IndexRuleLocation",
+                      "description": "location indicates where to store index."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "title": "updated_at indicates when the IndexRule is updated"
+                    }
+                  },
+                  "description": "IndexRule defines how to generate indices based on tags and the index type\nIndexRule should bind to a subject through an IndexRuleBinding to generate proper indices."
+                }
+              }
+            }
+          }
+        ],
+        "tags": [
+          "IndexRuleRegistryService"
+        ]
+      }
+    },
+    "/v1/index-rule/schema/{metadata.group}/{metadata.name}": {
+      "get": {
+        "operationId": "IndexRuleRegistryService_Get",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceGetResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "IndexRuleRegistryService"
+        ]
+      },
+      "delete": {
+        "operationId": "IndexRuleRegistryService_Delete",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1IndexRuleRegistryServiceDeleteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "metadata.group",
+            "description": "group contains a set of options, like retention policy, max",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.name",
+            "description": "name of the entity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "metadata.id",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.createRevision",
+            "description": "readonly. create_revision is the revision of last creation on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "metadata.modRevision",
+            "description": "readonly. mod_revision is the revision of last modification on this key.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "IndexRuleRegistryService"
+        ]
+      }
+    },
     "/v1/measure/schema": {
       "post": {
         "operationId": "MeasureRegistryService_Create",
@@ -763,6 +1520,14 @@
       },
       "title": "Group is an internal object for Group management"
     },
+    "v1GroupRegistryServiceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/v1Group"
+        }
+      }
+    },
     "v1GroupRegistryServiceCreateResponse": {
       "type": "object"
     },
@@ -870,6 +1635,14 @@
       },
       "description": "IndexRuleBinding is a bridge to connect severalIndexRules to a subject\nThis binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies\nto control how to generate time series indices."
     },
+    "v1IndexRuleBindingRegistryServiceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "indexRuleBinding": {
+          "$ref": "#/definitions/v1IndexRuleBinding"
+        }
+      }
+    },
     "v1IndexRuleBindingRegistryServiceCreateResponse": {
       "type": "object"
     },
@@ -911,6 +1684,14 @@
         "LOCATION_GLOBAL"
       ],
       "default": "LOCATION_UNSPECIFIED"
+    },
+    "v1IndexRuleRegistryServiceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "indexRule": {
+          "$ref": "#/definitions/v1IndexRule"
+        }
+      }
     },
     "v1IndexRuleRegistryServiceCreateResponse": {
       "type": "object"
