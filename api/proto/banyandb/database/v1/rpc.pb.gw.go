@@ -77,6 +77,33 @@ func request_StreamRegistryService_Update_0(ctx context.Context, marshaler runti
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["stream.metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "stream.metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "stream.metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "stream.metadata.group", err)
+	}
+
+	val, ok = pathParams["stream.metadata.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "stream.metadata.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "stream.metadata.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "stream.metadata.name", err)
+	}
+
 	msg, err := client.Update(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
@@ -92,6 +119,33 @@ func local_request_StreamRegistryService_Update_0(ctx context.Context, marshaler
 	}
 	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["stream.metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "stream.metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "stream.metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "stream.metadata.group", err)
+	}
+
+	val, ok = pathParams["stream.metadata.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "stream.metadata.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "stream.metadata.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "stream.metadata.name", err)
 	}
 
 	msg, err := server.Update(ctx, &protoReq)
@@ -377,6 +431,33 @@ func request_MeasureRegistryService_Update_0(ctx context.Context, marshaler runt
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["measure.metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "measure.metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "measure.metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "measure.metadata.group", err)
+	}
+
+	val, ok = pathParams["measure.metadata.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "measure.metadata.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "measure.metadata.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "measure.metadata.name", err)
+	}
+
 	msg, err := client.Update(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
@@ -392,6 +473,33 @@ func local_request_MeasureRegistryService_Update_0(ctx context.Context, marshale
 	}
 	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["measure.metadata.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "measure.metadata.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "measure.metadata.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "measure.metadata.group", err)
+	}
+
+	val, ok = pathParams["measure.metadata.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "measure.metadata.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "measure.metadata.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "measure.metadata.name", err)
 	}
 
 	msg, err := server.Update(ctx, &protoReq)
@@ -668,7 +776,7 @@ func RegisterStreamRegistryServiceHandlerServer(ctx context.Context, mux *runtim
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Update", runtime.WithHTTPPathPattern("/v1/stream/schema"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Update", runtime.WithHTTPPathPattern("/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -740,7 +848,7 @@ func RegisterStreamRegistryServiceHandlerServer(ctx context.Context, mux *runtim
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema-group/{group}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema/lists/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -797,7 +905,7 @@ func RegisterMeasureRegistryServiceHandlerServer(ctx context.Context, mux *runti
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/Update", runtime.WithHTTPPathPattern("/v1/measure/schema"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/Update", runtime.WithHTTPPathPattern("/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -869,7 +977,7 @@ func RegisterMeasureRegistryServiceHandlerServer(ctx context.Context, mux *runti
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/List", runtime.WithHTTPPathPattern("/v1/measure/schema-group/{group}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/List", runtime.WithHTTPPathPattern("/v1/measure/schema/lists/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -953,7 +1061,7 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Update", runtime.WithHTTPPathPattern("/v1/stream/schema"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/Update", runtime.WithHTTPPathPattern("/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1016,7 +1124,7 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema-group/{group}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.StreamRegistryService/List", runtime.WithHTTPPathPattern("/v1/stream/schema/lists/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1038,13 +1146,13 @@ func RegisterStreamRegistryServiceHandlerClient(ctx context.Context, mux *runtim
 var (
 	pattern_StreamRegistryService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "stream", "schema"}, ""))
 
-	pattern_StreamRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "stream", "schema"}, ""))
+	pattern_StreamRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "stream.metadata.group", "stream.metadata.name"}, ""))
 
 	pattern_StreamRegistryService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "metadata.group", "metadata.name"}, ""))
 
 	pattern_StreamRegistryService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "metadata.group", "metadata.name"}, ""))
 
-	pattern_StreamRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "stream", "schema-group", "group"}, ""))
+	pattern_StreamRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "stream", "schema", "lists", "group"}, ""))
 )
 
 var (
@@ -1123,7 +1231,7 @@ func RegisterMeasureRegistryServiceHandlerClient(ctx context.Context, mux *runti
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/Update", runtime.WithHTTPPathPattern("/v1/measure/schema"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/Update", runtime.WithHTTPPathPattern("/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1186,7 +1294,7 @@ func RegisterMeasureRegistryServiceHandlerClient(ctx context.Context, mux *runti
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/List", runtime.WithHTTPPathPattern("/v1/measure/schema-group/{group}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.MeasureRegistryService/List", runtime.WithHTTPPathPattern("/v1/measure/schema/lists/{group}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1208,13 +1316,13 @@ func RegisterMeasureRegistryServiceHandlerClient(ctx context.Context, mux *runti
 var (
 	pattern_MeasureRegistryService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "measure", "schema"}, ""))
 
-	pattern_MeasureRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "measure", "schema"}, ""))
+	pattern_MeasureRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "measure", "schema", "measure.metadata.group", "measure.metadata.name"}, ""))
 
 	pattern_MeasureRegistryService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "measure", "schema", "metadata.group", "metadata.name"}, ""))
 
 	pattern_MeasureRegistryService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "measure", "schema", "metadata.group", "metadata.name"}, ""))
 
-	pattern_MeasureRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "measure", "schema-group", "group"}, ""))
+	pattern_MeasureRegistryService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "measure", "schema", "lists", "group"}, ""))
 )
 
 var (

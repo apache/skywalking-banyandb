@@ -77,6 +77,43 @@ func request_PropertyService_Update_0(ctx context.Context, marshaler runtime.Mar
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["property.metadata.container.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.container.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.container.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.container.group", err)
+	}
+
+	val, ok = pathParams["property.metadata.container.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.container.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.container.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.container.name", err)
+	}
+
+	val, ok = pathParams["property.metadata.id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.id")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.id", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.id", err)
+	}
+
 	msg, err := client.Update(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
@@ -92,6 +129,43 @@ func local_request_PropertyService_Update_0(ctx context.Context, marshaler runti
 	}
 	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["property.metadata.container.group"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.container.group")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.container.group", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.container.group", err)
+	}
+
+	val, ok = pathParams["property.metadata.container.name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.container.name")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.container.name", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.container.name", err)
+	}
+
+	val, ok = pathParams["property.metadata.id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "property.metadata.id")
+	}
+
+	err = runtime.PopulateFieldFromPath(&protoReq, "property.metadata.id", val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.id", err)
 	}
 
 	msg, err := server.Update(ctx, &protoReq)
@@ -422,7 +496,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property/data"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -446,7 +520,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/data"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -470,7 +544,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/data/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -494,7 +568,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/data/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -518,7 +592,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/data/{container.group}/{container.name}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -581,7 +655,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property/data"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -602,7 +676,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/data"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -623,7 +697,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/data/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -644,7 +718,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/data/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -665,7 +739,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/data/{container.group}/{container.name}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -685,15 +759,15 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 }
 
 var (
-	pattern_PropertyService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "property", "data"}, ""))
+	pattern_PropertyService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "property"}, ""))
 
-	pattern_PropertyService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "property", "data"}, ""))
+	pattern_PropertyService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "property.metadata.container.group", "property.metadata.container.name", "property.metadata.id"}, ""))
 
-	pattern_PropertyService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"v1", "property", "data", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
+	pattern_PropertyService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
 
-	pattern_PropertyService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"v1", "property", "data", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
+	pattern_PropertyService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
 
-	pattern_PropertyService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "data", "container.group", "container.name"}, ""))
+	pattern_PropertyService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "lists", "container.group", "container.name"}, ""))
 )
 
 var (

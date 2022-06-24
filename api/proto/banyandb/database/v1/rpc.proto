@@ -78,7 +78,7 @@ service StreamRegistryService {
   };
   rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse){
     option(google.api.http) = {
-      put:"/v1/stream/schema"
+      put:"/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"
       body:"*"
     };
   };
@@ -94,7 +94,7 @@ service StreamRegistryService {
   };
   rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse){
     option(google.api.http) = {
-      get:"/v1/stream/schema-group/{group}"
+      get:"/v1/stream/schema/lists/{group}"
     };
   };
 }
@@ -238,7 +238,7 @@ service MeasureRegistryService {
   };
   rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse){
     option(google.api.http) = {
-      put:"/v1/measure/schema"
+      put:"/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"
       body:"*"
     };
   };
@@ -254,7 +254,7 @@ service MeasureRegistryService {
   };
   rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse){
     option(google.api.http) = {
-      get:"/v1/measure/schema-group/{group}"
+      get:"/v1/measure/schema/lists/{group}"
     };
   };
 }
