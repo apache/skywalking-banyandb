@@ -67,9 +67,12 @@ lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 lint: default ## Run the linters on all projects
 
 ##@ Code style targets
+tidy:
+	go mod tidy
 
 format: TARGET=format
 format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+format: tidy
 format: default ## Run the linters on all projects
 
 ## Check that the status is consistent with CI.
@@ -94,12 +97,17 @@ pre-push: generate lint license-check check ## Check source files before pushing
 
 include scripts/build/license.mk
 
-license-check: $(LICENSE_EYE) ## Check license header
+license-check: $(LICENSE_EYE)
+license-check: TARGET=license-check
+license-check: PROJECTS:=ui
+license-check: default ## Check license header
 	$(LICENSE_EYE) header check
  
-license-fix: $(LICENSE_EYE) ## Fix license header issues
+license-fix: $(LICENSE_EYE)
+license-fix: TARGET=license-fix
+license-fix: PROJECTS:=ui
+license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
-
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
@@ -151,5 +159,8 @@ release-sign: ## Sign artifacts
 release-assembly: release-binary release-sign ## Generate release package
 
 
-.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
-.PHONY: release-binary release-source release-sign release-assembly
+.PHONY: all $(PROJECTS) clean build  default nuke
+.PHONY: lint check tidy format pre-commit
+.PHONY: test test-race test-coverage 
+.PHONY: license-check license-fix license-dep
+.PHONY: release release-binary release-source release-sign release-assembly
