@@ -182,7 +182,7 @@ Apache-2.0 licenses
     github.com/coreos/go-semver v0.3.0 Apache-2.0
     github.com/coreos/go-systemd/v22 v22.3.2 Apache-2.0
     github.com/dgraph-io/ristretto v0.1.0 Apache-2.0
-    github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b Apache-2.0
+    github.com/golang/glog v1.0.0 Apache-2.0
     github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da Apache-2.0
     github.com/golang/mock v1.6.0 Apache-2.0
     github.com/google/btree v1.0.1 Apache-2.0
@@ -221,7 +221,7 @@ Apache-2.0 licenses
     go.opentelemetry.io/otel/sdk/metric v0.20.0 Apache-2.0
     go.opentelemetry.io/otel/trace v0.20.0 Apache-2.0
     go.opentelemetry.io/proto/otlp v0.7.0 Apache-2.0
-    google.golang.org/genproto v0.0.0-20220519153652-3a47de7e79bd Apache-2.0
+    google.golang.org/genproto v0.0.0-20220615141314-f1464d18c36b Apache-2.0
     google.golang.org/grpc v1.47.0 Apache-2.0
     gopkg.in/ini.v1 v1.66.4 Apache-2.0
     gopkg.in/yaml.v2 v2.4.0 Apache-2.0
@@ -252,14 +252,17 @@ BSD-3-Clause licenses
     github.com/google/go-cmp v0.5.8 BSD-3-Clause
     github.com/google/uuid v1.3.0 BSD-3-Clause
     github.com/grpc-ecosystem/grpc-gateway v1.16.0 BSD-3-Clause
+    github.com/grpc-ecosystem/grpc-gateway/v2 v2.10.3 BSD-3-Clause
     github.com/pmezard/go-difflib v1.0.0 BSD-3-Clause
     github.com/spf13/pflag v1.0.5 BSD-3-Clause
-    golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 BSD-3-Clause
+    golang.org/x/crypto v0.0.0-20220525230936-793ad666bf5e BSD-3-Clause
     golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f BSD-3-Clause
+    golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3 BSD-3-Clause
     golang.org/x/net v0.0.0-20220520000938-2e3eb7b945c2 BSD-3-Clause
     golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a BSD-3-Clause
     golang.org/x/text v0.3.7 BSD-3-Clause
     golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba BSD-3-Clause
+    golang.org/x/xerrors v0.0.0-20220517211312-f3a8303e98df BSD-3-Clause
     google.golang.org/protobuf v1.28.0 BSD-3-Clause
 
 ========================================================================
@@ -284,6 +287,7 @@ MIT licenses
     github.com/cespare/xxhash/v2 v2.1.2 MIT
     github.com/dustin/go-humanize v1.0.0 MIT
     github.com/form3tech-oss/jwt-go v3.2.3+incompatible MIT
+    github.com/go-chi/chi/v5 v5.0.7 MIT
     github.com/json-iterator/go v1.1.12 MIT
     github.com/mitchellh/mapstructure v1.5.0 MIT
     github.com/onsi/ginkgo/v2 v2.1.4 MIT
@@ -310,7 +314,7 @@ MIT and Apache-2.0 licenses
 ========================================================================
 
     github.com/pelletier/go-toml v1.9.5 MIT and Apache-2.0
-    gopkg.in/yaml.v3 v3.0.0 MIT and Apache-2.0
+    gopkg.in/yaml.v3 v3.0.1 MIT and Apache-2.0
 
 ========================================================================
 MIT and BSD-3-Clause licenses

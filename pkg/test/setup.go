@@ -28,8 +28,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type StartFunc func() error
-type StopFunc func()
+type (
+	StartFunc func() error
+	StopFunc  func()
+)
 
 type Flow interface {
 	// PushErrorHandler only pushes a stopFunc
@@ -105,7 +107,6 @@ func (tf *testFlow) Run(ctx context.Context, startFunc StartFunc, stopFunc StopF
 			}
 		}()
 		err := startFunc()
-
 		if err != nil {
 			errCh <- err
 		}

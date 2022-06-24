@@ -29,18 +29,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-var (
-	binaryOpsMap = map[string]modelv1.Condition_BinaryOp{
-		"=":          modelv1.Condition_BINARY_OP_EQ,
-		"!=":         modelv1.Condition_BINARY_OP_NE,
-		">":          modelv1.Condition_BINARY_OP_GT,
-		">=":         modelv1.Condition_BINARY_OP_GE,
-		"<":          modelv1.Condition_BINARY_OP_LT,
-		"<=":         modelv1.Condition_BINARY_OP_LE,
-		"having":     modelv1.Condition_BINARY_OP_HAVING,
-		"not having": modelv1.Condition_BINARY_OP_NOT_HAVING,
-	}
-)
+var binaryOpsMap = map[string]modelv1.Condition_BinaryOp{
+	"=":          modelv1.Condition_BINARY_OP_EQ,
+	"!=":         modelv1.Condition_BINARY_OP_NE,
+	">":          modelv1.Condition_BINARY_OP_GT,
+	">=":         modelv1.Condition_BINARY_OP_GE,
+	"<":          modelv1.Condition_BINARY_OP_LT,
+	"<=":         modelv1.Condition_BINARY_OP_LE,
+	"having":     modelv1.Condition_BINARY_OP_HAVING,
+	"not having": modelv1.Condition_BINARY_OP_NOT_HAVING,
+}
 
 type StreamQueryRequestBuilder struct {
 	ec *streamv1.QueryRequest

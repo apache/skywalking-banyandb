@@ -35,12 +35,14 @@ func (ps *propertyServer) Create(ctx context.Context, req *propertyv1.CreateRequ
 	}
 	return &propertyv1.CreateResponse{}, nil
 }
+
 func (ps *propertyServer) Update(ctx context.Context, req *propertyv1.UpdateRequest) (*propertyv1.UpdateResponse, error) {
 	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
 		return nil, err
 	}
 	return &propertyv1.UpdateResponse{}, nil
 }
+
 func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequest) (*propertyv1.DeleteResponse, error) {
 	ok, err := ps.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, req.GetMetadata())
 	if err != nil {
@@ -50,6 +52,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 		Deleted: ok,
 	}, nil
 }
+
 func (ps *propertyServer) Get(ctx context.Context, req *propertyv1.GetRequest) (*propertyv1.GetResponse, error) {
 	entity, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, req.GetMetadata())
 	if err != nil {
@@ -59,6 +62,7 @@ func (ps *propertyServer) Get(ctx context.Context, req *propertyv1.GetRequest) (
 		Property: entity,
 	}, nil
 }
+
 func (ps *propertyServer) List(ctx context.Context, req *propertyv1.ListRequest) (*propertyv1.ListResponse, error) {
 	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, req.GetContainer())
 	if err != nil {

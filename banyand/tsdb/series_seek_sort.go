@@ -201,7 +201,8 @@ func (s *searcherIterator) Close() error {
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, data kv.TimeSeriesReader,
-	seriesID common.SeriesID, filters []filterFn) Iterator {
+	seriesID common.SeriesID, filters []filterFn,
+) Iterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
 		data:          data,

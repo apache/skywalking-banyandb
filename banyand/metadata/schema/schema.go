@@ -29,9 +29,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
-var (
-	ErrUnsupportedEntityType = errors.New("unsupported entity type")
-)
+var ErrUnsupportedEntityType = errors.New("unsupported entity type")
 
 type Kind int
 
@@ -84,8 +82,7 @@ type Metadata struct {
 	Spec Spec
 }
 
-type Spec interface {
-}
+type Spec interface{}
 
 func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 	switch tm.Kind {

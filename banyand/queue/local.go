@@ -22,8 +22,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-var _ bus.Publisher = (*local)(nil)
-var _ bus.Subscriber = (*local)(nil)
+var (
+	_ bus.Publisher  = (*local)(nil)
+	_ bus.Subscriber = (*local)(nil)
+)
 
 type local struct {
 	local *bus.Bus

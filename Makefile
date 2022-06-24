@@ -63,35 +63,21 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 ##@ Code quality targets
 
 lint: TARGET=lint
-lint: PROJECTS:=api $(PROJECTS) pkg
+lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 lint: default ## Run the linters on all projects
 
 ##@ Code style targets
+tidy:
+	go mod tidy
 
-# The goimports tool does not arrange imports in 3 blocks if there are already more than three blocks.
-# To avoid that, before running it, we collapse all imports in one block, then run the formatter.
-format: ## Format all Go code
-	@for f in `find . -name '*.go'`; do \
-	    awk '/^import \($$/,/^\)$$/{if($$0=="")next}{print}' $$f > /tmp/fmt; \
-	    mv /tmp/fmt $$f; \
-	done
-	@goimports -w -local github.com/apache/skywalking-banyandb .
-
-# Enforce go version matches what's in go.mod when running `make check` assuming the following:
-# * 'go version' returns output like "go version go1.17 darwin/amd64"
-# * go.mod contains a line like "go 1.17"
-CONFIGURED_GO_VERSION := $(shell sed -ne '/^go /s/.* //gp' go.mod)
-EXPECTED_GO_VERSION_PREFIX := "go version go$(CONFIGURED_GO_VERSION)"
-GO_VERSION := $(shell go version)
+format: TARGET=format
+format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+format: tidy
+format: default ## Run the linters on all projects
 
 ## Check that the status is consistent with CI.
 check: clean
-# case statement because /bin/sh cannot do prefix comparison, awk is awkward and assuming /bin/bash is brittle
-	@case "$(GO_VERSION)" in $(EXPECTED_GO_VERSION_PREFIX)* ) ;; * ) \
-		echo "Expected 'go version' to start with $(EXPECTED_GO_VERSION_PREFIX), but it didn't: $(GO_VERSION)"; \
-		echo "Upgrade go to $(CONFIGURED_GO_VERSION)+"; \
-		exit 1; \
-	esac
+	$(MAKE) -C scripts/ci/check test
 	$(MAKE) -C ui check-version
 	$(MAKE) license-dep
 	$(MAKE) format
@@ -111,12 +97,17 @@ pre-push: generate lint license-check check ## Check source files before pushing
 
 include scripts/build/license.mk
 
-license-check: $(LICENSE_EYE) ## Check license header
+license-check: $(LICENSE_EYE)
+license-check: TARGET=license-check
+license-check: PROJECTS:=ui
+license-check: default ## Check license header
 	$(LICENSE_EYE) header check
  
-license-fix: $(LICENSE_EYE) ## Fix license header issues
+license-fix: $(LICENSE_EYE)
+license-fix: TARGET=license-fix
+license-fix: PROJECTS:=ui
+license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
-
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
@@ -168,5 +159,8 @@ release-sign: ## Sign artifacts
 release-assembly: release-binary release-sign ## Generate release package
 
 
-.PHONY: all $(PROJECTS) clean build release test test-race test-coverage lint default check format license-check license-fix pre-commit nuke
-.PHONY: release-binary release-source release-sign release-assembly
+.PHONY: all $(PROJECTS) clean build  default nuke
+.PHONY: lint check tidy format pre-commit
+.PHONY: test test-race test-coverage 
+.PHONY: license-check license-fix license-dep
+.PHONY: release release-binary release-source release-sign release-assembly

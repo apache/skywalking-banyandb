@@ -19,7 +19,7 @@
 NAME := api
 
 include ../scripts/build/base.mk
-include ../scripts/build/lint.mk
+include ../scripts/build/lint-api.mk
 include ../scripts/build/help.mk
 
 proto_dir := $(root_dir)/api/proto
@@ -31,34 +31,23 @@ $(BUF):
 	@rm -f $(tool_bin)/protoc-gen-go
 	@rm -f $(tool_bin)/protoc-gen-go-grpc
 	@rm -f $(tool_bin)/protoc-gen-doc
+	@rm -f $(tool_bin)/protoc-gen-grpc-gateway
+	@rm -f $(tool_bin)/protoc-gen-openapiv2
+	@rm -f $(tool_bin)/protoc-gen-validate
 	@rm -f $(tool_bin)/buf
 	@rm -f $(tool_bin)/protoc-gen-buf-breaking
 	@rm -f $(tool_bin)/protoc-gen-buf-lint
 	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
 	@GOBIN=$(tool_bin) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
 	@GOBIN=$(tool_bin) go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v1.5.1
+	@GOBIN=$(tool_bin) go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.10.3
+	@GOBIN=$(tool_bin) go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.10.3
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/buf@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/envoyproxy/protoc-gen-validate@v0.6.7
 
-PROTOC_GEN_GO := $(tool_bin)/protoc-gen-go
-$(PROTOC_GEN_GO):
-	@echo "Install protoc gen go..."
-	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
-
-PROTOC_GEN_GO_GRPC := $(tool_bin)/protoc-gen-go-grpc
-$(PROTOC_GEN_GO_GRPC):
-	@echo "Install protoc gen go grpc..."
-	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
-
 generate: $(BUF)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate
 	@echo "Protobuf schema files are compiled"
 	mv proto/api-reference.md $(root_dir)/docs
-
-lint: $(PROTOC)
-	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
-	$(MAKE) lint-desperated

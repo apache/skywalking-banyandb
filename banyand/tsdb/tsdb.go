@@ -54,7 +54,7 @@ const (
 	blockHourFormat = "15"
 	blockDayFormat  = "0102"
 
-	dirPerm = 0700
+	dirPerm = 0o700
 )
 
 var (
@@ -217,8 +217,8 @@ func createDatabase(ctx context.Context, db *database, startID int) (Database, e
 }
 
 func loadDatabase(ctx context.Context, db *database) (Database, error) {
-	//TODO: open the lock file
-	//TODO: open the manifest file
+	// TODO: open the lock file
+	// TODO: open the manifest file
 	db.Lock()
 	defer db.Unlock()
 	err := WalkDir(db.location, shardPathPrefix, func(suffix, _ string) error {

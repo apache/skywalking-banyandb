@@ -21,13 +21,9 @@ mk_dir   := $(dir $(mk_path))
 root_dir := $(mk_dir)../..
 tool_bin := $(root_dir)/bin
 tool_include := "$(root_dir)/include"
-uname_os := $(shell uname -s)
-uname_arch := $(shell uname -m)
 
 buf_version ?= v1.5.0
 go_version ?= 1.18
-
-MODULE_PATH ?= $(shell go mod edit -json | jq -r .Module.Path)
 
 # Retrieve git versioning details so we can add to our binary assets
 VERSION_PATH    := github.com/apache/skywalking-banyandb/pkg/version
@@ -35,7 +31,7 @@ ifdef RELEASE_VERSION
 VERSION_STRING := $(RELEASE_VERSION)
 GIT_BRANCH_NAME := release
 else
-VERSION_STRING  := $(shell git describe --tags --long $(shell git rev-list --tags --max-count=1))
+VERSION_STRING  := $(shell git describe --tags --long)
 GIT_BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD)
 endif
 

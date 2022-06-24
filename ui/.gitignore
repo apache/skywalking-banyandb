@@ -18,4 +18,4 @@
 # Binaries for programs and plugins
 dist
 node_modules
-package-lock.json
+ui-licenses

@@ -5,3 +5,11 @@ deps:
     owner: envoyproxy
     repository: protoc-gen-validate
     commit: dc09a417d27241f7b069feae2cd74a0e
+  - remote: buf.build
+    owner: googleapis
+    repository: googleapis
+    commit: b2ce3a783bb9432c86e4ff84bea45f27
+  - remote: buf.build
+    owner: grpc-ecosystem
+    repository: grpc-gateway
+    commit: 00116f302b12478b85deb33b734e026c

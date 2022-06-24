@@ -41,8 +41,8 @@ var _ = Describe("Write and Update service_cpm_minute", func() {
 	var measure measure.Measure
 	var baseTime time.Time
 
-	var count = func() (num int) {
-		//Retrieve all shards
+	count := func() (num int) {
+		// Retrieve all shards
 		shards, err := measure.Shards(nil)
 		Expect(err).ShouldNot(HaveOccurred())
 		for _, shard := range shards {
@@ -89,7 +89,6 @@ var _ = Describe("Write and Update service_cpm_minute", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		baseTime = writeData(dataFile, measure)
 		Expect(count()).To(Equal(expectDatapointsNum))
-
 	},
 		Entry("service_cpm_minute", &commonv1.Metadata{
 			Name:  "service_cpm_minute",
@@ -113,7 +112,6 @@ var _ = Describe("Write and Update service_cpm_minute", func() {
 		writeDataWithBaseTime(baseTime, "service_cpm_minute_data1.json", measure)
 		Expect(count()).To(Equal(3))
 	})
-
 })
 
 //go:embed testdata/*.json

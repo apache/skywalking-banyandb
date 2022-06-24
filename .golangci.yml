@@ -28,14 +28,12 @@ linters:
     - lll
     - misspell
     - staticcheck
-    - structcheck
     - stylecheck
     - typecheck
     - unconvert
     - varcheck
     - prealloc
     - unused
-    - unparam
 linters-settings:
   lll:
     line-length: 170

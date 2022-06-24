@@ -161,7 +161,6 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		if err = mIterator.Close(); err != nil {
 			p.queryService.log.Error().Err(err).Msg("fail to close the query plan")
 		}
-
 	}()
 	result := make([]*measurev1.DataPoint, 0)
 	for mIterator.Next() {
