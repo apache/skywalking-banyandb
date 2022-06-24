@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
