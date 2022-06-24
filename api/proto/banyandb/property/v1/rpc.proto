@@ -24,6 +24,12 @@ package banyandb.property.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/property/v1/property.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+    base_path:"/api"
+};
 
 message CreateRequest {
     banyandb.property.v1.Property property = 1;
@@ -64,9 +70,31 @@ message ListResponse {
 }
 
 service PropertyService {
-    rpc Create(CreateRequest) returns (CreateResponse);
-    rpc Update(UpdateRequest) returns (UpdateResponse);
-    rpc Delete(DeleteRequest) returns (DeleteResponse);
-    rpc Get(GetRequest) returns (GetResponse);
-    rpc List(ListRequest) returns (ListResponse);
+    rpc Create(CreateRequest) returns (CreateResponse){
+        option(google.api.http) = {
+            post:"/v1/property"
+            body:"*"
+        };
+    };
+    rpc Update(UpdateRequest) returns (UpdateResponse){
+        option(google.api.http) = {
+            put:"/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"
+            body:"*"
+        };
+    };
+    rpc Delete(DeleteRequest) returns (DeleteResponse){
+        option(google.api.http) = {
+            delete:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"
+        };
+    };
+    rpc Get(GetRequest) returns (GetResponse){
+        option(google.api.http) = {
+            get:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"
+        };
+    };
+    rpc List(ListRequest) returns (ListResponse){
+        option(google.api.http) = {
+            get:"/v1/property/lists/{container.group}/{container.name}"
+        };
+    };
 }

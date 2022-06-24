@@ -29,3 +29,8 @@ plugins:
     out: proto
     opt: markdown,api-reference.md
     strategy: all
+  - name: grpc-gateway
+    out: proto
+    opt: paths=source_relative
+  - name: openapiv2
+    out: proto/openapi

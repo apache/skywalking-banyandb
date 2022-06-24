@@ -24,6 +24,12 @@ package banyandb.database.v1;
 
 import "banyandb/database/v1/schema.proto";
 import "banyandb/common/v1/common.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  base_path:"/api"
+};
 
 message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
@@ -64,11 +70,33 @@ message StreamRegistryServiceListResponse {
 }
 
 service StreamRegistryService {
-  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse);
-  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse);
-  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse);
-  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse);
-  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse);
+  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/stream/schema"
+      body:"*"
+    };
+  };
+  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"
+      body:"*"
+    };
+  };
+  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/stream/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/stream/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/stream/schema/lists/{group}"
+    };
+  };
 }
 
 message IndexRuleBindingRegistryServiceCreateRequest {
@@ -202,11 +230,33 @@ message MeasureRegistryServiceListResponse {
 }
 
 service MeasureRegistryService {
-  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse);
-  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse);
-  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse);
-  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse);
-  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse);
+  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse){
+    option(google.api.http) = {
+      post:"/v1/measure/schema"
+      body:"*"
+    };
+  };
+  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse){
+    option(google.api.http) = {
+      put:"/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"
+      body:"*"
+    };
+  };
+  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse){
+    option(google.api.http) = {
+      delete:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse){
+    option(google.api.http) = {
+      get:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+    };
+  };
+  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse){
+    option(google.api.http) = {
+      get:"/v1/measure/schema/lists/{group}"
+    };
+  };
 }
 
 message GroupRegistryServiceCreateRequest {
