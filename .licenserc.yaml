@@ -75,13 +75,13 @@ header: # `header` section is configurations for source codes license header.
     - '**/*_mock.go'
     - '**/*_mock_test.go'
     - '**/*.pb.go'
+    - '**/*.pb.validate.go'
     - '**/*.pb.gw.go'
     - '**/*.textproto'
     - '**/*.pem'
     - '**/.gitignore'
     - '**/buf.lock'
     - 'ui'
-    - '**/*.pb.validate.go'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
