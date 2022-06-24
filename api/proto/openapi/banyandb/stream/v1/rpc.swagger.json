@@ -9,6 +9,7 @@
       "name": "StreamService"
     }
   ],
+  "basePath": "/api",
   "consumes": [
     "application/json"
   ],
@@ -68,6 +69,18 @@
       "default": "BINARY_OP_UNSPECIFIED",
       "title": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\""
     },
+    "modelv1Tag": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/v1TagValue"
+        }
+      },
+      "description": "Pair is the building block of a record which is equivalent to a key-value pair.\nIn the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.\nBesides, other tags are organized in key-value pair in the underlying storage layer.\nOne should notice that the values can be a multi-value."
+    },
     "modelv1TagFamily": {
       "type": "object",
       "properties": {
@@ -77,7 +90,7 @@
         "tags": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Tag"
+            "$ref": "#/definitions/modelv1Tag"
           }
         }
       }
@@ -338,18 +351,6 @@
           }
         }
       }
-    },
-    "v1Tag": {
-      "type": "object",
-      "properties": {
-        "key": {
-          "type": "string"
-        },
-        "value": {
-          "$ref": "#/definitions/v1TagValue"
-        }
-      },
-      "description": "Pair is the building block of a record which is equivalent to a key-value pair.\nIn the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.\nBesides, other tags are organized in key-value pair in the underlying storage layer.\nOne should notice that the values can be a multi-value."
     },
     "v1TagFamilyForWrite": {
       "type": "object",

@@ -20,7 +20,6 @@ NAME := ui
 DIST_INDEX := dist/index.html
 
 include ../scripts/build/base.mk
-include ../scripts/build/license.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
 
@@ -58,6 +57,16 @@ docker: build
 .PHONY: docker.push
 docker.push:
 	@echo "No push"
+
+include ../scripts/build/license.mk
+
+.PHONY: license-check
+license-check: $(LICENSE_EYE) ## Check license header
+	$(LICENSE_EYE) header check
+ 
+.PHONY: license-fix
+license-fix: $(LICENSE_EYE) ## Fix license header issues
+	$(LICENSE_EYE) header fix
 
 license-dep:$(LICENSE_EYE)
 	@rm -rf licenses

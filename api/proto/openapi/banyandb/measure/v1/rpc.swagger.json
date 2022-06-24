@@ -9,6 +9,7 @@
       "name": "MeasureService"
     }
   ],
+  "basePath": "/api",
   "consumes": [
     "application/json"
   ],
@@ -144,6 +145,18 @@
         }
       }
     },
+    "modelv1Tag": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/v1TagValue"
+        }
+      },
+      "description": "Pair is the building block of a record which is equivalent to a key-value pair.\nIn the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.\nBesides, other tags are organized in key-value pair in the underlying storage layer.\nOne should notice that the values can be a multi-value."
+    },
     "modelv1TagFamily": {
       "type": "object",
       "properties": {
@@ -153,7 +166,7 @@
         "tags": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Tag"
+            "$ref": "#/definitions/modelv1Tag"
           }
         }
       }
@@ -467,18 +480,6 @@
           }
         }
       }
-    },
-    "v1Tag": {
-      "type": "object",
-      "properties": {
-        "key": {
-          "type": "string"
-        },
-        "value": {
-          "$ref": "#/definitions/v1TagValue"
-        }
-      },
-      "description": "Pair is the building block of a record which is equivalent to a key-value pair.\nIn the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.\nBesides, other tags are organized in key-value pair in the underlying storage layer.\nOne should notice that the values can be a multi-value."
     },
     "v1TagFamilyForWrite": {
       "type": "object",
