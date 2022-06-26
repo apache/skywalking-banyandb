@@ -22,11 +22,9 @@
         <el-aside :width="fatherWidth" class="bd-top">
             <aside-component></aside-component>
         </el-aside>
-        <el-main>
+        <el-main style="background-color: var(--color-background)">
             <tag-navigation-component></tag-navigation-component>
-            <h1>
-                this is database
-            </h1>
+            <main-component></main-component>
         </el-main>
     </el-container>
 </template>
@@ -34,6 +32,7 @@
 <script>
 import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
 import TagNavigationComponent from '../components/databaseComponents/TagNavigationComponent.vue'
+import MainComponent from '../components/databaseComponents/MainComponent.vue'
 import { mapState } from 'vuex'
 export default {
     name: 'Database',
@@ -49,7 +48,8 @@ export default {
     },
     components: {
         AsideComponent,
-        TagNavigationComponent
+        TagNavigationComponent,
+        MainComponent
     },
     activated() {
         console.log('this component is activated!')

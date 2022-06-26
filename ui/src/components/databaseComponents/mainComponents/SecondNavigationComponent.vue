@@ -16,47 +16,16 @@
   ~ specific language governing permissions and limitations
   ~ under the License.
 -->
-
 <template>
-  <div class="justify-start flex">
-    <el-tag class="pointer" size="medium" v-for="(item, index) in tags" :key="item.name" closable
-      @click="changeMenu(item)" @close="handleClose(item, index)" effect="dark">{{ item.name }}
-    </el-tag>
-  </div>
+    <div class="flex center second-nav-contain">
+        <el-button>Check All</el-button>
+        <el-button>Check None</el-button>
+    </div>
 </template>
 
-<script>
-import { mapState, mapMutations } from "vuex"
-export default {
-  name: 'TagNavigationComponent',
-  computed: {
-    ...mapState({
-      tags: (state) => state.tags.tagsList,
-    }),
-  },
-  created() {
-
-  },
-  methods: {
-    ...mapMutations({
-      close: 'closeTag',
-    }),
-    changeMenu(item) {
-      console.log(item)
-    },
-    handleClose(item, index) {
-      console.log(item, index)
-    }
-  }
-}
-</script>
-
 <style lang="scss" scoped>
-div {
-  margin: 20px 20px 0 20px;
-
-  .el-tag {
-    margin-right: 15px;
-  }
+.second-nav-contain {
+    width: 100%;
+    height: 50px;
 }
 </style>

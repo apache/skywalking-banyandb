@@ -18,45 +18,46 @@
 -->
 
 <template>
-  <div class="justify-start flex">
-    <el-tag class="pointer" size="medium" v-for="(item, index) in tags" :key="item.name" closable
-      @click="changeMenu(item)" @close="handleClose(item, index)" effect="dark">{{ item.name }}
-    </el-tag>
-  </div>
+    <div class="buttonItem flex center text-main-color text-family" :style="active" @mouseover="handleOver" @mouseleave="handleLeave">
+        <i :class="icon" class="text-big"></i>
+        <div class="text-main-color text-family text-title" :style="active">{{name}}</div>
+    </div>
 </template>
 
 <script>
-import { mapState, mapMutations } from "vuex"
 export default {
-  name: 'TagNavigationComponent',
-  computed: {
-    ...mapState({
-      tags: (state) => state.tags.tagsList,
-    }),
-  },
-  created() {
-
-  },
-  methods: {
-    ...mapMutations({
-      close: 'closeTag',
-    }),
-    changeMenu(item) {
-      console.log(item)
+    name: 'TopButtonComponent',
+    data() {
+        return {
+            active: "background-color: #F2F6FC"
+        }
     },
-    handleClose(item, index) {
-      console.log(item, index)
+    props: {
+        icon: {
+            type: String,
+        },
+        name: {
+            type: String
+        }
+    },
+    methods: {
+        handleOver() {
+            this.active = "background-color: #ecf5ff; color: var(--color-main); font-color: var(--color-main)"
+        },
+        handleLeave() {
+            this.active = "background-color: #F2F6FC; color: var(--color-main-font); font-color: var(--color-main-font)"
+        }
     }
-  }
 }
 </script>
 
 <style lang="scss" scoped>
-div {
-  margin: 20px 20px 0 20px;
+.buttonItem {
+    height: 100%;
+    cursor: pointer;
+}
 
-  .el-tag {
-    margin-right: 15px;
-  }
+i {
+    margin-right: 10px;
 }
 </style>

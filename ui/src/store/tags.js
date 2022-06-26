@@ -17,23 +17,24 @@
  * under the License.
  */
 
-import Vue from 'vue'
-import Vuex from 'vuex'
-import header from './header'
-import aside from './aside'
-import tags from './tags'
-Vue.use(Vuex)
+export default {
+    state: {
+        tagsList: [
+            {
+                name: 'node\\Stream\\db',
+            }
+        ],
+        currentMenu: null,
+    },
+    mutations: {
+        selectMenu(state, val) {
 
-export default new Vuex.Store({
-  state: {
-  },
-  mutations: {
-  },
-  actions: {
-  },
-  modules: {
-    header,
-    aside,
-    tags
-  }
-})
+        },
+        closeTag(state, val) {
+
+        },
+        changeTag(state, val) {
+
+        }
+    }
+}

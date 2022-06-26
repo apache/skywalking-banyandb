@@ -18,45 +18,38 @@
 -->
 
 <template>
-  <div class="justify-start flex">
-    <el-tag class="pointer" size="medium" v-for="(item, index) in tags" :key="item.name" closable
-      @click="changeMenu(item)" @close="handleClose(item, index)" effect="dark">{{ item.name }}
-    </el-tag>
-  </div>
+    <div>
+        <el-card>
+            <top-navigation-component></top-navigation-component>
+            <second-navigation-component></second-navigation-component>
+        </el-card>
+    </div>
 </template>
 
 <script>
-import { mapState, mapMutations } from "vuex"
+import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
+import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
 export default {
-  name: 'TagNavigationComponent',
-  computed: {
-    ...mapState({
-      tags: (state) => state.tags.tagsList,
-    }),
-  },
-  created() {
+    name: 'MainComponent',
+    data() {
+        return {
 
-  },
-  methods: {
-    ...mapMutations({
-      close: 'closeTag',
-    }),
-    changeMenu(item) {
-      console.log(item)
+        }
     },
-    handleClose(item, index) {
-      console.log(item, index)
+    components: {
+        TopNavigationComponent,
+        SecondNavigationComponent
     }
-  }
 }
 </script>
 
-<style lang="scss" scoped>
-div {
-  margin: 20px 20px 0 20px;
+<style lang="scss">
+.el-card {
+    margin: 20px;
+    padding: 0;
+}
 
-  .el-tag {
-    margin-right: 15px;
-  }
+.el-card__body {
+    padding: 0;
 }
 </style>
