@@ -15,16 +15,42 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow
+package streaming
 
 import (
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
+
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 )
 
-var _ AggregateFunction = (*topNAggregator)(nil)
+var _ api.AggregateFunction = (*topNAggregator)(nil)
+
+type windowedFlow struct {
+	f  *streamingFlow
+	wa api.WindowAssigner
+}
+
+func (s *windowedFlow) TopN(topNum int, opts ...any) api.Flow {
+	topNAggrFunc := &topNAggregator{
+		topNum:    topNum,
+		cacheSize: 1000, // default cache size is 1000
+		treeMap:   treemap.NewWith(utils.Int64Comparator),
+	}
+	// apply user customized options
+	for _, opt := range opts {
+		if applier, ok := opt.(TopNOption); ok {
+			applier(topNAggrFunc)
+		}
+	}
+	if topNAggrFunc.sortKeyExtractor == nil {
+		s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
+	}
+	s.wa.(*slidingTimeWindows).aggrFunc = topNAggrFunc
+	return s.f
+}
 
 type topNAggregator struct {
 	topNum int
@@ -51,23 +77,6 @@ func WithSortKeyExtractor(sortKeyExtractor func(interface{}) int64) TopNOption {
 	return func(aggregator *topNAggregator) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
 	}
-}
-
-func (s *SlidingTimeWindows) TopN(topNum int, opts ...TopNOption) *Flow {
-	topNAggrFunc := &topNAggregator{
-		topNum:    topNum,
-		cacheSize: 1000, // default cache size is 1000
-		treeMap:   treemap.NewWith(utils.Int64Comparator),
-	}
-	// apply user customized options
-	for _, opt := range opts {
-		opt(topNAggrFunc)
-	}
-	if topNAggrFunc.sortKeyExtractor == nil {
-		s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
-	}
-	s.aggrFunc = topNAggrFunc
-	return s.f
 }
 
 func (t *topNAggregator) Add(input []interface{}) {

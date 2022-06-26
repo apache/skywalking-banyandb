@@ -23,7 +23,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
 var _ api.Source = (*sourceChan)(nil)
@@ -66,7 +66,7 @@ func (s *sourceChan) run(ctx context.Context, chanVal reflect.Value) {
 			return
 		}
 		select {
-		case s.out <- val.Interface():
+		case s.out <- tryExactTimestamp(val.Interface()):
 		case <-ctx.Done():
 			return
 		}

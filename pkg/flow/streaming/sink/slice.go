@@ -15,45 +15,56 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package sources_test
+package sink
 
 import (
 	"context"
-	"strings"
-	"testing"
 
-	"github.com/golang/mock/gomock"
-	"github.com/stretchr/testify/require"
-
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
-	"github.com/apache/skywalking-banyandb/pkg/streaming/sources"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-func TestSource_io_reader(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+var _ api.Sink = (*Slice)(nil)
 
-	inlet := api.NewMockInlet(ctrl)
+type Slice struct {
+	slice []interface{}
+	in    chan interface{}
+}
 
-	assert := require.New(t)
-	src := sources.FromReader(strings.NewReader(ALPHABET), sources.WithBufferSize(1))
-	assert.NoError(src.Setup(context.TODO()))
-
-	in := make(chan interface{})
-	inlet.
-		EXPECT().
-		In().Times(len(ALPHABET) + 1).
-		Return(in)
-
-	src.Exec(inlet)
-
-	var result strings.Builder
-	for item := range in {
-		assert.IsType([]byte{}, item)
-		result.Write(item.([]byte))
+func NewSlice() *Slice {
+	return &Slice{
+		slice: make([]interface{}, 0),
+		in:    make(chan interface{}),
 	}
+}
 
-	assert.Equal(ALPHABET, result.String())
+func (s *Slice) Value() []interface{} {
+	return s.slice
+}
 
-	assert.NoError(src.Teardown(context.TODO()))
+func (s *Slice) In() chan<- interface{} {
+	return s.in
+}
+
+func (s *Slice) Setup(ctx context.Context) error {
+	go s.run(ctx)
+
+	return nil
+}
+
+func (s *Slice) run(ctx context.Context) {
+	for {
+		select {
+		case item, ok := <-s.in:
+			if !ok {
+				return
+			}
+			s.slice = append(s.slice, item)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Slice) Teardown(ctx context.Context) error {
+	return nil
 }

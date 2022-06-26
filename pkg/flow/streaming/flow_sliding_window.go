@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow
+package streaming
 
 import (
 	"container/heap"
@@ -27,7 +27,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
 type TriggerResult uint8
@@ -38,19 +39,38 @@ const (
 )
 
 var (
-	_ api.Operator   = (*SlidingTimeWindows)(nil)
-	_ TriggerContext = (*SlidingTimeWindows)(nil)
+	_ streamingApi.Operator = (*slidingTimeWindows)(nil)
+	_ TriggerContext        = (*slidingTimeWindows)(nil)
+	_ api.WindowAssigner    = (*slidingTimeWindows)(nil)
+	_ api.Window            = (*timeWindow)(nil)
 )
 
-func (flow *Flow) Window(windows *SlidingTimeWindows) *Flow {
-	windows.f = flow
-	flow.ops = append(flow.ops, windows)
-	return flow
+func (flow *streamingFlow) Window(w api.WindowAssigner) api.WindowedFlow {
+	switch v := w.(type) {
+	case *slidingTimeWindows:
+		flow.ops = append(flow.ops, v)
+	default:
+		flow.drainErr(errors.New("window is not supported"))
+	}
+
+	return &windowedFlow{
+		f:  flow,
+		wa: w,
+	}
 }
 
-type SlidingTimeWindows struct {
-	f *Flow
-	// For SlidingTimeWindows
+func (s *windowedFlow) Aggregate(aggrFunc api.AggregateFunction) api.Flow {
+	switch v := s.wa.(type) {
+	case *slidingTimeWindows:
+		v.Aggregate(aggrFunc)
+	default:
+		s.f.drainErr(errors.New("aggregation is not supported"))
+	}
+	return s.f
+}
+
+type slidingTimeWindows struct {
+	// For slidingTimeWindows
 	currentWindow timeWindow
 	size          int64
 	slide         int64
@@ -62,7 +82,7 @@ type SlidingTimeWindows struct {
 	// guard timerHeap
 	timerMu  sync.Mutex
 	trigger  EventTimeTrigger
-	aggrFunc AggregateFunction
+	aggrFunc api.AggregateFunction
 
 	// For api.Operator
 	in           chan interface{}
@@ -71,22 +91,11 @@ type SlidingTimeWindows struct {
 	purgedWindow chan timeWindow
 }
 
-//go:generate mockgen -destination=./aggregation_func_mock.go -package=flow github.com/apache/skywalking-banyandb/pkg/streaming/flow AggregateFunction
-type AggregateFunction interface {
-	Add([]interface{})
-	GetResult() interface{}
-}
-
-func (s *SlidingTimeWindows) Aggregate(aggrFunc AggregateFunction) *Flow {
-	s.aggrFunc = aggrFunc
-	return s.f
-}
-
-func (s *SlidingTimeWindows) GetCurrentWatermark() int64 {
+func (s *slidingTimeWindows) GetCurrentWatermark() int64 {
 	return s.currentWatermark
 }
 
-func (s *SlidingTimeWindows) RegisterEventTimeTimer(triggerTime int64) {
+func (s *slidingTimeWindows) RegisterEventTimeTimer(triggerTime int64) {
 	s.timerMu.Lock()
 	defer s.timerMu.Unlock()
 	heap.Push(s.timerHeap, &internalTimer{
@@ -95,15 +104,15 @@ func (s *SlidingTimeWindows) RegisterEventTimeTimer(triggerTime int64) {
 	})
 }
 
-func (s *SlidingTimeWindows) In() chan<- interface{} {
+func (s *slidingTimeWindows) In() chan<- interface{} {
 	return s.in
 }
 
-func (s *SlidingTimeWindows) Out() <-chan interface{} {
+func (s *slidingTimeWindows) Out() <-chan interface{} {
 	return s.out
 }
 
-func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
+func (s *slidingTimeWindows) Setup(ctx context.Context) error {
 	// start processing
 	go s.receive()
 	// start emitting
@@ -112,7 +121,7 @@ func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlidingTimeWindows) emit() {
+func (s *slidingTimeWindows) emit() {
 	for w := range s.purgedWindow {
 		s.queueMu.Lock()
 		// build a window slice and send it to the out chan
@@ -155,7 +164,7 @@ func (s *SlidingTimeWindows) emit() {
 	}
 }
 
-func (s *SlidingTimeWindows) purgeOutdatedWindows() {
+func (s *slidingTimeWindows) purgeOutdatedWindows() {
 	s.timerMu.Lock()
 	defer s.timerMu.Unlock()
 	for {
@@ -170,23 +179,24 @@ func (s *SlidingTimeWindows) purgeOutdatedWindows() {
 	}
 }
 
-func (s *SlidingTimeWindows) receive() {
+func (s *slidingTimeWindows) receive() {
 	for elem := range s.in {
 		record := elem.(api.StreamRecord)
 		// assume records are consumed one by one in strict time order
 		s.currentWatermark = record.TimestampMillis()
 		s.purgeOutdatedWindows()
 
-		assignedWindows, err := s.assignWindows(record.TimestampMillis())
+		assignedWindows, err := s.AssignWindows(record.TimestampMillis())
 		if err != nil {
 			// TODO: drainError
 			continue
 		}
 		for _, w := range assignedWindows {
-			s.currentWindow = w
-			result := s.trigger.OnElement(record.TimestampMillis(), w, s)
+			tw := w.(timeWindow)
+			s.currentWindow = tw
+			result := s.trigger.OnElement(record.TimestampMillis(), tw, s)
 			if result == FIRE {
-				s.purgedWindow <- w
+				s.purgedWindow <- tw
 			}
 		}
 		item := &TimestampedValue{elem.(api.StreamRecord), 0}
@@ -198,16 +208,16 @@ func (s *SlidingTimeWindows) receive() {
 	close(s.out)
 }
 
-func (s *SlidingTimeWindows) Teardown(ctx context.Context) error {
+func (s *slidingTimeWindows) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlidingTimeWindows) Exec(downstream api.Inlet) {
-	go api.Transmit(downstream, s)
+func (s *slidingTimeWindows) Exec(downstream streamingApi.Inlet) {
+	go streamingApi.Transmit(downstream, s)
 }
 
-func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {
-	return &SlidingTimeWindows{
+func NewSlidingTimeWindows(size, slide time.Duration) *slidingTimeWindows {
+	return &slidingTimeWindows{
 		size:             size.Milliseconds(),
 		slide:            slide.Milliseconds(),
 		queue:            api.NewPriorityQueue(true),
@@ -226,13 +236,17 @@ type timeWindow struct {
 	end   int64
 }
 
-func (t *timeWindow) maxTimestamp() int64 {
+func (t timeWindow) MaxTimestamp() int64 {
 	return t.end - 1
 }
 
-func (s *SlidingTimeWindows) assignWindows(timestamp int64) ([]timeWindow, error) {
+func (s *slidingTimeWindows) Aggregate(aggrFunc api.AggregateFunction) {
+	s.aggrFunc = aggrFunc
+}
+
+func (s *slidingTimeWindows) AssignWindows(timestamp int64) ([]api.Window, error) {
 	if timestamp > math.MinInt64 {
-		windows := make([]timeWindow, 0, s.size/s.slide)
+		windows := make([]api.Window, 0, s.size/s.slide)
 		lastStart := getWindowStart(timestamp, s.slide)
 		for start := lastStart; start > timestamp-s.size; start -= s.slide {
 			windows = append(windows, timeWindow{
@@ -260,17 +274,17 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 type EventTimeTrigger struct{}
 
 func (t EventTimeTrigger) OnElement(timestamp int64, window timeWindow, ctx TriggerContext) TriggerResult {
-	if window.maxTimestamp() <= ctx.GetCurrentWatermark() {
+	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
 		// if the watermark is already past the window fire immediately
 		return FIRE
 	} else {
-		ctx.RegisterEventTimeTimer(window.maxTimestamp())
+		ctx.RegisterEventTimeTimer(window.MaxTimestamp())
 		return CONTINUE
 	}
 }
 
 func (t EventTimeTrigger) OnEventTime(time int64, window timeWindow, ctx TriggerContext) TriggerResult {
-	if time == window.maxTimestamp() {
+	if time == window.MaxTimestamp() {
 		return FIRE
 	}
 	return CONTINUE

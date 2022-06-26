@@ -17,63 +17,62 @@
 
 package api
 
-import (
-	"context"
-)
-
-//go:generate mockgen -destination=./inlet_mock.go -package=api github.com/apache/skywalking-banyandb/pkg/streaming/api Inlet
-// Inlet represents a type that exposes one open input.
-type Inlet interface {
-	In() chan<- interface{}
+type Flow interface {
+	Filter(f interface{}) Flow
+	Map(f interface{}) Flow
+	Window(WindowAssigner) WindowedFlow
+	Offset(int) Flow
+	Limit(int) Flow
+	To(interface{}) Flow
+	Open() <-chan error
 }
 
-// Outlet represents a type that exposes one open output.
-type Outlet interface {
-	Out() <-chan interface{}
+type WindowedFlow interface {
+	TopN(topNum int, opts ...any) Flow
+	Aggregate(aggrFunc AggregateFunction) Flow
 }
 
-type Component interface {
-	Setup(context.Context) error
-	Teardown(context.Context) error
+type Window interface {
+	MaxTimestamp() int64
 }
 
-// Source represents a set of stream processing steps that has one open output.
-type Source interface {
-	Outlet
-	Component
-	Exec(downstream Inlet)
+type WindowAssigner interface {
+	AssignWindows(int64) ([]Window, error)
 }
 
-// Operator represents a set of stream processing steps that has one open input and one open output.
-type Operator interface {
-	Inlet
-	Outlet
-	Component
-	Exec(downstream Inlet)
-}
-
-// Sink represents a set of stream processing steps that has one open input.
-type Sink interface {
-	Inlet
-	Component
+//go:generate mockgen -destination=./aggregation_func_mock.go -package=api github.com/apache/skywalking-banyandb/pkg/flow/api AggregateFunction
+type AggregateFunction interface {
+	Add([]interface{})
+	GetResult() interface{}
 }
 
 type StreamRecord struct {
-	ts   int64
-	data interface{}
+	ts           int64
+	hasTimestamp bool
+	data         interface{}
 }
 
 func NewStreamRecord(data interface{}, ts int64) StreamRecord {
 	return StreamRecord{
-		data: data,
-		ts:   ts,
+		data:         data,
+		ts:           ts,
+		hasTimestamp: true,
+	}
+}
+
+func NewStreamRecordWithoutTS(data interface{}) StreamRecord {
+	return StreamRecord{
+		data:         data,
+		ts:           0,
+		hasTimestamp: false,
 	}
 }
 
 func (sr StreamRecord) WithNewData(data interface{}) StreamRecord {
 	return StreamRecord{
-		ts:   sr.ts,
-		data: data,
+		ts:           sr.ts,
+		hasTimestamp: sr.hasTimestamp,
+		data:         data,
 	}
 }
 

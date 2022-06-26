@@ -23,10 +23,11 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-var _ api.Source = (*sourceSlice)(nil)
+var _ streamingApi.Source = (*sourceSlice)(nil)
 
 type sourceSlice struct {
 	slice interface{}
@@ -59,7 +60,7 @@ func (s *sourceSlice) run(ctx context.Context, sliceVal reflect.Value) {
 	for i := 0; i < sliceVal.Len(); i++ {
 		val := sliceVal.Index(i)
 		select {
-		case s.out <- val.Interface():
+		case s.out <- tryExactTimestamp(val.Interface()):
 		case <-ctx.Done():
 			return
 		}
@@ -70,13 +71,28 @@ func (s *sourceSlice) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func (s *sourceSlice) Exec(downstream api.Inlet) {
-	go api.Transmit(downstream, s)
+func (s *sourceSlice) Exec(downstream streamingApi.Inlet) {
+	go streamingApi.Transmit(downstream, s)
 }
 
-func NewSlice(slice interface{}) api.Source {
+func NewSlice(slice interface{}) streamingApi.Source {
 	return &sourceSlice{
 		slice: slice,
 		out:   make(chan interface{}),
+	}
+}
+
+func tryExactTimestamp(item any) api.StreamRecord {
+	if r, ok := item.(api.StreamRecord); ok {
+		return r
+	}
+	type timestampExtractor interface {
+		TimestampMillis() int64
+	}
+	// otherwise, check if we can extract timestamp
+	if extractor, ok := item.(timestampExtractor); ok {
+		return api.NewStreamRecord(item, extractor.TimestampMillis())
+	} else {
+		return api.NewStreamRecordWithoutTS(item)
 	}
 }

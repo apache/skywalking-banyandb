@@ -21,10 +21,11 @@ import (
 	"context"
 	"io"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-var _ api.Source = (*sourceReader)(nil)
+var _ streamingApi.Source = (*sourceReader)(nil)
 
 type sourceReader struct {
 	reader io.Reader
@@ -55,7 +56,7 @@ func (r *sourceReader) run(ctx context.Context) {
 
 		if byteCnt > 0 {
 			select {
-			case r.out <- buf[0:byteCnt]:
+			case r.out <- api.NewStreamRecordWithoutTS(buf[0:byteCnt]):
 			case <-ctx.Done():
 				return
 			}
@@ -72,8 +73,8 @@ func (r *sourceReader) Teardown(context.Context) error {
 	return nil
 }
 
-func (r *sourceReader) Exec(downstream api.Inlet) {
-	go api.Transmit(downstream, r)
+func (r *sourceReader) Exec(downstream streamingApi.Inlet) {
+	go streamingApi.Transmit(downstream, r)
 }
 
 type ReaderSourceOpt func(*sourceReader)
@@ -86,7 +87,7 @@ func WithBufferSize(size int) ReaderSourceOpt {
 }
 
 // FromReader returns a *sourceReader which can be used to emit bytes
-func FromReader(reader io.Reader, opts ...ReaderSourceOpt) api.Source {
+func FromReader(reader io.Reader, opts ...ReaderSourceOpt) streamingApi.Source {
 	s := &sourceReader{
 		reader:  reader,
 		out:     make(chan interface{}, 1024),

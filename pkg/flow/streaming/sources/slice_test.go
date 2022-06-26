@@ -25,8 +25,9 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
-	"github.com/apache/skywalking-banyandb/pkg/streaming/sources"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
 
 const (
@@ -37,7 +38,7 @@ func TestSource_slice(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	inlet := api.NewMockInlet(ctrl)
+	inlet := streamingApi.NewMockInlet(ctrl)
 
 	assert := require.New(t)
 	src := sources.NewSlice(strings.Split(ALPHABET, ""))
@@ -53,8 +54,8 @@ func TestSource_slice(t *testing.T) {
 
 	var result strings.Builder
 	for item := range in {
-		assert.IsType("<string>", item)
-		result.WriteString(item.(string))
+		assert.IsType(api.StreamRecord{}, item)
+		result.WriteString(item.(api.StreamRecord).Data().(string))
 	}
 
 	assert.Equal(ALPHABET, result.String())

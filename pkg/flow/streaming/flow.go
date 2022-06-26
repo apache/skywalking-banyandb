@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow
+package streaming
 
 import (
 	"context"
@@ -24,31 +24,42 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
-	"github.com/apache/skywalking-banyandb/pkg/streaming/sources"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
 
-type Flow struct {
+var _ api.Flow = (*streamingFlow)(nil)
+
+type streamingFlow struct {
 	// sourceParam and sinkParam are generic source and sink
 	sourceParam interface{}
 	sinkParam   interface{}
 
 	ctx    context.Context
-	source api.Source
-	sink   api.Sink
-	ops    []api.Operator
+	source streamingApi.Source
+	sink   streamingApi.Sink
+	ops    []streamingApi.Operator
 	drain  chan error
 }
 
-func New(sourceParam interface{}) *Flow {
-	return &Flow{
+func (flow *streamingFlow) Offset(i int) api.Flow {
+	panic("offset is not supported in streaming context")
+}
+
+func (flow *streamingFlow) Limit(i int) api.Flow {
+	panic("limit is not supported in streaming context")
+}
+
+func New(sourceParam interface{}) *streamingFlow {
+	return &streamingFlow{
 		sourceParam: sourceParam,
-		ops:         make([]api.Operator, 0),
+		ops:         make([]streamingApi.Operator, 0),
 		drain:       make(chan error),
 	}
 }
 
-func (flow *Flow) init() error {
+func (flow *streamingFlow) init() error {
 	flow.prepareContext()
 
 	// check and build sources type
@@ -64,14 +75,14 @@ func (flow *Flow) init() error {
 	return nil
 }
 
-func (flow *Flow) buildSource() error {
+func (flow *streamingFlow) buildSource() error {
 	if flow.sourceParam == nil {
 		return errors.New("sources parameter is nil")
 	}
 
 	// check interface
 	switch src := flow.sourceParam.(type) {
-	case api.Source:
+	case streamingApi.Source:
 		flow.source = src
 	case io.Reader:
 		flow.source = sources.FromReader(src)
@@ -93,14 +104,14 @@ func (flow *Flow) buildSource() error {
 	return nil
 }
 
-func (flow *Flow) buildSink() error {
+func (flow *streamingFlow) buildSink() error {
 	if flow.sinkParam == nil {
 		return errors.New("sources parameter is nil")
 	}
 
 	// check interface
 	switch snk := flow.sinkParam.(type) {
-	case api.Sink:
+	case streamingApi.Sink:
 		flow.sink = snk
 	}
 
@@ -111,20 +122,20 @@ func (flow *Flow) buildSink() error {
 	return nil
 }
 
-func (flow *Flow) prepareContext() {
+func (flow *streamingFlow) prepareContext() {
 	if flow.ctx == nil {
 		flow.ctx = context.TODO()
 	}
 
-	//TODO: add more runtime utilities
+	// TODO: add more runtime utilities
 }
 
-func (flow *Flow) To(sink interface{}) *Flow {
+func (flow *streamingFlow) To(sink interface{}) api.Flow {
 	flow.sinkParam = sink
 	return flow
 }
 
-func (flow *Flow) Open() <-chan error {
+func (flow *streamingFlow) Open() <-chan error {
 	if err := flow.init(); err != nil {
 		flow.drainErr(err)
 		return flow.drain
@@ -167,6 +178,6 @@ func (flow *Flow) Open() <-chan error {
 	return flow.drain
 }
 
-func (flow *Flow) drainErr(err error) {
+func (flow *streamingFlow) drainErr(err error) {
 	go func() { flow.drain <- err }()
 }

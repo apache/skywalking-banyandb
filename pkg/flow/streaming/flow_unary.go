@@ -15,24 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow
+package streaming
 
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-func (flow *Flow) Filter(f interface{}) *Flow {
-	op, err := api.FilterFunc(f)
+func (flow *streamingFlow) Filter(f interface{}) api.Flow {
+	op, err := streamingApi.FilterFunc(f)
 	if err != nil {
 		flow.drainErr(err)
 	}
 	return flow.Transform(op)
 }
 
-func (flow *Flow) Map(f interface{}) *Flow {
-	op, err := api.MapperFunc(f)
+func (flow *streamingFlow) Map(f interface{}) api.Flow {
+	op, err := streamingApi.MapperFunc(f)
 	if err != nil {
 		flow.drainErr(err)
 	}
@@ -41,15 +42,15 @@ func (flow *Flow) Map(f interface{}) *Flow {
 
 // Transform represents a general unary transformation
 // For example: filter, map, etc.
-func (flow *Flow) Transform(op api.UnaryOperation) *Flow {
+func (flow *streamingFlow) Transform(op streamingApi.UnaryOperation) api.Flow {
 	flow.ops = append(flow.ops, newUnaryOp(op, 1))
 	return flow
 }
 
-var _ api.Operator = (*unaryOperator)(nil)
+var _ streamingApi.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
-	op          api.UnaryOperation
+	op          streamingApi.UnaryOperation
 	in          chan interface{}
 	out         chan interface{}
 	parallelism uint
@@ -61,9 +62,9 @@ func (u *unaryOperator) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (u *unaryOperator) Exec(downstream api.Inlet) {
+func (u *unaryOperator) Exec(downstream streamingApi.Inlet) {
 	// start a background job for transmission
-	go api.Transmit(downstream, u)
+	go streamingApi.Transmit(downstream, u)
 }
 
 func (u *unaryOperator) Teardown(ctx context.Context) error {
@@ -71,7 +72,7 @@ func (u *unaryOperator) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func newUnaryOp(op api.UnaryOperation, parallelism uint) *unaryOperator {
+func newUnaryOp(op streamingApi.UnaryOperation, parallelism uint) *unaryOperator {
 	return &unaryOperator{
 		op:          op,
 		in:          make(chan interface{}),
@@ -91,17 +92,21 @@ func (u *unaryOperator) Out() <-chan interface{} {
 func (u *unaryOperator) run() {
 	semaphore := make(chan struct{}, u.parallelism)
 	for elem := range u.in {
-		semaphore <- struct{}{}
-		go func(e interface{}) {
-			defer func() { <-semaphore }()
-			result := u.op.Apply(context.TODO(), e)
-			switch val := result.(type) {
-			case nil:
-				return
-			default:
-				u.out <- val
-			}
-		}(elem)
+		if streamRecord, ok := elem.(api.StreamRecord); ok {
+			semaphore <- struct{}{}
+			go func(r api.StreamRecord) {
+				defer func() { <-semaphore }()
+				result := u.op.Apply(context.TODO(), r.Data())
+				switch val := result.(type) {
+				case nil:
+					return
+				default:
+					u.out <- r.WithNewData(val)
+				}
+			}(streamRecord)
+		} else {
+			// TODO: warning
+		}
 	}
 	for i := 0; i < int(u.parallelism); i++ {
 		semaphore <- struct{}{}

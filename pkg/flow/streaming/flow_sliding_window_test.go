@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow_test
+package streaming
 
 import (
 	"context"
@@ -25,18 +25,17 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/streaming/api"
-	"github.com/apache/skywalking-banyandb/pkg/streaming/flow"
-	"github.com/apache/skywalking-banyandb/pkg/streaming/sink"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 )
 
 func Test_SlidingWindow_NoOutput(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	aggrFunc := flow.NewMockAggregateFunction(ctrl)
+	aggrFunc := api.NewMockAggregateFunction(ctrl)
 
 	assert := assert.New(t)
-	slidingWindows := flow.NewSlidingTimeWindows(time.Minute*1, time.Second*15)
+	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
 	slidingWindows.Aggregate(aggrFunc)
 	assert.NoError(slidingWindows.Setup(context.TODO()))
 	slidingWindows.Exec(sink.NewSlice())
@@ -54,10 +53,10 @@ func Test_SlidingWindow_NoOutput(t *testing.T) {
 func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	aggrFunc := flow.NewMockAggregateFunction(ctrl)
+	aggrFunc := api.NewMockAggregateFunction(ctrl)
 
 	assert := assert.New(t)
-	slidingWindows := flow.NewSlidingTimeWindows(time.Minute*1, time.Second*15)
+	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
 	slidingWindows.Aggregate(aggrFunc)
 	assert.NoError(slidingWindows.Setup(context.TODO()))
 	snk := sink.NewSlice()
@@ -80,7 +79,7 @@ func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 	for _, r := range input {
 		slidingWindows.In() <- r
 	}
-	assert.NoError(Await().AtMost(10 * time.Second).Util(func() bool {
+	assert.NoError(Await().AtMost(10 * time.Second).Until(func() bool {
 		if len(snk.Value()) > 0 {
 			return assert.Len(snk.Value(), 1)
 		}
