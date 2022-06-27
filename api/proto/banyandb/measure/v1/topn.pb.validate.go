@@ -16,7 +16,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -444,16 +443,7 @@ func (m *TopNRequest) validate(all bool) error {
 		errors = append(errors, err)
 	}
 
-	if _, ok := v1.AggregationFunction_name[int32(m.GetAgg())]; !ok {
-		err := TopNRequestValidationError{
-			field:  "Agg",
-			reason: "value must be one of the defined enum values",
-		}
-		if !all {
-			return err
-		}
-		errors = append(errors, err)
-	}
+	// no validation rules for Agg
 
 	for idx, item := range m.GetConditions() {
 		_, _ = idx, item
