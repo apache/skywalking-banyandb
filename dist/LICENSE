@@ -342,6 +342,9 @@ The text of each license is also included at licenses/ui-licenses/LICENSE-[proje
 MIT licenses
 ========================================================================
 
+    bindings 1.5.0 MIT
     core-js 3.22.8 MIT
+    file-uri-to-path 1.0.0 MIT
+    nan 2.16.0 MIT
     vue 2.6.14 MIT
     vue-router 3.5.4 MIT
