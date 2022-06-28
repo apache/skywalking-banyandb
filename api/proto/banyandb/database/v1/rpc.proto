@@ -351,7 +351,7 @@ service GroupRegistryService {
   };
   rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse){
     option(google.api.http) = {
-      put:"/v1/group/schema/{group.metadata.group}/{group.metadata.name}"
+      put:"/v1/group/schema/{group.metadata.name}"
       body:"*"
     };
   };

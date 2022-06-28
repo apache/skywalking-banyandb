@@ -1500,16 +1500,6 @@ func request_GroupRegistryService_Update_0(ctx context.Context, marshaler runtim
 		_   = err
 	)
 
-	val, ok = pathParams["group.metadata.group"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "group.metadata.group")
-	}
-
-	err = runtime.PopulateFieldFromPath(&protoReq, "group.metadata.group", val)
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "group.metadata.group", err)
-	}
-
 	val, ok = pathParams["group.metadata.name"]
 	if !ok {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "group.metadata.name")
@@ -1543,16 +1533,6 @@ func local_request_GroupRegistryService_Update_0(ctx context.Context, marshaler 
 		err error
 		_   = err
 	)
-
-	val, ok = pathParams["group.metadata.group"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "group.metadata.group")
-	}
-
-	err = runtime.PopulateFieldFromPath(&protoReq, "group.metadata.group", val)
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "group.metadata.group", err)
-	}
 
 	val, ok = pathParams["group.metadata.name"]
 	if !ok {
@@ -2244,7 +2224,7 @@ func RegisterGroupRegistryServiceHandlerServer(ctx context.Context, mux *runtime
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.GroupRegistryService/Update", runtime.WithHTTPPathPattern("/v1/group/schema/{group.metadata.group}/{group.metadata.name}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.database.v1.GroupRegistryService/Update", runtime.WithHTTPPathPattern("/v1/group/schema/{group.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -3080,7 +3060,7 @@ func RegisterGroupRegistryServiceHandlerClient(ctx context.Context, mux *runtime
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.GroupRegistryService/Update", runtime.WithHTTPPathPattern("/v1/group/schema/{group.metadata.group}/{group.metadata.name}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.database.v1.GroupRegistryService/Update", runtime.WithHTTPPathPattern("/v1/group/schema/{group.metadata.name}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -3165,7 +3145,7 @@ func RegisterGroupRegistryServiceHandlerClient(ctx context.Context, mux *runtime
 var (
 	pattern_GroupRegistryService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "group", "schema"}, ""))
 
-	pattern_GroupRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "group", "schema", "group.metadata.group", "group.metadata.name"}, ""))
+	pattern_GroupRegistryService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "group", "schema", "group.metadata.name"}, ""))
 
 	pattern_GroupRegistryService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 1}, []string{"v1", "group", "schema"}, ""))
 

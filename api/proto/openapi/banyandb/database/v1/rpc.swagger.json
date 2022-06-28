@@ -86,7 +86,7 @@
         ]
       }
     },
-    "/v1/group/schema/{group.metadata.group}/{group.metadata.name}": {
+    "/v1/group/schema/{group.metadata.name}": {
       "put": {
         "operationId": "GroupRegistryService_Update",
         "responses": {
@@ -104,13 +104,6 @@
           }
         },
         "parameters": [
-          {
-            "name": "group.metadata.group",
-            "description": "group contains a set of options, like retention policy, max",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
           {
             "name": "group.metadata.name",
             "description": "name of the entity",
@@ -131,6 +124,10 @@
                     "metadata": {
                       "type": "object",
                       "properties": {
+                        "group": {
+                          "type": "string",
+                          "title": "group contains a set of options, like retention policy, max"
+                        },
                         "id": {
                           "type": "integer",
                           "format": "int64"
