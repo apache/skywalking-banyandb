@@ -18,28 +18,44 @@
 -->
 
 <template>
-    <div>
-        <el-card>
-            <top-navigation-component></top-navigation-component>
-            <second-navigation-component></second-navigation-component>
-        </el-card>
+    <div class="flex" style="height:100%; width:100%;">
+        <div class="flex-grow">
+            <tag-navigation-component></tag-navigation-component>
+            <el-card>
+                <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
+                <second-navigation-component></second-navigation-component>
+            </el-card>
+        </div>
+        <div class="bd-top drawer-right" :style="showDrawer" style="width: 400px; height: 100%; background-color: white;">
+
+        </div>
     </div>
 </template>
 
 <script>
 import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
 import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
+import TagNavigationComponent from './TagNavigationComponent.vue'
 export default {
     name: 'MainComponent',
     data() {
         return {
-
+            showDrawer: "display: none"
         }
     },
     components: {
         TopNavigationComponent,
-        SecondNavigationComponent
-    }
+        SecondNavigationComponent,
+        TagNavigationComponent
+    },
+    methods: {
+        handleNavigation(item, index) {
+            console.log(item)
+            if (item.name == "Detail") {
+                this.showDrawer = "displat: block"
+            }
+        }
+    },
 }
 </script>
 
@@ -51,5 +67,13 @@ export default {
 
 .el-card__body {
     padding: 0;
+}
+//     -webkit-animation: rtl-drawer-in .3s 1ms;
+    //     animation: rtl-drawer-in .3s 1ms; el-drawer__open .el-drawer.rtl
+    //     -webkit-animation: rtl-drawer-out .3s;
+    //     animation: rtl-drawer-out .3s; el-drawer.rtl
+.drawer-right {
+-webkit-animation: rtl-drawer-in .3s 1ms;
+animation: rtl-drawer-in .3s 1ms;
 }
 </style>

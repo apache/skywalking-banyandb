@@ -19,10 +19,16 @@
 
 <template>
     <div class="flex center top-contain">
-        <div v-for="(item, index) in button" :key="item.name" class="buttonItem poiner">
+        <div v-for="(item, index) in button" @click="handleNavigation(item, index)" :key="item.name"
+            class="buttonItem poiner">
             <top-button :icon="item.icon" :name="item.name"></top-button>
         </div>
+        <!--el-drawer title="我是标题" :wrapperClosable="false" :size="450" :visible.sync="drawer" :modal="false"
+            :append-to-body="true" direction="rtl" :close-on-press-escape="false" :before-close="handleClose">
+            <span>我来啦!</span>
+        </el-drawer-->
     </div>
+
 </template>
 
 <script>
@@ -40,7 +46,7 @@ export default {
             }, {
                 icon: "el-icon-truck",
                 name: "Filter"
-            },{
+            }, {
                 icon: "el-icon-sort",
                 name: "Sort"
             }, {
@@ -55,14 +61,20 @@ export default {
             }, {
                 icon: "el-icon-files",
                 name: "Design"
-            }]
+            }],
+            drawer: false,
         }
     },
     components: {
         TopButton
     },
     methods: {
-
+        handleNavigation(item, index) {
+            this.$emit('handleNavigation', item, index)
+        },
+        handleClose(done) {
+            done()
+        }
     }
 }
 </script>
@@ -73,6 +85,7 @@ export default {
     height: 50px;
     background-color: var(--color-Quad-border);
 }
+
 .buttonItem {
     height: 100%;
     flex-grow: 1;

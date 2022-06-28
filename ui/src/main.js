@@ -19,7 +19,7 @@
 
 import Vue from 'vue'
 import './plugins/axios'
-import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card } from 'element-ui'
+import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox } from 'element-ui'
 import App from './App.vue'
 import router from './router'
 import store from './store'
@@ -42,6 +42,8 @@ Vue.use(Image)
 Vue.use(Tooltip)
 Vue.use(Tag)
 Vue.use(Card)
+Vue.use(Drawer)
+Vue.prototype.$confirm = MessageBox.confirm
 Vue.prototype.$loading = Loading
 Vue.prototype.$loading.create = () => {
   Vue.prototype.$loading.instance = Loading.service({

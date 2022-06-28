@@ -23,7 +23,6 @@
             <aside-component></aside-component>
         </el-aside>
         <el-main style="background-color: var(--color-background)">
-            <tag-navigation-component></tag-navigation-component>
             <main-component></main-component>
         </el-main>
     </el-container>
@@ -31,7 +30,7 @@
 
 <script>
 import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
-import TagNavigationComponent from '../components/databaseComponents/TagNavigationComponent.vue'
+
 import MainComponent from '../components/databaseComponents/MainComponent.vue'
 import { mapState } from 'vuex'
 export default {
@@ -48,7 +47,6 @@ export default {
     },
     components: {
         AsideComponent,
-        TagNavigationComponent,
         MainComponent
     },
     activated() {
