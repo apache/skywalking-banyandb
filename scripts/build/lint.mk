@@ -16,6 +16,8 @@
 # under the License.
 #
 
+include $(mk_dir)lint-bin.mk
+
 ##@ Code quality targets
 
 REVIVE := $(tool_bin)/revive

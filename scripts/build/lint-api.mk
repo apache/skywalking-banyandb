@@ -18,6 +18,8 @@
 
 LINT_OPTS ?= --timeout 1m0s
 
+include $(mk_dir)lint-bin.mk
+
 ##@ Code quality targets
 
 .PHONY: lint
