@@ -76,7 +76,6 @@ format: default ## Run the linters on all projects
 
 
 check: ## Check that the status is consistent with CI
-	$(MAKE) clean
 	$(MAKE) -C scripts/ci/check test
 	$(MAKE) -C ui check-version
 	$(MAKE) license-dep
