@@ -18,30 +18,45 @@
 -->
 
 <template>
-  <div id="app">
-    <button type="button" @click="getLaw()">Get a new hacker law</button>
-    <div v-if="law != null">
-      <h1>{{ law.name }}</h1>
-      <p>{{ law.definition }}</p>
-    </div>
+  <div class="justify-start flex">
+    <el-tag class="pointer" size="medium" v-for="(item, index) in tags" :key="item.name" closable
+      @click="changeMenu(item)" @close="handleClose(item, index)" effect="dark">{{ item.name }}
+    </el-tag>
   </div>
 </template>
 
 <script>
-import Vue from "vue";
-
+import { mapState, mapMutations } from "vuex"
 export default {
-  name: "Laws",
-  components: {},
-  data() {
-    return {
-      law: null,
-    };
+  name: 'TagNavigationComponent',
+  computed: {
+    ...mapState({
+      tags: (state) => state.tags.tagsList,
+    }),
+  },
+  created() {
+
   },
   methods: {
-    getLaw() {
-      Vue.axios.get("/law").then((response) => (this.law = response.data));
+    ...mapMutations({
+      close: 'closeTag',
+    }),
+    changeMenu(item) {
+      console.log(item)
     },
-  },
-};
+    handleClose(item, index) {
+      console.log(item, index)
+    }
+  }
+}
 </script>
+
+<style lang="scss" scoped>
+div {
+  margin: 20px 20px 0 20px;
+
+  .el-tag {
+    margin-right: 15px;
+  }
+}
+</style>

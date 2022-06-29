@@ -16,24 +16,16 @@
   ~ specific language governing permissions and limitations
   ~ under the License.
 -->
-
 <template>
-  <div class="about">
-    <h1>This is an about page</h1>
-  </div>
+    <div class="flex center second-nav-contain">
+        <el-button>Check All</el-button>
+        <el-button>Check None</el-button>
+    </div>
 </template>
 
-<script>
-export default{
-  name: 'About',
-  data() {
-    return {
-      
-    }
-  },
-}
-</script>
-
 <style lang="scss" scoped>
-  
+.second-nav-contain {
+    width: 100%;
+    height: 50px;
+}
 </style>

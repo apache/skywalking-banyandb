@@ -21,32 +21,57 @@ import Vue from 'vue'
 import VueRouter from 'vue-router'
 import Home from '../views/Home.vue'
 import About from '../views/About.vue'
-import Laws from '../views/Laws.vue'
 import NotFound from '../views/NotFound.vue'
+import Database from '../views/Database.vue'
+import Structure from '../views/Structure.vue'
 
 Vue.use(VueRouter)
 
 const routes = [
   {
     path: '/',
+    redirect: '/home'
+  },
+  {
+    path: '/home',
     name: 'Home',
     component: Home,
+    meta: {
+      keepAlive: false,
+    }
+  },
+  {
+    path: '/database',
+    name: 'Database',
+    component: Database,
+    meta: {
+      keepAlive: true,
+    }
+  },
+  {
+    path: '/structure',
+    name: 'Structure',
+    component: Structure,
+    meta: {
+      keepAlive: false,
+    }
   },
   {
     path: '/about',
     name: 'About',
     component: About,
-  },
-  {
-    path: '/laws',
-    name: 'Laws',
-    component: Laws,
+    meta: {
+      keepAlive: false,
+    }
   },
   {
     // will match everything
     path: '*',
     name: 'NotFound',
     component: NotFound,
+    meta: {
+      keepAlive: false,
+    }
   },
 ]
 

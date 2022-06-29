@@ -19,22 +19,86 @@
 
 <template>
   <div id="app">
-    <div id="nav">
-      <router-link to="/">Home</router-link> |
-      <router-link to="/about">About</router-link> |
-      <router-link to="/laws">Laws</router-link>
-    </div>
-    <router-view/>
+    <el-container>
+      <el-header v-if="show">
+        <header-component :active="activePath" :showButton="showButton"></header-component>
+      </el-header>
+      <el-main>
+        <keep-alive>
+          <router-view v-if="$route.meta.keepAlive"/>
+        </keep-alive>
+          <router-view v-if="!$route.meta.keepAlive"></router-view>
+      </el-main>
+    </el-container>
   </div>
 </template>
 
-<style>
+<script>
+import HeaderComponent from "./components/HeaderComponent.vue";
+export default {
+  data() {
+    return {
+      activePath: "",
+      show: true,
+      showButton: true,
+    }
+  },
+  components: {
+    HeaderComponent
+  },
+  beforeCreate() {
+    this.$loading.create()
+  },
+  created() {
+    let path = this.$route.path
+    let name = this.$route.name
+    if (name == "NotFound") {
+      this.show = false
+    } else {
+      this.activePath = path
+    }
+    if (name == "Database") {
+      this.$store.commit('changeShowButton', true)
+    } else {
+      this.$store.commit('changeShowButton', false)
+    }
+  },
+  mounted() {
+    this.$loading.close()
+  },
+}
+</script>
+
+<style lang="scss">
+html,
+body,
 #app {
   font-family: Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #2c3e50;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.el-container {
+  height: 100%;
+  padding: 0;
+  margin: 0;
+
+  .el-header {
+    background-color: #ffffff;
+    padding: 0;
+    margin: 0;
+  }
+
+  .el-main {
+    background-color: #eaedf1;
+    padding: 0;
+    margin: 0;
+  }
 }
 
 #nav {

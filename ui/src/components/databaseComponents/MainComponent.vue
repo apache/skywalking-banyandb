@@ -18,22 +18,38 @@
 -->
 
 <template>
-  <div class="about">
-    <h1>This is an about page</h1>
-  </div>
+    <div>
+        <el-card>
+            <top-navigation-component></top-navigation-component>
+            <second-navigation-component></second-navigation-component>
+        </el-card>
+    </div>
 </template>
 
 <script>
-export default{
-  name: 'About',
-  data() {
-    return {
-      
+import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
+import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
+export default {
+    name: 'MainComponent',
+    data() {
+        return {
+
+        }
+    },
+    components: {
+        TopNavigationComponent,
+        SecondNavigationComponent
     }
-  },
 }
 </script>
 
-<style lang="scss" scoped>
-  
+<style lang="scss">
+.el-card {
+    margin: 20px;
+    padding: 0;
+}
+
+.el-card__body {
+    padding: 0;
+}
 </style>
