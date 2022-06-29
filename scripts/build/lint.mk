@@ -16,15 +16,7 @@
 # under the License.
 #
 
-GOLANGCI_VERSION := v1.46.2
-
-LINT_OPTS ?= --timeout 1m0s
-
 ##@ Code quality targets
-
-LINTER := $(tool_bin)/golangci-lint
-$(LINTER):
-	@wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(root_dir)/bin $(GOLANGCI_VERSION)
 
 REVIVE := $(tool_bin)/revive
 $(REVIVE):
