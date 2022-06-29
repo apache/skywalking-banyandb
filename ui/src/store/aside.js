@@ -17,14 +17,18 @@
  * under the License.
  */
 
-// Option 2: Proxy all traffic starting with "/api" to http://localhost:8081
-module.exports = {
-  devServer: {
-    proxy: {
-      "^/api": {
-        target: "http://localhost:17913",
-        changeOrigin: true,
-      },
+export default {
+    state: {
+      fatherWidth: '200px',
+      isCollapse: false
     },
-  },
-};
+    mutations: {
+      changeFatherWidth(state, val) {
+        state.fatherWidth = val
+      },
+      changeCollapse(state, val) {
+        state.isCollapse = val
+      }
+    }
+  }
+  

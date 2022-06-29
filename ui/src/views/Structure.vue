@@ -18,22 +18,13 @@
 -->
 
 <template>
-  <div class="about">
-    <h1>This is an about page</h1>
-  </div>
+    <h1>
+        this is structure
+    </h1>
 </template>
 
 <script>
 export default{
-  name: 'About',
-  data() {
-    return {
-      
-    }
-  },
+    name: 'Structure',
 }
 </script>
-
-<style lang="scss" scoped>
-  
-</style>

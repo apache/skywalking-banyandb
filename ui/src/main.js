@@ -19,12 +19,46 @@
 
 import Vue from 'vue'
 import './plugins/axios'
+import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card } from 'element-ui'
 import App from './App.vue'
 import router from './router'
+import store from './store'
+import './assets/custom.scss'
+import './assets/main.scss'
+
 
 Vue.config.productionTip = false
 
+Vue.use(Button)
+Vue.use(Container)
+Vue.use(Header)
+Vue.use(Main)
+Vue.use(Aside)
+Vue.use(Menu)
+Vue.use(MenuItem)
+Vue.use(MenuItemGroup)
+Vue.use(Submenu)
+Vue.use(Image)
+Vue.use(Tooltip)
+Vue.use(Tag)
+Vue.use(Card)
+Vue.prototype.$loading = Loading
+Vue.prototype.$loading.create = () => {
+  Vue.prototype.$loading.instance = Loading.service({
+    text: '拼命加载中',
+    spinner: 'el-icon-loading',
+    background: 'rgba(0, 0, 0, 0.8)',
+  })
+}
+Vue.prototype.$loading.close = () => {
+  Vue.nextTick(() => {
+    Vue.prototype.$loading.instance.close()
+  })
+}
+
+
 new Vue({
   router,
+  store,
   render: h => h(App)
 }).$mount('#app')

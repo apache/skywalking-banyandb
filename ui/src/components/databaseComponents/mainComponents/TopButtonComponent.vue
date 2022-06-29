@@ -18,19 +18,46 @@
 -->
 
 <template>
-  <div>
-    <h1 class="home">
-    This is the home page
-    </h1>
-  </div>
+    <div class="buttonItem flex center text-main-color text-family" :style="active" @mouseover="handleOver" @mouseleave="handleLeave">
+        <i :class="icon" class="text-big"></i>
+        <div class="text-main-color text-family text-title" :style="active">{{name}}</div>
+    </div>
 </template>
 
 <script>
 export default {
-  name: 'Home',
+    name: 'TopButtonComponent',
+    data() {
+        return {
+            active: "background-color: #F2F6FC"
+        }
+    },
+    props: {
+        icon: {
+            type: String,
+        },
+        name: {
+            type: String
+        }
+    },
+    methods: {
+        handleOver() {
+            this.active = "background-color: #ecf5ff; color: var(--color-main); font-color: var(--color-main)"
+        },
+        handleLeave() {
+            this.active = "background-color: #F2F6FC; color: var(--color-main-font); font-color: var(--color-main-font)"
+        }
+    }
 }
 </script>
 
 <style lang="scss" scoped>
+.buttonItem {
+    height: 100%;
+    cursor: pointer;
+}
 
+i {
+    margin-right: 10px;
+}
 </style>
