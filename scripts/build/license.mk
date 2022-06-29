@@ -20,4 +20,4 @@ LICENSE_EYE := $(tool_bin)/license-eye
 $(LICENSE_EYE):
 	@echo "Install license-eye..."
 	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install github.com/apache/skywalking-eyes/cmd/license-eye@35c6a02375648f83f211b2eebb53f345e95b35c7
+	@GOBIN=$(tool_bin) go install github.com/apache/skywalking-eyes/cmd/license-eye@f461a46e74e5fa22e9f9599a355ab4f0ac265469
