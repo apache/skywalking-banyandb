@@ -38,7 +38,6 @@ clean: default  ## Clean artifacts in all projects
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
-	@$(MAKE) format
 
 build: TARGET=all
 build: default  ## Build all projects
@@ -75,8 +74,8 @@ format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
 format: tidy
 format: default ## Run the linters on all projects
 
-## Check that the status is consistent with CI.
-check: clean
+
+check: ## Check that the status is consistent with CI
 	$(MAKE) -C scripts/ci/check test
 	$(MAKE) -C ui check-version
 	$(MAKE) license-dep
@@ -91,7 +90,11 @@ check: clean
 		exit 1; \
 	fi
 	
-pre-push: generate lint license-check check ## Check source files before pushing to the remote repo
+pre-push: ## Check source files before pushing to the remote repo
+	$(MAKE) generate
+	$(MAKE) lint
+	$(MAKE) license-check
+	$(MAKE) check
 
 ##@ License targets
 
@@ -160,7 +163,7 @@ release-assembly: release-binary release-sign ## Generate release package
 
 
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-commit
+.PHONY: lint check tidy format pre-push
 .PHONY: test test-race test-coverage 
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
