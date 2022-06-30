@@ -16,15 +16,11 @@
 # under the License.
 #
 
-GOLANGCI_VERSION := v1.46.2
-
 LINT_OPTS ?= --timeout 1m0s
 
-##@ Code quality targets
+include $(mk_dir)lint-bin.mk
 
-LINTER := $(tool_bin)/golangci-lint
-$(LINTER):
-	@wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(root_dir)/bin $(GOLANGCI_VERSION)
+##@ Code quality targets
 
 .PHONY: lint
 lint: $(LINTER)
