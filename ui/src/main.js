@@ -19,7 +19,7 @@
 
 import Vue from 'vue'
 import './plugins/axios'
-import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox } from 'element-ui'
+import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, DatePicker, Input, Table, TableColumn } from 'element-ui'
 import App from './App.vue'
 import router from './router'
 import store from './store'
@@ -43,6 +43,10 @@ Vue.use(Tooltip)
 Vue.use(Tag)
 Vue.use(Card)
 Vue.use(Drawer)
+Vue.use(DatePicker)
+Vue.use(Input)
+Vue.use(Table)
+Vue.use(TableColumn)
 Vue.prototype.$confirm = MessageBox.confirm
 Vue.prototype.$loading = Loading
 Vue.prototype.$loading.create = () => {
@@ -57,7 +61,7 @@ Vue.prototype.$loading.close = () => {
     Vue.prototype.$loading.instance.close()
   })
 }
-
+Vue.prototype.$bus = new Vue()
 
 new Vue({
   router,

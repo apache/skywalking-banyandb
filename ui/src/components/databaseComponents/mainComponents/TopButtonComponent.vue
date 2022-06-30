@@ -18,7 +18,7 @@
 -->
 
 <template>
-    <div class="buttonItem flex center text-main-color text-family" :style="active" @mouseover="handleOver" @mouseleave="handleLeave">
+    <div class="button-item flex center text-main-color text-family" :style="active" @mouseover="handleOver" @mouseleave="handleLeave">
         <i :class="icon" class="text-big"></i>
         <div class="text-main-color text-family text-title" :style="active">{{name}}</div>
     </div>
@@ -52,7 +52,7 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-.buttonItem {
+.button-item {
     height: 100%;
     cursor: pointer;
 }

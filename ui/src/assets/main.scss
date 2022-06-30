@@ -59,12 +59,27 @@
 .text-line-normal {line-height: 20px;}
 .text-center {text-align: center;}
 .text-justify {text-align: justify;}
+.text-start {text-align: start;}
 .text-family {font-family: var(--font-family-main);}
 .text-weight-mini {font-weight: var(--weight-mini);}
 .text-weight-lt {font-weight: var(--weight-lt);}
 .text-main-color {color: var(--color-main-font);}
+.text-general-color {color: var(--color-general-font)}
+.text-secondary-color {color: var(--color-secondary-font)}
+
 /* ==================
      icon style
 ==================== */
-.icon{font-size: 20px;}
-.pointer{cursor:pointer;}
+.icon {font-size: 20px;}
+.icon-little {font-size: 15px;}
+.pointer {cursor:pointer;}
+
+/* ==================
+     border-radius
+==================== */
+.border-radius {
+     border-radius: 10px;
+}
+.border-radius-little {
+     border-radius: 5px;
+}

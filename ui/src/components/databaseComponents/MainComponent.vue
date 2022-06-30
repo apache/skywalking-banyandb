@@ -19,15 +19,16 @@
 
 <template>
     <div class="flex" style="height:100%; width:100%;">
-        <div class="flex-grow">
+        <div>
             <tag-navigation-component></tag-navigation-component>
-            <el-card>
+            <el-card :style="showDrawer ? 'width: 1330px' : 'width:1680px'">
                 <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
-                <second-navigation-component></second-navigation-component>
+                <second-navigation-component style="margin: 10px 0 10px 0;"></second-navigation-component>
+                <data-table-component style="margin: 10px; width:100%;"></data-table-component>
             </el-card>
         </div>
-        <div class="bd-top drawer-right" :style="showDrawer" style="width: 400px; height: 100%; background-color: white;">
-
+        <div class="bd-top bd-left drawer-right" v-if="showDrawer">
+            <drawer-right-component @closeDetail="closeDetail"></drawer-right-component>
         </div>
     </div>
 </template>
@@ -36,24 +37,31 @@
 import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
 import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
 import TagNavigationComponent from './TagNavigationComponent.vue'
+import DrawerRightComponent from './mainComponents/DrawerRightComponent.vue'
+import DataTableComponent from './mainComponents/DataTableComponent.vue'
 export default {
     name: 'MainComponent',
     data() {
         return {
-            showDrawer: "display: none"
+            showDrawer: false,
+            navWidth: "0px"
         }
     },
     components: {
         TopNavigationComponent,
         SecondNavigationComponent,
-        TagNavigationComponent
+        TagNavigationComponent,
+        DrawerRightComponent,
+        DataTableComponent
     },
     methods: {
         handleNavigation(item, index) {
-            console.log(item)
             if (item.name == "Detail") {
-                this.showDrawer = "displat: block"
+                this.showDrawer = !this.showDrawer
             }
+        },
+        closeDetail() {
+            this.showDrawer = false
         }
     },
 }
@@ -68,12 +76,12 @@ export default {
 .el-card__body {
     padding: 0;
 }
-//     -webkit-animation: rtl-drawer-in .3s 1ms;
-    //     animation: rtl-drawer-in .3s 1ms; el-drawer__open .el-drawer.rtl
-    //     -webkit-animation: rtl-drawer-out .3s;
-    //     animation: rtl-drawer-out .3s; el-drawer.rtl
+
 .drawer-right {
--webkit-animation: rtl-drawer-in .3s 1ms;
-animation: rtl-drawer-in .3s 1ms;
+    -webkit-animation: rtl-drawer-in .3s 1ms;
+    animation: rtl-drawer-in .3s 1ms;
+    width: 350px;
+    height: 100%;
+    background-color: var(--color-background);
 }
 </style>
