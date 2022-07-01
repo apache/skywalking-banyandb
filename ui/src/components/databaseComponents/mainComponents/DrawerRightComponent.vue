@@ -20,34 +20,70 @@
     <div class="drawer-container flex column">
         <div class="text-secondary-color text-tips text-start text-family detail-title">Details</div>
         <div class="detail-content border-radius">
-            <div class="detail-content-container">
+            <div class="detail-content-container margin-all">
                 <div class="detail-content-title flex justify-between">
                     <div class="text-main-color text-title text-family">Name DB</div>
-                    <i class="el-icon-close pointer detail-close icon" @click="closeDetail" @mouseover="handleOver" @mouseleave="handleLeave"
+                    <i class="el-icon-close pointer detail-close icon" @click="closeDetail" @mouseover="handleOver"
+                        @mouseleave="handleLeave"
                         :style="{ color: closeColor, backgroundColor: closeBackgroundColor }"></i>
                 </div>
+                <div class="text-secondary-color text-tips text-start text-family margin-top-bottom-little">Group:
+                    Stream</div>
+                <div v-for="item in detailList" :key="item.key">
+                    <detail-list-component :keyName="item.key" :value="item.value"></detail-list-component>
+                </div>
+                <div  class="text-main-color text-tips text-start text-family margin-top-bottom-little">Tags Configuration Information</div>
+                <detail-table-component></detail-table-component>
             </div>
         </div>
     </div>
 </template>
 
 <script>
+import DetailListComponent from './drawerRightComponents/DetailListComponent.vue'
+import DetailTableComponent from './drawerRightComponents/DetailTableComponent.vue'
 export default {
     name: 'DrawerRightComponent',
     data() {
         return {
             closeColor: "var(--color-main-font)",
-            closeBackgroundColor: "var(--color-white)"
+            closeBackgroundColor: "var(--color-white)",
+            detailList: [{
+                key: "Url",
+                value: "Database/node/Stream"
+            }, {
+                key: "Start Time",
+                value: "2022/04/15 17:30:15"
+            }, {
+                key: "End Time",
+                value: "2022/04/15 17:50:17"
+            }, {
+                key: "Updated at",
+                value: "2022/04/15 17:44:59"
+            }, {
+                key: "Duration",
+                value: "5000ms"
+            }, {
+                key: "Size",
+                value: "30B"
+            }, {
+                key: "Tags Number",
+                value: "15"
+            }]
         }
+    },
+    components: {
+        DetailListComponent,
+        DetailTableComponent
     },
     methods: {
         handleOver() {
             this.closeColor = "var(--color-main)",
-            this.closeBackgroundColor = "var(--color-select)"
+                this.closeBackgroundColor = "var(--color-select)"
         },
         handleLeave() {
             this.closeColor = "var(--color-main-font)",
-            this.closeBackgroundColor = "var(--color-white)"
+                this.closeBackgroundColor = "var(--color-white)"
         },
         closeDetail() {
             this.$emit('closeDetail')
@@ -75,9 +111,8 @@ export default {
         background: var(--color-white);
 
         .detail-content-container {
-            margin: 10px;
-            width: calc(100% - 20px);
-            height: calc(100% - 20px);
+            width: calc(100% - 40px);
+            height: calc(100% - 40px);
 
             .detail-content-title {
                 width: 100%;

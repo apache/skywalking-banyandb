@@ -116,7 +116,7 @@ export default {
     }
 
     .refresh {
-        width: 5%;
+        width: 5.5%;
         height: 80%;
     }
 }

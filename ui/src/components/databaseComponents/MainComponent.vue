@@ -19,12 +19,12 @@
 
 <template>
     <div class="flex" style="height:100%; width:100%;">
-        <div>
+        <div :style="showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
             <tag-navigation-component></tag-navigation-component>
-            <el-card :style="showDrawer ? 'width: 1330px' : 'width:1680px'">
+            <el-card style="max-height: 90%;">
                 <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
-                <second-navigation-component style="margin: 10px 0 10px 0;"></second-navigation-component>
-                <data-table-component style="margin: 10px; width:100%;"></data-table-component>
+                <second-navigation-component class="margin-top-bottom-little"></second-navigation-component>
+                <data-table-component class="margin-all-little"></data-table-component>
             </el-card>
         </div>
         <div class="bd-top bd-left drawer-right" v-if="showDrawer">
@@ -80,8 +80,8 @@ export default {
 .drawer-right {
     -webkit-animation: rtl-drawer-in .3s 1ms;
     animation: rtl-drawer-in .3s 1ms;
-    width: 350px;
-    height: 100%;
+    width: 20%;
+    height: calc(100% - 5px);
     background-color: var(--color-background);
 }
 </style>

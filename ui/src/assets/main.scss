@@ -77,9 +77,13 @@
 /* ==================
      border-radius
 ==================== */
-.border-radius {
-     border-radius: 10px;
-}
-.border-radius-little {
-     border-radius: 5px;
-}
+.border-radius {border-radius: 10px;}
+.border-radius-little {border-radius: 5px;}
+
+/* ==================
+        margin
+==================== */
+.margin-top-bottom {margin: 20px 0 20px 0;}
+.margin-top-bottom-little {margin: 10px 0 10px 0;}
+.margin-all {margin: 20px;}
+.margin-all-little {margin: 10px;}

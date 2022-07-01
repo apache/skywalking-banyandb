@@ -19,8 +19,8 @@
 
 <template>
     <div>
-        <el-table ref="multipleTable" stripe :data="tableData" highlight-current-row tooltip-effect="dark" style="width: 100%"
-            @selection-change="handleSelectionChange">
+        <el-table ref="multipleTable" max-height=625 stripe :data="tableData" highlight-current-row
+            tooltip-effect="dark" @selection-change="handleSelectionChange">
             <el-table-column type="selection" width="55">
             </el-table-column>
             <el-table-column label="Date" width="120">
@@ -31,6 +31,11 @@
             <el-table-column prop="address" label="Address" show-overflow-tooltip>
             </el-table-column>
         </el-table>
+
+        <el-pagination class="margin-top-bottom" @size-change="handleSizeChange" @current-change="handleCurrentChange"
+            :current-page="queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]" :page-size="queryInfo.pagesize"
+            layout="total, sizes, prev, pager, next, jumper" :total="total">
+        </el-pagination>
     </div>
 </template>
 
@@ -38,6 +43,11 @@
 export default {
     data() {
         return {
+            total: 25,
+            queryInfo: {
+                pagenum: 1,
+                pagesize: 6,
+            },
             tableData: [{
                 date: '2016-05-03',
                 name: 'Xiaohu Wang',
@@ -56,6 +66,58 @@ export default {
                 address: 'Shaihai'
             }, {
                 date: '2016-05-08',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-06',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-07',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-08',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-06',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-07',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-08',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-06',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-07',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-08',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-06',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-07',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-06',
+                name: 'Xiaohu Wang',
+                address: 'Shaihai'
+            }, {
+                date: '2016-05-07',
                 name: 'Xiaohu Wang',
                 address: 'Shaihai'
             }, {
