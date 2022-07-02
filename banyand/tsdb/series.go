@@ -27,7 +27,9 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -83,6 +85,10 @@ type SeriesSpan interface {
 	io.Closer
 	WriterBuilder() WriterBuilder
 	SeekerBuilder() SeekerBuilder
+	Blocks() []BlockDelegate
+	SeriesID() common.SeriesID
+	BuildItemIterators(BlockDelegate, ItemFilter) (ItemIterator, error)
+	BuildConditionalFilter(BlockDelegate, LogicalIndexedCondition) (ItemFilter, error)
 }
 
 var _ Series = (*series)(nil)
@@ -145,11 +151,44 @@ func newSeries(ctx context.Context, id common.SeriesID, blockDB blockDatabase) *
 var _ SeriesSpan = (*seriesSpan)(nil)
 
 type seriesSpan struct {
-	blocks    []blockDelegate
+	blocks    []BlockDelegate
 	seriesID  common.SeriesID
 	shardID   common.ShardID
 	timeRange timestamp.TimeRange
 	l         *logger.Logger
+}
+
+func (s *seriesSpan) BuildItemIterators(b BlockDelegate, filter ItemFilter) (ItemIterator, error) {
+	termRange := index.RangeOpts{
+		Lower:         convert.Int64ToBytes(s.timeRange.Start.UnixNano()),
+		Upper:         convert.Int64ToBytes(s.timeRange.End.UnixNano()),
+		IncludesLower: true,
+	}
+	sortFieldIter, err := b.primaryIndexReader().
+		Iterator(
+			index.FieldKey{
+				SeriesID: s.seriesID,
+			},
+			termRange,
+			// TODO: support sort
+			modelv1.Sort_SORT_ASC,
+		)
+	if err != nil {
+		return nil, err
+	}
+	return newSearcherIterator(s.l, sortFieldIter, b.dataReader(), s.seriesID, []FilterFn{filter.Predicate}), nil
+}
+
+func (s *seriesSpan) BuildConditionalFilter(b BlockDelegate, lc LogicalIndexedCondition) (ItemFilter, error) {
+	return lc.build(s, b)
+}
+
+func (s *seriesSpan) SeriesID() common.SeriesID {
+	return s.seriesID
+}
+
+func (s *seriesSpan) Blocks() []BlockDelegate {
+	return s.blocks
 }
 
 func (s *seriesSpan) Close() (err error) {
@@ -167,7 +206,7 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []BlockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
 	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,

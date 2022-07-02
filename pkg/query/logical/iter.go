@@ -36,7 +36,7 @@ var _ heap.Interface = (*containerHeap)(nil)
 type container struct {
 	c    comparator
 	item tsdb.Item
-	iter tsdb.Iterator
+	iter tsdb.ItemIterator
 }
 
 type containerHeap []*container
@@ -60,8 +60,8 @@ func (h *containerHeap) Pop() interface{} {
 type itemIter struct {
 	// c is the comparator to sort items
 	c comparator
-	// iters is the list of initial Iterator
-	iters []tsdb.Iterator
+	// iters is the list of initial ItemIterator
+	iters []tsdb.ItemIterator
 	// deq is the deque of the container
 	// 1. When we push a new container, we can normally append it to the tail of the deq,
 	//    and then sort the whole slice
@@ -70,7 +70,7 @@ type itemIter struct {
 	h *containerHeap
 }
 
-func NewItemIter(iters []tsdb.Iterator, c comparator) ItemIterator {
+func NewItemIter(iters []tsdb.ItemIterator, c comparator) ItemIterator {
 	it := &itemIter{
 		c:     c,
 		iters: iters,
@@ -92,7 +92,7 @@ func (it *itemIter) init() {
 }
 
 // pushIterator pushes the given iterator into the underlying deque.
-// Status will be immediately checked if the Iterator has a next value.
+// Status will be immediately checked if the ItemIterator has a next value.
 // 1 - If not, it will be close at once and will not be added to the slice,
 //
 //	which means inactive iterator does not exist in the deq.
@@ -100,13 +100,14 @@ func (it *itemIter) init() {
 // 2 - If so, it will be wrapped into a container and push to the deq.
 //
 //	Then we call SliceStable sort to sort the deq.
-func (it *itemIter) pushIterator(iter tsdb.Iterator) {
-	if !iter.Next() {
+func (it *itemIter) pushIterator(iter tsdb.ItemIterator) {
+	item, hasNext := iter.Next()
+	if !hasNext {
 		_ = iter.Close()
 		return
 	}
 	heap.Push(it.h, &container{
-		item: iter.Val(),
+		item: item,
 		iter: iter,
 		c:    it.c,
 	})

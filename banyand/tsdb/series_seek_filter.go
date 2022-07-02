@@ -25,6 +25,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
+var (
+	_ ItemFilter = (and)(nil)
+	_ ItemFilter = (or)(nil)
+	_ ItemFilter = (FilterFn)(nil)
+	_ ItemFilter = (*roaringBitmapFilter)(nil)
+)
+
 var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
 
 type Condition map[string][]index.ConditionValue
@@ -71,7 +78,7 @@ func (s *seekerBuilder) buildConditions() ([]condWithIRT, error) {
 	return conditions, nil
 }
 
-func (s *seekerBuilder) buildIndexFilter(block blockDelegate, conditions []condWithIRT) (filterFn, error) {
+func (s *seekerBuilder) buildIndexFilter(block BlockDelegate, conditions []condWithIRT) (FilterFn, error) {
 	var allItemIDs posting.List
 	addIDs := func(allList posting.List, searcher index.Searcher, cond index.Condition) (posting.List, bool, error) {
 		tree, err := index.BuildTree(searcher, cond)
@@ -135,4 +142,4 @@ func (s *seekerBuilder) buildIndexFilter(block blockDelegate, conditions []condW
 	}, nil
 }
 
-type filterFn func(item Item) bool
+type FilterFn func(item Item) bool

@@ -24,7 +24,8 @@ type Flow interface {
 	Offset(int) Flow
 	Limit(int) Flow
 	To(interface{}) Flow
-	Open() <-chan error
+	OpenAsync() <-chan error
+	OpenSync() error
 }
 
 type WindowedFlow interface {

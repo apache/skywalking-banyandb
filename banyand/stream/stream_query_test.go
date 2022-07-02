@@ -939,8 +939,12 @@ func queryData(s *stream, baseTime time.Time, opts queryOpts) (shardsForTest, er
 				}
 				for dataFlowID, iterator := range iter {
 					var elements []string
-					for iterator.Next() {
-						tagFamily, errInner := s.ParseTagFamily("searchable", iterator.Val())
+					for {
+						val, hasNext := iterator.Next()
+						if !hasNext {
+							break
+						}
+						tagFamily, errInner := s.ParseTagFamily("searchable", val)
 						if errInner != nil {
 							return nil, errInner
 						}
@@ -949,7 +953,7 @@ func queryData(s *stream, baseTime time.Time, opts queryOpts) (shardsForTest, er
 								elements = append(elements, tag.GetValue().GetStr().GetValue())
 							}
 						}
-						eleID, errInner := s.ParseElementID(iterator.Val())
+						eleID, errInner := s.ParseElementID(val)
 						if errInner != nil {
 							return nil, errInner
 						}

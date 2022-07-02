@@ -48,7 +48,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) api.Flow {
 	if topNAggrFunc.sortKeyExtractor == nil {
 		s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
 	}
-	s.wa.(*slidingTimeWindows).aggrFunc = topNAggrFunc
+	s.wa.(*SlidingTimeWindows).aggrFunc = topNAggrFunc
 	return s.f
 }
 
@@ -94,7 +94,7 @@ func (t *topNAggregator) Add(input []interface{}) {
 					t.currentTopNum -= size
 					t.treeMap.Remove(lastKey)
 				} else {
-					t.currentTopNum -= 1
+					t.currentTopNum--
 					t.treeMap.Put(lastKey, lastValues.([]interface{})[0:size-1])
 				}
 			}
@@ -103,7 +103,7 @@ func (t *topNAggregator) Add(input []interface{}) {
 }
 
 func (t *topNAggregator) put(sortKey int64, data interface{}) {
-	t.currentTopNum += 1
+	t.currentTopNum++
 	if existingList, ok := t.treeMap.Get(sortKey); ok {
 		existingList = append(existingList.([]interface{}), data)
 		t.treeMap.Put(sortKey, existingList)
@@ -118,14 +118,12 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 	if worstKey == nil {
 		// return true if the buffer is empty.
 		return true
-	} else {
-		// TODO: sort direction?
-		if sortKey < worstKey.(int64) {
-			return true
-		} else {
-			return t.currentTopNum < t.cacheSize
-		}
 	}
+	// TODO: sort direction?
+	if sortKey < worstKey.(int64) {
+		return true
+	}
+	return t.currentTopNum < t.cacheSize
 }
 
 type Tuple2 struct {

@@ -92,7 +92,6 @@ func tryExactTimestamp(item any) api.StreamRecord {
 	// otherwise, check if we can extract timestamp
 	if extractor, ok := item.(timestampExtractor); ok {
 		return api.NewStreamRecord(item, extractor.TimestampMillis())
-	} else {
-		return api.NewStreamRecordWithoutTS(item)
 	}
+	return api.NewStreamRecordWithoutTS(item)
 }

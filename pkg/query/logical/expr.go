@@ -36,6 +36,10 @@ var binaryOpFactory = map[modelv1.Condition_BinaryOp]func(l, r Expr) Expr{
 	modelv1.Condition_BINARY_OP_NOT_HAVING: NotHaving,
 }
 
+func OpFactory(op modelv1.Condition_BinaryOp) func(l, r Expr) Expr {
+	return binaryOpFactory[op]
+}
+
 var _ ResolvableExpr = (*TagRef)(nil)
 
 // TagRef is the reference to the field

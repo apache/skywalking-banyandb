@@ -51,7 +51,7 @@ func (flow *streamingFlow) Limit(i int) api.Flow {
 	panic("limit is not supported in streaming context")
 }
 
-func New(sourceParam interface{}) *streamingFlow {
+func New(sourceParam interface{}) api.Flow {
 	return &streamingFlow{
 		sourceParam: sourceParam,
 		ops:         make([]streamingApi.Operator, 0),
@@ -135,7 +135,7 @@ func (flow *streamingFlow) To(sink interface{}) api.Flow {
 	return flow
 }
 
-func (flow *streamingFlow) Open() <-chan error {
+func (flow *streamingFlow) OpenAsync() <-chan error {
 	if err := flow.init(); err != nil {
 		flow.drainErr(err)
 		return flow.drain
@@ -176,6 +176,10 @@ func (flow *streamingFlow) Open() <-chan error {
 	}()
 
 	return flow.drain
+}
+
+func (flow *streamingFlow) OpenSync() error {
+	return errors.New("cannot open streaming flow in sync mode")
 }
 
 func (flow *streamingFlow) drainErr(err error) {

@@ -94,10 +94,10 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // This method is used by the underlying tableScan and localIndexScan plans.
 func executeForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 	builders ...seekerBuilder,
-) ([]tsdb.Iterator, error) {
-	var itersInShard []tsdb.Iterator
+) ([]tsdb.ItemIterator, error) {
+	var itersInShard []tsdb.ItemIterator
 	for _, seriesFound := range series {
-		itersInSeries, err := func() ([]tsdb.Iterator, error) {
+		itersInSeries, err := func() ([]tsdb.ItemIterator, error) {
 			sp, errInner := seriesFound.Span(timeRange)
 			defer func(sp tsdb.SeriesSpan) {
 				if sp != nil {

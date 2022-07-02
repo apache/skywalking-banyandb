@@ -59,11 +59,15 @@ var _ = Describe("Write and Update service_cpm_minute", func() {
 				iters, err := seeker.Seek()
 				Expect(err).ShouldNot(HaveOccurred())
 				for _, iter := range iters {
-					defer func(iterator tsdb.Iterator) {
+					defer func(iterator tsdb.ItemIterator) {
 						Expect(iterator.Close()).ShouldNot(HaveOccurred())
 					}(iter)
-					for iter.Next() {
-						num++
+					for {
+						if _, hasNext := iter.Next(); hasNext {
+							num++
+						} else {
+							break
+						}
 					}
 				}
 			}

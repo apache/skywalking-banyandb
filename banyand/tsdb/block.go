@@ -179,7 +179,7 @@ func (b *block) open() (err error) {
 	return nil
 }
 
-func (b *block) delegate() (blockDelegate, error) {
+func (b *block) delegate() (BlockDelegate, error) {
 	if b.incRef() {
 		return &bDelegate{
 			delegate: b,
@@ -289,7 +289,7 @@ func (b *block) stats() (names []string, stats []observability.Statistics) {
 	return names, stats
 }
 
-type blockDelegate interface {
+type BlockDelegate interface {
 	io.Closer
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
@@ -305,7 +305,7 @@ type blockDelegate interface {
 	String() string
 }
 
-var _ blockDelegate = (*bDelegate)(nil)
+var _ BlockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block

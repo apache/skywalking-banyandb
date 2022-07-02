@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var emptyFilters = make([]filterFn, 0)
+var emptyFilters = make([]FilterFn, 0)
 
 func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder {
 	s.indexRuleForSorting = indexRule
@@ -47,14 +47,14 @@ func (s *seekerBuilder) OrderByTime(order modelv1.Sort) SeekerBuilder {
 	return s
 }
 
-func (s *seekerBuilder) buildSeries(conditions []condWithIRT) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeries(conditions []condWithIRT) ([]ItemIterator, error) {
 	if s.indexRuleForSorting == nil {
 		return s.buildSeriesByTime(conditions)
 	}
 	return s.buildSeriesByIndex(conditions)
 }
 
-func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []Iterator, err error) {
+func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []ItemIterator, err error) {
 	timeFilter := func(item Item) bool {
 		valid := s.seriesSpan.timeRange.Contains(item.Time())
 		timeRange := s.seriesSpan.timeRange
@@ -70,7 +70,7 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 			SeriesID:    s.seriesSpan.seriesID,
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 		}
-		filters := []filterFn{timeFilter}
+		filters := []FilterFn{timeFilter}
 		filter, err := s.buildIndexFilter(b, conditions)
 		if err != nil {
 			return nil, err
@@ -94,7 +94,7 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 	return
 }
 
-func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]ItemIterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
 	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
@@ -107,7 +107,7 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 			return bb[i].startTime().After(bb[j].startTime())
 		})
 	}
-	delegated := make([]Iterator, 0, len(bb))
+	delegated := make([]ItemIterator, 0, len(bb))
 	bTimes := make([]time.Time, 0, len(bb))
 	timeRange := s.seriesSpan.timeRange
 	termRange := index.RangeOpts{
@@ -136,7 +136,7 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 			if filter == nil {
 				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, emptyFilters))
 			} else {
-				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, []filterFn{filter}))
+				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), s.seriesSpan.seriesID, []FilterFn{filter}))
 			}
 		}
 	}
@@ -146,10 +146,10 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
 		Int("shard_id", int(s.seriesSpan.shardID)).
 		Msg("seek series by time")
-	return []Iterator{newMergedIterator(delegated)}, nil
+	return []ItemIterator{newMergedIterator(delegated)}, nil
 }
 
-var _ Iterator = (*searcherIterator)(nil)
+var _ ItemIterator = (*searcherIterator)(nil)
 
 type searcherIterator struct {
 	fieldIterator index.FieldIterator
@@ -157,11 +157,11 @@ type searcherIterator struct {
 	cur           posting.Iterator
 	data          kv.TimeSeriesReader
 	seriesID      common.SeriesID
-	filters       []filterFn
+	filters       []FilterFn
 	l             *logger.Logger
 }
 
-func (s *searcherIterator) Next() bool {
+func (s *searcherIterator) Next() (Item, bool) {
 	if s.cur == nil {
 		if s.fieldIterator.Next() {
 			v := s.fieldIterator.Val()
@@ -169,25 +169,24 @@ func (s *searcherIterator) Next() bool {
 			s.curKey = v.Term
 			s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Hex("term", s.curKey).Msg("got a new field")
 		} else {
-			return false
+			return nil, false
 		}
 	}
 	if s.cur.Next() {
-
 		for _, filter := range s.filters {
-			if !filter(s.Val()) {
-				s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("ignore the item")
+			if !filter(s.val()) {
+				s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.val().ID())).Msg("ignore the item")
 				return s.Next()
 			}
 		}
-		s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
-		return true
+		s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.val().ID())).Msg("got an item")
+		return s.val(), true
 	}
 	s.cur = nil
 	return s.Next()
 }
 
-func (s *searcherIterator) Val() Item {
+func (s *searcherIterator) val() Item {
 	return &item{
 		sortedField: s.curKey,
 		itemID:      s.cur.Current(),
@@ -201,8 +200,8 @@ func (s *searcherIterator) Close() error {
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, data kv.TimeSeriesReader,
-	seriesID common.SeriesID, filters []filterFn,
-) Iterator {
+	seriesID common.SeriesID, filters []FilterFn,
+) ItemIterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
 		data:          data,
@@ -212,32 +211,28 @@ func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, da
 	}
 }
 
-var _ Iterator = (*mergedIterator)(nil)
+var _ ItemIterator = (*mergedIterator)(nil)
 
 type mergedIterator struct {
-	curr      Iterator
+	curr      ItemIterator
 	index     int
-	delegated []Iterator
+	delegated []ItemIterator
 }
 
-func (m *mergedIterator) Next() bool {
+func (m *mergedIterator) Next() (Item, bool) {
 	if m.curr == nil {
 		m.index++
 		if m.index >= len(m.delegated) {
-			return false
+			return nil, false
 		}
 		m.curr = m.delegated[m.index]
 	}
-	hasNext := m.curr.Next()
+	nextItem, hasNext := m.curr.Next()
 	if !hasNext {
 		m.curr = nil
 		return m.Next()
 	}
-	return true
-}
-
-func (m *mergedIterator) Val() Item {
-	return m.curr.Val()
+	return nextItem, true
 }
 
 func (m *mergedIterator) Close() error {
@@ -248,7 +243,7 @@ func (m *mergedIterator) Close() error {
 	return err
 }
 
-func newMergedIterator(delegated []Iterator) Iterator {
+func newMergedIterator(delegated []ItemIterator) ItemIterator {
 	return &mergedIterator{
 		index:     -1,
 		delegated: delegated,

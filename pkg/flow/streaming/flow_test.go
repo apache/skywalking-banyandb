@@ -84,7 +84,7 @@ func TestStream_Filter(t *testing.T) {
 			s := New(tt.input).
 				Filter(tt.f).
 				To(snk)
-			if errCh := s.Open(); errCh != nil {
+			if errCh := s.OpenAsync(); errCh != nil {
 				err := Await().AtMost(3 * time.Second).Until(func() bool {
 					if len(snk.Value()) == len(tt.expected) {
 						if assert.Equal(tt.expected, snk.Value()) {
@@ -154,7 +154,7 @@ func TestStream_Mapper(t *testing.T) {
 			s := New(tt.input).
 				Map(tt.f).
 				To(snk)
-			if errCh := s.Open(); errCh != nil {
+			if errCh := s.OpenAsync(); errCh != nil {
 				err := Await().AtMost(3 * time.Second).Until(func() bool {
 					if len(snk.Value()) == len(tt.expected) {
 						if assert.Equal(tt.expected, snk.Value()) {
@@ -218,7 +218,7 @@ func TestStream_TopN(t *testing.T) {
 				})).
 				To(snk)
 
-			if errCh := s.Open(); errCh != nil {
+			if errCh := s.OpenAsync(); errCh != nil {
 				err := Await().AtMost(5 * time.Second).Until(func() bool {
 					if len(snk.Value()) == 0 {
 						return false

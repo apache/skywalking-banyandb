@@ -132,8 +132,8 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(timeRange timestamp.TimeRange) ([]blockDelegate, error)
-	block(id GlobalItemID) (blockDelegate, error)
+	span(timeRange timestamp.TimeRange) ([]BlockDelegate, error)
+	block(id GlobalItemID) (BlockDelegate, error)
 }
 
 var (
@@ -172,7 +172,7 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	return newSeries(s.context(), id, s), nil
 }
 
-func (s *seriesDB) block(id GlobalItemID) (blockDelegate, error) {
+func (s *seriesDB) block(id GlobalItemID) (BlockDelegate, error) {
 	seg := s.segCtrl.get(id.segID)
 	if seg == nil {
 		return nil, nil
@@ -234,9 +234,9 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) {
+func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
 	// TODO: return correct blocks
-	result := make([]blockDelegate, 0)
+	result := make([]BlockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		dd, err := s.blockController.span(timeRange)
 		if err != nil {

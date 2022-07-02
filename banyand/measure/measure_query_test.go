@@ -82,12 +82,15 @@ var _ = Describe("Query service_cpm_minute", func() {
 		iter, err := seeker.Seek()
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(len(iter)).To(Equal(1))
-		defer func(iterator tsdb.Iterator) {
+		defer func(iterator tsdb.ItemIterator) {
 			Expect(iterator.Close()).ShouldNot(HaveOccurred())
 		}(iter[0])
 		i := 0
-		for ; iter[0].Next(); i++ {
-			item := iter[0].Val()
+		for {
+			item, hasNext := iter[0].Next()
+			if !hasNext {
+				break
+			}
 			tagFamily, err := measure.ParseTagFamily("default", item)
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(len(tagFamily.Tags)).To(Equal(2))
@@ -97,6 +100,7 @@ var _ = Describe("Query service_cpm_minute", func() {
 			value, err := measure.ParseField("value", item)
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(value.GetValue().GetInt().Value).To(Equal(expectedFields[i][1]))
+			i++
 		}
 		Expect(len(expectedFields)).To(Equal(i))
 	}
@@ -200,13 +204,13 @@ var _ = Describe("Query service_traffic", func() {
 				iter, err := seeker.Seek()
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(len(iter)).To(Equal(1))
-				defer func(iterator tsdb.Iterator) {
+				defer func(iterator tsdb.ItemIterator) {
 					_ = iterator.Close()
 				}(iter[0])
-				if !iter[0].Next() {
+				item, hasNext := iter[0].Next()
+				if !hasNext {
 					continue
 				}
-				item := iter[0].Val()
 				tagFamily, err := measure.ParseTagFamily("default", item)
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(len(tagFamily.Tags)).To(Equal(6))
@@ -220,7 +224,7 @@ var _ = Describe("Query service_traffic", func() {
 				if !existServiceID {
 					Fail("doesn't get service_id")
 				}
-				if iter[0].Next() {
+				if _, hasNext = iter[0].Next(); hasNext {
 					Fail("should only one data point in this series")
 				}
 			}

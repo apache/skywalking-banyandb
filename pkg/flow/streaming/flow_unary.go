@@ -104,9 +104,8 @@ func (u *unaryOperator) run() {
 					u.out <- r.WithNewData(val)
 				}
 			}(streamRecord)
-		} else {
-			// TODO: warning
 		}
+		// TODO: else warning
 	}
 	for i := 0; i < int(u.parallelism); i++ {
 		semaphore <- struct{}{}

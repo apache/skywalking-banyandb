@@ -366,3 +366,58 @@ func (b *GroupByBuilder) aggregate(fieldName string, aggregationFunc modelv1.Agg
 	}
 	return b.builder
 }
+
+func Eq(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_EQ,
+		Value: buildTagValue(val),
+	}
+}
+
+func Ne(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_NE,
+		Value: buildTagValue(val),
+	}
+}
+
+func Le(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_LE,
+		Value: buildTagValue(val),
+	}
+}
+
+func Lt(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_LT,
+		Value: buildTagValue(val),
+	}
+}
+
+func Ge(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_GE,
+		Value: buildTagValue(val),
+	}
+}
+
+func Gt(key string, val interface{}) *modelv1.Condition {
+	return &modelv1.Condition{
+		Name:  key,
+		Op:    modelv1.Condition_BINARY_OP_GT,
+		Value: buildTagValue(val),
+	}
+}
+
+func And(tagFamilyName string, conditions ...*modelv1.Condition) *modelv1.Criteria {
+	return &modelv1.Criteria{
+		TagFamilyName: tagFamilyName,
+		Conditions:    conditions,
+	}
+}

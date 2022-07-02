@@ -18,17 +18,22 @@
 package tsdb
 
 import (
+	"io"
+
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	batchApi "github.com/apache/skywalking-banyandb/pkg/iter"
 )
 
-type Iterator interface {
-	Next() bool
-	Val() Item
-	Close() error
+type ItemIterator interface {
+	batchApi.Iterator[Item]
+	io.Closer
 }
 
 type Item interface {
@@ -47,7 +52,7 @@ type SeekerBuilder interface {
 }
 
 type Seeker interface {
-	Seek() ([]Iterator, error)
+	Seek() ([]ItemIterator, error)
 }
 
 var _ SeekerBuilder = (*seekerBuilder)(nil)
@@ -55,11 +60,7 @@ var _ SeekerBuilder = (*seekerBuilder)(nil)
 type seekerBuilder struct {
 	seriesSpan *seriesSpan
 
-	conditions []struct {
-		indexRuleType databasev1.IndexRule_Type
-		indexRuleID   uint32
-		condition     Condition
-	}
+	conditions          []indexedCondition
 	order               modelv1.Sort
 	indexRuleForSorting *databasev1.IndexRule
 	rangeOptsForSorting index.RangeOpts
@@ -89,14 +90,14 @@ func newSeekerBuilder(s *seriesSpan) SeekerBuilder {
 var _ Seeker = (*seeker)(nil)
 
 type seeker struct {
-	series []Iterator
+	series []ItemIterator
 }
 
-func (s *seeker) Seek() ([]Iterator, error) {
+func (s *seeker) Seek() ([]ItemIterator, error) {
 	return s.series, nil
 }
 
-func newSeeker(series []Iterator) Seeker {
+func newSeeker(series []ItemIterator) Seeker {
 	return &seeker{
 		series: series,
 	}
@@ -136,4 +137,29 @@ func (i *item) Val() ([]byte, error) {
 
 func (i *item) ID() common.ItemID {
 	return i.itemID
+}
+
+func buildSingleFilterSet(searcher index.Searcher, cond index.Condition,
+	seriesID common.SeriesID, indexRuleID uint32,
+) (posting.List, bool, error) {
+	tree, err := index.BuildTree(searcher, cond)
+	if err != nil {
+		return nil, false, err
+	}
+	_, _ = tree.TrimRangeLeaf(index.FieldKey{
+		SeriesID:    seriesID,
+		IndexRuleID: indexRuleID,
+	})
+	//if found {
+	//	// TODO: set sorting?
+	//	//s.rangeOptsForSorting = rangeOpts
+	//}
+	itemIDs, err := tree.Execute()
+	if errors.Is(err, index.ErrEmptyTree) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return itemIDs, true, nil
 }

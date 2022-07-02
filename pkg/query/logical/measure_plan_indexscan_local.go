@@ -51,9 +51,9 @@ type unresolvedMeasureIndexScan struct {
 	unresolvedOrderBy *UnresolvedOrderBy
 }
 
-func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
+func ParseConditionMap(conditions []Expr, s Schema) (map[*databasev1.IndexRule][]Expr, error) {
 	localConditionMap := make(map[*databasev1.IndexRule][]Expr)
-	for _, cond := range uis.conditions {
+	for _, cond := range conditions {
 		if resolvable, ok := cond.(ResolvableExpr); ok {
 			err := resolvable.Resolve(s)
 			if err != nil {
@@ -78,21 +78,30 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
+	return localConditionMap, nil
+}
+
+func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
+	conditionMap, err := ParseConditionMap(uis.conditions, s)
+	if err != nil {
+		return nil, err
+	}
+
 	var projTagsRefs [][]*TagRef
 	if len(uis.projectionTags) > 0 {
-		var err error
-		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
-		if err != nil {
-			return nil, err
+		var innerErr error
+		projTagsRefs, innerErr = s.CreateTagRef(uis.projectionTags...)
+		if innerErr != nil {
+			return nil, innerErr
 		}
 	}
 
 	var projFieldRefs []*FieldRef
 	if len(uis.projectionFields) > 0 {
-		var err error
-		projFieldRefs, err = s.CreateFieldRef(uis.projectionFields...)
-		if err != nil {
-			return nil, err
+		var innerErr error
+		projFieldRefs, innerErr = s.CreateFieldRef(uis.projectionFields...)
+		if innerErr != nil {
+			return nil, innerErr
 		}
 	}
 
@@ -108,7 +117,7 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
-		conditionMap:         localConditionMap,
+		conditionMap:         conditionMap,
 		entity:               uis.entity,
 		groupByEntity:        uis.groupByEntity,
 		orderBy:              orderBySubPlan,
@@ -134,7 +143,7 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (ex
 	if err != nil {
 		return nil, err
 	}
-	var iters []tsdb.Iterator
+	var iters []tsdb.ItemIterator
 	for _, shard := range shards {
 		itersInShard, innerErr := i.executeInShard(shard)
 		if innerErr != nil {
@@ -162,7 +171,7 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (ex
 	return newIndexScanMIterator(it, transformContext), nil
 }
 
-func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
+func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.ItemIterator, error) {
 	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
 	if err != nil {
 		return nil, err
@@ -195,7 +204,7 @@ func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterato
 	if i.conditionMap != nil && len(i.conditionMap) > 0 {
 		builders = append(builders, func(b tsdb.SeekerBuilder) {
 			for idxRule, exprs := range i.conditionMap {
-				b.Filter(idxRule, exprToCondition(exprs))
+				b.Filter(idxRule, ExprToCondition(exprs))
 			}
 		})
 	}
@@ -316,7 +325,7 @@ func (ism *indexScanMIterator) Close() error {
 var _ executor.MIterator = (*seriesMIterator)(nil)
 
 type seriesMIterator struct {
-	inner   []tsdb.Iterator
+	inner   []tsdb.ItemIterator
 	context transformContext
 
 	index   int
@@ -324,7 +333,7 @@ type seriesMIterator struct {
 	err     error
 }
 
-func newSeriesMIterator(inner []tsdb.Iterator, context transformContext) executor.MIterator {
+func newSeriesMIterator(inner []tsdb.ItemIterator, context transformContext) executor.MIterator {
 	return &seriesMIterator{
 		inner:   inner,
 		context: context,
@@ -344,8 +353,12 @@ func (ism *seriesMIterator) Next() bool {
 	if ism.current != nil {
 		ism.current = ism.current[:0]
 	}
-	for iter.Next() {
-		dp, err := transform(iter.Val(), ism.context)
+	for {
+		val, hasNext := iter.Next()
+		if !hasNext {
+			break
+		}
+		dp, err := transform(val, ism.context)
 		if err != nil {
 			ism.err = err
 			return false

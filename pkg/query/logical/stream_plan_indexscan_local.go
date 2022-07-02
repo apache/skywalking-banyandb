@@ -52,7 +52,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 	if err != nil {
 		return nil, err
 	}
-	var iters []tsdb.Iterator
+	var iters []tsdb.ItemIterator
 	for _, shard := range shards {
 		itersInShard, innerErr := i.executeInShard(shard)
 		if innerErr != nil {
@@ -91,7 +91,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 	return elems, nil
 }
 
-func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
+func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.ItemIterator, error) {
 	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, erro
 	if i.conditionMap != nil && len(i.conditionMap) > 0 {
 		builders = append(builders, func(b tsdb.SeekerBuilder) {
 			for idxRule, exprs := range i.conditionMap {
-				b.Filter(idxRule, exprToCondition(exprs))
+				b.Filter(idxRule, ExprToCondition(exprs))
 			}
 		})
 	}
@@ -174,7 +174,7 @@ func (i *localIndexScan) Equal(plan Plan) bool {
 		cmp.Equal(i.orderBy, other.orderBy)
 }
 
-func exprToCondition(exprs []Expr) tsdb.Condition {
+func ExprToCondition(exprs []Expr) tsdb.Condition {
 	cond := make(map[string][]index.ConditionValue)
 	for _, expr := range exprs {
 		bExpr := expr.(*binaryExpr)

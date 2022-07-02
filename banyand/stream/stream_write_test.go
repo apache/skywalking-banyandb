@@ -227,8 +227,12 @@ var _ = Describe("Write", func() {
 				iters, errInternal := sb.Seek()
 				Expect(errInternal).ShouldNot(HaveOccurred())
 				for _, iter := range iters {
-					for iter.Next() {
-						eleSize++
+					for {
+						if _, hasNext := iter.Next(); hasNext {
+							eleSize++
+						} else {
+							break
+						}
 					}
 					iter.Close()
 				}
