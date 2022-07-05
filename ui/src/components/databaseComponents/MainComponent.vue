@@ -18,28 +18,52 @@
 -->
 
 <template>
-    <div>
-        <el-card>
-            <top-navigation-component></top-navigation-component>
-            <second-navigation-component></second-navigation-component>
-        </el-card>
+    <div class="flex" style="height:100%; width:100%;">
+        <div :style="showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
+            <tag-navigation-component></tag-navigation-component>
+            <el-card style="max-height: 90%;">
+                <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
+                <second-navigation-component class="margin-top-bottom-little"></second-navigation-component>
+                <data-table-component class="margin-all-little"></data-table-component>
+            </el-card>
+        </div>
+        <div class="bd-top bd-left drawer-right" v-if="showDrawer">
+            <drawer-right-component @closeDetail="closeDetail"></drawer-right-component>
+        </div>
     </div>
 </template>
 
 <script>
 import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
 import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
+import TagNavigationComponent from './TagNavigationComponent.vue'
+import DrawerRightComponent from './mainComponents/DrawerRightComponent.vue'
+import DataTableComponent from './mainComponents/DataTableComponent.vue'
 export default {
     name: 'MainComponent',
     data() {
         return {
-
+            showDrawer: false,
+            navWidth: "0px"
         }
     },
     components: {
         TopNavigationComponent,
-        SecondNavigationComponent
-    }
+        SecondNavigationComponent,
+        TagNavigationComponent,
+        DrawerRightComponent,
+        DataTableComponent
+    },
+    methods: {
+        handleNavigation(item, index) {
+            if (item.name == "Detail") {
+                this.showDrawer = !this.showDrawer
+            }
+        },
+        closeDetail() {
+            this.showDrawer = false
+        }
+    },
 }
 </script>
 
@@ -51,5 +75,13 @@ export default {
 
 .el-card__body {
     padding: 0;
+}
+
+.drawer-right {
+    -webkit-animation: rtl-drawer-in .3s 1ms;
+    animation: rtl-drawer-in .3s 1ms;
+    width: 20%;
+    height: calc(100% - 5px);
+    background-color: var(--color-background);
 }
 </style>

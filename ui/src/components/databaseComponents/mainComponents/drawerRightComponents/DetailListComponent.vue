@@ -18,46 +18,22 @@
 -->
 
 <template>
-    <div class="button-item flex center text-main-color text-family" :style="active" @mouseover="handleOver" @mouseleave="handleLeave">
-        <i :class="icon" class="text-big"></i>
-        <div class="text-main-color text-family text-title" :style="active">{{name}}</div>
+    <div style="width: 100%; height: 45px;" class="flex justify-between bd-bottom align-item-center">
+        <div class="text-main-color text-tips text-family">{{keyName}}</div>
+        <div class="text-secondary-color text-tips text-family">{{value}}</div>
     </div>
 </template>
 
 <script>
 export default {
-    name: 'TopButtonComponent',
-    data() {
-        return {
-            active: "background-color: #F2F6FC"
-        }
-    },
+    name: "DetailListComponent",
     props: {
-        icon: {
+        keyName: {
             type: String,
         },
-        name: {
+        value: {
             type: String
-        }
-    },
-    methods: {
-        handleOver() {
-            this.active = "background-color: #ecf5ff; color: var(--color-main); font-color: var(--color-main)"
-        },
-        handleLeave() {
-            this.active = "background-color: #F2F6FC; color: var(--color-main-font); font-color: var(--color-main-font)"
         }
     }
 }
 </script>
-
-<style lang="scss" scoped>
-.button-item {
-    height: 100%;
-    cursor: pointer;
-}
-
-i {
-    margin-right: 10px;
-}
-</style>

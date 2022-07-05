@@ -49,7 +49,6 @@ $(BUILDS):
 .PHONY: release 
 release: $(BUILDS)
 
-DOCKER_BUILD_ARGS := --build-arg BASE_IMAGE=golang:${go_version}
 include ../scripts/build/docker.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
