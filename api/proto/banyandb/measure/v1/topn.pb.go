@@ -162,6 +162,7 @@ type TopNRequest struct {
 	// top_n set the how many items should be returned in each list.
 	TopN int32 `protobuf:"varint,3,opt,name=top_n,json=topN,proto3" json:"top_n,omitempty"`
 	// agg aggregates lists grouped by field names in the time_range
+	// TODO validate enum defined_only
 	Agg v11.AggregationFunction `protobuf:"varint,4,opt,name=agg,proto3,enum=banyandb.model.v1.AggregationFunction" json:"agg,omitempty"`
 	// criteria select counters.
 	Conditions []*v11.Condition `protobuf:"bytes,5,rep,name=conditions,proto3" json:"conditions,omitempty"`
