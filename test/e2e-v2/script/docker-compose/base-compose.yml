@@ -18,7 +18,7 @@ version: '2.1'
 services:
   banyandb:
     extends:
-      file: ../../docker/docker-compose/base-compose.yml
+      file: ../../../docker/docker-compose/base-compose.yml
       service: banyandb
     image: "apache/skywalking-banyandb:${TAG}"
     networks:
@@ -26,14 +26,14 @@ services:
   
   agent:
     extends:
-      file: ../../docker/docker-compose/base-compose.yml
+      file: ../../../docker/docker-compose/base-compose.yml
       service: agent
     networks:
       - e2e
 
   oap:
     extends:
-      file: ../../docker/docker-compose/base-compose.yml
+      file: ../../../docker/docker-compose/base-compose.yml
       service: oap
     networks:
       - e2e
@@ -42,14 +42,14 @@ services:
 
   provider:
     extends:
-      file: ../../docker/docker-compose/base-compose.yml
+      file: ../../../docker/docker-compose/base-compose.yml
       service: provider
     networks:
       - e2e
 
   consumer:
     extends:
-      file: ../../docker/docker-compose/base-compose.yml
+      file: ../../../docker/docker-compose/base-compose.yml
       service: consumer
     networks:
       - e2e
