@@ -33,6 +33,7 @@ $(BUF):
 	@rm -f $(tool_bin)/protoc-gen-doc
 	@rm -f $(tool_bin)/protoc-gen-grpc-gateway
 	@rm -f $(tool_bin)/protoc-gen-openapiv2
+	@rm -f $(tool_bin)/protoc-gen-validate
 	@rm -f $(tool_bin)/buf
 	@rm -f $(tool_bin)/protoc-gen-buf-breaking
 	@rm -f $(tool_bin)/protoc-gen-buf-lint
@@ -44,6 +45,7 @@ $(BUF):
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/buf@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@$(buf_version)
+	@GOBIN=$(tool_bin) go install github.com/envoyproxy/protoc-gen-validate@v0.6.7
 
 generate: $(BUF)
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate

@@ -24,6 +24,7 @@ package banyandb.property.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/property/v1/property.proto";
+import "validate/validate.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
@@ -32,21 +33,21 @@ option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
 };
 
 message CreateRequest {
-    banyandb.property.v1.Property property = 1;
+    banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
 }
 
 message CreateResponse {
 }
 
 message UpdateRequest {
-    banyandb.property.v1.Property property = 1;
+    banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
 }
 
 message UpdateResponse {
 }
 
 message DeleteRequest {
-    banyandb.property.v1.Metadata metadata = 1;
+    banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
 }
 
 message DeleteResponse {
@@ -54,7 +55,7 @@ message DeleteResponse {
 }
 
 message GetRequest {
-    banyandb.property.v1.Metadata metadata = 1;
+    banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
 }
 
 message GetResponse {
@@ -62,7 +63,7 @@ message GetResponse {
 }
 
 message ListRequest {
-    banyandb.common.v1.Metadata container = 1;
+    banyandb.common.v1.Metadata container = 1 [(validate.rules).message.required = true];
 }
 
 message ListResponse {

@@ -2256,7 +2256,7 @@ TopNRequest is the request contract for query.
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is required |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
 | top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
-| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range |
+| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range TODO validate enum defined_only |
 | conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
 
