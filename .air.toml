@@ -13,26 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-services:
-  banyandb:
-    extends:
-      file: ../../../script/docker-compose/base-compose.yml
-      service: banyandb
-    networks:
-      - e2e
+# Config file for [Air](https://github.com/cosmtrek/air) in TOML format
 
-  oap:
-    extends:
-      file: ../../../script/docker-compose/base-compose.yml
-      service: oap
-    environment:
-      SW_STORAGE: banyandb
-    depends_on:
-      banyandb:
-        condition: service_healthy
-    ports:
-    - 11800
-    - 12800
+# Working directory
+# . or absolute path, please note that the directories following must be under root.
+root = "."
+tmp_dir = "tmp"
 
-networks:
-  e2e:
+[build]
+# Just plain old shell command. You could use `make` as well.
+cmd = "go build -gcflags='all=-N -l' -buildvcs=false -o ./tmp/main ./banyand/cmd/server"
+# Binary file yields from `cmd`.
+bin = "tmp/main"
+# Customize binary.
+full_bin = "dlv exec --accept-multiclient --log --headless --continue --listen :2345 --api-version 2 ./tmp/main standalone"
+# Watch these filename extensions.
+include_ext = ["go"]

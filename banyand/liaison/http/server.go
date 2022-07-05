@@ -27,10 +27,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measure_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/ui"
@@ -50,11 +54,12 @@ func NewService() ServiceRepo {
 }
 
 type service struct {
-	listenAddr string
-	grpcAddr   string
-	mux        *chi.Mux
-	stopCh     chan struct{}
-	l          *logger.Logger
+	listenAddr   string
+	grpcAddr     string
+	mux          *chi.Mux
+	stopCh       chan struct{}
+	clientCloser context.CancelFunc
+	l            *logger.Logger
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -86,9 +91,27 @@ func (p *service) PreRun() error {
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 
 	gwMux := runtime.NewServeMux()
+	var ctx context.Context
+	ctx, p.clientCloser = context.WithCancel(context.Background())
 
-	err = pb.RegisterStreamRegistryServiceHandlerFromEndpoint(context.Background(), gwMux, p.grpcAddr,
-		[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())})
+	err = multierr.Combine(
+		database_v1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		database_v1.RegisterMeasureRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		database_v1.RegisterIndexRuleRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		database_v1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		database_v1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		stream_v1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		measure_v1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		property_v1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
+			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+	)
 	if err != nil {
 		return err
 	}
@@ -107,6 +130,7 @@ func (p *service) Serve() run.StopNotify {
 }
 
 func (p *service) GracefulStop() {
+	p.clientCloser()
 	close(p.stopCh)
 }
 

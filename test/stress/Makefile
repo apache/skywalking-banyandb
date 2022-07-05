@@ -14,36 +14,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-/tmp
+NAME := ui
 
-# Test binary, build with `go test -c`
-*.test
+.PHONY: dev-up
+dev-up:
+	DOCKER_BUILDKIT=1 docker compose --env-file ./env.dev up --build
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+.PHONY: up
+up:
+	DOCKER_BUILDKIT=1 docker compose --env-file ./env up --build
 
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
-
-.DS_Store
-.env
-.run
-
-# mock files
-*mock.go
-*mock_test.go
+.PHONY: down
+down:
+	DOCKER_BUILDKIT=1 docker compose down
