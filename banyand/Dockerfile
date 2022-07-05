@@ -14,16 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASE_IMAGE
-ARG CERT_IMAGE
+FROM golang:1.18 AS dev
+WORKDIR /app
+ENV GOOS="linux"
+ENV CGO_ENABLED=0
 
-FROM $BASE_IMAGE AS base
+RUN go install github.com/cosmtrek/air@latest \
+    && go install github.com/go-delve/delve/cmd/dlv@latest
+
+EXPOSE 8080
+EXPOSE 2345
+
+ENTRYPOINT ["air"]
+
+FROM golang:1.18 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"
 WORKDIR /src
 COPY go.* ./
 RUN go mod download
+RUN GOBIN=/bin go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.11 \
+    && chmod 755 /bin/grpc-health-probe
 
 FROM base AS builder
 
@@ -31,7 +43,7 @@ RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
             BUILD_DIR=/out make -C banyand all
 
-FROM $CERT_IMAGE AS certs
+FROM alpine:edge AS certs
 RUN apk add --no-cache ca-certificates
 RUN update-ca-certificates
 
@@ -39,5 +51,18 @@ FROM busybox:stable-glibc
 
 COPY --from=builder /out/banyand-server /banyand-server
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
+
+EXPOSE 17912
+EXPOSE 17913
+
+ENTRYPOINT ["/banyand-server"]
+
+FROM busybox:stable-glibc AS test
+
+COPY --from=builder /out/banyand-server /banyand-server
+COPY --from=base /bin/grpc-health-probe /grpc-health-probe
+
+EXPOSE 17912
+EXPOSE 17913
 
 ENTRYPOINT ["/banyand-server"]

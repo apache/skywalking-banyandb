@@ -29,8 +29,6 @@ TAG ?= latest
 
 IMG := $(HUB)/$(IMG_NAME):$(TAG)
 
-DOCKER_BUILD_ARGS ?= ""
-
 # Disable cache in CI environment
 ifeq (true,$(CI))
 	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
@@ -39,7 +37,7 @@ endif
 .PHONY: docker
 docker:
 	@echo "Build $(IMG)"
-	@time docker buildx build $(DOCKER_BUILD_ARGS) -t $(IMG) -f Dockerfile ..
+	time docker buildx build $(DOCKER_BUILD_ARGS) -t $(IMG) -f Dockerfile ..
 
 .PHONY: docker.push
 docker.push:
