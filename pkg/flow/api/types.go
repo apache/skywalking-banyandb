@@ -17,6 +17,10 @@
 
 package api
 
+import (
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
 type Flow interface {
 	Filter(f interface{}) Flow
 	Map(f interface{}) Flow
@@ -57,6 +61,14 @@ func NewStreamRecord(data interface{}, ts int64) StreamRecord {
 	return StreamRecord{
 		data:         data,
 		ts:           ts,
+		hasTimestamp: true,
+	}
+}
+
+func NewStreamRecordWithTimestampPb(data interface{}, timestamp *timestamppb.Timestamp) StreamRecord {
+	return StreamRecord{
+		data:         data,
+		ts:           timestamp.GetSeconds()*1000 + int64(timestamp.GetNanos())/1000_000,
 		hasTimestamp: true,
 	}
 }
