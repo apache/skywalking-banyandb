@@ -29,8 +29,5 @@ include ../scripts/build/build.mk
 include ../scripts/build/test.mk
 # TODO: remove this
 include ../scripts/build/lint-deprecated.mk
-
-DOCKER_BUILD_ARGS := --build-arg CERT_IMAGE=alpine:edge --build-arg BASE_IMAGE=golang:${go_version}
-
 include ../scripts/build/docker.mk
 include ../scripts/build/help.mk

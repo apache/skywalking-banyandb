@@ -22,6 +22,7 @@ import (
 	"net"
 	"time"
 
+	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/validator"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -188,7 +189,10 @@ func (s *Server) Serve() run.StopNotify {
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
-	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize))
+	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize),
+		grpclib.UnaryInterceptor(grpc_validator.UnaryServerInterceptor()),
+		grpclib.StreamInterceptor(grpc_validator.StreamServerInterceptor()),
+	)
 	s.ser = grpclib.NewServer(opts...)
 
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)

@@ -99,6 +99,7 @@ run:
   deadline: 20m
   skip-files:
     - ".*\\.pb\\.go"
+    - ".*\\.pb\\.validate\\.go"
     - ".*\\.gen\\.go"
 issues:
   exclude-rules:

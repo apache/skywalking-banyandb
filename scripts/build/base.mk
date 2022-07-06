@@ -23,7 +23,6 @@ tool_bin := $(root_dir)/bin
 tool_include := "$(root_dir)/include"
 
 buf_version ?= v1.5.0
-go_version ?= 1.18
 
 # Retrieve git versioning details so we can add to our binary assets
 VERSION_PATH    := github.com/apache/skywalking-banyandb/pkg/version

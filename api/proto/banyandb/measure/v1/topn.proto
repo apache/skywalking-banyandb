@@ -26,6 +26,7 @@ import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "validate/validate.proto";
 
 //TopNList contains a series of topN items
 message TopNList {
@@ -49,12 +50,13 @@ message TopNResponse {
 // TopNRequest is the request contract for query.
 message TopNRequest {
     // metadata is required
-    common.v1.Metadata metadata = 1;
+    common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
     // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
-    model.v1.TimeRange time_range = 2;
+    model.v1.TimeRange time_range = 2 [(validate.rules).message.required = true];
     // top_n set the how many items should be returned in each list.
-    int32 top_n = 3;
+    int32 top_n = 3 [(validate.rules).int32.gt = 0];
     // agg aggregates lists grouped by field names in the time_range
+    // TODO validate enum defined_only
     model.v1.AggregationFunction agg = 4;
     // criteria select counters.
     repeated model.v1.Condition conditions = 5;

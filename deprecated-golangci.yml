@@ -43,6 +43,8 @@ linters-settings:
     check-shadowing: true
 run:
   deadline: 10m
+  skip-files:
+    - ".*\\.pb\\.validate\\.go"
 issues:
   exclude:
     # staticcheck

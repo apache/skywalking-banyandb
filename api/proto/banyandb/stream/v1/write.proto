@@ -25,6 +25,7 @@ package banyandb.stream.v1;
 import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
+import "validate/validate.proto";
 
 message ElementValue {
   // element_id could be span_id of a Span or segment_id of a Segment in the context of stream
@@ -39,9 +40,9 @@ message ElementValue {
 
 message WriteRequest {
   // the metadata is only required in the first write.
-  common.v1.Metadata metadata = 1;
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // the element is required.
-  ElementValue element = 2;
+  ElementValue element = 2 [(validate.rules).message.required = true];
 }
 
 message WriteResponse {}

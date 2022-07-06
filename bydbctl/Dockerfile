@@ -14,10 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASE_IMAGE
-ARG CERT_IMAGE
-
-FROM $BASE_IMAGE AS base
+FROM golang:1.18 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"

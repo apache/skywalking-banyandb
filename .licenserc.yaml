@@ -75,6 +75,7 @@ header: # `header` section is configurations for source codes license header.
     - '**/*_mock.go'
     - '**/*_mock_test.go'
     - '**/*.pb.go'
+    - '**/*.pb.validate.go'
     - '**/*.pb.gw.go'
     - '**/*.textproto'
     - '**/*.pem'
