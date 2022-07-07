@@ -167,12 +167,11 @@ type writeCallback struct {
 	schemaRepo *schemaRepo
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) *writeCallback {
-	wcb := &writeCallback{
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
+	return &writeCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
 	}
-	return wcb
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {

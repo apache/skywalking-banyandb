@@ -23,13 +23,9 @@ import (
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 )
-
-type data []interface{}
-
-func row(args ...interface{}) data {
-	return args
-}
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
 	assert := assert.New(t)
@@ -38,20 +34,20 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 		cacheSize: 5,
 		treeMap:   treemap.NewWith(utils.Int64Comparator),
 		sortKeyExtractor: func(elem interface{}) int64 {
-			return int64(elem.(data)[1].(int))
+			return int64(elem.(api.Data)[1].(int))
 		},
 	}
 
-	topN.Add([]interface{}{row("e2e-service-provider", 10000), row("e2e-service-consumer", 9900)})
-	topN.Add([]interface{}{row("e2e-service-provider", 9800), row("e2e-service-consumer", 9700)})
-	topN.Add([]interface{}{row("e2e-service-provider", 9700), row("e2e-service-consumer", 9600)})
-	topN.Add([]interface{}{row("e2e-service-provider", 9800), row("e2e-service-consumer", 9500)})
+	topN.Add([]interface{}{api.Row("e2e-service-provider", 10000), api.Row("e2e-service-consumer", 9900)})
+	topN.Add([]interface{}{api.Row("e2e-service-provider", 9800), api.Row("e2e-service-consumer", 9700)})
+	topN.Add([]interface{}{api.Row("e2e-service-provider", 9700), api.Row("e2e-service-consumer", 9600)})
+	topN.Add([]interface{}{api.Row("e2e-service-provider", 9800), api.Row("e2e-service-consumer", 9500)})
 
 	result := topN.GetResult()
 	assert.Len(result, 3)
 	assert.Equal([]*Tuple2{
-		{int64(9500), row("e2e-service-consumer", 9500)},
-		{int64(9600), row("e2e-service-consumer", 9600)},
-		{int64(9700), row("e2e-service-consumer", 9700)},
+		{int64(9500), api.Row("e2e-service-consumer", 9500)},
+		{int64(9600), api.Row("e2e-service-consumer", 9600)},
+		{int64(9700), api.Row("e2e-service-consumer", 9700)},
 	}, result)
 }

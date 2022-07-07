@@ -195,9 +195,9 @@ func TestStream_TopN(t *testing.T) {
 				api.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
 			},
 			expected: []*Tuple2{
-				{int64(9500), row("e2e-service-consumer", int64(9500))},
-				{int64(9600), row("e2e-service-consumer", int64(9600))},
-				{int64(9700), row("e2e-service-consumer", int64(9700))},
+				{int64(9500), api.Row("e2e-service-consumer", int64(9500))},
+				{int64(9600), api.Row("e2e-service-consumer", int64(9600))},
+				{int64(9700), api.Row("e2e-service-consumer", int64(9700))},
 			},
 		},
 	}
@@ -208,13 +208,13 @@ func TestStream_TopN(t *testing.T) {
 			snk := sink.NewSlice()
 
 			s := New(sources.NewSlice(tt.input)).
-				Map(func(item *record) data {
+				Map(func(item *record) api.Data {
 					// groupBy
-					return row(item.service, int64(item.value))
+					return api.Row(item.service, int64(item.value))
 				}).
 				Window(NewSlidingTimeWindows(60*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(elem interface{}) int64 {
-					return elem.(data)[1].(int64)
+					return elem.(api.Data)[1].(int64)
 				})).
 				To(snk)
 

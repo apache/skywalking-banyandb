@@ -70,8 +70,11 @@ type ResourceSchema interface {
 }
 
 type ResourceSpec struct {
-	Schema     ResourceSchema
+	Schema ResourceSchema
+	// IndexRules are index rules bound to the Schema
 	IndexRules []*databasev1.IndexRule
+	// Aggregations are topN aggregation bound to the Schema, e.g. TopNAggregation
+	Aggregations []*databasev1.TopNAggregation
 }
 
 type Resource interface {
@@ -185,8 +188,8 @@ func (sr *schemaRepo) Watcher() {
 
 func (sr *schemaRepo) StoreGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	groupSchema, err := sr.metadata.GroupRegistry().GetGroup(ctx, groupMeta.GetName())
-	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -431,14 +434,27 @@ func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	idxRules, errIndexRules := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
-	cancel()
-	if errIndexRules != nil {
-		return nil, errIndexRules
+	defer cancel()
+	idxRules, err := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
+	if err != nil {
+		return nil, err
 	}
+
+	var topNAggrs []*databasev1.TopNAggregation
+	if _, ok := resourceSchema.(*databasev1.Measure); ok {
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		var innerErr error
+		topNAggrs, innerErr = g.metadata.TopNAggregations(ctx, resourceSchema.GetMetadata())
+		cancel()
+		if innerErr != nil {
+			return nil, innerErr
+		}
+	}
+
 	sm, errTS := g.resourceSupplier.OpenResource(g.groupSchema.GetResourceOpts().ShardNum, g, ResourceSpec{
-		Schema:     resourceSchema,
-		IndexRules: idxRules,
+		Schema:       resourceSchema,
+		IndexRules:   idxRules,
+		Aggregations: topNAggrs,
 	})
 	if errTS != nil {
 		return nil, errTS

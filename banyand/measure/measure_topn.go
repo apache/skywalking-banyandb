@@ -18,17 +18,20 @@
 package measure
 
 import (
-	"context"
+	"encoding/base64"
+	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
@@ -36,8 +39,13 @@ import (
 )
 
 var (
-	_ bus.MessageListener = (*topNProcessorManager)(nil)
+	_ bus.MessageListener = (*topNProcessCallback)(nil)
+	_ io.Closer           = (*topNProcessor)(nil)
+	_ io.Closer           = (*topNProcessorManager)(nil)
 )
+
+type measureProcessorFilter func(request *measurev1.DataPointValue) bool
+type measureProcessorMapper func(request *measurev1.DataPointValue) api.Data
 
 type topNProcessor struct {
 	input         chan interface{}
@@ -45,47 +53,64 @@ type topNProcessor struct {
 	streamingFlow api.Flow
 }
 
+func (t *topNProcessor) Close() error {
+	close(t.input)
+	return nil
+}
+
+// topNProcessorManager manages multiple topNProcessor(s) belonging to a single measure
 type topNProcessorManager struct {
 	l            *logger.Logger
-	schemaRepo   *schemaRepo
+	schema       *databasev1.Measure
+	topNSchemas  []*databasev1.TopNAggregation
 	processorMap map[*commonv1.Metadata]*topNProcessor
 }
 
-func (cb *topNProcessorManager) start() error {
-	// load all topNAggregations and start processor
-	topNSchemas, err := cb.schemaRepo.metadata.TopNAggregationRegistry().ListTopNAggregation(context.TODO(), schema.ListOpt{})
-	if err != nil {
-		return err
+func (manager *topNProcessorManager) Close() error {
+	var err error
+	for _, processor := range manager.processorMap {
+		err = multierr.Append(err, processor.Close())
+	}
+	return err
+}
+
+func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) error {
+	for _, processor := range manager.processorMap {
+		processor.input <- api.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
 	}
 
-	for _, topNSchema := range topNSchemas {
-		m, innerErr := cb.schemaRepo.metadata.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetSourceMeasure())
-		if err != nil {
-			return innerErr
-		}
+	return nil
+}
+
+func (manager *topNProcessorManager) start() error {
+	for _, topNSchema := range manager.topNSchemas {
 		input := make(chan interface{})
 		streamingFlow := streaming.New(input)
 
 		if conditions := topNSchema.GetCriteria(); len(conditions) > 0 {
-			filters, buildErr := cb.buildFilters(m, conditions)
+			filters, buildErr := manager.buildFilters(conditions)
 			if buildErr != nil {
 				return buildErr
 			}
 			streamingFlow = streamingFlow.Filter(filters)
 		}
 
-		mapper, innerErr := cb.buildMapper(m, topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
-		if err != nil {
+		mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
+		if innerErr != nil {
 			return innerErr
 		}
 		streamingFlow = streamingFlow.Map(mapper)
 
 		// TODO: how to set size and slide
 		errCh := streamingFlow.Window(streaming.NewSlidingTimeWindows(60*time.Second, 25*time.Second)).
-			TopN(10, topNSchema.GetCountersNumber()).
+			TopN(int(topNSchema.GetCountersNumber()),
+				streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
+					return elem.(api.Data)[1].(int64)
+				}),
+						streaming.WithCacheSize(int(topNSchema.GetCountersNumber()))).
 			To(nil).OpenAsync() // TODO: add destination impl
 
-		cb.processorMap[topNSchema.GetSourceMeasure()] = &topNProcessor{
+		manager.processorMap[topNSchema.GetSourceMeasure()] = &topNProcessor{
 			input:         input,
 			errCh:         errCh,
 			streamingFlow: streamingFlow,
@@ -95,17 +120,17 @@ func (cb *topNProcessorManager) start() error {
 	return nil
 }
 
-func (cb *topNProcessorManager) buildFilters(m *databasev1.Measure, criteria []*modelv1.Criteria) (func(request *measurev1.WriteRequest) bool, error) {
+func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (measureProcessorFilter, error) {
 	var filters []conditionFilter
 	for _, group := range criteria {
 		tagFamilyName := group.GetTagFamilyName()
-		tagFamilyIdx := slices.IndexFunc(m.GetTagFamilies(), func(spec *databasev1.TagFamilySpec) bool {
+		tagFamilyIdx := slices.IndexFunc(manager.schema.GetTagFamilies(), func(spec *databasev1.TagFamilySpec) bool {
 			return spec.GetName() == tagFamilyName
 		})
 		if tagFamilyIdx == -1 {
 			return nil, errors.New("invalid condition: tag family not found")
 		}
-		tagSpecs := m.GetTagFamilies()[tagFamilyIdx].GetTags()
+		tagSpecs := manager.schema.GetTagFamilies()[tagFamilyIdx].GetTags()
 		for _, cond := range group.GetConditions() {
 			tagName := cond.GetName()
 			tagIdx := slices.IndexFunc(tagSpecs, func(spec *databasev1.TagSpec) bool {
@@ -114,18 +139,18 @@ func (cb *topNProcessorManager) buildFilters(m *databasev1.Measure, criteria []*
 			if tagIdx == -1 {
 				return nil, errors.New("invalid condition: tag not found")
 			}
-			filters = append(filters, cb.buildFilterForTag(tagFamilyIdx, tagIdx, cond))
+			filters = append(filters, manager.buildFilterForTag(tagFamilyIdx, tagIdx, cond))
 		}
 	}
 
 	if len(filters) == 0 {
-		return func(*measurev1.WriteRequest) bool {
+		return func(value *measurev1.DataPointValue) bool {
 			return true
 		}, nil
 	}
 
-	return func(request *measurev1.WriteRequest) bool {
-		tfs := request.GetDataPoint().GetTagFamilies()
+	return func(dataPoint *measurev1.DataPointValue) bool {
+		tfs := dataPoint.GetTagFamilies()
 		for _, f := range filters {
 			if !f.predicate(tfs) {
 				return false
@@ -135,68 +160,93 @@ func (cb *topNProcessorManager) buildFilters(m *databasev1.Measure, criteria []*
 	}, nil
 }
 
-func (cb *topNProcessorManager) buildFilterForTag(tagFamilyIdx, tagIdx int, cond *modelv1.Condition) conditionFilter {
+func (manager *topNProcessorManager) buildFilterForTag(tagFamilyIdx, tagIdx int, cond *modelv1.Condition) conditionFilter {
 	switch v := cond.GetValue().GetValue().(type) {
 	case *modelv1.TagValue_Int:
 		return &int64TagFilter{
-			tagFamilyIdx: tagFamilyIdx,
-			tagIdx:       tagIdx,
-			op:           cond.GetOp(),
-			val:          v.Int.GetValue(),
+			tagLocator: &tagLocator{
+				tagFamilyIdx: tagFamilyIdx,
+				tagIdx:       tagIdx,
+			},
+			op:  cond.GetOp(),
+			val: v.Int.GetValue(),
 		}
 	case *modelv1.TagValue_Str:
 		return &strTagFilter{
-			tagFamilyIdx: tagFamilyIdx,
-			tagIdx:       tagIdx,
-			op:           cond.GetOp(),
-			val:          v.Str.GetValue(),
+			tagLocator: &tagLocator{
+				tagFamilyIdx: tagFamilyIdx,
+				tagIdx:       tagIdx,
+			},
+			op:  cond.GetOp(),
+			val: v.Str.GetValue(),
 		}
 	case *modelv1.TagValue_Id:
 		return &idTagFilter{
-			tagFamilyIdx: tagFamilyIdx,
-			tagIdx:       tagIdx,
-			op:           cond.GetOp(),
-			val:          v.Id.GetValue(),
+			tagLocator: &tagLocator{
+				tagFamilyIdx: tagFamilyIdx,
+				tagIdx:       tagIdx,
+			},
+			op:  cond.GetOp(),
+			val: v.Id.GetValue(),
 		}
 	default:
 		return nil
 	}
 }
 
-func (cb *topNProcessorManager) buildMapper(m *databasev1.Measure, fieldName string, groupByNames ...string) (func(request *measurev1.WriteRequest) streaming.Tuple2, error) {
-	fieldIdx := slices.IndexFunc(m.GetFields(), func(spec *databasev1.FieldSpec) bool {
+func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (measureProcessorMapper, error) {
+	fieldIdx := slices.IndexFunc(manager.schema.GetFields(), func(spec *databasev1.FieldSpec) bool {
 		return spec.GetName() == fieldName
 	})
 	if fieldIdx == -1 {
 		return nil, errors.New("invalid fieldName")
 	}
-	var groupByIndices []int
-	if len(groupByNames) > 0 {
-		groupByIndices = append(groupByIndices, 0)
+	gMapper, err := newGroupMapper(manager.schema, groupByNames)
+	if err != nil {
+		return nil, err
 	}
-	return func(request *measurev1.WriteRequest) streaming.Tuple2 {
-		return streaming.Tuple2{
-			First:  nil,
-			Second: request.GetDataPoint().GetFields()[fieldIdx],
-		}
+	return func(request *measurev1.DataPointValue) api.Data {
+		return api.Row(
+			gMapper.transform(request.GetTagFamilies()),
+			// TODO we only support
+			request.GetFields()[fieldIdx].GetInt().GetValue(),
+		)
 	}, nil
 }
 
-func (cb *topNProcessorManager) Rev(message bus.Message) (resp bus.Message) {
+// topNProcessCallback listens pipeline for writing requests
+type topNProcessCallback struct {
+	l          *logger.Logger
+	schemaRepo *schemaRepo
+}
+
+func setUpStreamingProcessCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
+	return &topNProcessCallback{
+		l:          l,
+		schemaRepo: schemaRepo,
+	}
+}
+
+func (cb *topNProcessCallback) Rev(message bus.Message) (resp bus.Message) {
 	writeEvent, ok := message.Data().(*measurev1.InternalWriteRequest)
 	if !ok {
 		cb.l.Warn().Msg("invalid event data type")
 		return
 	}
 
-	// first check processor existence
-	processor, ok := cb.processorMap[writeEvent.GetRequest().GetMetadata()]
+	// first get measure existence
+	m, ok := cb.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
 	if !ok {
-		cb.l.Warn().Msg("fail to find processor for measure entity")
+		cb.l.Warn().Msg("cannot find measure definition")
 		return
 	}
 
-	processor.input <- api.NewStreamRecordWithTimestampPb(writeEvent.GetRequest(), writeEvent.GetRequest().GetDataPoint().GetTimestamp())
+	err := m.processorManager.onMeasureWrite(writeEvent.GetRequest())
+
+	if err != nil {
+		cb.l.Debug().Err(err).Msg("fail to send to the streaming processor")
+	}
+
 	return
 }
 
@@ -209,11 +259,15 @@ type conditionFilter interface {
 	predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool
 }
 
-type strTagFilter struct {
+type tagLocator struct {
 	tagFamilyIdx int
 	tagIdx       int
-	op           modelv1.Condition_BinaryOp
-	val          string
+}
+
+type strTagFilter struct {
+	*tagLocator
+	op  modelv1.Condition_BinaryOp
+	val string
 }
 
 func (f *strTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
@@ -228,10 +282,9 @@ func (f *strTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool 
 }
 
 type idTagFilter struct {
-	tagFamilyIdx int
-	tagIdx       int
-	op           modelv1.Condition_BinaryOp
-	val          string
+	*tagLocator
+	op  modelv1.Condition_BinaryOp
+	val string
 }
 
 func (f *idTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
@@ -246,10 +299,9 @@ func (f *idTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
 }
 
 type int64TagFilter struct {
-	tagFamilyIdx int
-	tagIdx       int
-	op           modelv1.Condition_BinaryOp
-	val          int64
+	*tagLocator
+	op  modelv1.Condition_BinaryOp
+	val int64
 }
 
 func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
@@ -269,4 +321,77 @@ func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) boo
 		return val < f.val
 	}
 	return false
+}
+
+type groupMapper struct {
+	groupTags []*tagLocator
+}
+
+func newGroupMapper(m *databasev1.Measure, groupByNames []string) (*groupMapper, error) {
+	groupTags := make([]*tagLocator, len(groupByNames))
+	for idx, groupByName := range groupByNames {
+		locator, err := findTagByName(m, groupByName)
+		if err != nil {
+			return nil, err
+		}
+		groupTags[idx] = locator
+	}
+	return &groupMapper{
+		groupTags: groupTags,
+	}, nil
+}
+
+func findTagByName(m *databasev1.Measure, name string) (*tagLocator, error) {
+	for i, tagFamily := range m.GetTagFamilies() {
+		for j, tag := range tagFamily.GetTags() {
+			if tag.GetName() == name {
+				return &tagLocator{
+					tagFamilyIdx: i,
+					tagIdx:       j,
+				}, nil
+			}
+		}
+	}
+	return nil, errors.New("tag not found")
+}
+
+func (m *groupMapper) transform(tagFamilies []*modelv1.TagFamilyForWrite) string {
+	bld := &strings.Builder{}
+	for i, tag := range m.groupTags {
+		bld.WriteString(stringify(tagFamilies[tag.tagFamilyIdx].GetTags()[tag.tagIdx]))
+		if i != len(m.groupTags)-1 {
+			// append a separator
+			bld.WriteString("|")
+		}
+	}
+	return bld.String()
+}
+
+func stringify(tagValue *modelv1.TagValue) string {
+	switch v := tagValue.GetValue().(type) {
+	case *modelv1.TagValue_Str:
+		return v.Str.GetValue()
+	case *modelv1.TagValue_Id:
+		return v.Id.GetValue()
+	case *modelv1.TagValue_Int:
+		return strconv.FormatInt(v.Int.GetValue(), 10)
+	case *modelv1.TagValue_BinaryData:
+		return base64.StdEncoding.EncodeToString(v.BinaryData)
+	case *modelv1.TagValue_IntArray:
+		return strings.Join(transform(v.IntArray.GetValue(), func(num int64) string {
+			return strconv.FormatInt(num, 10)
+		}), ",")
+	case *modelv1.TagValue_StrArray:
+		return strings.Join(v.StrArray.GetValue(), ",")
+	default:
+		return "<nil>"
+	}
+}
+
+func transform[I, O any](input []I, mapper func(I) O) []O {
+	output := make([]O, len(input))
+	for i := range input {
+		output[i] = mapper(input[i])
+	}
+	return output
 }

@@ -21,6 +21,8 @@ import (
 	"context"
 	"time"
 
+	"go.uber.org/multierr"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -49,6 +51,7 @@ type measure struct {
 	indexRules             []*databasev1.IndexRule
 	indexWriter            *index.Writer
 	interval               time.Duration
+	processorManager       *topNProcessorManager
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {
@@ -72,7 +75,7 @@ func (s *measure) EntityLocator() partition.EntityLocator {
 }
 
 func (s *measure) Close() error {
-	return s.indexWriter.Close()
+	return multierr.Combine(s.processorManager.Close(), s.indexWriter.Close())
 }
 
 func (s *measure) parseSpec() (err error) {
@@ -86,28 +89,42 @@ func (s *measure) parseSpec() (err error) {
 }
 
 type measureSpec struct {
-	schema     *databasev1.Measure
-	indexRules []*databasev1.IndexRule
+	schema           *databasev1.Measure
+	indexRules       []*databasev1.IndexRule
+	topNAggregations []*databasev1.TopNAggregation
 }
 
 func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
-	sm := &measure{
+	m := &measure{
 		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
 	}
-	if err := sm.parseSpec(); err != nil {
+	if err := m.parseSpec(); err != nil {
 		return nil, err
 	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 
-	sm.db = db
-	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
+	m.db = db
+	m.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:         db,
 		ShardNum:   shardNum,
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
-	return sm, nil
+
+	m.processorManager = &topNProcessorManager{
+		l:            l,
+		schema:       m.schema,
+		topNSchemas:  spec.topNAggregations,
+		processorMap: make(map[*commonv1.Metadata]*topNProcessor),
+	}
+
+	err := m.processorManager.start()
+	if err != nil {
+		return nil, err
+	}
+
+	return m, nil
 }
