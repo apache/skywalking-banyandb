@@ -83,7 +83,8 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 		deferFn()
 	})
 	DescribeTable("writes", func(measureMetadata *commonv1.Metadata, topNMetadata *commonv1.Metadata,
-		dataTextualFile string, expectDataPointsNum int) {
+		dataTextualFile string, expectDataPointsNum int,
+	) {
 		var err error
 		measure, err = svcs.measure.Measure(measureMetadata)
 		Expect(err).ShouldNot(HaveOccurred())
