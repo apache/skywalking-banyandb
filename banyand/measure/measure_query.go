@@ -44,6 +44,7 @@ type Measure interface {
 	io.Closer
 	Write(value *measurev1.DataPointValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
@@ -61,7 +62,7 @@ func (s *measure) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 		}
 		return result
 	}
-	db := s.db.SupplyTSDB()
+	db := s.databaseSupplier.SupplyTSDB()
 	if len(entity) < 1 {
 		return wrap(db.Shards()), nil
 	}
@@ -74,15 +75,31 @@ func (s *measure) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	if err != nil {
 		return nil, err
 	}
-	shard, err := db.Shard(common.ShardID(shardID))
+	shard, err := s.Shard(common.ShardID(shardID))
 	if err != nil {
 		return nil, err
 	}
-	return []tsdb.Shard{tsdb.NewScopedShard(tsdb.Entry(s.name), shard)}, nil
+	return []tsdb.Shard{shard}, nil
+}
+
+func (s *measure) CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error) {
+	wrap := func(shards []tsdb.Shard) []tsdb.Shard {
+		result := make([]tsdb.Shard, len(shards))
+		for i := 0; i < len(shards); i++ {
+			result[i] = tsdb.NewScopedShard(tsdb.Entry(formatMeasureCompanionPrefix(s.name, metadata.GetName())), shards[i])
+		}
+		return result
+	}
+	db := s.databaseSupplier.SupplyTSDB()
+	return wrap(db.Shards()), nil
+}
+
+func formatMeasureCompanionPrefix(measureName, name string) string {
+	return measureName + "." + name
 }
 
 func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
-	shard, err := s.db.SupplyTSDB().Shard(id)
+	shard, err := s.databaseSupplier.SupplyTSDB().Shard(id)
 	if err != nil {
 		return nil, err
 	}

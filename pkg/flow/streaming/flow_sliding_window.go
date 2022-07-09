@@ -205,6 +205,7 @@ func (s *SlidingTimeWindows) receive() {
 		heap.Push(s.queue, item)
 		s.queueMu.Unlock()
 	}
+	close(s.purgedWindow)
 	close(s.done)
 	close(s.out)
 }

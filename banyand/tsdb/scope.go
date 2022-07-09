@@ -87,5 +87,5 @@ func (sdd *scopedSeriesDatabase) Get(entity Entity) (Series, error) {
 }
 
 func (sdd *scopedSeriesDatabase) List(path Path) (SeriesList, error) {
-	return sdd.delegated.List(path.Prepand(sdd.scope))
+	return sdd.delegated.List(path.Prepend(sdd.scope))
 }

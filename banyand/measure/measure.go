@@ -46,7 +46,7 @@ type measure struct {
 	schema   *databasev1.Measure
 	// maxObservedModRevision is the max observed revision of index rules in the spec
 	maxObservedModRevision int64
-	db                     tsdb.Supplier
+	databaseSupplier       tsdb.Supplier
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
 	indexWriter            *index.Writer
@@ -106,7 +106,7 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 
-	m.db = db
+	m.databaseSupplier = db
 	m.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:         db,
 		ShardNum:   shardNum,
@@ -116,7 +116,7 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 
 	m.processorManager = &topNProcessorManager{
 		l:            l,
-		schema:       m.schema,
+		m:            m,
 		topNSchemas:  spec.topNAggregations,
 		processorMap: make(map[*commonv1.Metadata]*topNProcessor),
 	}

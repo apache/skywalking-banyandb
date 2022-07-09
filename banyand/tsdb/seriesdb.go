@@ -106,18 +106,18 @@ func (p *Path) extractPrefix() {
 	}
 }
 
-func (p Path) Prepand(entry Entry) Path {
+func (p Path) Prepend(entry Entry) Path {
 	e := Hash(entry)
-	prepand := func(src []byte, entry []byte) []byte {
+	prependFunc := func(src []byte, entry []byte) []byte {
 		dst := make([]byte, len(src)+len(entry))
 		copy(dst, entry)
 		copy(dst[len(entry):], src)
 		return dst
 	}
-	p.template = prepand(p.template, e)
+	p.template = prependFunc(p.template, e)
 	p.offset += len(e)
 	p.extractPrefix()
-	p.mask = prepand(p.mask, maxIntBytes)
+	p.mask = prependFunc(p.mask, maxIntBytes)
 	return p
 }
 
@@ -291,8 +291,11 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 	return sdb, nil
 }
 
+// HashEntity runs hash function (e.g. with xxhash algorithm) on each segment of the Entity,
+// and concatenates all uint64 in byte array. So the return length of the byte array will be
+// 8 (every uint64 has 8 bytes) * length of the input entity.
 func HashEntity(entity Entity) []byte {
-	result := make(Entry, 0, len(entity)*8)
+	result := make([]byte, 0, len(entity)*8)
 	for _, entry := range entity {
 		result = append(result, Hash(entry)...)
 	}
@@ -300,7 +303,7 @@ func HashEntity(entity Entity) []byte {
 }
 
 func SeriesID(entity Entity) common.SeriesID {
-	return common.SeriesID(convert.Hash((HashEntity(entity))))
+	return common.SeriesID(convert.Hash(HashEntity(entity)))
 }
 
 func Hash(entry []byte) []byte {
