@@ -46,6 +46,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	timeBucketFormat = "202207111141"
+)
+
 var (
 	_ bus.MessageListener = (*topNProcessCallback)(nil)
 	_ io.Closer           = (*topNProcessor)(nil)
@@ -61,6 +65,7 @@ type (
 type topNProcessor struct {
 	l                *logger.Logger
 	shardNum         uint32
+	interval         time.Duration
 	topNSchema       *databasev1.TopNAggregation
 	databaseSupplier tsdb.Supplier
 	src              chan interface{}
@@ -106,7 +111,11 @@ func (t *topNProcessor) Close() error {
 }
 
 func (t *topNProcessor) write(record api.StreamRecord) error {
-	entity, shardID, err := t.locate()
+	// eventTime is the start time of a timeWindow
+	eventTime := time.UnixMilli(record.TimestampMillis())
+	// down-sampling to a time bucket as measure ID
+	timeBucket := t.downSampleTimeBucket(eventTime)
+	entity, shardID, err := t.locate(timeBucket)
 	if err != nil {
 		return err
 	}
@@ -118,8 +127,7 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 	if err != nil {
 		return err
 	}
-	startTs := time.UnixMilli(record.TimestampMillis())
-	span, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(startTs, 0))
+	span, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(eventTime, 0))
 	if err != nil {
 		if span != nil {
 			_ = span.Close()
@@ -127,9 +135,16 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 		return err
 	}
 	writeFn := func() (tsdb.Writer, error) {
-		builder := span.WriterBuilder().Time(startTs)
+		builder := span.WriterBuilder().Time(eventTime)
 		virtualFamily := &modelv1.TagFamilyForWrite{
 			Tags: []*modelv1.TagValue{
+				{
+					Value: &modelv1.TagValue_Id{
+						Id: &modelv1.ID{
+							Value: timeBucket,
+						},
+					},
+				},
 				{
 					Value: &modelv1.TagValue_BinaryData{
 						BinaryData: nil, // TODO: how to serialize result set
@@ -148,9 +163,9 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 		}
 		_, errWrite = writer.Write()
 		t.l.Debug().
-			Time("ts", startTs).
-			Int("ts_nano", startTs.Nanosecond()).
-			Interface("data", record).
+			Time("ts", eventTime).
+			Int("ts_nano", eventTime.Nanosecond()).
+			Interface("data", record.Data()).
 			Uint64("series_id", uint64(series.ID())).
 			Uint64("item_id", uint64(writer.ItemID().ID)).
 			Int("shard_id", int(shardID)).
@@ -165,10 +180,18 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 	return span.Close()
 }
 
-func (t *topNProcessor) locate() (tsdb.Entity, common.ShardID, error) {
-	entity := make(tsdb.Entity, 1)
+func (t *topNProcessor) downSampleTimeBucket(eventTime time.Time) string {
+	return time.UnixMilli(eventTime.UnixMilli() - eventTime.UnixMilli()%t.interval.Milliseconds()).
+		Format(timeBucketFormat)
+}
+
+func (t *topNProcessor) locate(measureID string) (tsdb.Entity, common.ShardID, error) {
+	entity := make(tsdb.Entity, 2)
+	// entity prefix
 	entity[0] = []byte(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
+	// measureID as sharding key
+	entity[1] = []byte(measureID)
 	id, err := partition.ShardID(entity.Marshal(), t.shardNum)
 	if err != nil {
 		return nil, 0, err
@@ -222,6 +245,7 @@ func (manager *topNProcessorManager) start() error {
 		processor := &topNProcessor{
 			l:                manager.l,
 			shardNum:         manager.m.shardNum,
+			interval:         manager.m.interval,
 			topNSchema:       topNSchema,
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
