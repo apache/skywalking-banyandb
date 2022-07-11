@@ -20,34 +20,75 @@ package streaming
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
-	"github.com/stretchr/testify/assert"
-
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 )
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
-	assert := assert.New(t)
-	topN := &topNAggregator{
-		topNum:    3,
-		cacheSize: 5,
-		treeMap:   treemap.NewWith(utils.Int64Comparator),
-		sortKeyExtractor: func(elem interface{}) int64 {
-			return int64(elem.(api.Data)[1].(int))
+	input := []interface{}{
+		api.Row("e2e-service-provider", 10000),
+		api.Row("e2e-service-consumer", 9900),
+		api.Row("e2e-service-provider", 9800),
+		api.Row("e2e-service-consumer", 9700),
+		api.Row("e2e-service-provider", 9700),
+		api.Row("e2e-service-consumer", 9600),
+		api.Row("e2e-service-consumer", 9800),
+		api.Row("e2e-service-consumer", 9500),
+	}
+	tests := []struct {
+		name     string
+		sort     modelv1.Sort
+		expected []*Tuple2
+	}{
+		{
+			name: "DESC",
+			sort: modelv1.Sort_SORT_DESC,
+			expected: []*Tuple2{
+				{int64(10000), api.Row("e2e-service-provider", 10000)},
+				{int64(9900), api.Row("e2e-service-consumer", 9900)},
+				{int64(9800), api.Row("e2e-service-provider", 9800)},
+			},
+		},
+		{
+			name: "ASC",
+			sort: modelv1.Sort_SORT_ASC,
+			expected: []*Tuple2{
+				{int64(9500), api.Row("e2e-service-consumer", 9500)},
+				{int64(9600), api.Row("e2e-service-consumer", 9600)},
+				{int64(9700), api.Row("e2e-service-consumer", 9700)},
+			},
 		},
 	}
-
-	topN.Add([]interface{}{api.Row("e2e-service-provider", 10000), api.Row("e2e-service-consumer", 9900)})
-	topN.Add([]interface{}{api.Row("e2e-service-provider", 9800), api.Row("e2e-service-consumer", 9700)})
-	topN.Add([]interface{}{api.Row("e2e-service-provider", 9700), api.Row("e2e-service-consumer", 9600)})
-	topN.Add([]interface{}{api.Row("e2e-service-provider", 9800), api.Row("e2e-service-consumer", 9500)})
-
-	result := topN.GetResult()
-	assert.Len(result, 3)
-	assert.Equal([]*Tuple2{
-		{int64(9500), api.Row("e2e-service-consumer", 9500)},
-		{int64(9600), api.Row("e2e-service-consumer", 9600)},
-		{int64(9700), api.Row("e2e-service-consumer", 9700)},
-	}, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			var comparator utils.Comparator
+			if tt.sort == modelv1.Sort_SORT_DESC {
+				comparator = func(a, b interface{}) int {
+					return utils.Int64Comparator(b, a)
+				}
+			} else {
+				comparator = utils.Int64Comparator
+			}
+			topN := &topNAggregator{
+				cacheSize:  3,
+				sort:       tt.sort,
+				comparator: comparator,
+				treeMap:    treemap.NewWith(comparator),
+				sortKeyExtractor: func(elem interface{}) int64 {
+					return int64(elem.(api.Data)[1].(int))
+				},
+			}
+			for _, item := range input {
+				topN.Add([]interface{}{item})
+			}
+			result := topN.GetResult()
+			require.Len(result, 3)
+			require.Equal(tt.expected, result)
+		})
+	}
 }

@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ import (
 
 const (
 	timeBucketFormat = "202207111141"
+	TopNTagFamily    = "__topN__"
 )
 
 var (
@@ -136,6 +138,11 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 	}
 	writeFn := func() (tsdb.Writer, error) {
 		builder := span.WriterBuilder().Time(eventTime)
+		// TODO: use JSON or others?
+		payload, errJSONMarshal := json.Marshal(record.Data().([]*streaming.Tuple2))
+		if errJSONMarshal != nil {
+			return nil, errJSONMarshal
+		}
 		virtualFamily := &modelv1.TagFamilyForWrite{
 			Tags: []*modelv1.TagValue{
 				{
@@ -147,7 +154,7 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 				},
 				{
 					Value: &modelv1.TagValue_BinaryData{
-						BinaryData: nil, // TODO: how to serialize result set
+						BinaryData: payload,
 					},
 				},
 			},
@@ -156,7 +163,7 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 		if errMarshal != nil {
 			return nil, errMarshal
 		}
-		builder.Family(familyIdentity("__topN__", TagFlag), payload)
+		builder.Family(familyIdentity(TopNTagFamily, TagFlag), payload)
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
@@ -224,6 +231,14 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 }
 
 func (manager *topNProcessorManager) start() error {
+	interval := manager.m.interval
+	// use 40% of the data point interval as the flush interval,
+	// which means roughly the record located in the same time bucket will be persistent twice.
+	// |---------------------------------|
+	// |    40%     |    40%     |  20%  |
+	// |          flush        flush     |
+	// |---------------------------------|
+	slideSize := time.Duration(float64(interval.Nanoseconds()) * 0.4)
 	for _, topNSchema := range manager.topNSchemas {
 		srcCh := make(chan interface{})
 		streamingFlow := streaming.New(srcCh)
@@ -245,7 +260,7 @@ func (manager *topNProcessorManager) start() error {
 		processor := &topNProcessor{
 			l:                manager.l,
 			shardNum:         manager.m.shardNum,
-			interval:         manager.m.interval,
+			interval:         interval,
 			topNSchema:       topNSchema,
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
@@ -253,14 +268,12 @@ func (manager *topNProcessorManager) start() error {
 			streamingFlow:    streamingFlow,
 		}
 
-		// TODO: how to set size and slide
-		processor.errCh = streamingFlow.Window(streaming.NewSlidingTimeWindows(60*time.Second, 25*time.Second)).
+		processor.errCh = streamingFlow.Window(streaming.NewSlidingTimeWindows(interval, slideSize)).
 			TopN(int(topNSchema.GetCountersNumber()),
 				streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
 					return elem.(api.Data)[1].(int64)
-				}),
-							streaming.WithCacheSize(int(topNSchema.GetCountersNumber()))).
-			To(processor).OpenAsync() // TODO: add destination impl
+				}), streaming.OrderBy(topNSchema.GetFieldValueSort())).
+			To(processor).OpenAsync()
 
 		manager.processorMap[topNSchema.GetSourceMeasure()] = processor
 	}
