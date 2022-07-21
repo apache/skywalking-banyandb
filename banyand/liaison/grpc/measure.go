@@ -106,4 +106,23 @@ func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.Que
 	return &measurev1.QueryResponse{DataPoints: queryMsg}, nil
 }
 
-// TODO: implement topN
+func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNRequest) (*measurev1.TopNResponse, error) {
+	if err := timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
+	}
+
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), topNRequest)
+	feat, errQuery := ms.pipeline.Publish(data.TopicTopNQuery, message)
+	if errQuery != nil {
+		return nil, errQuery
+	}
+	msg, errFeat := feat.Get()
+	if errFeat != nil {
+		return nil, errFeat
+	}
+	queryResp, ok := msg.Data().([]*measurev1.TopNList)
+	if !ok {
+		return nil, ErrQueryMsg
+	}
+	return &measurev1.TopNResponse{Lists: queryResp}, nil
+}
