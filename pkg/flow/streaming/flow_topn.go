@@ -138,12 +138,12 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 }
 
 type Tuple2 struct {
-	First  interface{} `json:"first"`
-	Second interface{} `json:"second"`
+	V1 interface{} `json:"v1"`
+	V2 interface{} `json:"v2"`
 }
 
 func (t *Tuple2) Equal(other *Tuple2) bool {
-	return cmp.Equal(t.First, other.First) && cmp.Equal(t.Second, other.Second)
+	return cmp.Equal(t.V1, other.V1) && cmp.Equal(t.V2, other.V2)
 }
 
 func (t *topNAggregator) GetResult() interface{} {

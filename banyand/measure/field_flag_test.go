@@ -26,7 +26,7 @@ import (
 )
 
 func TestEncodeFieldFlag(t *testing.T) {
-	flag := encoderFieldFlag(&databasev1.FieldSpec{
+	flag := EncoderFieldFlag(&databasev1.FieldSpec{
 		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 	}, time.Minute)

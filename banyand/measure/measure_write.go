@@ -137,7 +137,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			if data == nil {
 				continue
 			}
-			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), encoderFieldFlag(fieldSpec, s.interval)), data)
+			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), EncoderFieldFlag(fieldSpec, s.interval)), data)
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
@@ -219,7 +219,7 @@ func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
 	return nil
 }
 
-func decodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
+func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
 	switch fieldSpec.GetFieldType() {
 	case databasev1.FieldType_FIELD_TYPE_STRING:
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}

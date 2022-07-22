@@ -20,7 +20,6 @@ package measure
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -54,9 +53,16 @@ const (
 
 var (
 	_ bus.MessageListener = (*topNProcessCallback)(nil)
-	_ io.Closer           = (*topNProcessor)(nil)
+	_ io.Closer           = (*topNStreamingProcessor)(nil)
 	_ io.Closer           = (*topNProcessorManager)(nil)
-	_ streamingApi.Sink   = (*topNProcessor)(nil)
+	_ streamingApi.Sink   = (*topNStreamingProcessor)(nil)
+
+	TopNValueFieldSpec = &databasev1.FieldSpec{
+		Name:              "value",
+		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
+		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+	}
 )
 
 type (
@@ -64,7 +70,7 @@ type (
 	measureProcessorMapper func(request *measurev1.DataPointValue) api.Data
 )
 
-type topNProcessor struct {
+type topNStreamingProcessor struct {
 	l                *logger.Logger
 	shardNum         uint32
 	interval         time.Duration
@@ -76,16 +82,16 @@ type topNProcessor struct {
 	streamingFlow    api.Flow
 }
 
-func (t *topNProcessor) In() chan<- interface{} {
+func (t *topNStreamingProcessor) In() chan<- interface{} {
 	return t.in
 }
 
-func (t *topNProcessor) Setup(ctx context.Context) error {
+func (t *topNStreamingProcessor) Setup(ctx context.Context) error {
 	go t.run(ctx)
 	return nil
 }
 
-func (t *topNProcessor) run(ctx context.Context) {
+func (t *topNStreamingProcessor) run(ctx context.Context) {
 	for {
 		select {
 		case item, open := <-t.in:
@@ -93,7 +99,7 @@ func (t *topNProcessor) run(ctx context.Context) {
 				return
 			}
 			if record, ok := item.(api.StreamRecord); ok {
-				if err := t.write(record); err != nil {
+				if err := t.writeStreamRecord(record); err != nil {
 					t.l.Err(err).Msg("fail to write stream record")
 				}
 			}
@@ -103,21 +109,35 @@ func (t *topNProcessor) run(ctx context.Context) {
 	}
 }
 
-func (t *topNProcessor) Teardown(ctx context.Context) error {
+func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func (t *topNProcessor) Close() error {
+func (t *topNStreamingProcessor) Close() error {
 	close(t.src)
 	return nil
 }
 
-func (t *topNProcessor) write(record api.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(record api.StreamRecord) error {
+	tuples, ok := record.Data().([]*streaming.Tuple2)
+	if !ok {
+		return errors.New("invalid data type")
+	}
 	// eventTime is the start time of a timeWindow
 	eventTime := time.UnixMilli(record.TimestampMillis())
 	// down-sampling to a time bucket as measure ID
 	timeBucket := t.downSampleTimeBucket(eventTime)
-	entity, shardID, err := t.locate(timeBucket)
+	var err error
+	for _, tuple := range tuples {
+		fieldValue := tuple.V1.(int64)
+		data := tuple.V2.(api.Data)
+		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data))
+	}
+	return err
+}
+
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data api.Data) error {
+	entity, shardID, err := t.locate(data[2].([]*modelv1.TagValue))
 	if err != nil {
 		return err
 	}
@@ -138,32 +158,31 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 	}
 	writeFn := func() (tsdb.Writer, error) {
 		builder := span.WriterBuilder().Time(eventTime)
-		// TODO: use JSON or others?
-		payload, errJSONMarshal := json.Marshal(record.Data().([]*streaming.Tuple2))
-		if errJSONMarshal != nil {
-			return nil, errJSONMarshal
-		}
-		virtualFamily := &modelv1.TagFamilyForWrite{
+		virtualTagFamily := &modelv1.TagFamilyForWrite{
 			Tags: []*modelv1.TagValue{
 				{
 					Value: &modelv1.TagValue_Id{
 						Id: &modelv1.ID{
-							Value: timeBucket,
+							Value: data[0].(string) + "_" + timeBucket,
 						},
-					},
-				},
-				{
-					Value: &modelv1.TagValue_BinaryData{
-						BinaryData: payload,
 					},
 				},
 			},
 		}
-		payload, errMarshal := proto.Marshal(virtualFamily)
+		payload, errMarshal := proto.Marshal(virtualTagFamily)
 		if errMarshal != nil {
 			return nil, errMarshal
 		}
 		builder.Family(familyIdentity(TopNTagFamily, TagFlag), payload)
+		virtualFieldValue := &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_Int{
+				Int: &modelv1.Int{
+					Value: fieldValue,
+				},
+			},
+		}
+		fieldData := encodeFieldValue(virtualFieldValue)
+		builder.Family(familyIdentity(TopNValueFieldSpec.GetName(), EncoderFieldFlag(TopNValueFieldSpec, t.interval)), fieldData)
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
@@ -172,7 +191,6 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 		t.l.Debug().
 			Time("ts", eventTime).
 			Int("ts_nano", eventTime.Nanosecond()).
-			Interface("data", record.Data()).
 			Uint64("series_id", uint64(series.ID())).
 			Uint64("item_id", uint64(writer.ItemID().ID)).
 			Int("shard_id", int(shardID)).
@@ -187,18 +205,27 @@ func (t *topNProcessor) write(record api.StreamRecord) error {
 	return span.Close()
 }
 
-func (t *topNProcessor) downSampleTimeBucket(eventTime time.Time) string {
+func (t *topNStreamingProcessor) downSampleTimeBucket(eventTime time.Time) string {
 	return time.UnixMilli(eventTime.UnixMilli() - eventTime.UnixMilli()%t.interval.Milliseconds()).
 		Format(timeBucketFormat)
 }
 
-func (t *topNProcessor) locate(measureID string) (tsdb.Entity, common.ShardID, error) {
-	entity := make(tsdb.Entity, 2)
+func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue) (tsdb.Entity, common.ShardID, error) {
+	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
+		return nil, 0, errors.New("no enough tag values for the entity")
+	}
+	entity := make(tsdb.Entity, 1+len(t.topNSchema.GetGroupByTagNames()))
 	// entity prefix
 	entity[0] = []byte(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
 	// measureID as sharding key
-	entity[1] = []byte(measureID)
+	for idx, tagVal := range tagValues {
+		var innerErr error
+		entity[idx+1], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
+		if innerErr != nil {
+			return nil, 0, innerErr
+		}
+	}
 	id, err := partition.ShardID(entity.Marshal(), t.shardNum)
 	if err != nil {
 		return nil, 0, err
@@ -206,12 +233,12 @@ func (t *topNProcessor) locate(measureID string) (tsdb.Entity, common.ShardID, e
 	return entity, common.ShardID(id), nil
 }
 
-// topNProcessorManager manages multiple topNProcessor(s) belonging to a single measure
+// topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure
 type topNProcessorManager struct {
 	l            *logger.Logger
 	m            *measure
 	topNSchemas  []*databasev1.TopNAggregation
-	processorMap map[*commonv1.Metadata]*topNProcessor
+	processorMap map[*commonv1.Metadata]*topNStreamingProcessor
 }
 
 func (manager *topNProcessorManager) Close() error {
@@ -257,7 +284,7 @@ func (manager *topNProcessorManager) start() error {
 		}
 		streamingFlow = streamingFlow.Map(mapper)
 
-		processor := &topNProcessor{
+		processor := &topNStreamingProcessor{
 			l:                manager.l,
 			shardNum:         manager.m.shardNum,
 			interval:         interval,
@@ -272,8 +299,9 @@ func (manager *topNProcessorManager) start() error {
 			TopN(int(topNSchema.GetCountersNumber()),
 				streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
 					return elem.(api.Data)[1].(int64)
-				}), streaming.OrderBy(topNSchema.GetFieldValueSort())).
-			To(processor).OpenAsync()
+				}),
+				streaming.OrderBy(topNSchema.GetFieldValueSort()),
+			).To(processor).OpenAsync()
 
 		manager.processorMap[topNSchema.GetSourceMeasure()] = processor
 	}
@@ -357,11 +385,17 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	}
 	return func(request *measurev1.DataPointValue) api.Data {
 		return api.Row(
+			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
 				return stringify(request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
 			}), "|"),
+			// field value as v2
 			// TODO: we only support int64
 			request.GetFields()[fieldIdx].GetInt().GetValue(),
+			// groupBy tag values as v3
+			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
+				return request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
+			}),
 		)
 	}, nil
 }
@@ -469,8 +503,10 @@ func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) boo
 	return false
 }
 
+// groupTagsLocator can be used to locate tags within families
 type groupTagsLocator []partition.TagLocator
 
+// newGroupLocator generates a groupTagsLocator which strictly preserve the order of groupByNames
 func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLocator, error) {
 	groupTags := make([]partition.TagLocator, 0, len(groupByNames))
 	for _, groupByName := range groupByNames {

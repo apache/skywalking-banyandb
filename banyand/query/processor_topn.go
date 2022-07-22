@@ -21,12 +21,14 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"encoding/json"
 	"math"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -43,49 +45,57 @@ type topNQueryProcessor struct {
 }
 
 func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	topNQueryCriteria, ok := message.Data().(*measurev1.TopNRequest)
+	request, ok := message.Data().(*measurev1.TopNRequest)
 	if !ok {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
 	t.log.Info().Msg("received a topN query event")
-	meta := topNQueryCriteria.GetMetadata()
-	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), meta)
+	topNMetadata := request.GetMetadata()
+	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
 	if err != nil {
 		t.log.Error().Err(err).
-			Str("topN", meta.GetName()).
+			Str("topN", topNMetadata.GetName()).
 			Msg("fail to get execution context")
 		return
 	}
 	sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
 	if err != nil {
 		t.log.Error().Err(err).
-			Str("topN", meta.GetName()).
+			Str("topN", topNMetadata.GetName()).
 			Msg("fail to find source measure")
 		return
 	}
-	shards, err := sourceMeasure.CompanionShards(meta)
+	shards, err := sourceMeasure.CompanionShards(topNMetadata)
 	if err != nil {
 		t.log.Error().Err(err).
-			Str("topN", meta.GetName()).
+			Str("topN", topNMetadata.GetName()).
 			Msg("fail to list shards")
 		return
 	}
-	aggregator := createTopNAggregator(topNQueryCriteria.GetTopN(),
-		topNQueryCriteria.GetAgg(), topNQueryCriteria.GetFieldValueSort())
+	aggregator := createTopNPostAggregator(request.GetTopN(),
+		request.GetAgg(), request.GetFieldValueSort())
+	entity, err := locateEntity(topNSchema, request.GetConditions())
+	if err != nil {
+		t.log.Error().Err(err).
+			Str("topN", topNMetadata.GetName()).
+			Msg("fail to parse entity")
+		return
+	}
 	for _, shard := range shards {
-		sl, innerErr := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry}))
+		// TODO: support condition
+		sl, innerErr := shard.Series().List(tsdb.NewPath(entity))
 		if innerErr != nil {
 			t.log.Error().Err(innerErr).
-				Str("topN", meta.GetName()).
+				Str("topN", topNMetadata.GetName()).
 				Msg("fail to list series")
 			return
 		}
 		for _, series := range sl {
-			iters, scanErr := t.scanSeries(series, topNQueryCriteria)
+			iters, scanErr := t.scanSeries(series, request)
 			if scanErr != nil {
 				t.log.Error().Err(innerErr).
-					Str("topN", meta.GetName()).
+					Str("topN", topNMetadata.GetName()).
 					Msg("fail to scan series")
 				return
 			}
@@ -95,16 +105,14 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 				}(iter)
 				for {
 					if item, hasNext := iter.Next(); hasNext {
-						tuples, parseErr := parseTopNFamily(item)
+						tuple, parseErr := parseTopNFamily(item, sourceMeasure.GetInterval())
 						if parseErr != nil {
 							t.log.Error().Err(parseErr).
-								Str("topN", meta.GetName()).
+								Str("topN", topNMetadata.GetName()).
 								Msg("fail to parse topN family")
 							return
 						}
-						for _, tuple := range tuples {
-							_ = aggregator.put(tuple.First.(string), tuple.Second.(int64))
-						}
+						_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64))
 					} else {
 						break
 					}
@@ -113,7 +121,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}
 
-	itemLen := int(math.Min(float64(topNQueryCriteria.GetTopN()), float64(aggregator.Len())))
+	itemLen := int(math.Min(float64(request.GetTopN()), float64(aggregator.Len())))
 	topNItems := make([]*measurev1.TopNList_Item, 0, itemLen)
 
 	for _, item := range aggregator.items[0:itemLen] {
@@ -133,7 +141,35 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func parseTopNFamily(item tsdb.Item) ([]*streaming.Tuple2, error) {
+func locateEntity(topNSchema *databasev1.TopNAggregation, conditions []*modelv1.Condition) (tsdb.Entity, error) {
+	entityMap := make(map[string]int)
+	entity := make([]tsdb.Entry, len(topNSchema.GetGroupByTagNames()))
+	for idx, tagName := range topNSchema.GetGroupByTagNames() {
+		entityMap[tagName] = idx
+		// fill AnyEntry by default
+		entity[idx] = tsdb.AnyEntry
+	}
+	for _, pairQuery := range conditions {
+		// TODO: check op?
+		if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
+			switch v := pairQuery.GetValue().GetValue().(type) {
+			case *modelv1.TagValue_Str:
+				entity[entityIdx] = []byte(v.Str.GetValue())
+			case *modelv1.TagValue_Id:
+				entity[entityIdx] = []byte(v.Id.GetValue())
+			case *modelv1.TagValue_Int:
+				entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
+			default:
+				return nil, errors.New("unsupported condition tag type for entity")
+			}
+			continue
+		}
+		return nil, errors.New("only groupBy tag name is supported")
+	}
+	return entity, nil
+}
+
+func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2, error) {
 	familyRawBytes, err := item.Family(familyIdentity(measure.TopNTagFamily, measure.TagFlag))
 	if err != nil {
 		return nil, err
@@ -143,12 +179,16 @@ func parseTopNFamily(item tsdb.Item) ([]*streaming.Tuple2, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tuples []*streaming.Tuple2
-	err = json.Unmarshal(tagFamily.GetTags()[1].GetBinaryData(), &tuples)
+	fieldBytes, err := item.Family(familyIdentity(measure.TopNValueFieldSpec.GetName(),
+		measure.EncoderFieldFlag(measure.TopNValueFieldSpec, interval)))
 	if err != nil {
 		return nil, err
 	}
-	return tuples, nil
+	fieldValue := measure.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
+	return &streaming.Tuple2{
+		V1: tagFamily.GetTags()[0].GetId().GetValue(),
+		V2: fieldValue.GetInt().GetValue(),
+	}, nil
 }
 
 func familyIdentity(name string, flag []byte) []byte {
@@ -174,7 +214,7 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 }
 
 var (
-	_ heap.Interface = (*topNAggregator)(nil)
+	_ heap.Interface = (*topNPostAggregator)(nil)
 )
 
 type topNAggregatorItem struct {
@@ -183,7 +223,7 @@ type topNAggregatorItem struct {
 	index     int
 }
 
-type topNAggregator struct {
+type topNPostAggregator struct {
 	topN     int32
 	sort     modelv1.Sort
 	aggrFunc modelv1.AggregationFunction
@@ -191,31 +231,31 @@ type topNAggregator struct {
 	cache    map[string]*topNAggregatorItem
 }
 
-func (aggr topNAggregator) Len() int {
+func (aggr topNPostAggregator) Len() int {
 	return len(aggr.items)
 }
 
-func (aggr topNAggregator) Less(i, j int) bool {
+func (aggr topNPostAggregator) Less(i, j int) bool {
 	if aggr.sort == modelv1.Sort_SORT_DESC {
 		return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
 	}
 	return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
 }
 
-func (aggr *topNAggregator) Swap(i, j int) {
+func (aggr *topNPostAggregator) Swap(i, j int) {
 	aggr.items[i], aggr.items[j] = aggr.items[j], aggr.items[i]
 	aggr.items[i].index = i
 	aggr.items[j].index = j
 }
 
-func (aggr *topNAggregator) Push(x any) {
+func (aggr *topNPostAggregator) Push(x any) {
 	n := len(aggr.items)
 	item := x.(*topNAggregatorItem)
 	item.index = n
 	aggr.items = append(aggr.items, item)
 }
 
-func (aggr *topNAggregator) Pop() any {
+func (aggr *topNPostAggregator) Pop() any {
 	old := aggr.items
 	n := len(old)
 	item := old[n-1]
@@ -225,8 +265,8 @@ func (aggr *topNAggregator) Pop() any {
 	return item
 }
 
-func createTopNAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) *topNAggregator {
-	aggregator := &topNAggregator{
+func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) *topNPostAggregator {
+	aggregator := &topNPostAggregator{
 		topN:     topN,
 		sort:     sort,
 		aggrFunc: aggrFunc,
@@ -236,7 +276,7 @@ func createTopNAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort
 	return aggregator
 }
 
-func (aggr *topNAggregator) put(key string, val int64) error {
+func (aggr *topNPostAggregator) put(key string, val int64) error {
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
 		heap.Fix(aggr, item.index)
@@ -250,6 +290,7 @@ func (aggr *topNAggregator) put(key string, val int64) error {
 		key:       key,
 		int64Func: aggrFunc,
 	}
+	item.int64Func.In(val)
 	aggr.cache[key] = item
 	heap.Push(aggr, item)
 	return nil

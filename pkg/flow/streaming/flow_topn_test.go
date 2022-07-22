@@ -20,24 +20,27 @@ package streaming
 import (
 	"testing"
 
+	"github.com/emirpasic/gods/maps/treemap"
+	"github.com/emirpasic/gods/utils"
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
-	"github.com/emirpasic/gods/maps/treemap"
-	"github.com/emirpasic/gods/utils"
 )
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
 	input := []interface{}{
-		api.Row("e2e-service-provider", 10000),
-		api.Row("e2e-service-consumer", 9900),
-		api.Row("e2e-service-provider", 9800),
-		api.Row("e2e-service-consumer", 9700),
-		api.Row("e2e-service-provider", 9700),
-		api.Row("e2e-service-consumer", 9600),
-		api.Row("e2e-service-consumer", 9800),
-		api.Row("e2e-service-consumer", 9500),
+		// 1. string
+		// 2. number
+		// 3. slices of groupBy values
+		api.Row("e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}),
+		api.Row("e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}),
+		api.Row("e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}),
+		api.Row("e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}),
+		api.Row("e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}),
+		api.Row("e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}),
+		api.Row("e2e-service-consumer", 9800, []interface{}{"e2e-service-consumer"}),
+		api.Row("e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}),
 	}
 	tests := []struct {
 		name     string
@@ -48,18 +51,18 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			name: "DESC",
 			sort: modelv1.Sort_SORT_DESC,
 			expected: []*Tuple2{
-				{int64(10000), api.Row("e2e-service-provider", 10000)},
-				{int64(9900), api.Row("e2e-service-consumer", 9900)},
-				{int64(9800), api.Row("e2e-service-provider", 9800)},
+				{int64(10000), api.Row("e2e-service-provider", 10000, []interface{}{"e2e-service-provider"})},
+				{int64(9900), api.Row("e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"})},
+				{int64(9800), api.Row("e2e-service-provider", 9800, []interface{}{"e2e-service-provider"})},
 			},
 		},
 		{
 			name: "ASC",
 			sort: modelv1.Sort_SORT_ASC,
 			expected: []*Tuple2{
-				{int64(9500), api.Row("e2e-service-consumer", 9500)},
-				{int64(9600), api.Row("e2e-service-consumer", 9600)},
-				{int64(9700), api.Row("e2e-service-consumer", 9700)},
+				{int64(9500), api.Row("e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"})},
+				{int64(9600), api.Row("e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"})},
+				{int64(9700), api.Row("e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"})},
 			},
 		},
 	}

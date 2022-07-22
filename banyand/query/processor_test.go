@@ -50,10 +50,8 @@ import (
 )
 
 var (
-	svcs         *services
-	deferFn      func()
-	streamSchema stream.Stream
-	sT, eT       time.Time
+	svcs    *services
+	deferFn func()
 )
 
 // BeforeSuite - Init logger
@@ -64,15 +62,6 @@ var _ = BeforeSuite(func() {
 	})).To(Succeed())
 
 	svcs, deferFn = setUpServices()
-	var err error
-	streamSchema, err = svcs.stream.Stream(&commonv1.Metadata{
-		Name:  "sw",
-		Group: "default",
-	})
-	Expect(err).ShouldNot(HaveOccurred())
-	baseTs := setUpStreamQueryData("multiple_shards.json", streamSchema)
-
-	sT, eT = baseTs, baseTs.Add(1*time.Hour)
 })
 
 var _ = AfterSuite(func() {
@@ -180,7 +169,22 @@ func setUpStreamQueryData(dataFile string, stream stream.Stream) (baseTime time.
 	return baseTime
 }
 
-var _ = Describe("Stream Query", func() {
+var _ = Describe("Stream Query", Ordered, func() {
+	var streamSchema stream.Stream
+	var sT, eT time.Time
+
+	BeforeAll(func() {
+		var err error
+		// setup stream data
+		streamSchema, err = svcs.stream.Stream(&commonv1.Metadata{
+			Name:  "sw",
+			Group: "default",
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		baseTs := setUpStreamQueryData("multiple_shards.json", streamSchema)
+		sT, eT = baseTs, baseTs.Add(1*time.Hour)
+	})
+
 	It("should return nothing when querying given timeRange which is out of the time range of data", func() {
 		query := pb.NewStreamQueryRequestBuilder().
 			Limit(10).

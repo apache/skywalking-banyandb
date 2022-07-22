@@ -101,7 +101,7 @@ func (p *decoderPool) Put(decoder encoding.SeriesDecoder) {
 
 const fieldFlagLength = 9
 
-func encoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) []byte {
+func EncoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) []byte {
 	encodingMethod := byte(fieldSpec.GetEncodingMethod().Number())
 	compressionMethod := byte(fieldSpec.GetCompressionMethod().Number())
 	bb := make([]byte, fieldFlagLength)

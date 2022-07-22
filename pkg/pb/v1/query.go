@@ -367,6 +367,50 @@ func (b *GroupByBuilder) aggregate(fieldName string, aggregationFunc modelv1.Agg
 	return b.builder
 }
 
+type MeasureTopNRequestBuilder struct {
+	req *measurev1.TopNRequest
+}
+
+func NewMeasureTopNRequestBuilder() *MeasureTopNRequestBuilder {
+	return &MeasureTopNRequestBuilder{
+		req: &measurev1.TopNRequest{},
+	}
+}
+
+func (b *MeasureTopNRequestBuilder) Metadata(group, name string) *MeasureTopNRequestBuilder {
+	b.req.Metadata = &commonv1.Metadata{
+		Group: group,
+		Name:  name,
+	}
+	return b
+}
+
+func (b *MeasureTopNRequestBuilder) TimeRange(sT, eT time.Time) *MeasureTopNRequestBuilder {
+	b.req.TimeRange = &modelv1.TimeRange{
+		Begin: timestamppb.New(sT),
+		End:   timestamppb.New(eT),
+	}
+	return b
+}
+
+func (b *MeasureTopNRequestBuilder) TopN(num int32) *MeasureTopNRequestBuilder {
+	b.req.TopN = num
+	return b
+}
+
+func (b *MeasureTopNRequestBuilder) Max() *MeasureTopNRequestBuilder {
+	return b.Aggregate(modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX)
+}
+
+func (b *MeasureTopNRequestBuilder) Aggregate(aggMethod modelv1.AggregationFunction) *MeasureTopNRequestBuilder {
+	b.req.Agg = aggMethod
+	return b
+}
+
+func (b *MeasureTopNRequestBuilder) Build() *measurev1.TopNRequest {
+	return b.req
+}
+
 func Eq(key string, val interface{}) *modelv1.Condition {
 	return &modelv1.Condition{
 		Name:  key,

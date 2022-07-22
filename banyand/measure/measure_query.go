@@ -19,6 +19,7 @@ package measure
 
 import (
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -50,9 +51,14 @@ type Measure interface {
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
+	GetInterval() time.Duration
 }
 
 var _ Measure = (*measure)(nil)
+
+func (s *measure) GetInterval() time.Duration {
+	return s.interval
+}
 
 func (s *measure) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	wrap := func(shards []tsdb.Shard) []tsdb.Shard {
@@ -148,11 +154,11 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 			break
 		}
 	}
-	bytes, err := item.Family(familyIdentity(name, encoderFieldFlag(fieldSpec, s.interval)))
+	bytes, err := item.Family(familyIdentity(name, EncoderFieldFlag(fieldSpec, s.interval)))
 	if err != nil {
 		return nil, err
 	}
-	fieldValue := decodeFieldValue(bytes, fieldSpec)
+	fieldValue := DecodeFieldValue(bytes, fieldSpec)
 	return &measurev1.DataPoint_Field{
 		Name:  name,
 		Value: fieldValue,
