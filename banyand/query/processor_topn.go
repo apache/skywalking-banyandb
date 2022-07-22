@@ -213,9 +213,7 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 	return seeker.Seek()
 }
 
-var (
-	_ heap.Interface = (*topNPostAggregator)(nil)
-)
+var _ heap.Interface = (*topNPostAggregator)(nil)
 
 type topNAggregatorItem struct {
 	key       string
