@@ -20,90 +20,83 @@
 <template>
     <el-menu default-active="2" active-text-color="#6E38F7" style="height: 100%" :collapse="isCollapse"
         :collapse-transition="false">
-
-        <el-submenu index="1">
+        <!--el-submenu index="1">
             <template slot="title">
                 <i class="el-icon-folder"></i>
                 <span slot="title">Database</span>
-            </template>
-            <el-submenu index="1-1">
-                <template slot="title">
-                    <i class="el-icon-folder"></i>
-                    <span slot="title">Node name</span>
-                </template>
-                <el-submenu index="1-1-1">
+            </template-->
+            <div v-for="(item, index) in groupLists" :key="item.metadata.name">
+                <el-submenu :index="item.metadata.name">
                     <template slot="title">
                         <i class="el-icon-folder"></i>
-                        <span slot="title">Stream</span>
+                        <span slot="title"><div style="width: 75%" class="text-overflow-hidden">{{item.metadata.name}}</div></span>
                     </template>
-                    <el-menu-item index="1-1-3-1">
+                    <el-submenu :index="item.metadata.name+'-'+index+'-stream'">
                         <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">db</span>
+                            <i class="el-icon-folder"></i>
+                            <span slot="title">Stream</span>
                         </template>
-                    </el-menu-item>
-                    <el-menu-item index="1-1-3-2">
+                        <el-menu-item>
+                            <template slot="title">
+                                <i class="el-icon-document"></i>
+                                <span slot="title">streamFile</span>
+                            </template>
+                        </el-menu-item>
+                    </el-submenu>
+                    <el-submenu :index="item.metadata.name+'-'+index+'-measure'">
                         <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">product</span>
+                            <i class="el-icon-folder"></i>
+                            <span slot="title">Measure</span>
                         </template>
-                    </el-menu-item>
-                    <el-menu-item index="1-1-3-3">
-                        <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">xxxxxxx</span>
-                        </template>
-                    </el-menu-item>
+                        <el-menu-item>
+                            <template slot="title">
+                                <i class="el-icon-document"></i>
+                                <span slot="title">measureFile</span>
+                            </template>
+                        </el-menu-item>
+                    </el-submenu>
                 </el-submenu>
-            </el-submenu>
-            <el-submenu index="1-2">
-                <template slot="title">
-                    <i class="el-icon-folder"></i>
-                    <span slot="title">node</span>
-                </template>
-                <el-submenu index="1-2-1">
-                    <template slot="title">
-                        <i class="el-icon-folder"></i>
-                        <span slot="title">Stream</span>
-                    </template>
-                    <el-menu-item index="1-2-3-1">
-                        <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">db</span>
-                        </template>
-                    </el-menu-item>
-                    <el-menu-item index="1-2-3-2">
-                        <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">product</span>
-                        </template>
-                    </el-menu-item>
-                    <el-menu-item index="1-2-3-3">
-                        <template slot="title">
-                            <i class="el-icon-document"></i>
-                            <span slot="title">xxxxxx</span>
-                        </template>
-                    </el-menu-item>
-                </el-submenu>
-            </el-submenu>
-        </el-submenu>
-
+            </div>
+        <!--/el-submenu-->
     </el-menu>
 </template>
-
+ 
 <script>
 import { mapState } from 'vuex'
 export default {
     name: 'AsideComponent',
     data() {
         return {
+            groupLists: [],
         }
     },
+    async created() {
+        console.log('this is aside created')
+        this.getGroupLists()
+    },
+
     computed: {
         ...mapState({
             isCollapse: (state) => state.aside.isCollapse
         })
-    }
+    },
+
+    methods: {
+        async getGroupLists() {
+            try {
+                const data = await this.$http.get('/api/v1/group/schema/lists')
+                if (data.status != 200) {
+                    this.$message.error(data.status, data.statusText)
+                } else {
+                    this.groupLists = data.data.group
+                    console.log(data)
+                }
+            } catch (err) {
+                console.log(err)
+                this.$message.errorNet()
+            }
+        }
+    },
 }
 </script>
 
