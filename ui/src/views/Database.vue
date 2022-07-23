@@ -23,22 +23,28 @@
             <aside-component></aside-component>
         </el-aside>
         <el-main style="background-color: var(--color-background)">
-            <main-component></main-component>
+            <component :is="mainComponent"></component>
         </el-main>
     </el-container>
 </template>
 
 <script>
 import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
-
 import MainComponent from '../components/databaseComponents/MainComponent.vue'
+import MainStartComponent from '../components/databaseComponents/MainStartComponent.vue'
 import { mapState } from 'vuex'
 export default {
     name: 'Database',
     data() {
         return {
-
+            mainComponent: "mainStartCom"
         }
+    },
+    created() {
+        this.$loading.create()
+    },
+    mounted() {
+        this.$loading.close()
     },
     computed: {
         ...mapState({
@@ -47,7 +53,8 @@ export default {
     },
     components: {
         AsideComponent,
-        MainComponent
+        mainCom: MainComponent,
+        mainStartCom: MainStartComponent
     },
     activated() {
         console.log('this component is activated!')
