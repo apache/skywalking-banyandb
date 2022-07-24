@@ -86,10 +86,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 					return int64(elem.(api.Data)[1].(int))
 				},
 			}
-			for _, item := range input {
-				topN.Add([]interface{}{item})
-			}
-			result := topN.GetResult()
+			result := topN.Add(input)
 			require.Len(result, 3)
 			require.Equal(tt.expected, result)
 		})

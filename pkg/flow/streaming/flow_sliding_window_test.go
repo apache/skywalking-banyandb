@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
@@ -30,9 +29,11 @@ import (
 )
 
 func Test_SlidingWindow_NoOutput(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	aggrFunc := api.NewMockAggregateFunction(ctrl)
+	num := 0
+	var aggrFunc api.AggregateFunction = func(i []interface{}) interface{} {
+		num++
+		return nil
+	}
 
 	assert := assert.New(t)
 	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
@@ -40,7 +41,6 @@ func Test_SlidingWindow_NoOutput(t *testing.T) {
 	assert.NoError(slidingWindows.Setup(context.TODO()))
 	slidingWindows.Exec(sink.NewSlice())
 	baseTs := time.Now()
-	aggrFunc.EXPECT().Add(gomock.Any()).MaxTimes(0)
 	// add a single
 	input := []api.StreamRecord{
 		api.NewStreamRecord(1, baseTs.UnixMilli()),
@@ -48,12 +48,15 @@ func Test_SlidingWindow_NoOutput(t *testing.T) {
 	for _, r := range input {
 		slidingWindows.In() <- r
 	}
+	assert.Equal(0, num)
 }
 
 func Test_SlidingWindow_Trigger_Once(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	aggrFunc := api.NewMockAggregateFunction(ctrl)
+	num := 0
+	var aggrFunc api.AggregateFunction = func(i []interface{}) interface{} {
+		num++
+		return nil
+	}
 
 	assert := assert.New(t)
 	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
@@ -63,13 +66,6 @@ func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 	assert.NoError(snk.Setup(context.TODO()))
 	slidingWindows.Exec(snk)
 	baseTs := time.Now()
-	aggrFunc.EXPECT().
-		Add(gomock.Eq([]interface{}{1})).
-		Times(1)
-
-	aggrFunc.EXPECT().
-		GetResult().
-		Times(1).Return(1)
 
 	// add a single
 	input := []api.StreamRecord{
@@ -85,4 +81,5 @@ func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 		}
 		return false
 	}))
+	assert.Equal(1, num)
 }

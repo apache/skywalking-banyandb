@@ -27,8 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 )
 
-var _ api.AggregateFunction = (*topNAggregator)(nil)
-
 type windowedFlow struct {
 	f  *streamingFlow
 	wa api.WindowAssigner
@@ -56,7 +54,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) api.Flow {
 		topNAggrFunc.comparator = utils.Int64Comparator
 	}
 	topNAggrFunc.treeMap = treemap.NewWith(topNAggrFunc.comparator)
-	s.wa.(*SlidingTimeWindows).aggrFunc = topNAggrFunc
+	s.wa.(*SlidingTimeWindows).aggrFunc = topNAggrFunc.Add
 	return s.f
 }
 
@@ -89,7 +87,7 @@ func OrderBy(sort modelv1.Sort) TopNOption {
 	}
 }
 
-func (t *topNAggregator) Add(input []interface{}) {
+func (t *topNAggregator) Add(input []interface{}) interface{} {
 	for _, item := range input {
 		sortKey := t.sortKeyExtractor(item)
 		// check
@@ -110,6 +108,7 @@ func (t *topNAggregator) Add(input []interface{}) {
 			}
 		}
 	}
+	return t.getResult()
 }
 
 func (t *topNAggregator) put(sortKey int64, data interface{}) {
@@ -146,7 +145,7 @@ func (t *Tuple2) Equal(other *Tuple2) bool {
 	return cmp.Equal(t.V1, other.V1) && cmp.Equal(t.V2, other.V2)
 }
 
-func (t *topNAggregator) GetResult() interface{} {
+func (t *topNAggregator) getResult() interface{} {
 	iter := t.treeMap.Iterator()
 	items := make([]*Tuple2, 0, t.treeMap.Size())
 	for iter.Next() {

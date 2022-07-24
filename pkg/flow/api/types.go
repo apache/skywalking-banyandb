@@ -59,11 +59,7 @@ type WindowAssigner interface {
 	AssignWindows(timestamp int64) ([]Window, error)
 }
 
-//go:generate mockgen -destination=./aggregation_func_mock.go -package=api github.com/apache/skywalking-banyandb/pkg/flow/api AggregateFunction
-type AggregateFunction interface {
-	Add([]interface{})
-	GetResult() interface{}
-}
+type AggregateFunction func([]interface{}) interface{}
 
 type StreamRecord struct {
 	ts           int64

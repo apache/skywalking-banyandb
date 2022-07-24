@@ -159,8 +159,7 @@ func (s *SlidingTimeWindows) emit() {
 			for _, elem := range slidingSlices {
 				data = append(data, elem.(*TimestampedValue).Data())
 			}
-			s.aggrFunc.Add(data)
-			s.out <- api.NewStreamRecord(s.aggrFunc.GetResult(), slideUpperTime)
+			s.out <- api.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
 		}
 	}
 }
