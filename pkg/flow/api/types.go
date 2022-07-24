@@ -21,14 +21,27 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Flow is an abstraction of data flow for
+// both Streaming and Batch
 type Flow interface {
+	// Filter is used to filter data.
+	// The parameter f can be either predicate function for streaming,
+	// or conditions for batch query.
 	Filter(f interface{}) Flow
+	// Map is used to transform data
 	Map(f interface{}) Flow
+	// Window is used to split infinite data into "buckets" of finite size.
+	// Currently, it is only applicable to streaming context.
 	Window(WindowAssigner) WindowedFlow
+	// Offset skips the given number of result
 	Offset(int) Flow
+	// Limit takes the given number of result
 	Limit(int) Flow
-	To(interface{}) Flow
+	// To pipes data to the given sink
+	To(sink interface{}) Flow
+	// OpenAsync opens the flow in the async mode for streaming scenario.
 	OpenAsync() <-chan error
+	// OpenSync opens the flow in the sync mode for batch scenario.
 	OpenSync() error
 }
 
@@ -42,7 +55,8 @@ type Window interface {
 }
 
 type WindowAssigner interface {
-	AssignWindows(int64) ([]Window, error)
+	// AssignWindows assigns a slice of Window according to the given timestamp, e.g. eventTime.
+	AssignWindows(timestamp int64) ([]Window, error)
 }
 
 //go:generate mockgen -destination=./aggregation_func_mock.go -package=api github.com/apache/skywalking-banyandb/pkg/flow/api AggregateFunction

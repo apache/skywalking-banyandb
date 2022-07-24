@@ -384,7 +384,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		return nil, err
 	}
 	return func(request *measurev1.DataPointValue) api.Data {
-		return api.Row(
+		return api.Data{
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
 				return stringify(request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
@@ -396,7 +396,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
 				return request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
 			}),
-		)
+		}
 	}, nil
 }
 

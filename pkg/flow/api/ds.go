@@ -18,7 +18,3 @@
 package api
 
 type Data []any
-
-func Row(args ...any) Data {
-	return args
-}
