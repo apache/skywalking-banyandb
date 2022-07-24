@@ -393,6 +393,11 @@ func (b *MeasureTopNRequestBuilder) TimeRange(sT, eT time.Time) *MeasureTopNRequ
 	return b
 }
 
+func (b *MeasureTopNRequestBuilder) Conditions(conditions ...*modelv1.Condition) *MeasureTopNRequestBuilder {
+	b.req.Conditions = conditions
+	return b
+}
+
 func (b *MeasureTopNRequestBuilder) TopN(num int32) *MeasureTopNRequestBuilder {
 	b.req.TopN = num
 	return b
@@ -400,6 +405,10 @@ func (b *MeasureTopNRequestBuilder) TopN(num int32) *MeasureTopNRequestBuilder {
 
 func (b *MeasureTopNRequestBuilder) Max() *MeasureTopNRequestBuilder {
 	return b.Aggregate(modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX)
+}
+
+func (b *MeasureTopNRequestBuilder) Min() *MeasureTopNRequestBuilder {
+	return b.Aggregate(modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN)
 }
 
 func (b *MeasureTopNRequestBuilder) Aggregate(aggMethod modelv1.AggregationFunction) *MeasureTopNRequestBuilder {

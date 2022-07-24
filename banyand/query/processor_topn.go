@@ -186,7 +186,9 @@ func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2,
 	}
 	fieldValue := measure.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
 	return &streaming.Tuple2{
-		V1: tagFamily.GetTags()[0].GetId().GetValue(),
+		// GroupValues
+		V1: tagFamily.GetTags()[1].GetStr().GetValue(),
+		// FieldValue
 		V2: fieldValue.GetInt().GetValue(),
 	}, nil
 }

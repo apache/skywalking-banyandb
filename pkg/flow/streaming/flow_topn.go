@@ -147,7 +147,7 @@ func (t *Tuple2) Equal(other *Tuple2) bool {
 
 func (t *topNAggregator) getResult() interface{} {
 	iter := t.treeMap.Iterator()
-	items := make([]*Tuple2, 0, t.treeMap.Size())
+	items := make([]*Tuple2, 0, t.currentTopNum)
 	for iter.Next() {
 		list := iter.Value().([]interface{})
 		for _, item := range list {

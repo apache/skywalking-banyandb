@@ -35,7 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func setupMeasureQueryData(dataFile string, measureSchema measure.Measure, interval time.Duration) (baseTime time.Time) {
+func setupMeasureQueryData(dataFile string, measureSchema measure.Measure,
+	interval time.Duration, lastDelay time.Duration) (baseTime time.Time) {
 	var templates []interface{}
 	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
@@ -49,6 +50,12 @@ func setupMeasureQueryData(dataFile string, measureSchema measure.Measure, inter
 		Expect(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue)).ShouldNot(HaveOccurred())
 		errInner := measureSchema.Write(dataPointValue)
 		Expect(errInner).ShouldNot(HaveOccurred())
+		if i == len(templates)-1 {
+			// add delay
+			dataPointValue.Timestamp.Seconds += int64(lastDelay.Seconds())
+			lastErr := measureSchema.Write(dataPointValue)
+			Expect(lastErr).ShouldNot(HaveOccurred())
+		}
 	}
 	return baseTime
 }
@@ -65,14 +72,56 @@ var _ = Describe("Measure Query", Ordered, func() {
 			Group: "sw_metric",
 		})
 		Expect(err).ShouldNot(HaveOccurred())
-		baseTs := setupMeasureQueryData("service_cpm_minute_data.json", measureSchema, 15*time.Second)
-		sT, eT = baseTs, baseTs.Add(10*time.Minute)
+		baseTs := setupMeasureQueryData("service_cpm_minute_data.json", measureSchema, 15*time.Second,
+			2*time.Minute)
+		sT, eT = baseTs.Add(-1*time.Minute), baseTs.Add(10*time.Minute)
 	})
 
 	It("Query without condition", func() {
 		query := pbv1.NewMeasureTopNRequestBuilder().
 			Metadata("sw_metric", "service_cpm_minute_top100").
 			TimeRange(sT, eT).
+			TopN(1).
+			Max().
+			Build()
+		Eventually(func(g Gomega) int64 {
+			now := time.Now()
+			msg := bus.NewMessage(bus.MessageID(now.UnixNano()), query)
+			f, err := svcs.pipeline.Publish(data.TopicTopNQuery, msg)
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(f).ShouldNot(BeNil())
+			resp, err := f.Get()
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(resp).ShouldNot(BeNil())
+			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
+		}).WithTimeout(time.Second * 5).Should(BeNumerically("==", 5))
+	})
+
+	It("Query with condition and min aggregation", func() {
+		query := pbv1.NewMeasureTopNRequestBuilder().
+			Metadata("sw_metric", "service_cpm_minute_top100").
+			TimeRange(sT, eT).
+			TopN(1).
+			Min().
+			Build()
+		Eventually(func(g Gomega) int64 {
+			now := time.Now()
+			msg := bus.NewMessage(bus.MessageID(now.UnixNano()), query)
+			f, err := svcs.pipeline.Publish(data.TopicTopNQuery, msg)
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(f).ShouldNot(BeNil())
+			resp, err := f.Get()
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(resp).ShouldNot(BeNil())
+			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
+		}).WithTimeout(time.Second * 5).Should(BeNumerically("==", 1))
+	})
+
+	It("Query with condition", func() {
+		query := pbv1.NewMeasureTopNRequestBuilder().
+			Metadata("sw_metric", "service_cpm_minute_top100").
+			TimeRange(sT, eT).
+			Conditions(pbv1.Eq("entity_id", "entity_2")).
 			TopN(1).
 			Max().
 			Build()
@@ -86,6 +135,6 @@ var _ = Describe("Measure Query", Ordered, func() {
 			g.Expect(err).ShouldNot(HaveOccurred())
 			g.Expect(resp).ShouldNot(BeNil())
 			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
-		}).Should(BeNumerically("==", 1))
+		}).Should(BeNumerically("==", 5))
 	})
 })

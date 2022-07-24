@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	timeBucketFormat = "202207111141"
+	timeBucketFormat = "200601021504"
 	TopNTagFamily    = "__topN__"
 )
 
@@ -128,15 +128,17 @@ func (t *topNStreamingProcessor) writeStreamRecord(record api.StreamRecord) erro
 	// down-sampling to a time bucket as measure ID
 	timeBucket := t.downSampleTimeBucket(eventTime)
 	var err error
-	for _, tuple := range tuples {
+	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(api.Data)
-		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data))
+		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data api.Data) error {
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data api.Data, rankNum int) error {
+	// HACK: use rankNumber as the nanoseconds to avoid overwrite items with same entity
+	eventTime = eventTime.Add(time.Duration(rankNum) * time.Nanosecond)
 	entity, shardID, err := t.locate(data[2].([]*modelv1.TagValue))
 	if err != nil {
 		return err
@@ -156,14 +158,28 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 		}
 		return err
 	}
+	// measureID is consist of three parts,
+	// 1. groupValues
+	// 2. rankNumber
+	// 3. timeBucket
+	measureID := data[0].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
 	writeFn := func() (tsdb.Writer, error) {
 		builder := span.WriterBuilder().Time(eventTime)
 		virtualTagFamily := &modelv1.TagFamilyForWrite{
 			Tags: []*modelv1.TagValue{
+				// MeasureID
 				{
 					Value: &modelv1.TagValue_Id{
 						Id: &modelv1.ID{
-							Value: data[0].(string) + "_" + timeBucket,
+							Value: measureID,
+						},
+					},
+				},
+				// GroupValues for merge in post processor
+				{
+					Value: &modelv1.TagValue_Str{
+						Str: &modelv1.Str{
+							Value: data[0].(string),
 						},
 					},
 				},
