@@ -95,7 +95,7 @@ var _ = Describe("Measure Query", Ordered, func() {
 			g.Expect(err).ShouldNot(HaveOccurred())
 			g.Expect(resp).ShouldNot(BeNil())
 			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
-		}).WithTimeout(time.Second * 5).Should(BeNumerically("==", 5))
+		}).WithTimeout(time.Second * 10).Should(BeNumerically("==", 5))
 	})
 
 	It("Query with condition and min aggregation", func() {
@@ -115,7 +115,7 @@ var _ = Describe("Measure Query", Ordered, func() {
 			g.Expect(err).ShouldNot(HaveOccurred())
 			g.Expect(resp).ShouldNot(BeNil())
 			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
-		}).WithTimeout(time.Second * 5).Should(BeNumerically("==", 1))
+		}).WithTimeout(time.Second * 10).Should(BeNumerically("==", 1))
 	})
 
 	It("Query with condition", func() {
@@ -126,7 +126,7 @@ var _ = Describe("Measure Query", Ordered, func() {
 			TopN(1).
 			Max().
 			Build()
-		Consistently(func(g Gomega) int64 {
+		Eventually(func(g Gomega) int64 {
 			now := time.Now()
 			msg := bus.NewMessage(bus.MessageID(now.UnixNano()), query)
 			f, err := svcs.pipeline.Publish(data.TopicTopNQuery, msg)
@@ -136,6 +136,6 @@ var _ = Describe("Measure Query", Ordered, func() {
 			g.Expect(err).ShouldNot(HaveOccurred())
 			g.Expect(resp).ShouldNot(BeNil())
 			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
-		}).Should(BeNumerically("==", 5))
+		}).WithTimeout(time.Second * 10).Should(BeNumerically("==", 5))
 	})
 })
