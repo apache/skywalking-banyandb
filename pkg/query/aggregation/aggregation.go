@@ -18,8 +18,9 @@
 package aggregation
 
 import (
-	"github.com/pkg/errors"
 	"math"
+
+	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
