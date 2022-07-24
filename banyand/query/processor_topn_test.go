@@ -36,7 +36,8 @@ import (
 )
 
 func setupMeasureQueryData(dataFile string, measureSchema measure.Measure,
-	interval time.Duration, lastDelay time.Duration) (baseTime time.Time) {
+	interval time.Duration, lastDelay time.Duration,
+) (baseTime time.Time) {
 	var templates []interface{}
 	baseTime = timestamp.NowMilli()
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
