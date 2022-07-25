@@ -18,46 +18,44 @@
 -->
 
 <template>
-    <el-menu default-active="2" active-text-color="#6E38F7" style="height: 100%" :collapse="isCollapse"
+    <el-menu default-active="2" active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse"
         :collapse-transition="false">
-        <!--el-submenu index="1">
-            <template slot="title">
-                <i class="el-icon-folder"></i>
-                <span slot="title">Database</span>
-            </template-->
-            <div v-for="(item, index) in groupLists" :key="item.metadata.name">
-                <el-submenu :index="item.metadata.name">
+        <div v-for="(item, index) in groupLists" :key="item.metadata.name">
+            <el-submenu :index="item.metadata.name">
+                <template slot="title">
+                    <i class="el-icon-folder"></i>
+                    <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">{{
+                            item.metadata.name
+                    }}</span>
+                </template>
+                <el-submenu :index="item.metadata.name + '-' + index + '-stream'">
                     <template slot="title">
                         <i class="el-icon-folder"></i>
-                        <span slot="title"><div style="width: 75%" class="text-overflow-hidden">{{item.metadata.name}}</div></span>
+                        <span slot="title">Stream</span>
                     </template>
-                    <el-submenu :index="item.metadata.name+'-'+index+'-stream'">
+                    <el-menu-item>
                         <template slot="title">
-                            <i class="el-icon-folder"></i>
-                            <span slot="title">Stream</span>
+                            <i class="el-icon-document"></i>
+                            <span slot="title" title="streamFile" style="width: 90%"
+                                class="text-overflow-hidden">streamFile</span>
                         </template>
-                        <el-menu-item>
-                            <template slot="title">
-                                <i class="el-icon-document"></i>
-                                <span slot="title">streamFile</span>
-                            </template>
-                        </el-menu-item>
-                    </el-submenu>
-                    <el-submenu :index="item.metadata.name+'-'+index+'-measure'">
-                        <template slot="title">
-                            <i class="el-icon-folder"></i>
-                            <span slot="title">Measure</span>
-                        </template>
-                        <el-menu-item>
-                            <template slot="title">
-                                <i class="el-icon-document"></i>
-                                <span slot="title">measureFile</span>
-                            </template>
-                        </el-menu-item>
-                    </el-submenu>
+                    </el-menu-item>
                 </el-submenu>
-            </div>
-        <!--/el-submenu-->
+                <el-submenu :index="item.metadata.name + '-' + index + '-measure'">
+                    <template slot="title">
+                        <i class="el-icon-folder"></i>
+                        <span slot="title">Measure</span>
+                    </template>
+                    <el-menu-item>
+                        <template slot="title">
+                            <i class="el-icon-document"></i>
+                            <span slot="title" title="measureFile" style="width: 90%"
+                                class="text-overflow-hidden">measureFile</span>
+                        </template>
+                    </el-menu-item>
+                </el-submenu>
+            </el-submenu>
+        </div>
     </el-menu>
 </template>
  
@@ -67,7 +65,54 @@ export default {
     name: 'AsideComponent',
     data() {
         return {
-            groupLists: [],
+            groupLists: [{
+                "metadata": {
+                    "group": "",
+                    "name": "measure-default",
+                    "id": 0,
+                    "createRevision": "0",
+                    "modRevision": "0"
+                },
+                "catalog": "CATALOG_MEASURE",
+                "resourceOpts": {
+                    "shardNum": 1,
+                    "blockNum": 12,
+                    "ttl": "420d"
+                },
+                "updatedAt": null
+            },
+            {
+                "metadata": {
+                    "group": "",
+                    "name": "stream-browser_error_log",
+                    "id": 0,
+                    "createRevision": "0",
+                    "modRevision": "0"
+                },
+                "catalog": "CATALOG_STREAM",
+                "resourceOpts": {
+                    "shardNum": 2,
+                    "blockNum": 0,
+                    "ttl": "420d"
+                },
+                "updatedAt": null
+            },
+            {
+                "metadata": {
+                    "group": "",
+                    "name": "stream-default",
+                    "id": 0,
+                    "createRevision": "0",
+                    "modRevision": "0"
+                },
+                "catalog": "CATALOG_STREAM",
+                "resourceOpts": {
+                    "shardNum": 1,
+                    "blockNum": 0,
+                    "ttl": "420d"
+                },
+                "updatedAt": null
+            },],
         }
     },
     async created() {
@@ -112,4 +157,5 @@ i {
     font-size: 25px;
     color: var(--color-main);
 }
+
 </style>

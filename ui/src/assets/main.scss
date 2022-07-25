@@ -48,7 +48,7 @@
 /* ==================
      font style
 ==================== */
-.text-overflow-hidden {text-overflow: ellipsis; white-space: nowrap; overflow: hidden;}
+.text-overflow-hidden {text-overflow: ellipsis; white-space: nowrap; overflow: hidden; display: inline-block;}
 .text-tips {font-size: var(--size-mini);}
 .text-normal {font-size: var(--size-lt);}
 .text-title {font-size: var(--size-title);}

@@ -18,17 +18,16 @@
  */
 
 export default {
-    state: {
-      fatherWidth: '200px',
-      isCollapse: false
+  state: {
+    fatherWidth: '200px',
+    isCollapse: false
+  },
+  mutations: {
+    changeFatherWidth(state, val) {
+      state.fatherWidth = val
     },
-    mutations: {
-      changeFatherWidth(state, val) {
-        state.fatherWidth = val
-      },
-      changeCollapse(state, val) {
-        state.isCollapse = val
-      }
+    changeCollapse(state, val) {
+      state.isCollapse = val
     }
   }
-  
+}

@@ -31,7 +31,6 @@
                     <i class="el-icon-s-fold icon" v-if="!isCollapse"></i>
                     <i class="el-icon-s-unfold icon" v-else></i>
                 </el-tooltip>
-
             </div>
             <div v-else class="icon-size"></div>
         </div>
