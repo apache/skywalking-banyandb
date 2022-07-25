@@ -17,25 +17,13 @@
  * under the License.
  */
 
-import Vue from 'vue'
-import Vuex from 'vuex'
-import header from './header'
-import aside from './aside'
-import tags from './tags'
-import menuState from './menuState'
-Vue.use(Vuex)
-
-export default new Vuex.Store({
-  state: {
-  },
-  mutations: {
-  },
-  actions: {
-  },
-  modules: {
-    header,
-    aside,
-    tags,
-    menuState
-  }
-})
+export default {
+    state: {
+        showRightMenu: false
+    },
+    mutations: {
+        changeShowRightMenu(state, val) {
+            state.showRightMenu = val
+        }
+    }
+}
