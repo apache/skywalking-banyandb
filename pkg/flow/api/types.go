@@ -62,40 +62,35 @@ type WindowAssigner interface {
 type AggregateFunction func([]interface{}) interface{}
 
 type StreamRecord struct {
-	ts           int64
-	hasTimestamp bool
-	data         interface{}
+	ts   int64
+	data interface{}
 }
 
 func NewStreamRecord(data interface{}, ts int64) StreamRecord {
 	return StreamRecord{
-		data:         data,
-		ts:           ts,
-		hasTimestamp: true,
+		data: data,
+		ts:   ts,
 	}
 }
 
 func NewStreamRecordWithTimestampPb(data interface{}, timestamp *timestamppb.Timestamp) StreamRecord {
 	return StreamRecord{
-		data:         data,
-		ts:           timestamp.GetSeconds()*1000 + int64(timestamp.GetNanos())/1000_000,
-		hasTimestamp: true,
+		data: data,
+		ts:   timestamp.GetSeconds()*1000 + int64(timestamp.GetNanos())/1000_000,
 	}
 }
 
 func NewStreamRecordWithoutTS(data interface{}) StreamRecord {
 	return StreamRecord{
-		data:         data,
-		ts:           0,
-		hasTimestamp: false,
+		data: data,
+		ts:   -1,
 	}
 }
 
 func (sr StreamRecord) WithNewData(data interface{}) StreamRecord {
 	return StreamRecord{
-		ts:           sr.ts,
-		hasTimestamp: sr.hasTimestamp,
-		data:         data,
+		ts:   sr.ts,
+		data: data,
 	}
 }
 

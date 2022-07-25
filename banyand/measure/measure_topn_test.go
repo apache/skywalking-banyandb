@@ -41,7 +41,7 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 		shards, err := measure.CompanionShards(topNMetadata)
 		Expect(err).ShouldNot(HaveOccurred())
 		for _, shard := range shards {
-			sl, err := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry}))
+			sl, err := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry, tsdb.AnyEntry}))
 			Expect(err).ShouldNot(HaveOccurred())
 			for _, series := range sl {
 				seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
@@ -99,6 +99,6 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 		}, &commonv1.Metadata{
 			Name:  "service_cpm_minute_top100",
 			Group: "sw_metric",
-		}, "service_cpm_minute_data.json", 2),
+		}, "service_cpm_minute_data.json", 3),
 	)
 })
