@@ -20,7 +20,6 @@ package measure
 import (
 	"context"
 	"encoding/base64"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"io"
 	"strconv"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
