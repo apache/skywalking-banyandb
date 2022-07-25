@@ -143,11 +143,12 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 func locateEntity(topNSchema *databasev1.TopNAggregation, conditions []*modelv1.Condition) (tsdb.Entity, error) {
 	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, len(topNSchema.GetGroupByTagNames()))
+	entity := make([]tsdb.Entry, 1+len(topNSchema.GetGroupByTagNames()))
+	entity[0] = tsdb.AnyEntry
 	for idx, tagName := range topNSchema.GetGroupByTagNames() {
-		entityMap[tagName] = idx
+		entityMap[tagName] = idx + 1
 		// fill AnyEntry by default
-		entity[idx] = tsdb.AnyEntry
+		entity[idx+1] = tsdb.AnyEntry
 	}
 	for _, pairQuery := range conditions {
 		// TODO: check op?

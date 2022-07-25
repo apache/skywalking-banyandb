@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"encoding/base64"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"io"
 	"strconv"
 	"strings"
@@ -137,9 +138,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record api.StreamRecord) erro
 }
 
 func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data api.Data, rankNum int) error {
-	// HACK: use rankNumber as the nanoseconds to avoid overwrite items with same entity
-	eventTime = eventTime.Add(time.Duration(rankNum) * time.Nanosecond)
-	entity, shardID, err := t.locate(data[2].([]*modelv1.TagValue))
+	entity, shardID, err := t.locate(data[2].([]*modelv1.TagValue), rankNum)
 	if err != nil {
 		return err
 	}
@@ -226,18 +225,19 @@ func (t *topNStreamingProcessor) downSampleTimeBucket(eventTime time.Time) strin
 		Format(timeBucketFormat)
 }
 
-func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue) (tsdb.Entity, common.ShardID, error) {
+func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, common.ShardID, error) {
 	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
 		return nil, 0, errors.New("no enough tag values for the entity")
 	}
-	entity := make(tsdb.Entity, 1+len(t.topNSchema.GetGroupByTagNames()))
+	entity := make(tsdb.Entity, 1+1+len(t.topNSchema.GetGroupByTagNames()))
 	// entity prefix
 	entity[0] = []byte(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
+	entity[1] = convert.Int64ToBytes(int64(rankNum))
 	// measureID as sharding key
 	for idx, tagVal := range tagValues {
 		var innerErr error
-		entity[idx+1], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
+		entity[idx+2], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
 		if innerErr != nil {
 			return nil, 0, innerErr
 		}
