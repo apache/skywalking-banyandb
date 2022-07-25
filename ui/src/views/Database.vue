@@ -33,7 +33,7 @@
 </template>
 
 <script>
-import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
+import AsideComponent from '../components/databaseComponents/asideComponents/AsideComponent.vue'
 import MainComponent from '../components/databaseComponents/MainComponent.vue'
 import MainStartComponent from '../components/databaseComponents/MainStartComponent.vue'
 import { mapState } from 'vuex'
@@ -70,7 +70,6 @@ export default {
     methods: {
         shrinkMove(e) {
             if (this.isShrink) {
-                console.log(e.screenX)
                 let wid = e.screenX + 5
                 if (wid <= 65) {
                     this.$store.commit('changeCollapse', true)
@@ -82,12 +81,10 @@ export default {
             }
         },
         shrinkDown(e) {
-            console.log(e)
             this.isShrink = true
         },
         shrinkUp(e) {
             this.isShrink = false
-            console.log(this.isShrink)
         }
     }
 }

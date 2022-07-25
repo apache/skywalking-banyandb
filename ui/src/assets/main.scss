@@ -80,11 +80,21 @@
 ==================== */
 .border-radius {border-radius: 10px;}
 .border-radius-little {border-radius: 5px;}
+.border-radius-top-little {border-top-left-radius: 5px; border-top-right-radius: 5px;}
+.border-radius-bottom-little {border-bottom-left-radius: 5px; border-bottom-right-radius: 5px;}
+
+/* ==================
+     box-shadow
+==================== */
+.box-shadow{box-shadow: 0px 0px 10px var(--color-placeholder-font);}
 
 /* ==================
         margin
 ==================== */
 .margin-top-bottom {margin: 20px 0 20px 0;}
 .margin-top-bottom-little {margin: 10px 0 10px 0;}
+.margin-left {margin: 0 0 0 20px;}
+.margin-left-little {margin-left: 10px;}
+.margin-left-small {margin-left: 5px;}
 .margin-all {margin: 20px;}
 .margin-all-little {margin: 10px;}
