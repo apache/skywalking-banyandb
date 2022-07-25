@@ -66,11 +66,6 @@ var (
 	}
 )
 
-type (
-	measureProcessorFilter func(request *measurev1.DataPointValue) bool
-	measureProcessorMapper func(request *measurev1.DataPointValue) api.Data
-)
-
 type topNStreamingProcessor struct {
 	l                *logger.Logger
 	shardNum         uint32
@@ -325,7 +320,7 @@ func (manager *topNProcessorManager) start() error {
 	return nil
 }
 
-func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (measureProcessorFilter, error) {
+func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (api.UnaryFunc[bool], error) {
 	var filters []conditionFilter
 	for _, group := range criteria {
 		for _, cond := range group.GetConditions() {
@@ -338,13 +333,13 @@ func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) 
 	}
 
 	if len(filters) == 0 {
-		return func(value *measurev1.DataPointValue) bool {
+		return func(_ context.Context, value interface{}) bool {
 			return true
 		}, nil
 	}
 
-	return func(dataPoint *measurev1.DataPointValue) bool {
-		tfs := dataPoint.GetTagFamilies()
+	return func(_ context.Context, dataPoint any) bool {
+		tfs := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
 		for _, f := range filters {
 			if !f.predicate(tfs) {
 				return false
@@ -388,7 +383,7 @@ func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset i
 	}
 }
 
-func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (measureProcessorMapper, error) {
+func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (api.UnaryFunc[any], error) {
 	fieldIdx := slices.IndexFunc(manager.m.GetSchema().GetFields(), func(spec *databasev1.FieldSpec) bool {
 		return spec.GetName() == fieldName
 	})
@@ -399,18 +394,19 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	if err != nil {
 		return nil, err
 	}
-	return func(request *measurev1.DataPointValue) api.Data {
+	return func(_ context.Context, request any) any {
+		dataPoint := request.(*measurev1.DataPointValue)
 		return api.Data{
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
-				return stringify(request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
+				return stringify(dataPoint.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
 			}), "|"),
 			// field value as v2
 			// TODO: we only support int64
-			request.GetFields()[fieldIdx].GetInt().GetValue(),
+			dataPoint.GetFields()[fieldIdx].GetInt().GetValue(),
 			// groupBy tag values as v3
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
-				return request.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
+				return dataPoint.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
 			}),
 		}
 	}, nil

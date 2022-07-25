@@ -171,7 +171,7 @@ func Test_Batch_Filter(t *testing.T) {
 			req := require.New(t)
 			snk := sink.NewItemSlice()
 			flow := New(sources.NewMeasure(m, tt.timeRange), metaSvc).
-				Filter(tt.criteria).
+				Filter(NewConditionalFilter(tt.criteria...)).
 				To(snk)
 
 			err := flow.OpenSync()

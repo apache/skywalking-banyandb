@@ -18,19 +18,23 @@
 package batch
 
 import (
+	"context"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/flow/batch/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	batchApi "github.com/apache/skywalking-banyandb/pkg/flow/batch/api"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
 	// func (tsdb.Series) tsdb.SeriesSpan
-	_ api.Operator[tsdb.Series, tsdb.SeriesSpan] = (*timeRangeOperator)(nil)
+	_ batchApi.Operator[tsdb.Series, tsdb.SeriesSpan] = (*timeRangeOperator)(nil)
 	// func (tsdb.SeriesSpan) tsdb.Item
-	_ api.Operator[tsdb.SeriesSpan, tsdb.Item] = (*conditionalFilterOperator)(nil)
+	_ batchApi.Operator[tsdb.SeriesSpan, tsdb.Item] = (*conditionalFilterOperator)(nil)
+	_ api.UnaryOperation[bool]                      = (*conditionalFilterOperator)(nil)
 )
 
 type timeRangeOperator struct {
@@ -66,6 +70,17 @@ type conditionalFilterOperator struct {
 	unresolvedCriteria []*modelv1.Criteria
 	// resolvedCriteria is the resolved condition attached with index rules
 	resolvedCriteria tsdb.LogicalIndexedCondition
+}
+
+func NewConditionalFilter(criteria ...*modelv1.Criteria) api.UnaryOperation[bool] {
+	return &conditionalFilterOperator{
+		unresolvedCriteria: criteria,
+	}
+}
+
+func (cfo *conditionalFilterOperator) Apply(ctx context.Context, data interface{}) bool {
+	// TODO implement me
+	panic("implement me")
 }
 
 func (cfo *conditionalFilterOperator) Analyze(schema logical.Schema) (logical.Schema, error) {

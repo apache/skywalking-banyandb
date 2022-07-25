@@ -44,28 +44,14 @@ func TestStream_Filter(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    interface{}
-		f        interface{}
+		f        api.UnaryFunc[bool]
 		expected []interface{}
 	}{
 		{
 			name:  "Even Number Filter",
 			input: sources.NewSlice(numberRange(0, 10)),
-			f: func(i int) bool {
-				return i%2 == 0
-			},
-			expected: []interface{}{
-				api.NewStreamRecordWithoutTS(0),
-				api.NewStreamRecordWithoutTS(2),
-				api.NewStreamRecordWithoutTS(4),
-				api.NewStreamRecordWithoutTS(6),
-				api.NewStreamRecordWithoutTS(8),
-			},
-		},
-		{
-			name:  "Even Number Filter with context",
-			input: sources.NewSlice(numberRange(0, 10)),
-			f: func(_ctx context.Context, i int) bool {
-				return i%2 == 0
+			f: func(ctx context.Context, i interface{}) bool {
+				return i.(int)%2 == 0
 			},
 			expected: []interface{}{
 				api.NewStreamRecordWithoutTS(0),
@@ -104,33 +90,14 @@ func TestStream_Mapper(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    interface{}
-		f        interface{}
+		f        api.UnaryFunc[any]
 		expected []interface{}
 	}{
 		{
 			name:  "Multiplier Mapper",
 			input: sources.NewSlice(numberRange(0, 10)),
-			f: func(i int) int {
-				return i * 2
-			},
-			expected: []interface{}{
-				api.NewStreamRecordWithoutTS(0),
-				api.NewStreamRecordWithoutTS(2),
-				api.NewStreamRecordWithoutTS(4),
-				api.NewStreamRecordWithoutTS(6),
-				api.NewStreamRecordWithoutTS(8),
-				api.NewStreamRecordWithoutTS(10),
-				api.NewStreamRecordWithoutTS(12),
-				api.NewStreamRecordWithoutTS(14),
-				api.NewStreamRecordWithoutTS(16),
-				api.NewStreamRecordWithoutTS(18),
-			},
-		},
-		{
-			name:  "Multiplier Mapper with context",
-			input: sources.NewSlice(numberRange(0, 10)),
-			f: func(_ctx context.Context, i int) int {
-				return i * 2
+			f: func(ctx context.Context, i interface{}) interface{} {
+				return i.(int) * 2
 			},
 			expected: []interface{}{
 				api.NewStreamRecordWithoutTS(0),
@@ -208,10 +175,10 @@ func TestStream_TopN(t *testing.T) {
 			snk := sink.NewSlice()
 
 			s := New(sources.NewSlice(tt.input)).
-				Map(func(item *record) api.Data {
+				Map(api.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
 					// groupBy
-					return api.Data{item.service, int64(item.value)}
-				}).
+					return api.Data{item.(*record).service, int64(item.(*record).value)}
+				})).
 				Window(NewSlidingTimeWindows(60*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(elem interface{}) int64 {
 					return elem.(api.Data)[1].(int64)

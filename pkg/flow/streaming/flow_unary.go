@@ -24,25 +24,21 @@ import (
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-func (flow *streamingFlow) Filter(f interface{}) api.Flow {
-	op, err := streamingApi.FilterFunc(f)
+func (flow *streamingFlow) Filter(predicate api.UnaryOperation[bool]) api.Flow {
+	op, err := api.FilterFunc(predicate)
 	if err != nil {
 		flow.drainErr(err)
 	}
 	return flow.Transform(op)
 }
 
-func (flow *streamingFlow) Map(f interface{}) api.Flow {
-	op, err := streamingApi.MapperFunc(f)
-	if err != nil {
-		flow.drainErr(err)
-	}
-	return flow.Transform(op)
+func (flow *streamingFlow) Map(mapper api.UnaryOperation[any]) api.Flow {
+	return flow.Transform(mapper)
 }
 
 // Transform represents a general unary transformation
 // For example: filter, map, etc.
-func (flow *streamingFlow) Transform(op streamingApi.UnaryOperation) api.Flow {
+func (flow *streamingFlow) Transform(op api.UnaryOperation[any]) api.Flow {
 	flow.ops = append(flow.ops, newUnaryOp(op, 1))
 	return flow
 }
@@ -50,7 +46,7 @@ func (flow *streamingFlow) Transform(op streamingApi.UnaryOperation) api.Flow {
 var _ streamingApi.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
-	op          streamingApi.UnaryOperation
+	op          api.UnaryOperation[any]
 	in          chan interface{}
 	out         chan interface{}
 	parallelism uint
@@ -72,7 +68,7 @@ func (u *unaryOperator) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func newUnaryOp(op streamingApi.UnaryOperation, parallelism uint) *unaryOperator {
+func newUnaryOp(op api.UnaryOperation[any], parallelism uint) *unaryOperator {
 	return &unaryOperator{
 		op:          op,
 		in:          make(chan interface{}),

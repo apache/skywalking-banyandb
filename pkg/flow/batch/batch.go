@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/flow/api"
@@ -65,19 +64,17 @@ func New(src batchApi.Source, metaSvc metadata.Service) api.Flow {
 	}
 }
 
-func (flow *batchFlow) Filter(f interface{}) api.Flow {
-	if unresolvedCriteria, ok := f.([]*modelv1.Criteria); ok {
-		flow.conditionOp = &conditionalFilterOperator{
-			f:                  flow,
-			unresolvedCriteria: unresolvedCriteria,
-		}
+func (flow *batchFlow) Filter(filter api.UnaryOperation[bool]) api.Flow {
+	if unresolvedCriteria, ok := filter.(*conditionalFilterOperator); ok {
+		unresolvedCriteria.f = flow
+		flow.conditionOp = unresolvedCriteria
 	} else {
 		flow.appendErr(errors.New("Filter can only accept []*modelv1.Criteria"))
 	}
 	return flow
 }
 
-func (flow *batchFlow) Map(f interface{}) api.Flow {
+func (flow *batchFlow) Map(mapper api.UnaryOperation[any]) api.Flow {
 	// TODO implement me
 	panic("implement me")
 }

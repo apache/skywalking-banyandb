@@ -27,9 +27,9 @@ type Flow interface {
 	// Filter is used to filter data.
 	// The parameter f can be either predicate function for streaming,
 	// or conditions for batch query.
-	Filter(f interface{}) Flow
+	Filter(UnaryOperation[bool]) Flow
 	// Map is used to transform data
-	Map(f interface{}) Flow
+	Map(UnaryOperation[any]) Flow
 	// Window is used to split infinite data into "buckets" of finite size.
 	// Currently, it is only applicable to streaming context.
 	Window(WindowAssigner) WindowedFlow
