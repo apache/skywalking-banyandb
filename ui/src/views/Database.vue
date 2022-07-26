@@ -21,7 +21,7 @@
     <div @mousemove="shrinkMove" @mouseup="shrinkUp" style="width:100%; height:100%">
         <el-container>
             <el-aside :width="fatherWidth" class="bd-top flex" style="position:relative;">
-                <aside-component></aside-component>
+                <aside-component @openFile="openFile"></aside-component>
                 <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
             </el-aside>
             <el-main style="background-color: var(--color-background)">
@@ -85,6 +85,9 @@ export default {
         },
         shrinkUp(e) {
             this.isShrink = false
+        },
+        openFile() {
+            this.mainComponent = "mainCom"
         }
     }
 }

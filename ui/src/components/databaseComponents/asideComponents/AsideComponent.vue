@@ -21,7 +21,8 @@
     <div style="width:100%; height:100%">
         <el-menu default-active="2" active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse"
             :collapse-transition="false">
-            <div v-for="(item, index) in groupLists" :key="item.metadata.name">
+            <div v-for="(item, index) in groupLists" :key="item.metadata.name"
+                @contextmenu.prevent="rightClickGroup($event, index)">
                 <el-submenu :index="item.metadata.name + '-' + index">
                     <template slot="title">
                         <i class="el-icon-folder"></i>
@@ -30,42 +31,50 @@
                                     item.metadata.name
                             }}</span>
                     </template>
-                    <el-submenu :index="item.metadata.name + '-' + index + '-stream'">
-                        <template slot="title">
-                            <i class="el-icon-folder"></i>
-                            <span slot="title">Stream</span>
-                        </template>
-                        <el-menu-item :index="'streamFile1' + index">
+                    <div @contextmenu.prevent="rightClickFolder($event, index, 'stream')">
+                        <el-submenu :index="item.metadata.name + '-' + index + '-stream'">
                             <template slot="title">
-                                <i class="el-icon-document"></i>
-                                <span slot="title" title="streamFile" style="width: 90%"
-                                    class="text-overflow-hidden">streamFile1</span>
+                                <i class="el-icon-folder"></i>
+                                <span slot="title">Stream</span>
                             </template>
-                        </el-menu-item>
-                    </el-submenu>
-                    <el-submenu :index="item.metadata.name + '-' + index + '-measure'">
-                        <template slot="title">
-                            <i class="el-icon-folder"></i>
-                            <span slot="title">Measure</span>
-                        </template>
-                        <div v-for="(itemMeasure, indexMeasure) in item.measure" :key="itemMeasure.metadata.name">
-                            <div @contextmenu.prevent="rightClick(index, indexMeasure, $event)">
-                                <el-menu-item
-                                    :index="item.metadata.name + '-' + index + '-' + itemMeasure.metadata.name">
+                            <div @contextmenu.prevent="rightClick($event, index)">
+                                <el-menu-item :index="'streamFile1' + index" @click="openStreamFile">
                                     <template slot="title">
                                         <i class="el-icon-document"></i>
-                                        <span slot="title" :title="itemMeasure.metadata.name" style="width: 90%"
-                                            class="text-overflow-hidden">{{ itemMeasure.metadata.name }}</span>
+                                        <span slot="title" title="streamFile" style="width: 90%"
+                                            class="text-overflow-hidden">streamFile1</span>
                                     </template>
                                 </el-menu-item>
                             </div>
-                        </div>
-                    </el-submenu>
+                        </el-submenu>
+                    </div>
+                    <div @contextmenu.prevent="rightClickFolder($event, index, 'measure')">
+                        <el-submenu :index="item.metadata.name + '-' + index + '-measure'">
+                            <template slot="title">
+                                <i class="el-icon-folder"></i>
+                                <span slot="title">Measure</span>
+                            </template>
+                            <div v-for="(itemMeasure, indexMeasure) in item.measure" :key="itemMeasure.metadata.name">
+                                <div @contextmenu.prevent="rightClick($event, index, indexMeasure)">
+                                    <el-menu-item
+                                        :index="item.metadata.name + '-' + index + '-' + itemMeasure.metadata.name"
+                                        @click="openMeasureFile(index, indexMeasure)">
+                                        <template slot="title">
+                                            <i class="el-icon-document"></i>
+                                            <span slot="title" :title="itemMeasure.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">{{ itemMeasure.metadata.name }}</span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-submenu>
+                    </div>
                 </el-submenu>
             </div>
         </el-menu>
-        <div v-if="showRightMenu" class="right-menu border-radius-little box-shadow" :style="{top: topNumber+'px', left: leftNumber+'px'}">
-            <right-menu-component></right-menu-component>
+        <div v-if="showRightMenu" class="right-menu border-radius-little box-shadow"
+            :style="{ top: topNumber + 'px', left: leftNumber + 'px' }">
+            <right-menu-component :rightMenuList="rightMenuList"></right-menu-component>
         </div>
     </div>
 </template>
@@ -268,9 +277,44 @@ export default {
                 },
                 "updatedAt": null
             },],
-            //showRightMenu: false,
             topNumber: 0,
-            leftNumber: 0
+            leftNumber: 0,
+            rightMenuListOne: [{
+                icon: "el-icon-document",
+                name: "new File",
+                id: "create File"
+            }, {
+                icon: "el-icon-refresh-right",
+                name: "refresh",
+                id: "refresh Folder"
+            }, {
+                icon: "el-icon-delete",
+                name: "delete",
+                id: "delete Folder"
+            }],
+            rightMenuList: this.rightMenuListOne,
+            rightMenuListTwo: [{
+                icon: "el-icon-folder",
+                name: "new Group",
+                id: "create Group"
+            }, {
+                icon: "el-icon-refresh-right",
+                name: "refresh",
+                id: "refresh Group"
+            }, {
+                icon: "el-icon-delete",
+                name: "delete",
+                id: "delete Group"
+            }],
+            rightMenuListThree: [{
+                icon: "el-icon-refresh-right",
+                name: "refresh",
+                id: "refresh File"
+            }, {
+                icon: "el-icon-delete",
+                name: "delete",
+                id: "delete File"
+            }]
         }
     },
 
@@ -305,10 +349,43 @@ export default {
                 this.$message.errorNet()
             }
         },
-        rightClick(index, indexMeasure, e) {
+        stopPropagation(e) {
+            e = e || window.event;
+            if (e.stopPropagation) { //W3C阻止冒泡方法  
+                e.stopPropagation();
+            } else {
+                e.cancelBubble = true; //IE阻止冒泡方法  
+            }
+        },
+        openRightMenu(e) {
             this.$store.commit("changeShowRightMenu", true)
             this.topNumber = e.pageY
             this.leftNumber = e.pageX
+            this.stopPropagation()
+        },
+        // open file right menu
+        rightClick(e, index, indexMeasure) {
+            this.rightMenuList = this.rightMenuListThree
+            this.openRightMenu(e)
+            console.log('rightClick')
+        },
+        // open folder right menu
+        rightClickFolder(e, index, type) {
+            this.rightMenuList = this.rightMenuListOne
+            this.openRightMenu(e)
+            console.log('rightClickFolder')
+        },
+        // open group right menu
+        rightClickGroup(e, index) {
+            this.rightMenuList = this.rightMenuListTwo
+            this.openRightMenu(e)
+            console.log('rightClickGroup')
+        },
+        openStreamFile() {
+            this.$emit('openFile')
+        },
+        openMeasureFile(index, indexMeasure) {
+            this.$emit('openFile')
         }
     },
 }
@@ -321,10 +398,11 @@ export default {
     text-align: start;
     text-justify: middle;
 }
+
 .right-menu {
     width: 130px;
     position: fixed;
-    z-index: 1000;
+    z-index: 9999999999999999999999999999 !important;
     background-color: white;
 }
 
