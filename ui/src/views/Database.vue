@@ -21,7 +21,7 @@
     <div @mousemove="shrinkMove" @mouseup="shrinkUp" style="width:100%; height:100%">
         <el-container>
             <el-aside :width="fatherWidth" class="bd-top flex" style="position:relative;">
-                <aside-component @openFile="openFile"></aside-component>
+                <aside-component></aside-component>
                 <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
             </el-aside>
             <el-main style="background-color: var(--color-background)">
@@ -29,7 +29,6 @@
             </el-main>
         </el-container>
     </div>
-
 </template>
 
 <script>
@@ -41,7 +40,6 @@ export default {
     name: 'Database',
     data() {
         return {
-            mainComponent: "mainStartCom",
             isShrink: false,
         }
     },
@@ -53,7 +51,8 @@ export default {
     },
     computed: {
         ...mapState({
-            fatherWidth: (state) => state.aside.fatherWidth
+            fatherWidth: (state) => state.aside.fatherWidth,
+            mainComponent: (state) => state.tags.currentMenu == null ? "mainStartCom" : "mainCom"
         })
     },
     components: {
@@ -74,7 +73,7 @@ export default {
                 if (wid <= 65) {
                     this.$store.commit('changeCollapse', true)
                     this.$store.commit('changeFatherWidth', '65px')
-                }else {
+                } else {
                     this.$store.commit('changeCollapse', false)
                     this.$store.commit('changeFatherWidth', wid + 'px')
                 }
@@ -85,9 +84,6 @@ export default {
         },
         shrinkUp(e) {
             this.isShrink = false
-        },
-        openFile() {
-            this.mainComponent = "mainCom"
         }
     }
 }
