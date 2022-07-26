@@ -42,7 +42,12 @@ func (*store) Flush() error {
 }
 
 func (s *store) Stats() observability.Statistics {
-	return s.lsm.Stats()
+	store := s.lsm.Stats()
+	term := s.termMetadata.Stats()
+	return observability.Statistics{
+		MemBytes:    store.MemBytes + term.MemBytes,
+		MaxMemBytes: store.MaxMemBytes + term.MaxMemBytes,
+	}
 }
 
 func (s *store) Close() error {

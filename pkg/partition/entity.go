@@ -56,6 +56,9 @@ func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) 
 			return nil, err
 		}
 		entry, errMarshal := pbv1.MarshalIndexFieldValue(tag)
+		if errors.Is(errMarshal, pbv1.ErrNullValue) {
+			continue
+		}
 		if errMarshal != nil {
 			return nil, errMarshal
 		}

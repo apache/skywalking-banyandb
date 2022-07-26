@@ -16,15 +16,21 @@
 # under the License.
 #
 
-NAME := ui
+NAME := stress
+
+CLI_ARGS :=
+
+ifdef PROFILE
+	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
+endif
 
 .PHONY: dev-up
 dev-up:
-	DOCKER_BUILDKIT=1 docker compose --env-file ./env.dev up --build
+	DOCKER_BUILDKIT=1 docker compose $(CLI_ARGS) --env-file ./env.dev up --build
 
 .PHONY: up
 up:
-	DOCKER_BUILDKIT=1 docker compose --env-file ./env up --build
+	DOCKER_BUILDKIT=1 docker compose $(CLI_ARGS) --env-file ./env up --build
 
 .PHONY: down
 down:

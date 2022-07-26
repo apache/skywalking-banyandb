@@ -131,6 +131,9 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRu
 	if err != nil {
 		return err
 	}
+	if values == nil {
+		return nil
+	}
 	var errWriting error
 	for _, val := range values {
 		indexShardID, err := partition.ShardID(val, s.shardNum)
@@ -175,6 +178,9 @@ func writeLocalIndex(writer tsdb.Writer, ruleIndex *partition.IndexRuleLocator, 
 	values, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
+	}
+	if values == nil {
+		return nil
 	}
 	var errWriting error
 	for _, val := range values {
@@ -221,6 +227,9 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 		existInt = true
 	}
 	fv, err := pbv1.ParseIndexFieldValue(tag)
+	if errors.Is(err, pbv1.ErrNullValue) {
+		return nil, existInt, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}
