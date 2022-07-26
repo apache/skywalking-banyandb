@@ -138,4 +138,24 @@ var _ = Describe("TopN Query", Ordered, func() {
 			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
 		}).WithTimeout(time.Second * 10).Should(BeNumerically("==", 5))
 	})
+
+	It("Query with condition for non-group-by topN", func() {
+		query := pbv1.NewMeasureTopNRequestBuilder().
+			Metadata("sw_metric", "service_cpm_minute_no_group_by_top100").
+			TimeRange(sT, eT).
+			TopN(1).
+			Max().
+			Build()
+		Eventually(func(g Gomega) int64 {
+			now := time.Now()
+			msg := bus.NewMessage(bus.MessageID(now.UnixNano()), query)
+			f, err := svcs.pipeline.Publish(data.TopicTopNQuery, msg)
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(f).ShouldNot(BeNil())
+			resp, err := f.Get()
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(resp).ShouldNot(BeNil())
+			return resp.Data().([]*measurev1.TopNList_Item)[0].GetValue().GetInt().GetValue()
+		}).WithTimeout(time.Second * 10).Should(BeNumerically("==", 5))
+	})
 })
