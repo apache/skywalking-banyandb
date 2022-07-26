@@ -19,8 +19,8 @@
 
 <template>
     <div style="width:100%; height:100%">
-        <el-menu default-active="2" active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse"
-            :collapse-transition="false">
+        <el-menu :default-active="currentMenu ? currentMenu.metadata.group + currentMenu.metadata.name : ''" active-text-color="#6E38F7"
+            style="height: 100%;" :collapse="isCollapse" :collapse-transition="false">
             <div v-for="(item, index) in groupLists" :key="item.metadata.name"
                 @contextmenu.prevent="rightClickGroup($event, index)">
                 <el-submenu :index="item.metadata.name + '-' + index">
@@ -56,8 +56,7 @@
                             </template>
                             <div v-for="(itemMeasure, indexMeasure) in item.measure" :key="itemMeasure.metadata.name">
                                 <div @contextmenu.prevent="rightClick($event, index, indexMeasure)">
-                                    <el-menu-item
-                                        :index="item.metadata.name + '-' + index + '-' + itemMeasure.metadata.name"
+                                    <el-menu-item :index="itemMeasure.metadata.group + itemMeasure.metadata.name"
                                         @click="openMeasureFile(index, indexMeasure)">
                                         <template slot="title">
                                             <i class="el-icon-document"></i>
@@ -330,7 +329,8 @@ export default {
     computed: {
         ...mapState({
             isCollapse: (state) => state.aside.isCollapse,
-            showRightMenu: (state) => state.menuState.showRightMenu
+            showRightMenu: (state) => state.menuState.showRightMenu,
+            currentMenu: (state) => state.tags.currentMenu
         })
     },
 
@@ -382,10 +382,13 @@ export default {
             console.log('rightClickGroup')
         },
         openStreamFile() {
-            this.$emit('openFile')
+
+
         },
         openMeasureFile(index, indexMeasure) {
-            this.$emit('openFile')
+            let item = this.groupLists[index].measure[indexMeasure]
+            item.metadata.type = "measure"
+            this.$store.commit('selectMenu', item)
         }
     },
 }

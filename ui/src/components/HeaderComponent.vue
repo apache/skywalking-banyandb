@@ -27,14 +27,22 @@
             </el-image>
             <div class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</div>
             <div class="flex center pointer icon-size" @click="changeAsideWidth" v-if="showButton">
-                <el-tooltip class="item" effect="dark" :content="!isCollapse ? 'Collapse menu' : 'Expand menu'" placement="bottom">
+                <el-tooltip class="item" effect="dark" :content="!isCollapse ? 'Collapse menu' : 'Expand menu'"
+                    placement="bottom">
                     <i class="el-icon-s-fold icon" v-if="!isCollapse"></i>
                     <i class="el-icon-s-unfold icon" v-else></i>
                 </el-tooltip>
             </div>
             <div v-else class="icon-size"></div>
+            <span
+            v-if="showButton && currentMenu"
+            :title="currentMenu.metadata.group + ' / ' + currentMenu.metadata.type + ' / ' + currentMenu.metadata.name"
+            class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{ currentMenu.metadata.group + ' / ' +
+                    currentMenu.metadata.type + ' / ' + currentMenu.metadata.name
+            }}</span>
+            <div v-else style="width:380px;" class="margin-left-small"></div>
         </div>
-        <div class="navigation">
+        <div class="navigation" style="margin-right: 450px;">
             <el-menu active-text-color="#6E38F7" router class="el-menu-demo" mode="horizontal" :default-active="active"
                 @select="handleSelect">
                 <el-menu-item index="/home">Home</el-menu-item>
@@ -65,6 +73,7 @@ export default {
         ...mapState({
             showButton: (state) => state.header.showButton,
             isCollapse: (state) => state.aside.isCollapse,
+            currentMenu: (state) => state.tags.currentMenu
         })
     },
     props: {
@@ -102,7 +111,7 @@ export default {
 }
 
 .image {
-    width: 280px;
+    width: 665px;
     height: 100%;
 
     .el-image {

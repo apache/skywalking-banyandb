@@ -19,8 +19,16 @@
 
 <template>
   <div class="justify-start flex">
-    <el-tag class="pointer" size="medium" v-for="(item, index) in tags" :key="item.name" closable
-      @click="changeMenu(item)" @close="handleClose(item, index)" effect="dark">{{ item.name }}
+    <el-tag class="pointer flex align-item-center" size="medium" v-for="(item, index) in tags" :key="item.metadata.name"
+      closable @click="changeMenu(item)" @close="handleClose(item, index)" style="width:180px;" :effect="currentMenu.metadata.group === item.metadata.group &&
+      currentMenu.metadata.type === item.metadata.type &&
+      currentMenu.metadata.name === item.metadata.name
+      ? 'dark'
+      : 'plain'">
+      <span :title="item.metadata.group + ' / ' + item.metadata.type + ' / ' + item.metadata.name"
+        class="text-overflow-hidden" style="width:85%">{{
+            item.metadata.name
+        }}</span>
     </el-tag>
   </div>
 </template>
@@ -32,6 +40,7 @@ export default {
   computed: {
     ...mapState({
       tags: (state) => state.tags.tagsList,
+      currentMenu: (state) => state.tags.currentMenu
     }),
   },
   created() {
@@ -43,9 +52,19 @@ export default {
     }),
     changeMenu(item) {
       console.log(item)
+      /**
+       * 切换组件
+       * currentMenu
+       */
+      this.$store.commit('selectMenu', item)
     },
     handleClose(item, index) {
       console.log(item, index)
+      let length = this.tags.length - 1
+      this.close(item)
+      /**
+       * 切换组件
+       */
     }
   }
 }
