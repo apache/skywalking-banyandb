@@ -25,7 +25,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
@@ -50,8 +50,8 @@ func TestSource_io_reader(t *testing.T) {
 
 	var result strings.Builder
 	for item := range in {
-		assert.IsType(api.StreamRecord{}, item)
-		result.Write(item.(api.StreamRecord).Data().([]byte))
+		assert.IsType(flow.StreamRecord{}, item)
+		result.Write(item.(flow.StreamRecord).Data().([]byte))
 	}
 
 	assert.Equal(ALPHABET, result.String())

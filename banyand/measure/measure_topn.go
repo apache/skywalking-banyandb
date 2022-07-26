@@ -38,7 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -75,7 +75,7 @@ type topNStreamingProcessor struct {
 	src              chan interface{}
 	in               chan interface{}
 	errCh            <-chan error
-	streamingFlow    api.Flow
+	streamingFlow    flow.Flow
 }
 
 func (t *topNStreamingProcessor) In() chan<- interface{} {
@@ -94,7 +94,7 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 			if !open {
 				return
 			}
-			if record, ok := item.(api.StreamRecord); ok {
+			if record, ok := item.(flow.StreamRecord); ok {
 				if err := t.writeStreamRecord(record); err != nil {
 					t.l.Err(err).Msg("fail to write stream record")
 				}
@@ -114,7 +114,7 @@ func (t *topNStreamingProcessor) Close() error {
 	return nil
 }
 
-func (t *topNStreamingProcessor) writeStreamRecord(record api.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
 	tuples, ok := record.Data().([]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
@@ -126,14 +126,21 @@ func (t *topNStreamingProcessor) writeStreamRecord(record api.StreamRecord) erro
 	var err error
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
-		data := tuple.V2.(api.Data)
+		data := tuple.V2.(flow.Data)
 		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data api.Data, rankNum int) error {
-	entity, shardID, err := t.locate(data[2].([]*modelv1.TagValue), rankNum)
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+	var tagValues []*modelv1.TagValue
+	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
+		var ok bool
+		if tagValues, ok = data[2].([]*modelv1.TagValue); !ok {
+			return errors.New("fail to extract tag values from topN result")
+		}
+	}
+	entity, shardID, err := t.locate(tagValues, rankNum)
 	if err != nil {
 		return err
 	}
@@ -262,7 +269,7 @@ func (manager *topNProcessorManager) Close() error {
 
 func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) error {
 	for _, processor := range manager.processorMap {
-		processor.src <- api.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+		processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
 	}
 
 	return nil
@@ -309,7 +316,7 @@ func (manager *topNProcessorManager) start() error {
 		processor.errCh = streamingFlow.Window(streaming.NewSlidingTimeWindows(interval, slideSize)).
 			TopN(int(topNSchema.GetCountersNumber()),
 				streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
-					return elem.(api.Data)[1].(int64)
+					return elem.(flow.Data)[1].(int64)
 				}),
 				streaming.OrderBy(topNSchema.GetFieldValueSort()),
 			).To(processor).OpenAsync()
@@ -320,7 +327,7 @@ func (manager *topNProcessorManager) start() error {
 	return nil
 }
 
-func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (api.UnaryFunc[bool], error) {
+func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (flow.UnaryFunc[bool], error) {
 	var filters []conditionFilter
 	for _, group := range criteria {
 		for _, cond := range group.GetConditions() {
@@ -383,12 +390,26 @@ func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset i
 	}
 }
 
-func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (api.UnaryFunc[any], error) {
+func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (flow.UnaryFunc[any], error) {
 	fieldIdx := slices.IndexFunc(manager.m.GetSchema().GetFields(), func(spec *databasev1.FieldSpec) bool {
 		return spec.GetName() == fieldName
 	})
 	if fieldIdx == -1 {
 		return nil, errors.New("invalid fieldName")
+	}
+	if len(groupByNames) == 0 {
+		return func(_ context.Context, request any) any {
+			dataPoint := request.(*measurev1.DataPointValue)
+			return flow.Data{
+				// save string representation of group values as the key, i.e. v1
+				"",
+				// field value as v2
+				// TODO: we only support int64
+				dataPoint.GetFields()[fieldIdx].GetInt().GetValue(),
+				// groupBy tag values as v3
+				nil,
+			}
+		}, nil
 	}
 	groupLocator, err := newGroupLocator(manager.m.GetSchema(), groupByNames)
 	if err != nil {
@@ -396,7 +417,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	}
 	return func(_ context.Context, request any) any {
 		dataPoint := request.(*measurev1.DataPointValue)
-		return api.Data{
+		return flow.Data{
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
 				return stringify(dataPoint.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])

@@ -25,7 +25,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
@@ -59,8 +59,8 @@ func TestSource_channel(t *testing.T) {
 
 	var result strings.Builder
 	for item := range in {
-		assert.IsType(api.StreamRecord{}, item)
-		result.WriteString(item.(api.StreamRecord).Data().(string))
+		assert.IsType(flow.StreamRecord{}, item)
+		result.WriteString(item.(flow.StreamRecord).Data().(string))
 	}
 
 	assert.Equal(ALPHABET, result.String())

@@ -18,6 +18,7 @@
 package measure_test
 
 import (
+	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -40,8 +41,14 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 		// Retrieve all shards
 		shards, err := measure.CompanionShards(topNMetadata)
 		Expect(err).ShouldNot(HaveOccurred())
+		topNSchema, err := svcs.metadataService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
+		Expect(err).ShouldNot(HaveOccurred())
+		entity := make(tsdb.Entity, 1+len(topNSchema.GetGroupByTagNames()))
+		for i := range entity {
+			entity[i] = tsdb.AnyEntry
+		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(tsdb.NewPath([]tsdb.Entry{tsdb.AnyEntry, tsdb.AnyEntry}))
+			sl, err := shard.Series().List(tsdb.NewPath(entity))
 			Expect(err).ShouldNot(HaveOccurred())
 			for _, series := range sl {
 				seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(baseTime, 1*time.Hour))
@@ -98,6 +105,13 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 			Group: "sw_metric",
 		}, &commonv1.Metadata{
 			Name:  "service_cpm_minute_top100",
+			Group: "sw_metric",
+		}, "service_cpm_minute_data.json", 3),
+		Entry("service_cpm_minute without groupBy", &commonv1.Metadata{
+			Name:  "service_cpm_minute",
+			Group: "sw_metric",
+		}, &commonv1.Metadata{
+			Name:  "service_cpm_minute_no_group_by_top100",
 			Group: "sw_metric",
 		}, "service_cpm_minute_data.json", 3),
 	)

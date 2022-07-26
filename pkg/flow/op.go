@@ -15,30 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package api
+package flow
 
 import (
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/iter"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"context"
 )
 
-type Outlet[O any] interface {
-	Output() iter.Iterator[O]
+// UnaryOperation represents user-defined unary function (i.e. Map, Filter, etc)
+type UnaryOperation[R any] interface {
+	Apply(ctx context.Context, data interface{}) R
 }
 
-type Operator[I, O any] interface {
-	Transform(iter.Iterator[I]) iter.Iterator[O]
+// UnaryFunc implements UnaryOperation as type func (context.Context, interface{})
+type UnaryFunc[R any] func(context.Context, interface{}) R
+
+// Apply implements UnOperation.Apply method
+func (f UnaryFunc[R]) Apply(ctx context.Context, data interface{}) R {
+	return f(ctx, data)
 }
 
-type Source interface {
-	Shards(shardingKeys tsdb.Entity) iter.Iterator[tsdb.Series]
-	TimeRange() timestamp.TimeRange
-	Metadata() *commonv1.Metadata
-}
-
-type Sink[T any] interface {
-	Drain(iter.Iterator[T]) error
-	Val() []T
+// FilterFunc transform a function to an UnaryOperation
+func FilterFunc(filter UnaryOperation[bool]) (UnaryOperation[any], error) {
+	return UnaryFunc[any](func(ctx context.Context, payload interface{}) interface{} {
+		predicate := filter.Apply(ctx, payload)
+		if !predicate {
+			return nil
+		}
+		return payload
+	}), nil
 }

@@ -27,7 +27,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
@@ -41,25 +41,25 @@ const (
 var (
 	_ streamingApi.Operator = (*SlidingTimeWindows)(nil)
 	_ TriggerContext        = (*SlidingTimeWindows)(nil)
-	_ api.WindowAssigner    = (*SlidingTimeWindows)(nil)
-	_ api.Window            = (*timeWindow)(nil)
+	_ flow.WindowAssigner   = (*SlidingTimeWindows)(nil)
+	_ flow.Window           = (*timeWindow)(nil)
 )
 
-func (flow *streamingFlow) Window(w api.WindowAssigner) api.WindowedFlow {
+func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	switch v := w.(type) {
 	case *SlidingTimeWindows:
-		flow.ops = append(flow.ops, v)
+		f.ops = append(f.ops, v)
 	default:
-		flow.drainErr(errors.New("window is not supported"))
+		f.drainErr(errors.New("window is not supported"))
 	}
 
 	return &windowedFlow{
-		f:  flow,
+		f:  f,
 		wa: w,
 	}
 }
 
-func (s *windowedFlow) Aggregate(aggrFunc api.AggregateFunction) api.Flow {
+func (s *windowedFlow) Aggregate(aggrFunc flow.AggregateFunction) flow.Flow {
 	switch v := s.wa.(type) {
 	case *SlidingTimeWindows:
 		v.Aggregate(aggrFunc)
@@ -74,15 +74,15 @@ type SlidingTimeWindows struct {
 	currentWindow timeWindow
 	size          int64
 	slide         int64
-	queue         *api.PriorityQueue
+	queue         *flow.PriorityQueue
 	// guard queue
 	queueMu          sync.Mutex
 	currentWatermark int64
-	timerHeap        *api.PriorityQueue
+	timerHeap        *flow.PriorityQueue
 	// guard timerHeap
 	timerMu  sync.Mutex
 	trigger  EventTimeTrigger
-	aggrFunc api.AggregateFunction
+	aggrFunc flow.AggregateFunction
 
 	// For api.Operator
 	in           chan interface{}
@@ -159,7 +159,7 @@ func (s *SlidingTimeWindows) emit() {
 			for _, elem := range slidingSlices {
 				data = append(data, elem.(*TimestampedValue).Data())
 			}
-			s.out <- api.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
+			s.out <- flow.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
 		}
 	}
 }
@@ -181,7 +181,7 @@ func (s *SlidingTimeWindows) purgeOutdatedWindows() {
 
 func (s *SlidingTimeWindows) receive() {
 	for elem := range s.in {
-		record := elem.(api.StreamRecord)
+		record := elem.(flow.StreamRecord)
 		// assume records are consumed one by one in strict time order
 		s.currentWatermark = record.TimestampMillis()
 		s.purgeOutdatedWindows()
@@ -199,7 +199,7 @@ func (s *SlidingTimeWindows) receive() {
 				s.purgedWindow <- tw
 			}
 		}
-		item := &TimestampedValue{elem.(api.StreamRecord), 0}
+		item := &TimestampedValue{elem.(flow.StreamRecord), 0}
 		s.queueMu.Lock()
 		heap.Push(s.queue, item)
 		s.queueMu.Unlock()
@@ -221,8 +221,8 @@ func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {
 	return &SlidingTimeWindows{
 		size:             size.Milliseconds(),
 		slide:            slide.Milliseconds(),
-		queue:            api.NewPriorityQueue(true),
-		timerHeap:        api.NewPriorityQueue(false),
+		queue:            flow.NewPriorityQueue(true),
+		timerHeap:        flow.NewPriorityQueue(false),
 		in:               make(chan interface{}),
 		out:              make(chan interface{}),
 		done:             make(chan struct{}),
@@ -241,13 +241,13 @@ func (t timeWindow) MaxTimestamp() int64 {
 	return t.end - 1
 }
 
-func (s *SlidingTimeWindows) Aggregate(aggrFunc api.AggregateFunction) {
+func (s *SlidingTimeWindows) Aggregate(aggrFunc flow.AggregateFunction) {
 	s.aggrFunc = aggrFunc
 }
 
-func (s *SlidingTimeWindows) AssignWindows(timestamp int64) ([]api.Window, error) {
+func (s *SlidingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
 	if timestamp > math.MinInt64 {
-		windows := make([]api.Window, 0, s.size/s.slide)
+		windows := make([]flow.Window, 0, s.size/s.slide)
 		lastStart := getWindowStart(timestamp, s.slide)
 		for start := lastStart; start > timestamp-s.size; start -= s.slide {
 			windows = append(windows, timeWindow{
@@ -293,10 +293,10 @@ type TriggerContext interface {
 	RegisterEventTimeTimer(int64)
 }
 
-var _ api.Element = (*TimestampedValue)(nil)
+var _ flow.Element = (*TimestampedValue)(nil)
 
 type TimestampedValue struct {
-	api.StreamRecord
+	flow.StreamRecord
 	index int
 }
 
@@ -312,11 +312,11 @@ func (t *TimestampedValue) SetIndex(i int) {
 	t.index = i
 }
 
-func (t *TimestampedValue) Compare(other api.Element) int {
+func (t *TimestampedValue) Compare(other flow.Element) int {
 	return int(t.StreamRecord.TimestampMillis() - other.(*TimestampedValue).TimestampMillis())
 }
 
-var _ api.Element = (*internalTimer)(nil)
+var _ flow.Element = (*internalTimer)(nil)
 
 type internalTimer struct {
 	w                 timeWindow
@@ -332,6 +332,6 @@ func (t *internalTimer) SetIndex(idx int) {
 	t.index = idx
 }
 
-func (t *internalTimer) Compare(elem api.Element) int {
+func (t *internalTimer) Compare(elem flow.Element) int {
 	return int(t.triggerTimeMillis - elem.(*internalTimer).triggerTimeMillis)
 }

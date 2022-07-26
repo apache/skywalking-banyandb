@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package api
+package flow
 
 import (
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -33,16 +33,10 @@ type Flow interface {
 	// Window is used to split infinite data into "buckets" of finite size.
 	// Currently, it is only applicable to streaming context.
 	Window(WindowAssigner) WindowedFlow
-	// Offset skips the given number of result
-	Offset(int) Flow
-	// Limit takes the given number of result
-	Limit(int) Flow
 	// To pipes data to the given sink
 	To(sink interface{}) Flow
 	// OpenAsync opens the flow in the async mode for streaming scenario.
 	OpenAsync() <-chan error
-	// OpenSync opens the flow in the sync mode for batch scenario.
-	OpenSync() error
 }
 
 type WindowedFlow interface {

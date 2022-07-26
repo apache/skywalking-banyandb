@@ -24,7 +24,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"

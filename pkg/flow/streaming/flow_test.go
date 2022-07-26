@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
@@ -44,7 +44,7 @@ func TestStream_Filter(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    interface{}
-		f        api.UnaryFunc[bool]
+		f        flow.UnaryFunc[bool]
 		expected []interface{}
 	}{
 		{
@@ -54,11 +54,11 @@ func TestStream_Filter(t *testing.T) {
 				return i.(int)%2 == 0
 			},
 			expected: []interface{}{
-				api.NewStreamRecordWithoutTS(0),
-				api.NewStreamRecordWithoutTS(2),
-				api.NewStreamRecordWithoutTS(4),
-				api.NewStreamRecordWithoutTS(6),
-				api.NewStreamRecordWithoutTS(8),
+				flow.NewStreamRecordWithoutTS(0),
+				flow.NewStreamRecordWithoutTS(2),
+				flow.NewStreamRecordWithoutTS(4),
+				flow.NewStreamRecordWithoutTS(6),
+				flow.NewStreamRecordWithoutTS(8),
 			},
 		},
 	}
@@ -90,7 +90,7 @@ func TestStream_Mapper(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    interface{}
-		f        api.UnaryFunc[any]
+		f        flow.UnaryFunc[any]
 		expected []interface{}
 	}{
 		{
@@ -100,16 +100,16 @@ func TestStream_Mapper(t *testing.T) {
 				return i.(int) * 2
 			},
 			expected: []interface{}{
-				api.NewStreamRecordWithoutTS(0),
-				api.NewStreamRecordWithoutTS(2),
-				api.NewStreamRecordWithoutTS(4),
-				api.NewStreamRecordWithoutTS(6),
-				api.NewStreamRecordWithoutTS(8),
-				api.NewStreamRecordWithoutTS(10),
-				api.NewStreamRecordWithoutTS(12),
-				api.NewStreamRecordWithoutTS(14),
-				api.NewStreamRecordWithoutTS(16),
-				api.NewStreamRecordWithoutTS(18),
+				flow.NewStreamRecordWithoutTS(0),
+				flow.NewStreamRecordWithoutTS(2),
+				flow.NewStreamRecordWithoutTS(4),
+				flow.NewStreamRecordWithoutTS(6),
+				flow.NewStreamRecordWithoutTS(8),
+				flow.NewStreamRecordWithoutTS(10),
+				flow.NewStreamRecordWithoutTS(12),
+				flow.NewStreamRecordWithoutTS(14),
+				flow.NewStreamRecordWithoutTS(16),
+				flow.NewStreamRecordWithoutTS(18),
 			},
 		},
 	}
@@ -146,25 +146,25 @@ func TestStream_TopN(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    []api.StreamRecord
+		input    []flow.StreamRecord
 		expected []*Tuple2
 	}{
 		{
 			name: "Smoke Test ASC",
-			input: []api.StreamRecord{
-				api.NewStreamRecord(&record{"e2e-service-provider", "instance-001", 10000}, 1000),
-				api.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9900}, 2000),
-				api.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 3000),
-				api.NewStreamRecord(&record{"e2e-service-consumer", "instance-002", 9700}, 4000),
-				api.NewStreamRecord(&record{"e2e-service-provider", "instance-003", 9700}, 5000),
-				api.NewStreamRecord(&record{"e2e-service-consumer", "instance-004", 9600}, 6000),
-				api.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9500}, 7000),
-				api.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
+			input: []flow.StreamRecord{
+				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-001", 10000}, 1000),
+				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9900}, 2000),
+				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 3000),
+				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-002", 9700}, 4000),
+				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-003", 9700}, 5000),
+				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-004", 9600}, 6000),
+				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9500}, 7000),
+				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
 			},
 			expected: []*Tuple2{
-				{int64(9500), api.Data{"e2e-service-consumer", int64(9500)}},
-				{int64(9600), api.Data{"e2e-service-consumer", int64(9600)}},
-				{int64(9700), api.Data{"e2e-service-consumer", int64(9700)}},
+				{int64(9500), flow.Data{"e2e-service-consumer", int64(9500)}},
+				{int64(9600), flow.Data{"e2e-service-consumer", int64(9600)}},
+				{int64(9700), flow.Data{"e2e-service-consumer", int64(9700)}},
 			},
 		},
 	}
@@ -175,13 +175,13 @@ func TestStream_TopN(t *testing.T) {
 			snk := sink.NewSlice()
 
 			s := New(sources.NewSlice(tt.input)).
-				Map(api.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
+				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
 					// groupBy
-					return api.Data{item.(*record).service, int64(item.(*record).value)}
+					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
 				Window(NewSlidingTimeWindows(60*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(elem interface{}) int64 {
-					return elem.(api.Data)[1].(int64)
+					return elem.(flow.Data)[1].(int64)
 				})).
 				To(snk)
 
@@ -190,7 +190,7 @@ func TestStream_TopN(t *testing.T) {
 					if len(snk.Value()) == 0 {
 						return false
 					}
-					firstValue := snk.Value()[0].(api.StreamRecord).Data()
+					firstValue := snk.Value()[0].(flow.StreamRecord).Data()
 					if len(firstValue.([]*Tuple2)) == len(tt.expected) {
 						if assert.Equal(tt.expected, firstValue) {
 							return true

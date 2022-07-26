@@ -24,15 +24,15 @@ import (
 	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
 type windowedFlow struct {
 	f  *streamingFlow
-	wa api.WindowAssigner
+	wa flow.WindowAssigner
 }
 
-func (s *windowedFlow) TopN(topNum int, opts ...any) api.Flow {
+func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 	topNAggrFunc := &topNAggregator{
 		cacheSize: topNum,
 		sort:      modelv1.Sort_SORT_UNSPECIFIED,

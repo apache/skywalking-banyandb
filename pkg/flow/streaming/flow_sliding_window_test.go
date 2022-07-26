@@ -24,13 +24,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 )
 
 func Test_SlidingWindow_NoOutput(t *testing.T) {
 	num := 0
-	var aggrFunc api.AggregateFunction = func(i []interface{}) interface{} {
+	var aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
 		num++
 		return nil
 	}
@@ -42,8 +42,8 @@ func Test_SlidingWindow_NoOutput(t *testing.T) {
 	slidingWindows.Exec(sink.NewSlice())
 	baseTs := time.Now()
 	// add a single
-	input := []api.StreamRecord{
-		api.NewStreamRecord(1, baseTs.UnixMilli()),
+	input := []flow.StreamRecord{
+		flow.NewStreamRecord(1, baseTs.UnixMilli()),
 	}
 	for _, r := range input {
 		slidingWindows.In() <- r
@@ -53,7 +53,7 @@ func Test_SlidingWindow_NoOutput(t *testing.T) {
 
 func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 	num := 0
-	var aggrFunc api.AggregateFunction = func(i []interface{}) interface{} {
+	var aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
 		num++
 		return nil
 	}
@@ -68,9 +68,9 @@ func Test_SlidingWindow_Trigger_Once(t *testing.T) {
 	baseTs := time.Now()
 
 	// add a single
-	input := []api.StreamRecord{
-		api.NewStreamRecord(1, baseTs.UnixMilli()),
-		api.NewStreamRecord(2, baseTs.Add(time.Minute*1).UnixMilli()),
+	input := []flow.StreamRecord{
+		flow.NewStreamRecord(1, baseTs.UnixMilli()),
+		flow.NewStreamRecord(2, baseTs.Add(time.Minute*1).UnixMilli()),
 	}
 	for _, r := range input {
 		slidingWindows.In() <- r

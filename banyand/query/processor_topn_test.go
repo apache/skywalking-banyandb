@@ -61,7 +61,7 @@ func setupMeasureQueryData(dataFile string, measureSchema measure.Measure,
 	return baseTime
 }
 
-var _ = Describe("Measure Query", Ordered, func() {
+var _ = Describe("TopN Query", Ordered, func() {
 	var measureSchema measure.Measure
 	var sT, eT time.Time
 

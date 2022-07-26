@@ -23,7 +23,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
@@ -82,8 +82,8 @@ func NewSlice(slice interface{}) streamingApi.Source {
 	}
 }
 
-func tryExactTimestamp(item any) api.StreamRecord {
-	if r, ok := item.(api.StreamRecord); ok {
+func tryExactTimestamp(item any) flow.StreamRecord {
+	if r, ok := item.(flow.StreamRecord); ok {
 		return r
 	}
 	type timestampExtractor interface {
@@ -91,7 +91,7 @@ func tryExactTimestamp(item any) api.StreamRecord {
 	}
 	// otherwise, check if we can extract timestamp
 	if extractor, ok := item.(timestampExtractor); ok {
-		return api.NewStreamRecord(item, extractor.TimestampMillis())
+		return flow.NewStreamRecord(item, extractor.TimestampMillis())
 	}
-	return api.NewStreamRecordWithoutTS(item)
+	return flow.NewStreamRecordWithoutTS(item)
 }

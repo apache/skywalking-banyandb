@@ -21,7 +21,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
@@ -56,7 +56,7 @@ func (r *sourceReader) run(ctx context.Context) {
 
 		if byteCnt > 0 {
 			select {
-			case r.out <- api.NewStreamRecordWithoutTS(buf[0:byteCnt]):
+			case r.out <- flow.NewStreamRecordWithoutTS(buf[0:byteCnt]):
 			case <-ctx.Done():
 				return
 			}

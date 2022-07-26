@@ -20,33 +20,34 @@ package streaming
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
+
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
-func (flow *streamingFlow) Filter(predicate api.UnaryOperation[bool]) api.Flow {
-	op, err := api.FilterFunc(predicate)
+func (f *streamingFlow) Filter(predicate flow.UnaryOperation[bool]) flow.Flow {
+	op, err := flow.FilterFunc(predicate)
 	if err != nil {
-		flow.drainErr(err)
+		f.drainErr(err)
 	}
-	return flow.Transform(op)
+	return f.Transform(op)
 }
 
-func (flow *streamingFlow) Map(mapper api.UnaryOperation[any]) api.Flow {
-	return flow.Transform(mapper)
+func (f *streamingFlow) Map(mapper flow.UnaryOperation[any]) flow.Flow {
+	return f.Transform(mapper)
 }
 
 // Transform represents a general unary transformation
 // For example: filter, map, etc.
-func (flow *streamingFlow) Transform(op api.UnaryOperation[any]) api.Flow {
-	flow.ops = append(flow.ops, newUnaryOp(op, 1))
-	return flow
+func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
+	f.ops = append(f.ops, newUnaryOp(op, 1))
+	return f
 }
 
 var _ streamingApi.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
-	op          api.UnaryOperation[any]
+	op          flow.UnaryOperation[any]
 	in          chan interface{}
 	out         chan interface{}
 	parallelism uint
@@ -68,7 +69,7 @@ func (u *unaryOperator) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func newUnaryOp(op api.UnaryOperation[any], parallelism uint) *unaryOperator {
+func newUnaryOp(op flow.UnaryOperation[any], parallelism uint) *unaryOperator {
 	return &unaryOperator{
 		op:          op,
 		in:          make(chan interface{}),
@@ -88,9 +89,9 @@ func (u *unaryOperator) Out() <-chan interface{} {
 func (u *unaryOperator) run() {
 	semaphore := make(chan struct{}, u.parallelism)
 	for elem := range u.in {
-		if streamRecord, ok := elem.(api.StreamRecord); ok {
+		if streamRecord, ok := elem.(flow.StreamRecord); ok {
 			semaphore <- struct{}{}
-			go func(r api.StreamRecord) {
+			go func(r flow.StreamRecord) {
 				defer func() { <-semaphore }()
 				result := u.op.Apply(context.TODO(), r.Data())
 				switch val := result.(type) {

@@ -24,12 +24,12 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 )
 
-var _ api.Flow = (*streamingFlow)(nil)
+var _ flow.Flow = (*streamingFlow)(nil)
 
 type streamingFlow struct {
 	// sourceParam and sinkParam are generic source and sink
@@ -43,15 +43,7 @@ type streamingFlow struct {
 	drain  chan error
 }
 
-func (flow *streamingFlow) Offset(i int) api.Flow {
-	panic("offset is not supported in streaming context")
-}
-
-func (flow *streamingFlow) Limit(i int) api.Flow {
-	panic("limit is not supported in streaming context")
-}
-
-func New(sourceParam interface{}) api.Flow {
+func New(sourceParam interface{}) flow.Flow {
 	return &streamingFlow{
 		sourceParam: sourceParam,
 		ops:         make([]streamingApi.Operator, 0),
@@ -59,129 +51,125 @@ func New(sourceParam interface{}) api.Flow {
 	}
 }
 
-func (flow *streamingFlow) init() error {
-	flow.prepareContext()
+func (f *streamingFlow) init() error {
+	f.prepareContext()
 
 	// check and build sources type
-	if err := flow.buildSource(); err != nil {
+	if err := f.buildSource(); err != nil {
 		return err
 	}
 
 	// check and build sink type
-	if err := flow.buildSink(); err != nil {
+	if err := f.buildSink(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (flow *streamingFlow) buildSource() error {
-	if flow.sourceParam == nil {
+func (f *streamingFlow) buildSource() error {
+	if f.sourceParam == nil {
 		return errors.New("sources parameter is nil")
 	}
 
 	// check interface
-	switch src := flow.sourceParam.(type) {
+	switch src := f.sourceParam.(type) {
 	case streamingApi.Source:
-		flow.source = src
+		f.source = src
 	case io.Reader:
-		flow.source = sources.FromReader(src)
+		f.source = sources.FromReader(src)
 	}
 
 	// check primitive
-	srcType := reflect.TypeOf(flow.sourceParam)
+	srcType := reflect.TypeOf(f.sourceParam)
 	switch srcType.Kind() {
 	case reflect.Slice:
-		flow.source = sources.NewSlice(flow.sourceParam)
+		f.source = sources.NewSlice(f.sourceParam)
 	case reflect.Chan:
-		flow.source = sources.NewChannel(flow.sourceParam)
+		f.source = sources.NewChannel(f.sourceParam)
 	}
 
-	if flow.source == nil {
+	if f.source == nil {
 		return errors.New("invalid source")
 	}
 
 	return nil
 }
 
-func (flow *streamingFlow) buildSink() error {
-	if flow.sinkParam == nil {
+func (f *streamingFlow) buildSink() error {
+	if f.sinkParam == nil {
 		return errors.New("sources parameter is nil")
 	}
 
 	// check interface
-	switch snk := flow.sinkParam.(type) {
+	switch snk := f.sinkParam.(type) {
 	case streamingApi.Sink:
-		flow.sink = snk
+		f.sink = snk
 	}
 
-	if flow.sink == nil {
+	if f.sink == nil {
 		return errors.New("invalid sink")
 	}
 
 	return nil
 }
 
-func (flow *streamingFlow) prepareContext() {
-	if flow.ctx == nil {
-		flow.ctx = context.TODO()
+func (f *streamingFlow) prepareContext() {
+	if f.ctx == nil {
+		f.ctx = context.TODO()
 	}
 
 	// TODO: add more runtime utilities
 }
 
-func (flow *streamingFlow) To(sink interface{}) api.Flow {
-	flow.sinkParam = sink
-	return flow
+func (f *streamingFlow) To(sink interface{}) flow.Flow {
+	f.sinkParam = sink
+	return f
 }
 
-func (flow *streamingFlow) OpenAsync() <-chan error {
-	if err := flow.init(); err != nil {
-		flow.drainErr(err)
-		return flow.drain
+func (f *streamingFlow) OpenAsync() <-chan error {
+	if err := f.init(); err != nil {
+		f.drainErr(err)
+		return f.drain
 	}
 
 	// open stream
 	go func() {
 		// setup sources
-		if err := flow.source.Setup(flow.ctx); err != nil {
-			flow.drainErr(err)
+		if err := f.source.Setup(f.ctx); err != nil {
+			f.drainErr(err)
 			return
 		}
 
 		// setup all operators one by one
-		for _, op := range flow.ops {
-			if err := op.Setup(flow.ctx); err != nil {
-				flow.drainErr(err)
+		for _, op := range f.ops {
+			if err := op.Setup(f.ctx); err != nil {
+				f.drainErr(err)
 				return
 			}
 		}
 
 		// setup sink
-		if err := flow.sink.Setup(flow.ctx); err != nil {
-			flow.drainErr(err)
+		if err := f.sink.Setup(f.ctx); err != nil {
+			f.drainErr(err)
 		}
 
 		// connect all operator and sink
-		for i := len(flow.ops) - 1; i >= 0; i-- {
-			last := i == len(flow.ops)-1
+		for i := len(f.ops) - 1; i >= 0; i-- {
+			last := i == len(f.ops)-1
 			if last {
-				flow.ops[i].Exec(flow.sink)
+				f.ops[i].Exec(f.sink)
 			} else {
-				flow.ops[i].Exec(flow.ops[i+1])
+				f.ops[i].Exec(f.ops[i+1])
 			}
 		}
 		// finally connect sources and the first operator
-		flow.source.Exec(flow.ops[0])
+		f.source.Exec(f.ops[0])
 	}()
 
-	return flow.drain
+	return f.drain
 }
 
-func (flow *streamingFlow) OpenSync() error {
-	return errors.New("cannot open streaming flow in sync mode")
-}
-
-func (flow *streamingFlow) drainErr(err error) {
-	go func() { flow.drain <- err }()
+func (f *streamingFlow) drainErr(err error) {
+	go func() { f.drain <- err }()
 }
