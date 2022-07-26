@@ -33,21 +33,9 @@ export default {
     name: "RightMenuComponent",
     data() {
         return {
-            rightMenuList: [{
-                icon: "el-icon-document",
-                name: "new File",
-                id: "create"
-            }, {
-                icon: "el-icon-refresh-right",
-                name: "refresh",
-                id: "refresh"
-            }, {
-                icon: "el-icon-delete",
-                name: "delete",
-                id: "delete"
-            }]
         }
     },
+    props:['rightMenuList'],
     components: {
         RightMenuItem
     }
