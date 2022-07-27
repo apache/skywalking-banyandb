@@ -100,10 +100,19 @@ func (s *store) Flush() error {
 	return nil
 }
 
-func (s *store) Stats() (stat observability.Statistics) {
+func (s *store) Stats() observability.Statistics {
+	stat := s.mainStats()
+	disk := s.diskTable.Stats()
+	stat.MaxMemBytes = disk.MaxMemBytes
+	term := s.termMetadata.Stats()
+	stat.MemBytes += term.MemBytes
+	stat.MaxMemBytes += term.MaxMemBytes
+	return stat
+}
+
+func (s *store) mainStats() (stat observability.Statistics) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
-	// TODO: add MaxMem
 	main := s.memTable.Stats()
 	stat.MemBytes += main.MemBytes
 	if s.immutableMemTable != nil {

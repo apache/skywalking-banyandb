@@ -143,6 +143,7 @@ type Iterable interface {
 type HandoverCallback func()
 
 type IndexStore interface {
+	observability.Observable
 	Iterable
 	Reader
 	Handover(iterator Iterator) error

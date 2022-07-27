@@ -23,11 +23,13 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type Term interface {
+	observability.Observable
 	ID(term []byte) (id []byte, err error)
 	Literal(id []byte) (term []byte, err error)
 	io.Closer
@@ -70,4 +72,8 @@ func (t *term) Literal(id []byte) (term []byte, err error) {
 
 func (t *term) Close() error {
 	return t.store.Close()
+}
+
+func (t *term) Stats() observability.Statistics {
+	return t.store.Stats()
 }
