@@ -17,6 +17,8 @@ services:
   banyandb:
     expose:
       - 17912
+      - 2121
+      - 6060
     command: standalone
     healthcheck:
       test: ["CMD", "/grpc-health-probe", "-addr=localhost:17912"]
