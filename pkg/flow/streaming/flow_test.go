@@ -137,9 +137,7 @@ var _ = Describe("Streaming", func() {
 			value    int
 		}
 
-		var (
-			input []flow.StreamRecord
-		)
+		var input []flow.StreamRecord
 
 		JustBeforeEach(func() {
 			snk = sink.NewSlice()
