@@ -18,36 +18,47 @@
 -->
 
 <template>
-    <el-container>
-        <el-aside :width="fatherWidth" class="bd-top">
-            <aside-component></aside-component>
-        </el-aside>
-        <el-main style="background-color: var(--color-background)">
-            <main-component></main-component>
-        </el-main>
-    </el-container>
+    <div @mousemove="shrinkMove" @mouseup="shrinkUp" style="width:100%; height:100%">
+        <el-container>
+            <el-aside :width="fatherWidth" class="bd-top flex" style="position:relative;">
+                <aside-component></aside-component>
+                <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
+            </el-aside>
+            <el-main style="background-color: var(--color-background)">
+                <component :is="mainComponent"></component>
+            </el-main>
+        </el-container>
+    </div>
 </template>
 
 <script>
-import AsideComponent from '../components/databaseComponents/AsideComponent.vue'
-
+import AsideComponent from '../components/databaseComponents/asideComponents/AsideComponent.vue'
 import MainComponent from '../components/databaseComponents/MainComponent.vue'
+import MainStartComponent from '../components/databaseComponents/MainStartComponent.vue'
 import { mapState } from 'vuex'
 export default {
     name: 'Database',
     data() {
         return {
-
+            isShrink: false,
         }
+    },
+    created() {
+        this.$loading.create()
+    },
+    mounted() {
+        this.$loading.close()
     },
     computed: {
         ...mapState({
-            fatherWidth: (state) => state.aside.fatherWidth
+            fatherWidth: (state) => state.aside.fatherWidth,
+            mainComponent: (state) => state.tags.currentMenu == null ? "mainStartCom" : "mainCom"
         })
     },
     components: {
         AsideComponent,
-        MainComponent
+        mainCom: MainComponent,
+        mainStartCom: MainStartComponent
     },
     activated() {
         console.log('this component is activated!')
@@ -55,8 +66,35 @@ export default {
     deactivated() {
         console.log('this component is deactivated!')
     },
+    methods: {
+        shrinkMove(e) {
+            if (this.isShrink) {
+                let wid = e.screenX + 5
+                if (wid <= 65) {
+                    this.$store.commit('changeCollapse', true)
+                    this.$store.commit('changeFatherWidth', '65px')
+                } else {
+                    this.$store.commit('changeCollapse', false)
+                    this.$store.commit('changeFatherWidth', wid + 'px')
+                }
+            }
+        },
+        shrinkDown(e) {
+            this.isShrink = true
+        },
+        shrinkUp(e) {
+            this.isShrink = false
+        }
+    }
 }
 </script>
 
 <style lang="scss" scoped>
+.resize {
+    cursor: col-resize;
+    position: absolute;
+    right: 0;
+    height: 100%;
+    width: 5px;
+}
 </style>

@@ -19,19 +19,24 @@
 
 export default {
     state: {
-        tagsList: [
-            {
-                name: 'node\\Stream\\db',
-            }
-        ],
+        tagsList: [],
         currentMenu: null,
     },
     mutations: {
         selectMenu(state, val) {
-
+            console.log(val)
+            state.currentMenu = val
+            let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
+            result === -1 ? state.tagsList.push(val) : ''
+            window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
+            window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
         },
         closeTag(state, val) {
-
+            let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
+            result === -1 ? '' : state.tagsList.splice(result, 1)
+            if (state.tagsList.length === 0) state.currentMenu = null
+            window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
+            window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
         },
         changeTag(state, val) {
 

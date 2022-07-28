@@ -152,6 +152,12 @@ export default {
     methods: {
         handleSelectionChange(val) {
             this.multipleSelection = val;
+        },
+        handleSizeChange() {
+
+        },
+        handleCurrentChange() {
+            
         }
     }
 }
