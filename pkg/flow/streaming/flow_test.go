@@ -173,12 +173,13 @@ var _ = Describe("Streaming", func() {
 
 			It("Should take top 3 elements", func() {
 				Eventually(func(g Gomega) {
-					g.Expect(snk.Value()).Should(Equal([]*Tuple2{
+					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo([]*Tuple2{
 						{int64(9500), flow.Data{"e2e-service-consumer", int64(9500)}},
 						{int64(9600), flow.Data{"e2e-service-consumer", int64(9600)}},
 						{int64(9700), flow.Data{"e2e-service-consumer", int64(9700)}},
 					}))
-				}).Should(Succeed())
+				}).WithTimeout(10 * time.Second).Should(Succeed())
 			})
 		})
 	})
