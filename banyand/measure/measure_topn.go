@@ -348,6 +348,7 @@ func (manager *topNProcessorManager) start() error {
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
 			in:               make(chan interface{}),
+			stopCh:           make(chan interface{}),
 			streamingFlow:    streamingFlow,
 		}
 
