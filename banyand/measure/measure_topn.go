@@ -77,6 +77,7 @@ type topNStreamingProcessor struct {
 	src              chan interface{}
 	in               chan interface{}
 	errCh            <-chan error
+	stopCh           chan interface{}
 	streamingFlow    flow.Flow
 }
 
@@ -94,8 +95,8 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 	defer t.Done()
 	for {
 		select {
-		case item, open := <-t.in:
-			if !open {
+		case item, ok := <-t.in:
+			if !ok {
 				return
 			}
 			if record, ok := item.(flow.StreamRecord); ok {
@@ -109,6 +110,8 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 	}
 }
 
+// Teardown is called by the Flow as a lifecycle hook.
+// So we should not block on err channel within this method.
 func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
 	t.Wait()
 	return nil
@@ -116,6 +119,7 @@ func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
 
 func (t *topNStreamingProcessor) Close() error {
 	close(t.src)
+	defer close(t.stopCh)
 	return t.streamingFlow.Close()
 }
 
@@ -269,9 +273,17 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 }
 
 func (t *topNStreamingProcessor) handleError() {
-	for err := range t.errCh {
-		t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
-			Msg("error occurred during flow setup or process")
+	for {
+		select {
+		case err, ok := <-t.errCh:
+			if !ok {
+				return
+			}
+			t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
+				Msg("error occurred during flow setup or process")
+		case <-t.stopCh:
+			return
+		}
 	}
 }
 
