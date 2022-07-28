@@ -29,6 +29,7 @@ import (
 var _ flow.Source = (*sourceSlice)(nil)
 
 type sourceSlice struct {
+	flow.ComponentState
 	slice interface{}
 	out   chan interface{}
 }
@@ -67,11 +68,12 @@ func (s *sourceSlice) run(ctx context.Context, sliceVal reflect.Value) {
 }
 
 func (s *sourceSlice) Teardown(ctx context.Context) error {
+	s.Wait()
 	return nil
 }
 
 func (s *sourceSlice) Exec(downstream flow.Inlet) {
-	go flow.Transmit(downstream, s)
+	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 
 func NewSlice(slice interface{}) flow.Source {

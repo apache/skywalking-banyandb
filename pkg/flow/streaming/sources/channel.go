@@ -29,7 +29,8 @@ import (
 var _ flow.Source = (*sourceChan)(nil)
 
 type sourceChan struct {
-	ch  interface{}
+	flow.ComponentState
+	in  interface{}
 	out chan interface{}
 }
 
@@ -38,12 +39,7 @@ func (s *sourceChan) Out() <-chan interface{} {
 }
 
 func (s *sourceChan) Setup(ctx context.Context) error {
-	// ensure channel param is a chan type
-	chanType := reflect.TypeOf(s.ch)
-	if chanType.Kind() != reflect.Chan {
-		return errors.New("sourceChan must have a channel")
-	}
-	chanVal := reflect.ValueOf(s.ch)
+	chanVal := reflect.ValueOf(s.in)
 
 	if !chanVal.IsValid() {
 		return errors.New("invalid channel")
@@ -54,10 +50,12 @@ func (s *sourceChan) Setup(ctx context.Context) error {
 }
 
 func (s *sourceChan) run(ctx context.Context, chanVal reflect.Value) {
+	s.Add(1)
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
 		close(s.out)
+		s.Done()
 	}()
 
 	for {
@@ -74,19 +72,21 @@ func (s *sourceChan) run(ctx context.Context, chanVal reflect.Value) {
 }
 
 func (s *sourceChan) Teardown(ctx context.Context) error {
+	s.Wait()
 	return nil
 }
 
 func (s *sourceChan) Exec(downstream flow.Inlet) {
-	go flow.Transmit(downstream, s)
+	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 
-func NewChannel(ch interface{}) (flow.Source, error) {
-	if reflect.TypeOf(ch).Kind() != reflect.Chan {
-		return nil, errors.New("ch must be a Channel")
+func NewChannel(in interface{}) (flow.Source, error) {
+	if reflect.TypeOf(in).Kind() != reflect.Chan {
+		return nil, errors.New("in must be a Channel")
 	}
+
 	return &sourceChan{
-		ch:  ch,
+		in:  in,
 		out: make(chan interface{}, 1024),
 	}, nil
 }

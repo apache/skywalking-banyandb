@@ -45,6 +45,7 @@ func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
 var _ flow.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
+	flow.ComponentState
 	op          flow.UnaryOperation[any]
 	in          chan interface{}
 	out         chan interface{}
@@ -59,11 +60,11 @@ func (u *unaryOperator) Setup(ctx context.Context) error {
 
 func (u *unaryOperator) Exec(downstream flow.Inlet) {
 	// start a background job for transmission
-	go flow.Transmit(downstream, u)
+	go flow.Transmit(&u.ComponentState, downstream, u)
 }
 
 func (u *unaryOperator) Teardown(ctx context.Context) error {
-	// do nothing now
+	u.Wait()
 	return nil
 }
 

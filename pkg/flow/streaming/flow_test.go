@@ -19,11 +19,10 @@ package streaming
 
 import (
 	"context"
-	"testing"
 	"time"
 
-	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
@@ -40,141 +39,112 @@ func numberRange(begin, count int) []int {
 	return result
 }
 
-func TestStream_Filter(t *testing.T) {
-	tests := []struct {
-		name     string
-		src      flow.Source
-		f        flow.UnaryFunc[bool]
-		expected []interface{}
-	}{
-		{
-			name: "Even Number Filter",
-			src:  flowTest.NewSlice(numberRange(0, 10)),
-			f: func(ctx context.Context, i interface{}) bool {
-				return i.(int)%2 == 0
-			},
-			expected: []interface{}{
-				flow.NewStreamRecordWithoutTS(0),
-				flow.NewStreamRecordWithoutTS(2),
-				flow.NewStreamRecordWithoutTS(4),
-				flow.NewStreamRecordWithoutTS(6),
-				flow.NewStreamRecordWithoutTS(8),
-			},
-		},
-	}
+var _ = Describe("Streaming", func() {
+	var (
+		f     flow.Flow
+		snk   *sink.Slice
+		errCh <-chan error
+	)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			snk := sink.NewSlice()
-			s := New(tt.src).
-				Filter(tt.f).
+	AfterEach(func() {
+		Expect(f.Close()).Should(Succeed())
+		Consistently(errCh).ShouldNot(Receive())
+	})
+
+	Context("With Filter operator", func() {
+		var (
+			filter flow.UnaryFunc[bool]
+
+			input = flowTest.NewSlice(numberRange(0, 10))
+		)
+
+		JustBeforeEach(func() {
+			snk = sink.NewSlice()
+			f = New(input).
+				Filter(filter).
 				To(snk)
-			if errCh := s.Open(); errCh != nil {
-				err := Await().AtMost(3 * time.Second).Until(func() bool {
-					if len(snk.Value()) == len(tt.expected) {
-						if assert.Equal(tt.expected, snk.Value()) {
-							return true
-						}
-					}
-
-					return false
-				})
-				assert.NoError(err)
-			}
+			errCh = f.Open()
+			Expect(errCh).ShouldNot(BeNil())
 		})
-	}
-}
 
-func TestStream_Mapper(t *testing.T) {
-	tests := []struct {
-		name     string
-		src      flow.Source
-		f        flow.UnaryFunc[any]
-		expected []interface{}
-	}{
-		{
-			name: "Multiplier Mapper",
-			src:  flowTest.NewSlice(numberRange(0, 10)),
-			f: func(ctx context.Context, i interface{}) interface{} {
-				return i.(int) * 2
-			},
-			expected: []interface{}{
-				flow.NewStreamRecordWithoutTS(0),
-				flow.NewStreamRecordWithoutTS(2),
-				flow.NewStreamRecordWithoutTS(4),
-				flow.NewStreamRecordWithoutTS(6),
-				flow.NewStreamRecordWithoutTS(8),
-				flow.NewStreamRecordWithoutTS(10),
-				flow.NewStreamRecordWithoutTS(12),
-				flow.NewStreamRecordWithoutTS(14),
-				flow.NewStreamRecordWithoutTS(16),
-				flow.NewStreamRecordWithoutTS(18),
-			},
-		},
-	}
+		When("Given a odd filter", func() {
+			BeforeEach(func() {
+				filter = func(ctx context.Context, i interface{}) bool {
+					return i.(int)%2 == 0
+				}
+			})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			snk := sink.NewSlice()
-			s := New(tt.src).
-				Map(tt.f).
+			It("Should filter odd number", func() {
+				Eventually(func(g Gomega) {
+					g.Expect(snk.Value()).Should(Equal([]interface{}{
+						flow.NewStreamRecordWithoutTS(0),
+						flow.NewStreamRecordWithoutTS(2),
+						flow.NewStreamRecordWithoutTS(4),
+						flow.NewStreamRecordWithoutTS(6),
+						flow.NewStreamRecordWithoutTS(8),
+					}))
+				}).Should(Succeed())
+			})
+		})
+	})
+
+	Context("With Mapper operator", func() {
+		var (
+			mapper flow.UnaryFunc[any]
+
+			input = flowTest.NewSlice(numberRange(0, 10))
+		)
+
+		JustBeforeEach(func() {
+			snk = sink.NewSlice()
+			f = New(input).
+				Map(mapper).
 				To(snk)
-			if errCh := s.Open(); errCh != nil {
-				err := Await().AtMost(3 * time.Second).Until(func() bool {
-					if len(snk.Value()) == len(tt.expected) {
-						if assert.Equal(tt.expected, snk.Value()) {
-							return true
-						}
-					}
-
-					return false
-				})
-				assert.NoError(err)
-			}
+			errCh = f.Open()
+			Expect(errCh).ShouldNot(BeNil())
 		})
-	}
-}
 
-func TestStream_TopN(t *testing.T) {
-	type record struct {
-		service  string
-		instance string
-		value    int
-	}
+		When("given a multiplier", func() {
+			BeforeEach(func() {
+				mapper = func(ctx context.Context, i interface{}) interface{} {
+					return i.(int) * 2
+				}
+			})
 
-	tests := []struct {
-		name     string
-		input    []flow.StreamRecord
-		expected []*Tuple2
-	}{
-		{
-			name: "Smoke Test ASC",
-			input: []flow.StreamRecord{
-				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-001", 10000}, 1000),
-				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9900}, 2000),
-				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 3000),
-				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-002", 9700}, 4000),
-				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-003", 9700}, 5000),
-				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-004", 9600}, 6000),
-				flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9500}, 7000),
-				flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
-			},
-			expected: []*Tuple2{
-				{int64(9500), flow.Data{"e2e-service-consumer", int64(9500)}},
-				{int64(9600), flow.Data{"e2e-service-consumer", int64(9600)}},
-				{int64(9700), flow.Data{"e2e-service-consumer", int64(9700)}},
-			},
-		},
-	}
+			It("Should multiply by 2", func() {
+				Eventually(func(g Gomega) {
+					g.Expect(snk.Value()).Should(Equal([]interface{}{
+						flow.NewStreamRecordWithoutTS(0),
+						flow.NewStreamRecordWithoutTS(2),
+						flow.NewStreamRecordWithoutTS(4),
+						flow.NewStreamRecordWithoutTS(6),
+						flow.NewStreamRecordWithoutTS(8),
+						flow.NewStreamRecordWithoutTS(10),
+						flow.NewStreamRecordWithoutTS(12),
+						flow.NewStreamRecordWithoutTS(14),
+						flow.NewStreamRecordWithoutTS(16),
+						flow.NewStreamRecordWithoutTS(18),
+					}))
+				}).Should(Succeed())
+			})
+		})
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			snk := sink.NewSlice()
+	Context("With TopN operator", func() {
+		type record struct {
+			service  string
+			instance string
+			value    int
+		}
 
-			s := New(flowTest.NewSlice(tt.input)).
+		var (
+			input []flow.StreamRecord
+		)
+
+		JustBeforeEach(func() {
+			snk = sink.NewSlice()
+
+			f = New(flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
@@ -185,68 +155,33 @@ func TestStream_TopN(t *testing.T) {
 				})).
 				To(snk)
 
-			if errCh := s.Open(); errCh != nil {
-				err := Await().AtMost(5 * time.Second).Until(func() bool {
-					if len(snk.Value()) == 0 {
-						return false
-					}
-					firstValue := snk.Value()[0].(flow.StreamRecord).Data()
-					if len(firstValue.([]*Tuple2)) == len(tt.expected) {
-						if assert.Equal(tt.expected, firstValue) {
-							return true
-						}
-					}
-
-					return false
-				})
-				assert.NoError(err)
-			}
+			errCh = f.Open()
+			Expect(errCh).ShouldNot(BeNil())
 		})
-	}
-}
 
-type AsyncTestBuilder struct {
-	timeout  time.Duration
-	interval time.Duration
-}
-
-func Await() *AsyncTestBuilder {
-	return &AsyncTestBuilder{}
-}
-
-func (t *AsyncTestBuilder) AtMost(timeout time.Duration) *AsyncTestBuilder {
-	t.timeout = timeout
-	return t
-}
-
-func (t *AsyncTestBuilder) PollInterval(interval time.Duration) *AsyncTestBuilder {
-	t.interval = interval
-	return t
-}
-
-func (t *AsyncTestBuilder) Until(lambda func() bool) error {
-	if t.timeout == 0 {
-		return errors.New("timeout must be greater than 0")
-	}
-	timer := time.NewTimer(t.timeout)
-	if t.interval == 0 {
-		t.interval = t.timeout / 5
-	}
-	err := func() error {
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				return errors.New("await: timeout")
-			default:
-				if lambda() {
-					return nil
+		When("Top3", func() {
+			BeforeEach(func() {
+				input = []flow.StreamRecord{
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-001", 10000}, 1000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9900}, 2000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 3000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-002", 9700}, 4000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-003", 9700}, 5000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-004", 9600}, 6000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9500}, 7000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
 				}
-				if t.interval.Milliseconds() > 0 {
-					time.Sleep(t.interval)
-				}
-			}
-		}
-	}()
-	return err
-}
+			})
+
+			It("Should take top 3 elements", func() {
+				Eventually(func(g Gomega) {
+					g.Expect(snk.Value()).Should(Equal([]*Tuple2{
+						{int64(9500), flow.Data{"e2e-service-consumer", int64(9500)}},
+						{int64(9600), flow.Data{"e2e-service-consumer", int64(9600)}},
+						{int64(9700), flow.Data{"e2e-service-consumer", int64(9700)}},
+					}))
+				}).Should(Succeed())
+			})
+		})
+	})
+})

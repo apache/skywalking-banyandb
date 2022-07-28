@@ -19,67 +19,70 @@ package streaming
 
 import (
 	"context"
-	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 )
 
-func Test_SlidingWindow_NoOutput(t *testing.T) {
-	num := 0
-	var aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
-		num++
-		return nil
-	}
-
-	assert := assert.New(t)
-	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
-	slidingWindows.Aggregate(aggrFunc)
-	assert.NoError(slidingWindows.Setup(context.TODO()))
-	slidingWindows.Exec(sink.NewSlice())
-	baseTs := time.Now()
-	// add a single
-	input := []flow.StreamRecord{
-		flow.NewStreamRecord(1, baseTs.UnixMilli()),
-	}
-	for _, r := range input {
-		slidingWindows.In() <- r
-	}
-	assert.Equal(0, num)
-}
-
-func Test_SlidingWindow_Trigger_Once(t *testing.T) {
-	num := 0
-	var aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
-		num++
-		return nil
-	}
-
-	assert := assert.New(t)
-	slidingWindows := NewSlidingTimeWindows(time.Minute*1, time.Second*15)
-	slidingWindows.Aggregate(aggrFunc)
-	assert.NoError(slidingWindows.Setup(context.TODO()))
-	snk := sink.NewSlice()
-	assert.NoError(snk.Setup(context.TODO()))
-	slidingWindows.Exec(snk)
-	baseTs := time.Now()
-
-	// add a single
-	input := []flow.StreamRecord{
-		flow.NewStreamRecord(1, baseTs.UnixMilli()),
-		flow.NewStreamRecord(2, baseTs.Add(time.Minute*1).UnixMilli()),
-	}
-	for _, r := range input {
-		slidingWindows.In() <- r
-	}
-	assert.NoError(Await().AtMost(10 * time.Second).Until(func() bool {
-		if len(snk.Value()) > 0 {
-			return assert.Len(snk.Value(), 1)
+var _ = Describe("Sliding Window", func() {
+	var (
+		num                             = 0
+		aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
+			num++
+			return nil
 		}
-		return false
-	}))
-	assert.Equal(1, num)
-}
+		baseTs = time.Now()
+		snk    = sink.NewSlice()
+
+		input          []flow.StreamRecord
+		slidingWindows *SlidingTimeWindows
+	)
+
+	JustBeforeEach(func() {
+		slidingWindows = NewSlidingTimeWindows(time.Minute*1, time.Second*15)
+		slidingWindows.Aggregate(aggrFunc)
+		Expect(slidingWindows.Setup(context.TODO())).Should(Succeed())
+		slidingWindows.Exec(snk)
+		for _, r := range input {
+			slidingWindows.In() <- r
+		}
+	})
+
+	AfterEach(func() {
+		close(slidingWindows.in)
+		Expect(slidingWindows.Teardown(context.TODO())).Should(Succeed())
+	})
+
+	When("input a single element", func() {
+		BeforeEach(func() {
+			input = []flow.StreamRecord{
+				flow.NewStreamRecord(1, baseTs.UnixMilli()),
+			}
+		})
+
+		It("Should receive nothing", func() {
+			Consistently(func(g Gomega) {
+				g.Expect(num).Should(Equal(0))
+			})
+		})
+	})
+
+	When("input two elements", func() {
+		BeforeEach(func() {
+			input = []flow.StreamRecord{
+				flow.NewStreamRecord(1, baseTs.UnixMilli()),
+				flow.NewStreamRecord(2, baseTs.Add(time.Minute*1).UnixMilli()),
+			}
+		})
+
+		It("Should trigger once", func() {
+			Consistently(func(g Gomega) {
+				g.Expect(snk.Value()).Should(HaveLen(1))
+			})
+		})
+	})
+})

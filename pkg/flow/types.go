@@ -19,6 +19,8 @@ package flow
 
 import (
 	"context"
+	"io"
+	"sync"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -28,6 +30,7 @@ type Data []any
 // Flow is an abstraction of data flow for
 // both Streaming and Batch
 type Flow interface {
+	io.Closer
 	// Filter is used to filter data.
 	// The parameter f can be either predicate function for streaming,
 	// or conditions for batch query.
@@ -125,8 +128,16 @@ type Outlet interface {
 }
 
 type Component interface {
+	// Setup is the lifecycle hook for resource preparation, e.g. start background job for listening input channel.
+	// It must be called before the flow starts to process elements.
 	Setup(context.Context) error
+	// Teardown is the lifecycle hook for shutting down the Component
+	// Implementation should ENSURE that all resource has been correctly recycled before this method returns.
 	Teardown(context.Context) error
+}
+
+type ComponentState struct {
+	sync.WaitGroup
 }
 
 // Source represents a set of stream processing steps that has one open output.

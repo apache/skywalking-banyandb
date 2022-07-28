@@ -67,9 +67,11 @@ var (
 )
 
 type topNStreamingProcessor struct {
+	flow.ComponentState
 	l                *logger.Logger
 	shardNum         uint32
 	interval         time.Duration
+	slideSize        time.Duration
 	topNSchema       *databasev1.TopNAggregation
 	databaseSupplier tsdb.Supplier
 	src              chan interface{}
@@ -88,6 +90,8 @@ func (t *topNStreamingProcessor) Setup(ctx context.Context) error {
 }
 
 func (t *topNStreamingProcessor) run(ctx context.Context) {
+	t.Add(1)
+	defer t.Done()
 	for {
 		select {
 		case item, open := <-t.in:
@@ -106,12 +110,13 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 }
 
 func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
+	t.Wait()
 	return nil
 }
 
 func (t *topNStreamingProcessor) Close() error {
 	close(t.src)
-	return nil
+	return t.streamingFlow.Close()
 }
 
 func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
@@ -251,6 +256,25 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	return entity, common.ShardID(id), nil
 }
 
+func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
+	t.errCh = t.streamingFlow.Window(streaming.NewSlidingTimeWindows(t.interval, t.slideSize)).
+		TopN(int(t.topNSchema.GetCountersNumber()),
+			streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
+				return elem.(flow.Data)[1].(int64)
+			}),
+			streaming.OrderBy(t.topNSchema.GetFieldValueSort()),
+		).To(t).Open()
+	go t.handleError()
+	return t
+}
+
+func (t *topNStreamingProcessor) handleError() {
+	for err := range t.errCh {
+		t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
+			Msg("error occurred during flow setup or process")
+	}
+}
+
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure
 type topNProcessorManager struct {
 	l            *logger.Logger
@@ -307,6 +331,7 @@ func (manager *topNProcessorManager) start() error {
 			l:                manager.l,
 			shardNum:         manager.m.shardNum,
 			interval:         interval,
+			slideSize:        slideSize,
 			topNSchema:       topNSchema,
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
@@ -314,15 +339,7 @@ func (manager *topNProcessorManager) start() error {
 			streamingFlow:    streamingFlow,
 		}
 
-		processor.errCh = streamingFlow.Window(streaming.NewSlidingTimeWindows(interval, slideSize)).
-			TopN(int(topNSchema.GetCountersNumber()),
-				streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
-					return elem.(flow.Data)[1].(int64)
-				}),
-				streaming.OrderBy(topNSchema.GetFieldValueSort()),
-			).To(processor).Open()
-
-		manager.processorMap[topNSchema.GetSourceMeasure()] = processor
+		manager.processorMap[topNSchema.GetSourceMeasure()] = processor.start()
 	}
 
 	return nil

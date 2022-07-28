@@ -26,6 +26,7 @@ import (
 var _ flow.Sink = (*Slice)(nil)
 
 type Slice struct {
+	flow.ComponentState
 	slice []interface{}
 	in    chan interface{}
 }
@@ -52,6 +53,10 @@ func (s *Slice) Setup(ctx context.Context) error {
 }
 
 func (s *Slice) run(ctx context.Context) {
+	s.Add(1)
+	defer func() {
+		s.Done()
+	}()
 	for {
 		select {
 		case item, ok := <-s.in:
@@ -66,5 +71,6 @@ func (s *Slice) run(ctx context.Context) {
 }
 
 func (s *Slice) Teardown(ctx context.Context) error {
+	s.Wait()
 	return nil
 }

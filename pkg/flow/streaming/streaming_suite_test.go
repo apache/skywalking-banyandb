@@ -15,31 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package flow
+package streaming_test
 
-// Transmit provides a helper function to connect the current component with the downstream component.
-// It should be run in another goroutine.
-func Transmit(state *ComponentState, downstream Inlet, current Outlet) {
-	state.Add(1)
-	defer func() {
-		state.Done()
-	}()
-	for elem := range current.Out() {
-		downstream.In() <- elem
-	}
-	close(downstream.In())
-}
+import (
+	"testing"
 
-func TryExactTimestamp(item any) StreamRecord {
-	if r, ok := item.(StreamRecord); ok {
-		return r
-	}
-	type timestampExtractor interface {
-		TimestampMillis() int64
-	}
-	// otherwise, check if we can extract timestamp
-	if extractor, ok := item.(timestampExtractor); ok {
-		return NewStreamRecord(item, extractor.TimestampMillis())
-	}
-	return NewStreamRecordWithoutTS(item)
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestStreaming(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Streaming Suite")
 }

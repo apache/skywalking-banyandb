@@ -69,6 +69,7 @@ func (s *windowedFlow) Aggregate(aggrFunc flow.AggregateFunction) flow.Flow {
 }
 
 type SlidingTimeWindows struct {
+	flow.ComponentState
 	// For SlidingTimeWindows
 	currentWindow timeWindow
 	size          int64
@@ -121,6 +122,8 @@ func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
 }
 
 func (s *SlidingTimeWindows) emit() {
+	s.Add(1)
+	defer s.Done()
 	for w := range s.purgedWindow {
 		s.queueMu.Lock()
 		// build a window slice and send it to the out chan
@@ -179,6 +182,8 @@ func (s *SlidingTimeWindows) purgeOutdatedWindows() {
 }
 
 func (s *SlidingTimeWindows) receive() {
+	s.Add(1)
+	defer s.Done()
 	for elem := range s.in {
 		record := elem.(flow.StreamRecord)
 		// assume records are consumed one by one in strict time order
@@ -209,11 +214,12 @@ func (s *SlidingTimeWindows) receive() {
 }
 
 func (s *SlidingTimeWindows) Teardown(ctx context.Context) error {
+	s.Wait()
 	return nil
 }
 
 func (s *SlidingTimeWindows) Exec(downstream flow.Inlet) {
-	go flow.Transmit(downstream, s)
+	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 
 func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {

@@ -42,7 +42,8 @@ func TestSource_channel(t *testing.T) {
 	srcCh := make(chan string)
 
 	assert := require.New(t)
-	src := sources.NewChannel(srcCh)
+	src, err := sources.NewChannel(srcCh)
+	assert.NoError(err)
 	assert.NoError(src.Setup(context.TODO()))
 
 	in := make(chan interface{})
