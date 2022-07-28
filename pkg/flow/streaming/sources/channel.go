@@ -66,7 +66,7 @@ func (s *sourceChan) run(ctx context.Context, chanVal reflect.Value) {
 			return
 		}
 		select {
-		case s.out <- tryExactTimestamp(val.Interface()):
+		case s.out <- flow.TryExactTimestamp(val.Interface()):
 		case <-ctx.Done():
 			return
 		}
@@ -81,23 +81,12 @@ func (s *sourceChan) Exec(downstream flow.Inlet) {
 	go flow.Transmit(downstream, s)
 }
 
-func NewChannel(ch interface{}) flow.Source {
+func NewChannel(ch interface{}) (flow.Source, error) {
+	if reflect.TypeOf(ch).Kind() != reflect.Chan {
+		return nil, errors.New("ch must be a Channel")
+	}
 	return &sourceChan{
 		ch:  ch,
 		out: make(chan interface{}, 1024),
-	}
-}
-
-func tryExactTimestamp(item any) flow.StreamRecord {
-	if r, ok := item.(flow.StreamRecord); ok {
-		return r
-	}
-	type timestampExtractor interface {
-		TimestampMillis() int64
-	}
-	// otherwise, check if we can extract timestamp
-	if extractor, ok := item.(timestampExtractor); ok {
-		return flow.NewStreamRecord(item, extractor.TimestampMillis())
-	}
-	return flow.NewStreamRecordWithoutTS(item)
+	}, nil
 }

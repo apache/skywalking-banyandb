@@ -286,7 +286,8 @@ func (manager *topNProcessorManager) start() error {
 	slideSize := time.Duration(float64(interval.Nanoseconds()) * 0.4)
 	for _, topNSchema := range manager.topNSchemas {
 		srcCh := make(chan interface{})
-		streamingFlow := streaming.New(sources.NewChannel(srcCh))
+		src, _ := sources.NewChannel(srcCh)
+		streamingFlow := streaming.New(src)
 
 		if conditions := topNSchema.GetCriteria(); len(conditions) > 0 {
 			filters, buildErr := manager.buildFilters(conditions)
