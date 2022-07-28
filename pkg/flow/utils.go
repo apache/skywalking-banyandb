@@ -21,9 +21,7 @@ package flow
 // It should be run in another goroutine.
 func Transmit(state *ComponentState, downstream Inlet, current Outlet) {
 	state.Add(1)
-	defer func() {
-		state.Done()
-	}()
+	defer state.Done()
 	for elem := range current.Out() {
 		downstream.In() <- elem
 	}

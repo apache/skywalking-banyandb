@@ -30,22 +30,26 @@ import (
 
 var _ = Describe("Sliding Window", func() {
 	var (
-		num                             = 0
+		num            int
+		baseTs         time.Time
+		snk            *sink.Slice
+		input          []flow.StreamRecord
+		slidingWindows *SlidingTimeWindows
+
 		aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
 			num++
 			return nil
 		}
-		baseTs = time.Now()
-		snk    = sink.NewSlice()
-
-		input          []flow.StreamRecord
-		slidingWindows *SlidingTimeWindows
 	)
 
 	JustBeforeEach(func() {
+		num = 0
+		snk = sink.NewSlice()
+		baseTs = time.Now()
 		slidingWindows = NewSlidingTimeWindows(time.Minute*1, time.Second*15)
 		slidingWindows.Aggregate(aggrFunc)
 		Expect(slidingWindows.Setup(context.TODO())).Should(Succeed())
+		Expect(snk.Setup(context.TODO())).Should(Succeed())
 		slidingWindows.Exec(snk)
 		for _, r := range input {
 			slidingWindows.In() <- r
@@ -82,7 +86,7 @@ var _ = Describe("Sliding Window", func() {
 		It("Should trigger once", func() {
 			Consistently(func(g Gomega) {
 				g.Expect(snk.Value()).Should(HaveLen(1))
-			})
+			}).Should(Succeed())
 		})
 	})
 })
