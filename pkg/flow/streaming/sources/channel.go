@@ -23,10 +23,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
-var _ api.Source = (*sourceChan)(nil)
+var _ flow.Source = (*sourceChan)(nil)
 
 type sourceChan struct {
 	ch  interface{}
@@ -77,13 +77,27 @@ func (s *sourceChan) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func (s *sourceChan) Exec(downstream api.Inlet) {
-	go api.Transmit(downstream, s)
+func (s *sourceChan) Exec(downstream flow.Inlet) {
+	go flow.Transmit(downstream, s)
 }
 
-func NewChannel(ch interface{}) api.Source {
+func NewChannel(ch interface{}) flow.Source {
 	return &sourceChan{
 		ch:  ch,
 		out: make(chan interface{}, 1024),
 	}
+}
+
+func tryExactTimestamp(item any) flow.StreamRecord {
+	if r, ok := item.(flow.StreamRecord); ok {
+		return r
+	}
+	type timestampExtractor interface {
+		TimestampMillis() int64
+	}
+	// otherwise, check if we can extract timestamp
+	if extractor, ok := item.(timestampExtractor); ok {
+		return flow.NewStreamRecord(item, extractor.TimestampMillis())
+	}
+	return flow.NewStreamRecordWithoutTS(item)
 }

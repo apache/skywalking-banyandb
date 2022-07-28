@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package sources_test
+package flow_test
 
 import (
 	"context"
@@ -26,18 +26,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
+	flowTest "github.com/apache/skywalking-banyandb/pkg/test/flow"
 )
 
-func TestSource_io_reader(t *testing.T) {
+const (
+	ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+
+func TestSource_slice(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	inlet := streamingApi.NewMockInlet(ctrl)
+	inlet := flow.NewMockInlet(ctrl)
 
 	assert := require.New(t)
-	src := sources.FromReader(strings.NewReader(ALPHABET), sources.WithBufferSize(1))
+	src := flowTest.NewSlice(strings.Split(ALPHABET, ""))
 	assert.NoError(src.Setup(context.TODO()))
 
 	in := make(chan interface{})
@@ -51,7 +54,7 @@ func TestSource_io_reader(t *testing.T) {
 	var result strings.Builder
 	for item := range in {
 		assert.IsType(flow.StreamRecord{}, item)
-		result.Write(item.(flow.StreamRecord).Data().([]byte))
+		result.WriteString(item.(flow.StreamRecord).Data().(string))
 	}
 
 	assert.Equal(ALPHABET, result.String())

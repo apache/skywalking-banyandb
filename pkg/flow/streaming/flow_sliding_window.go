@@ -28,7 +28,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
 type TriggerResult uint8
@@ -39,10 +38,10 @@ const (
 )
 
 var (
-	_ streamingApi.Operator = (*SlidingTimeWindows)(nil)
-	_ TriggerContext        = (*SlidingTimeWindows)(nil)
-	_ flow.WindowAssigner   = (*SlidingTimeWindows)(nil)
-	_ flow.Window           = (*timeWindow)(nil)
+	_ flow.Operator       = (*SlidingTimeWindows)(nil)
+	_ TriggerContext      = (*SlidingTimeWindows)(nil)
+	_ flow.WindowAssigner = (*SlidingTimeWindows)(nil)
+	_ flow.Window         = (*timeWindow)(nil)
 )
 
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
@@ -213,8 +212,8 @@ func (s *SlidingTimeWindows) Teardown(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlidingTimeWindows) Exec(downstream streamingApi.Inlet) {
-	go streamingApi.Transmit(downstream, s)
+func (s *SlidingTimeWindows) Exec(downstream flow.Inlet) {
+	go flow.Transmit(downstream, s)
 }
 
 func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {

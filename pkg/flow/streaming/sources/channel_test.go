@@ -26,15 +26,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
+)
+
+const (
+	ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )
 
 func TestSource_channel(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	inlet := streamingApi.NewMockInlet(ctrl)
+	inlet := flow.NewMockInlet(ctrl)
 
 	srcCh := make(chan string)
 

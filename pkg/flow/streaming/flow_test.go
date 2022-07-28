@@ -27,7 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
+	flowTest "github.com/apache/skywalking-banyandb/pkg/test/flow"
 )
 
 // numberRange generates a slice with `count` number of integers starting from `begin`,
@@ -43,13 +43,13 @@ func numberRange(begin, count int) []int {
 func TestStream_Filter(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		src      flow.Source
 		f        flow.UnaryFunc[bool]
 		expected []interface{}
 	}{
 		{
-			name:  "Even Number Filter",
-			input: sources.NewSlice(numberRange(0, 10)),
+			name: "Even Number Filter",
+			src:  flowTest.NewSlice(numberRange(0, 10)),
 			f: func(ctx context.Context, i interface{}) bool {
 				return i.(int)%2 == 0
 			},
@@ -67,10 +67,10 @@ func TestStream_Filter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			snk := sink.NewSlice()
-			s := New(tt.input).
+			s := New(tt.src).
 				Filter(tt.f).
 				To(snk)
-			if errCh := s.OpenAsync(); errCh != nil {
+			if errCh := s.Open(); errCh != nil {
 				err := Await().AtMost(3 * time.Second).Until(func() bool {
 					if len(snk.Value()) == len(tt.expected) {
 						if assert.Equal(tt.expected, snk.Value()) {
@@ -89,13 +89,13 @@ func TestStream_Filter(t *testing.T) {
 func TestStream_Mapper(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		src      flow.Source
 		f        flow.UnaryFunc[any]
 		expected []interface{}
 	}{
 		{
-			name:  "Multiplier Mapper",
-			input: sources.NewSlice(numberRange(0, 10)),
+			name: "Multiplier Mapper",
+			src:  flowTest.NewSlice(numberRange(0, 10)),
 			f: func(ctx context.Context, i interface{}) interface{} {
 				return i.(int) * 2
 			},
@@ -118,10 +118,10 @@ func TestStream_Mapper(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			snk := sink.NewSlice()
-			s := New(tt.input).
+			s := New(tt.src).
 				Map(tt.f).
 				To(snk)
-			if errCh := s.OpenAsync(); errCh != nil {
+			if errCh := s.Open(); errCh != nil {
 				err := Await().AtMost(3 * time.Second).Until(func() bool {
 					if len(snk.Value()) == len(tt.expected) {
 						if assert.Equal(tt.expected, snk.Value()) {
@@ -174,7 +174,7 @@ func TestStream_TopN(t *testing.T) {
 			assert := assert.New(t)
 			snk := sink.NewSlice()
 
-			s := New(sources.NewSlice(tt.input)).
+			s := New(flowTest.NewSlice(tt.input)).
 				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
@@ -185,7 +185,7 @@ func TestStream_TopN(t *testing.T) {
 				})).
 				To(snk)
 
-			if errCh := s.OpenAsync(); errCh != nil {
+			if errCh := s.Open(); errCh != nil {
 				err := Await().AtMost(5 * time.Second).Until(func() bool {
 					if len(snk.Value()) == 0 {
 						return false

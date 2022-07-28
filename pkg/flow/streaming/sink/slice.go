@@ -20,10 +20,10 @@ package sink
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
-var _ api.Sink = (*Slice)(nil)
+var _ flow.Sink = (*Slice)(nil)
 
 type Slice struct {
 	slice []interface{}

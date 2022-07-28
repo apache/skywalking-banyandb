@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package api
+package flow
 
 // Transmit provides a helper function to connect the current component with the downstream component.
 // It should be run in another goroutine.
@@ -24,4 +24,18 @@ func Transmit(downstream Inlet, current Outlet) {
 		downstream.In() <- elem
 	}
 	close(downstream.In())
+}
+
+func TryExactTimestamp(item any) StreamRecord {
+	if r, ok := item.(StreamRecord); ok {
+		return r
+	}
+	type timestampExtractor interface {
+		TimestampMillis() int64
+	}
+	// otherwise, check if we can extract timestamp
+	if extractor, ok := item.(timestampExtractor); ok {
+		return NewStreamRecord(item, extractor.TimestampMillis())
+	}
+	return NewStreamRecordWithoutTS(item)
 }

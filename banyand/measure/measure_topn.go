@@ -40,7 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
-	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -56,7 +56,7 @@ var (
 	_ bus.MessageListener = (*topNProcessCallback)(nil)
 	_ io.Closer           = (*topNStreamingProcessor)(nil)
 	_ io.Closer           = (*topNProcessorManager)(nil)
-	_ streamingApi.Sink   = (*topNStreamingProcessor)(nil)
+	_ flow.Sink           = (*topNStreamingProcessor)(nil)
 
 	TopNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
@@ -286,7 +286,7 @@ func (manager *topNProcessorManager) start() error {
 	slideSize := time.Duration(float64(interval.Nanoseconds()) * 0.4)
 	for _, topNSchema := range manager.topNSchemas {
 		srcCh := make(chan interface{})
-		streamingFlow := streaming.New(srcCh)
+		streamingFlow := streaming.New(sources.NewChannel(srcCh))
 
 		if conditions := topNSchema.GetCriteria(); len(conditions) > 0 {
 			filters, buildErr := manager.buildFilters(conditions)
@@ -319,7 +319,7 @@ func (manager *topNProcessorManager) start() error {
 					return elem.(flow.Data)[1].(int64)
 				}),
 				streaming.OrderBy(topNSchema.GetFieldValueSort()),
-			).To(processor).OpenAsync()
+			).To(processor).Open()
 
 		manager.processorMap[topNSchema.GetSourceMeasure()] = processor
 	}

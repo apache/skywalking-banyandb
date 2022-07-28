@@ -18,8 +18,12 @@
 package flow
 
 import (
+	"context"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type Data []any
 
 // Flow is an abstraction of data flow for
 // both Streaming and Batch
@@ -34,27 +38,40 @@ type Flow interface {
 	// Currently, it is only applicable to streaming context.
 	Window(WindowAssigner) WindowedFlow
 	// To pipes data to the given sink
-	To(sink interface{}) Flow
-	// OpenAsync opens the flow in the async mode for streaming scenario.
-	OpenAsync() <-chan error
+	To(sink Sink) Flow
+	// Open opens the flow in the async mode for streaming scenario.
+	Open() <-chan error
 }
 
+// WindowedFlow is a flow which processes incoming elements based on window.
+// The WindowedFlow can be created with a WindowAssigner.
 type WindowedFlow interface {
+	// TopN applies a TopNAggregation to each Window.
 	TopN(topNum int, opts ...any) Flow
+	// Aggregate applies the user-defined aggregation function to each Window.
 	Aggregate(aggrFunc AggregateFunction) Flow
 }
 
+// Window is a bucket of elements with a finite size.
+// timedWindow is the only implementation now.
 type Window interface {
+	// MaxTimestamp returns the upper bound of the Window.
 	MaxTimestamp() int64
 }
 
+// WindowAssigner is used to assign Window(s) for a given timestamp, and thus it can create a WindowedFlow.
 type WindowAssigner interface {
 	// AssignWindows assigns a slice of Window according to the given timestamp, e.g. eventTime.
+	// The unit of the timestamp here is MilliSecond.
 	AssignWindows(timestamp int64) ([]Window, error)
 }
 
+// AggregateFunction is the core operator for aggregation. It takes a slice of elements as the input,
+// and returns a snapshot of the stateful operator.
 type AggregateFunction func([]interface{}) interface{}
 
+// StreamRecord is a container wraps user data and timestamp.
+// It is the underlying transmission medium for the streaming processing.
 type StreamRecord struct {
 	ts   int64
 	data interface{}
@@ -94,4 +111,41 @@ func (sr StreamRecord) TimestampMillis() int64 {
 
 func (sr StreamRecord) Data() interface{} {
 	return sr.data
+}
+
+//go:generate mockgen -destination=./inlet_mock.go -package=flow github.com/apache/skywalking-banyandb/pkg/flow Inlet
+// Inlet represents a type that exposes one open input.
+type Inlet interface {
+	In() chan<- interface{}
+}
+
+// Outlet represents a type that exposes one open output.
+type Outlet interface {
+	Out() <-chan interface{}
+}
+
+type Component interface {
+	Setup(context.Context) error
+	Teardown(context.Context) error
+}
+
+// Source represents a set of stream processing steps that has one open output.
+type Source interface {
+	Outlet
+	Component
+	Exec(downstream Inlet)
+}
+
+// Operator represents a set of stream processing steps that has one open input and one open output.
+type Operator interface {
+	Inlet
+	Outlet
+	Component
+	Exec(downstream Inlet)
+}
+
+// Sink represents a set of stream processing steps that has one open input.
+type Sink interface {
+	Inlet
+	Component
 }

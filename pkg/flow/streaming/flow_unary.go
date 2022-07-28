@@ -21,8 +21,6 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-
-	streamingApi "github.com/apache/skywalking-banyandb/pkg/flow/streaming/api"
 )
 
 func (f *streamingFlow) Filter(predicate flow.UnaryOperation[bool]) flow.Flow {
@@ -44,7 +42,7 @@ func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
 	return f
 }
 
-var _ streamingApi.Operator = (*unaryOperator)(nil)
+var _ flow.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
 	op          flow.UnaryOperation[any]
@@ -59,9 +57,9 @@ func (u *unaryOperator) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (u *unaryOperator) Exec(downstream streamingApi.Inlet) {
+func (u *unaryOperator) Exec(downstream flow.Inlet) {
 	// start a background job for transmission
-	go streamingApi.Transmit(downstream, u)
+	go flow.Transmit(downstream, u)
 }
 
 func (u *unaryOperator) Teardown(ctx context.Context) error {
