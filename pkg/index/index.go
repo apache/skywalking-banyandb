@@ -27,7 +27,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
@@ -68,40 +67,11 @@ type Field struct {
 	Term []byte
 }
 
-func (f Field) MarshalStraight() ([]byte, error) {
+func (f Field) Marshal() ([]byte, error) {
 	return bytes.Join([][]byte{f.Key.Marshal(), f.Term}, nil), nil
 }
 
-func (f Field) Marshal(term metadata.Term) ([]byte, error) {
-	var t []byte
-	if f.Key.EncodeTerm {
-		var err error
-		t, err = term.ID(f.Term)
-		if err != nil {
-			return nil, errors.Wrap(err, "get term id")
-		}
-		f.Term = t
-	}
-	return f.MarshalStraight()
-}
-
-func (f *Field) Unmarshal(term metadata.Term, raw []byte) error {
-	err := f.UnmarshalStraight(raw)
-	if err != nil {
-		return err
-	}
-	if !f.Key.EncodeTerm {
-		return nil
-	}
-	t, err := term.Literal(f.Term)
-	if err != nil {
-		return errors.Wrap(err, "get term literal from metadata store")
-	}
-	f.Term = t
-	return nil
-}
-
-func (f *Field) UnmarshalStraight(raw []byte) error {
+func (f *Field) Unmarshal(raw []byte) error {
 	fk := &f.Key
 	err := fk.Unmarshal(raw[:len(raw)-8])
 	if err != nil {

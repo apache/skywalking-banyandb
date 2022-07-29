@@ -37,7 +37,7 @@ func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err erro
 }
 
 func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
-	f, err := field.Marshal(s.termMetadata)
+	f, err := field.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	return index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm, s.termMetadata,
+	return index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm,
 		func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			pv := &index.PostingValue{
 				Term:  term,
@@ -75,7 +75,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 
 			for ; delegated.Valid(); delegated.Next() {
 				f := index.Field{}
-				err := f.Unmarshal(s.termMetadata, delegated.Key())
+				err := f.Unmarshal(delegated.Key())
 				if err != nil {
 					return nil, err
 				}
