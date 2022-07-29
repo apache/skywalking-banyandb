@@ -67,7 +67,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		p.log.Warn().Msg("invalid event data type")
 		return
 	}
-	p.log.Info().Msg("received a query event")
+	p.log.Debug().Stringer("criteria", queryCriteria).Msg("received a query request")
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.streamService.Stream(meta)

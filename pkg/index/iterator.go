@@ -26,7 +26,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -89,7 +88,7 @@ func (f *FieldIteratorTemplate) Close() error {
 }
 
 func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
-	metadata metadata.Term, fn CompositePostingValueFn,
+	fn CompositePostingValueFn,
 ) (*FieldIteratorTemplate, error) {
 	if termRange.Upper == nil {
 		termRange.Upper = DefaultUpper
@@ -118,12 +117,12 @@ func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange Ran
 		Key:  fieldKey,
 		Term: term,
 	}
-	seekKey, err := field.Marshal(metadata)
+	seekKey, err := field.Marshal()
 	if err != nil {
 		return nil, err
 	}
 	return &FieldIteratorTemplate{
-		delegated: newDelegateIterator(iter, fieldKey, metadata, l),
+		delegated: newDelegateIterator(iter, fieldKey, l),
 		termRange: termRange,
 		fn:        fn,
 		reverse:   reverse,
@@ -131,11 +130,11 @@ func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange Ran
 	}, nil
 }
 
-func parseKey(fieldKey FieldKey, metadata metadata.Term, key []byte) (Field, error) {
+func parseKey(fieldKey FieldKey, key []byte) (Field, error) {
 	f := &Field{
 		Key: fieldKey,
 	}
-	err := f.Unmarshal(metadata, key)
+	err := f.Unmarshal(key)
 	if err != nil {
 		return *f, err
 	}
@@ -235,20 +234,18 @@ type delegateIterator struct {
 	delegated     kv.Iterator
 	fieldKey      FieldKey
 	fieldKeyBytes []byte
-	metadata      metadata.Term
 	l             *logger.Logger
 
 	curField Field
 	closed   bool
 }
 
-func newDelegateIterator(delegated kv.Iterator, fieldKey FieldKey, metadata metadata.Term, l *logger.Logger) *delegateIterator {
+func newDelegateIterator(delegated kv.Iterator, fieldKey FieldKey, l *logger.Logger) *delegateIterator {
 	fieldKeyBytes := fieldKey.Marshal()
 	return &delegateIterator{
 		delegated:     delegated,
 		fieldKey:      fieldKey,
 		fieldKeyBytes: fieldKeyBytes,
-		metadata:      metadata,
 		l:             l,
 	}
 }
@@ -282,7 +279,7 @@ func (di *delegateIterator) Valid() bool {
 		return false
 	}
 	var err error
-	di.curField, err = parseKey(di.fieldKey, di.metadata, di.Key())
+	di.curField, err = parseKey(di.fieldKey, di.Key())
 	if err != nil {
 		di.l.Error().Err(err).Msg("fail to parse field from key")
 		di.Close()
