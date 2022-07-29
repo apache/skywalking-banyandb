@@ -69,9 +69,9 @@ var _ = Describe("Sliding Window", func() {
 		})
 
 		It("Should receive nothing", func() {
-			Consistently(func(g Gomega) {
+			Eventually(func(g Gomega) {
 				g.Expect(num).Should(Equal(0))
-			})
+			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})
 
@@ -84,9 +84,10 @@ var _ = Describe("Sliding Window", func() {
 		})
 
 		It("Should trigger once", func() {
-			Consistently(func(g Gomega) {
+			Eventually(func(g Gomega) {
+				g.Expect(snk.Value()).ShouldNot(BeNil())
 				g.Expect(snk.Value()).Should(HaveLen(1))
-			}).Should(Succeed())
+			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})
 })
