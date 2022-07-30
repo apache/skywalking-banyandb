@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type CallbackFn func()
@@ -61,7 +62,7 @@ type Writer struct {
 	l              *logger.Logger
 	db             tsdb.Supplier
 	shardNum       uint32
-	ch             chan Message
+	ch             *run.Chan[Message]
 	indexRuleIndex []*partition.IndexRuleLocator
 }
 
@@ -76,31 +77,25 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	w.shardNum = options.ShardNum
 	w.db = options.DB
 	w.indexRuleIndex = partition.ParseIndexRuleLocators(options.Families, options.IndexRules)
-	w.ch = make(chan Message)
+	w.ch = run.NewChan[Message](make(chan Message))
 	w.bootIndexGenerator()
 	return w
 }
 
 func (s *Writer) Write(value Message) {
 	go func(m Message) {
-		defer func() {
-			if recover() != nil {
-				_ = m.BlockCloser.Close()
-			}
-		}()
-		s.ch <- m
+		s.ch.Write(m)
 	}(value)
 }
 
 func (s *Writer) Close() error {
-	close(s.ch)
-	return nil
+	return s.ch.Close()
 }
 
 func (s *Writer) bootIndexGenerator() {
 	go func() {
 		for {
-			m, more := <-s.ch
+			m, more := s.ch.Read()
 			if !more {
 				return
 			}

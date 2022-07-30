@@ -115,10 +115,12 @@ jobs:
       - name: Update dependencies 
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Generate codes
+      - name: Generate mocks
         run: make generate
       - name: Test
-        run: make test
+        run: make test-ci
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
   result:
     name: Continuous Integration
     runs-on: ubuntu-20.04

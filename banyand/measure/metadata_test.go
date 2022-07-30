@@ -104,7 +104,7 @@ var _ = Describe("Metadata", func() {
 					Group: "sw_metric",
 				})
 				return err != nil
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+			}).WithTimeout(30 * time.Second).Should(BeFalse())
 		})
 
 		Context("Update a measure", func() {

@@ -47,6 +47,14 @@ build: install
 test:
 	@echo "No test"
 
+.PHONY: test-race
+test-race:
+	@echo "No test"
+
+.PHONY: test-coverage
+test-coverage:
+	@echo "No test"
+
 .PHONY: release
 release: build
 
