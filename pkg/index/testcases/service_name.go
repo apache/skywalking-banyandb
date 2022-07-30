@@ -31,7 +31,7 @@ import (
 var serviceName = index.FieldKey{
 	// http_method
 	IndexRuleID: 6,
-	EncodeTerm:  true,
+	EncodeTerm:  false,
 }
 
 func RunServiceName(t *testing.T, store SimpleStore) {

@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
@@ -147,14 +146,13 @@ func (m *memTable) MatchTerms(field index.Field) (posting.List, error) {
 var _ kv.Iterator = (*flushIterator)(nil)
 
 type flushIterator struct {
-	fieldIdx     int
-	termIdx      int
-	key          []byte
-	value        []byte
-	fields       *fieldMap
-	valid        bool
-	err          error
-	termMetadata metadata.Term
+	fieldIdx int
+	termIdx  int
+	key      []byte
+	value    []byte
+	fields   *fieldMap
+	valid    bool
+	err      error
 }
 
 func (i *flushIterator) Next() {
@@ -228,7 +226,7 @@ func (i *flushIterator) setCurr() bool {
 		Key:  term.key,
 		Term: value.Term,
 	}
-	i.key, err = f.Marshal(i.termMetadata)
+	i.key, err = f.Marshal()
 	if err != nil {
 		i.err = multierr.Append(i.err, err)
 		return false
@@ -236,9 +234,8 @@ func (i *flushIterator) setCurr() bool {
 	return true
 }
 
-func (m *memTable) Iter(termMetadata metadata.Term) kv.Iterator {
+func (m *memTable) Iter() kv.Iterator {
 	return &flushIterator{
-		fields:       m.fields,
-		termMetadata: termMetadata,
+		fields: m.fields,
 	}
 }
