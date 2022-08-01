@@ -15,28 +15,36 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package grpc_test
+package run
 
 import (
-	"testing"
-	"time"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"sync"
 )
 
-var defaultEventuallyTimeout = 30 * time.Second
-
-func TestGrpc(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Grpc Suite")
+type Chan[T any] struct {
+	ch     chan T
+	closer sync.WaitGroup
 }
 
-var _ = BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: "warn",
-	})).Should(Succeed())
-})
+func NewChan[T any](ch chan T) *Chan[T] {
+	return &Chan[T]{
+		ch: ch,
+	}
+}
+
+func (c *Chan[T]) Write(item T) {
+	c.closer.Add(1)
+	defer c.closer.Done()
+	c.ch <- item
+}
+
+func (c *Chan[T]) Read() (T, bool) {
+	item, more := <-c.ch
+	return item, more
+}
+
+func (c *Chan[T]) Close() error {
+	c.closer.Wait()
+	close(c.ch)
+	return nil
+}

@@ -18,6 +18,8 @@
 package bucket
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -37,6 +39,7 @@ type Strategy struct {
 	ctrl       Controller
 	current    Reporter
 	next       Reporter
+	mux        sync.Mutex
 	logger     *logger.Logger
 	stopCh     chan struct{}
 }
@@ -111,9 +114,11 @@ func (s *Strategy) Run() {
 					}
 				}
 				if ratio >= 1.0 {
+					s.mux.Lock()
 					s.ctrl.OnMove(s.current, s.next)
 					s.current = s.next
 					s.next = nil
+					s.mux.Unlock()
 					goto bucket
 				}
 			case <-s.stopCh:
@@ -124,6 +129,8 @@ func (s *Strategy) Run() {
 }
 
 func (s *Strategy) Close() {
-	s.ctrl.OnMove(s.current, nil)
 	close(s.stopCh)
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	s.ctrl.OnMove(s.current, nil)
 }

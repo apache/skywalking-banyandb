@@ -325,11 +325,15 @@ func (sr *schemaRepo) notify(groupSchema *commonv1.Group, action databasev1.Acti
 }
 
 func (sr *schemaRepo) NotifyAll() (err error) {
-	for _, g := range sr.getMap() {
+	sr.RLock()
+	defer sr.RUnlock()
+	for _, g := range sr.data {
 		err = multierr.Append(err, sr.notify(g.groupSchema, databasev1.Action_ACTION_PUT))
-		for _, s := range g.getMap() {
+		g.mapMutex.RLock()
+		for _, s := range g.schemaMap {
 			err = multierr.Append(err, g.notify(s, databasev1.Action_ACTION_PUT))
 		}
+		g.mapMutex.RUnlock()
 	}
 	return err
 }
@@ -346,18 +350,15 @@ func (sr *schemaRepo) Close() {
 	if sr.workerStopCh != nil {
 		close(sr.workerStopCh)
 	}
-	for _, g := range sr.getMap() {
+
+	sr.RLock()
+	defer sr.RUnlock()
+	for _, g := range sr.data {
 		err := g.close()
 		if err != nil {
 			sr.l.Err(err).Stringer("group", g.groupSchema.Metadata).Msg("closing")
 		}
 	}
-}
-
-func (sr *schemaRepo) getMap() map[string]*group {
-	sr.RLock()
-	defer sr.RUnlock()
-	return sr.data
 }
 
 var _ Group = (*group)(nil)
@@ -469,8 +470,9 @@ func (g *group) deleteResource(metadata *commonv1.Metadata) error {
 }
 
 func (g *group) LoadResource(name string) (Resource, bool) {
-	data := g.getMap()
-	s := data[name]
+	g.mapMutex.RLock()
+	s := g.schemaMap[name]
+	g.mapMutex.RUnlock()
 	if s == nil {
 		return nil, false
 	}
@@ -501,14 +503,10 @@ func (g *group) notify(resource Resource, action databasev1.Action) error {
 }
 
 func (g *group) close() (err error) {
-	for _, s := range g.getMap() {
+	g.mapMutex.RLock()
+	for _, s := range g.schemaMap {
 		err = multierr.Append(err, s.Close())
 	}
+	g.mapMutex.RUnlock()
 	return multierr.Append(err, g.SupplyTSDB().Close())
-}
-
-func (g *group) getMap() map[string]Resource {
-	g.mapMutex.RLock()
-	defer g.mapMutex.RUnlock()
-	return g.schemaMap
 }

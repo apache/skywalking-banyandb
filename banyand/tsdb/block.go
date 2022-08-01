@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -66,7 +67,8 @@ type block struct {
 	segID          uint16
 	blockID        uint16
 	encodingMethod EncodingMethod
-	flushCh        chan struct{}
+	flushCh        *run.Chan[struct{}]
+	flushChQueue   chan *run.Chan[struct{}]
 }
 
 type blockOpts struct {
@@ -101,11 +103,24 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		Reporter:       bucket.NewTimeBasedReporter(timeRange, clock),
 		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
+		flushChQueue:   make(chan *run.Chan[struct{}]),
 	}
 	position := ctx.Value(common.PositionKey)
 	if position != nil {
 		b.position = position.(common.Position)
 	}
+	go func() {
+		for {
+			ch := <-b.flushChQueue
+			for {
+				_, more := ch.Read()
+				if !more {
+					break
+				}
+				b.flush()
+			}
+		}
+	}()
 	return b, err
 }
 
@@ -116,23 +131,15 @@ func (b *block) open() (err error) {
 		return nil
 	}
 	b.ref = z.NewCloser(1)
-	b.flushCh = make(chan struct{})
-	go func() {
-		for {
-			_, more := <-b.flushCh
-			if !more {
-				return
-			}
-			b.flush()
-		}
-	}()
+	b.flushCh = run.NewChan(make(chan struct{}))
+	b.flushChQueue <- b.flushCh
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
 		kv.TSSWithFlushCallback(func() {
-			b.flushCh <- struct{}{}
+			b.flushCh.Write(struct{}{})
 		}),
 	); err != nil {
 		return err
@@ -203,7 +210,7 @@ func (b *block) close() {
 		_ = closer.Close()
 	}
 	b.closed.Store(true)
-	close(b.flushCh)
+	b.flushCh.Close()
 }
 
 func (b *block) isClosed() bool {
