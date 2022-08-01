@@ -74,11 +74,11 @@ type SlidingTimeWindows struct {
 	currentWindow timeWindow
 	size          int64
 	slide         int64
-	queue         *flow.PriorityQueue
+	queue         *flow.DedupPriorityQueue
 	// guard queue
 	queueMu          sync.Mutex
 	currentWatermark int64
-	timerHeap        *flow.PriorityQueue
+	timerHeap        *flow.DedupPriorityQueue
 	// guard timerHeap
 	timerMu  sync.Mutex
 	trigger  EventTimeTrigger

@@ -23,9 +23,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-var _ heap.Interface = (*PriorityQueue)(nil)
+var _ heap.Interface = (*DedupPriorityQueue)(nil)
 
-// Element represents an item in the PriorityQueue.
+// Element represents an item in the DedupPriorityQueue.
 type Element interface {
 	GetIndex() int
 	SetIndex(int)
@@ -35,23 +35,23 @@ type Element interface {
 	Compare(other Element) int
 }
 
-// PriorityQueue implements heap.Interface.
-// PriorityQueue is not thread-safe
-type PriorityQueue struct {
+// DedupPriorityQueue implements heap.Interface.
+// DedupPriorityQueue is not thread-safe
+type DedupPriorityQueue struct {
 	Items           []Element
 	cache           map[Element]struct{}
 	allowDuplicates bool
 }
 
-func NewPriorityQueue(allowDuplicates bool) *PriorityQueue {
-	return &PriorityQueue{
+func NewPriorityQueue(allowDuplicates bool) *DedupPriorityQueue {
+	return &DedupPriorityQueue{
 		Items:           make([]Element, 0),
 		cache:           make(map[Element]struct{}),
 		allowDuplicates: allowDuplicates,
 	}
 }
 
-func (pq *PriorityQueue) initCache() error {
+func (pq *DedupPriorityQueue) initCache() error {
 	if pq.allowDuplicates || len(pq.Items) == 0 {
 		return nil
 	}
@@ -65,24 +65,24 @@ func (pq *PriorityQueue) initCache() error {
 	return nil
 }
 
-// Len returns the PriorityQueue length.
-func (pq *PriorityQueue) Len() int { return len(pq.Items) }
+// Len returns the DedupPriorityQueue length.
+func (pq *DedupPriorityQueue) Len() int { return len(pq.Items) }
 
 // Less is the items less comparator.
-func (pq *PriorityQueue) Less(i, j int) bool {
+func (pq *DedupPriorityQueue) Less(i, j int) bool {
 	return pq.Items[i].Compare(pq.Items[j]) < 0
 }
 
 // Swap exchanges indexes of the items.
-func (pq *PriorityQueue) Swap(i, j int) {
+func (pq *DedupPriorityQueue) Swap(i, j int) {
 	pq.Items[i], pq.Items[j] = pq.Items[j], pq.Items[i]
 	pq.Items[i].SetIndex(i)
 	pq.Items[j].SetIndex(j)
 }
 
 // Push implements heap.Interface.Push.
-// Appends an item to the PriorityQueue.
-func (pq *PriorityQueue) Push(x interface{}) {
+// Appends an item to the DedupPriorityQueue.
+func (pq *DedupPriorityQueue) Push(x interface{}) {
 	item := x.(Element)
 	// if duplicates is not allowed
 	if !pq.allowDuplicates {
@@ -100,7 +100,7 @@ func (pq *PriorityQueue) Push(x interface{}) {
 
 // Pop implements heap.Interface.Pop.
 // Removes and returns the Len() - 1 element.
-func (pq *PriorityQueue) Pop() interface{} {
+func (pq *DedupPriorityQueue) Pop() interface{} {
 	n := len(pq.Items)
 	item := pq.Items[n-1]
 	item.SetIndex(-1) // for safety
@@ -109,21 +109,21 @@ func (pq *PriorityQueue) Pop() interface{} {
 	return item
 }
 
-// Peek returns the first item of the PriorityQueue without removing it.
-func (pq *PriorityQueue) Peek() Element {
+// Peek returns the first item of the DedupPriorityQueue without removing it.
+func (pq *DedupPriorityQueue) Peek() Element {
 	if len(pq.Items) > 0 {
 		return (pq.Items)[0]
 	}
 	return nil
 }
 
-// Slice returns a sliced PriorityQueue using the given bounds.
-func (pq *PriorityQueue) Slice(start, end int) []Element {
+// Slice returns a sliced DedupPriorityQueue using the given bounds.
+func (pq *DedupPriorityQueue) Slice(start, end int) []Element {
 	return pq.Items[start:end]
 }
 
-func (pq *PriorityQueue) WithNewItems(items []Element) (*PriorityQueue, error) {
-	newPq := &PriorityQueue{
+func (pq *DedupPriorityQueue) WithNewItems(items []Element) (*DedupPriorityQueue, error) {
+	newPq := &DedupPriorityQueue{
 		Items:           items,
 		cache:           make(map[Element]struct{}),
 		allowDuplicates: pq.allowDuplicates,
