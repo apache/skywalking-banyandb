@@ -85,8 +85,8 @@ type SlidingTimeWindows struct {
 	aggrFunc flow.AggregateFunction
 
 	// For api.Operator
-	in           chan interface{}
-	out          chan interface{}
+	in           chan flow.StreamRecord
+	out          chan flow.StreamRecord
 	done         chan struct{}
 	purgedWindow chan timeWindow
 }
@@ -104,11 +104,11 @@ func (s *SlidingTimeWindows) RegisterEventTimeTimer(triggerTime int64) {
 	})
 }
 
-func (s *SlidingTimeWindows) In() chan<- interface{} {
+func (s *SlidingTimeWindows) In() chan<- flow.StreamRecord {
 	return s.in
 }
 
-func (s *SlidingTimeWindows) Out() <-chan interface{} {
+func (s *SlidingTimeWindows) Out() <-chan flow.StreamRecord {
 	return s.out
 }
 
@@ -185,12 +185,11 @@ func (s *SlidingTimeWindows) receive() {
 	s.Add(1)
 	defer s.Done()
 	for elem := range s.in {
-		record := elem.(flow.StreamRecord)
 		// assume records are consumed one by one in strict time order
-		s.currentWatermark = record.TimestampMillis()
+		s.currentWatermark = elem.TimestampMillis()
 		s.purgeOutdatedWindows()
 
-		assignedWindows, err := s.AssignWindows(record.TimestampMillis())
+		assignedWindows, err := s.AssignWindows(elem.TimestampMillis())
 		if err != nil {
 			// TODO: drainError
 			continue
@@ -198,12 +197,12 @@ func (s *SlidingTimeWindows) receive() {
 		for _, w := range assignedWindows {
 			tw := w.(timeWindow)
 			s.currentWindow = tw
-			result := s.trigger.OnElement(record.TimestampMillis(), tw, s)
+			result := s.trigger.OnElement(elem.TimestampMillis(), tw, s)
 			if result == FIRE {
 				s.purgedWindow <- tw
 			}
 		}
-		item := &TimestampedValue{elem.(flow.StreamRecord), 0}
+		item := &TimestampedValue{elem, 0}
 		s.queueMu.Lock()
 		heap.Push(s.queue, item)
 		s.queueMu.Unlock()
@@ -228,8 +227,8 @@ func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {
 		slide:            slide.Milliseconds(),
 		queue:            flow.NewPriorityQueue(true),
 		timerHeap:        flow.NewPriorityQueue(false),
-		in:               make(chan interface{}),
-		out:              make(chan interface{}),
+		in:               make(chan flow.StreamRecord),
+		out:              make(chan flow.StreamRecord),
 		done:             make(chan struct{}),
 		purgedWindow:     make(chan timeWindow),
 		trigger:          EventTimeTrigger{},

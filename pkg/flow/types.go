@@ -119,12 +119,12 @@ func (sr StreamRecord) Data() interface{} {
 //go:generate mockgen -destination=./inlet_mock.go -package=flow github.com/apache/skywalking-banyandb/pkg/flow Inlet
 // Inlet represents a type that exposes one open input.
 type Inlet interface {
-	In() chan<- interface{}
+	In() chan<- StreamRecord
 }
 
 // Outlet represents a type that exposes one open output.
 type Outlet interface {
-	Out() <-chan interface{}
+	Out() <-chan StreamRecord
 }
 
 type Component interface {

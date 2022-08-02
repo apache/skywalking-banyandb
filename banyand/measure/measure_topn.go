@@ -75,13 +75,13 @@ type topNStreamingProcessor struct {
 	topNSchema       *databasev1.TopNAggregation
 	databaseSupplier tsdb.Supplier
 	src              chan interface{}
-	in               chan interface{}
+	in               chan flow.StreamRecord
 	errCh            <-chan error
 	stopCh           chan interface{}
 	streamingFlow    flow.Flow
 }
 
-func (t *topNStreamingProcessor) In() chan<- interface{} {
+func (t *topNStreamingProcessor) In() chan<- flow.StreamRecord {
 	return t.in
 }
 
@@ -95,14 +95,12 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 	defer t.Done()
 	for {
 		select {
-		case item, ok := <-t.in:
+		case record, ok := <-t.in:
 			if !ok {
 				return
 			}
-			if record, ok := item.(flow.StreamRecord); ok {
-				if err := t.writeStreamRecord(record); err != nil {
-					t.l.Err(err).Msg("fail to write stream record")
-				}
+			if err := t.writeStreamRecord(record); err != nil {
+				t.l.Err(err).Msg("fail to write stream record")
 			}
 		case <-ctx.Done():
 			return
@@ -347,7 +345,7 @@ func (manager *topNProcessorManager) start() error {
 			topNSchema:       topNSchema,
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
-			in:               make(chan interface{}),
+			in:               make(chan flow.StreamRecord),
 			stopCh:           make(chan interface{}),
 			streamingFlow:    streamingFlow,
 		}

@@ -38,6 +38,7 @@ func (f *streamingFlow) Map(mapper flow.UnaryOperation[any]) flow.Flow {
 // Transform represents a general unary transformation
 // For example: filter, map, etc.
 func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
+	// TODO: support parallelism
 	f.ops = append(f.ops, newUnaryOp(op, 1))
 	return f
 }
@@ -47,8 +48,8 @@ var _ flow.Operator = (*unaryOperator)(nil)
 type unaryOperator struct {
 	flow.ComponentState
 	op          flow.UnaryOperation[any]
-	in          chan interface{}
-	out         chan interface{}
+	in          chan flow.StreamRecord
+	out         chan flow.StreamRecord
 	parallelism uint
 }
 
@@ -71,37 +72,34 @@ func (u *unaryOperator) Teardown(ctx context.Context) error {
 func newUnaryOp(op flow.UnaryOperation[any], parallelism uint) *unaryOperator {
 	return &unaryOperator{
 		op:          op,
-		in:          make(chan interface{}),
-		out:         make(chan interface{}),
+		in:          make(chan flow.StreamRecord),
+		out:         make(chan flow.StreamRecord),
 		parallelism: parallelism,
 	}
 }
 
-func (u *unaryOperator) In() chan<- interface{} {
+func (u *unaryOperator) In() chan<- flow.StreamRecord {
 	return u.in
 }
 
-func (u *unaryOperator) Out() <-chan interface{} {
+func (u *unaryOperator) Out() <-chan flow.StreamRecord {
 	return u.out
 }
 
 func (u *unaryOperator) run() {
 	semaphore := make(chan struct{}, u.parallelism)
 	for elem := range u.in {
-		if streamRecord, ok := elem.(flow.StreamRecord); ok {
-			semaphore <- struct{}{}
-			go func(r flow.StreamRecord) {
-				defer func() { <-semaphore }()
-				result := u.op.Apply(context.TODO(), r.Data())
-				switch val := result.(type) {
-				case nil:
-					return
-				default:
-					u.out <- r.WithNewData(val)
-				}
-			}(streamRecord)
-		}
-		// TODO: else warning
+		semaphore <- struct{}{}
+		go func(r flow.StreamRecord) {
+			defer func() { <-semaphore }()
+			result := u.op.Apply(context.TODO(), r.Data())
+			switch val := result.(type) {
+			case nil:
+				return
+			default:
+				u.out <- r.WithNewData(val)
+			}
+		}(elem)
 	}
 	for i := 0; i < int(u.parallelism); i++ {
 		semaphore <- struct{}{}

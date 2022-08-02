@@ -31,10 +31,10 @@ var _ flow.Source = (*sourceSlice)(nil)
 type sourceSlice struct {
 	flow.ComponentState
 	slice interface{}
-	out   chan interface{}
+	out   chan flow.StreamRecord
 }
 
-func (s *sourceSlice) Out() <-chan interface{} {
+func (s *sourceSlice) Out() <-chan flow.StreamRecord {
 	return s.out
 }
 
@@ -79,6 +79,6 @@ func (s *sourceSlice) Exec(downstream flow.Inlet) {
 func NewSlice(slice interface{}) flow.Source {
 	return &sourceSlice{
 		slice: slice,
-		out:   make(chan interface{}),
+		out:   make(chan flow.StreamRecord),
 	}
 }

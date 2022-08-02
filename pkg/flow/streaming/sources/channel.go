@@ -31,10 +31,10 @@ var _ flow.Source = (*sourceChan)(nil)
 type sourceChan struct {
 	flow.ComponentState
 	in  interface{}
-	out chan interface{}
+	out chan flow.StreamRecord
 }
 
-func (s *sourceChan) Out() <-chan interface{} {
+func (s *sourceChan) Out() <-chan flow.StreamRecord {
 	return s.out
 }
 
@@ -87,6 +87,6 @@ func NewChannel(in interface{}) (flow.Source, error) {
 
 	return &sourceChan{
 		in:  in,
-		out: make(chan interface{}, 1024),
+		out: make(chan flow.StreamRecord, 1024),
 	}, nil
 }

@@ -28,13 +28,13 @@ var _ flow.Sink = (*Slice)(nil)
 type Slice struct {
 	flow.ComponentState
 	slice []interface{}
-	in    chan interface{}
+	in    chan flow.StreamRecord
 }
 
 func NewSlice() *Slice {
 	return &Slice{
 		slice: make([]interface{}, 0),
-		in:    make(chan interface{}),
+		in:    make(chan flow.StreamRecord),
 	}
 }
 
@@ -42,7 +42,7 @@ func (s *Slice) Value() []interface{} {
 	return s.slice
 }
 
-func (s *Slice) In() chan<- interface{} {
+func (s *Slice) In() chan<- flow.StreamRecord {
 	return s.in
 }
 
