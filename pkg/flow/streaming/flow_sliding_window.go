@@ -30,11 +30,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
-type TriggerResult uint8
+type TriggerResult bool
 
 const (
-	FIRE TriggerResult = 1 << iota
-	CONTINUE
+	FIRE     TriggerResult = true
+	CONTINUE               = false
 )
 
 var (
@@ -185,8 +185,15 @@ func (s *SlidingTimeWindows) receive() {
 	s.Add(1)
 	defer s.Done()
 	for elem := range s.in {
-		// assume records are consumed one by one in strict time order
-		s.currentWatermark = elem.TimestampMillis()
+		// even if the incoming elements do not follow strict order,
+		// the watermark could increase monotonically.
+		if elem.TimestampMillis() > s.currentWatermark {
+			s.currentWatermark = elem.TimestampMillis()
+		}
+		// TODO: add various strategies to allow lateness items, which come later than the current watermark
+		// Currently, assume the current watermark is t,
+		// then we allow lateness items coming after t-windowSize+slideSize, but before t,
+		// i.e. [t-windowSize+slideSize, t)
 		s.purgeOutdatedWindows()
 
 		assignedWindows, err := s.AssignWindows(elem.TimestampMillis())
@@ -267,10 +274,6 @@ func (s *SlidingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, erro
 // getWindowStart calculates the window start for a timestamp.
 func getWindowStart(timestamp, windowSize int64) int64 {
 	remainder := timestamp % windowSize
-	// handle both positive and negative cases
-	if remainder < 0 {
-		return timestamp - (remainder + windowSize)
-	}
 	return timestamp - remainder
 }
 
