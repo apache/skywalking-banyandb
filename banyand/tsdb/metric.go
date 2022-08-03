@@ -114,7 +114,6 @@ func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
 func newBlockStat() map[string]*observability.Statistics {
 	return map[string]*observability.Statistics{
 		componentMain:              {},
-		componentPrimaryIdx:        {},
 		componentSecondInvertedIdx: {},
 		componentSecondLSMIdx:      {},
 	}
