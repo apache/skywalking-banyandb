@@ -70,12 +70,13 @@ func (f *streamingFlow) Close() error {
 	for _, op := range f.ops {
 		err = multierr.Append(err, op.Teardown(ctx))
 	}
+	defer close(f.drain)
 	return multierr.Append(err, f.sink.Teardown(ctx))
 }
 
 func (f *streamingFlow) Open() <-chan error {
 	if err := f.init(); err != nil {
-		f.drainErr(err)
+		go f.drainErr(err)
 		return f.drain
 	}
 
@@ -117,5 +118,5 @@ func (f *streamingFlow) Open() <-chan error {
 }
 
 func (f *streamingFlow) drainErr(err error) {
-	go func() { f.drain <- err }()
+	f.drain <- err
 }

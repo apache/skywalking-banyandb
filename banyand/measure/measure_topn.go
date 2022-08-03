@@ -77,7 +77,7 @@ type topNStreamingProcessor struct {
 	src              chan interface{}
 	in               chan flow.StreamRecord
 	errCh            <-chan error
-	stopCh           chan interface{}
+	stopCh           chan struct{}
 	streamingFlow    flow.Flow
 }
 
@@ -117,8 +117,12 @@ func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
 
 func (t *topNStreamingProcessor) Close() error {
 	close(t.src)
-	defer close(t.stopCh)
-	return t.streamingFlow.Close()
+	// close streaming flow
+	err := t.streamingFlow.Close()
+	// and wait for error channel close
+	<-t.stopCh
+	t.stopCh = nil
+	return err
 }
 
 func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
@@ -271,18 +275,11 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 }
 
 func (t *topNStreamingProcessor) handleError() {
-	for {
-		select {
-		case err, ok := <-t.errCh:
-			if !ok {
-				return
-			}
-			t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
-				Msg("error occurred during flow setup or process")
-		case <-t.stopCh:
-			return
-		}
+	for err := range t.errCh {
+		t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
+			Msg("error occurred during flow setup or process")
 	}
+	t.stopCh <- struct{}{}
 }
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure
@@ -346,7 +343,7 @@ func (manager *topNProcessorManager) start() error {
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,
 			in:               make(chan flow.StreamRecord),
-			stopCh:           make(chan interface{}),
+			stopCh:           make(chan struct{}),
 			streamingFlow:    streamingFlow,
 		}
 

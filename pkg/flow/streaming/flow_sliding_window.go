@@ -41,6 +41,8 @@ var (
 	_ flow.Operator       = (*SlidingTimeWindows)(nil)
 	_ flow.WindowAssigner = (*SlidingTimeWindows)(nil)
 	_ flow.Window         = (*timeWindow)(nil)
+
+	_ TriggerContext = (*triggerContext)(nil)
 )
 
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
@@ -280,10 +282,6 @@ func eventTimeTriggerOnElement(window timeWindow, ctx TriggerContext) TriggerRes
 	ctx.RegisterEventTimeTimer(window.MaxTimestamp())
 	return CONTINUE
 }
-
-var (
-	_ TriggerContext = (*triggerContext)(nil)
-)
 
 type TriggerContext interface {
 	GetCurrentWatermark() int64
