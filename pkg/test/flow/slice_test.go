@@ -43,7 +43,7 @@ func TestSource_slice(t *testing.T) {
 	src := flowTest.NewSlice(strings.Split(ALPHABET, ""))
 	assert.NoError(src.Setup(context.TODO()))
 
-	in := make(chan interface{})
+	in := make(chan flow.StreamRecord)
 	inlet.
 		EXPECT().
 		In().Times(len(ALPHABET) + 1).
@@ -54,7 +54,7 @@ func TestSource_slice(t *testing.T) {
 	var result strings.Builder
 	for item := range in {
 		assert.IsType(flow.StreamRecord{}, item)
-		result.WriteString(item.(flow.StreamRecord).Data().(string))
+		result.WriteString(item.Data().(string))
 	}
 
 	assert.Equal(ALPHABET, result.String())
