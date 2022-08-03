@@ -104,15 +104,16 @@ func (s *SlidingTimeWindows) Out() <-chan flow.StreamRecord {
 
 func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
 	// start processing
+	s.Add(1)
 	go s.receive()
 	// start emitting
+	s.Add(1)
 	go s.emit()
 
 	return nil
 }
 
 func (s *SlidingTimeWindows) emit() {
-	s.Add(1)
 	defer s.Done()
 	for w := range s.purgedWindow {
 		if err := func(window timeWindow) error {
@@ -176,7 +177,6 @@ func (s *SlidingTimeWindows) purgeOutdatedWindows() {
 }
 
 func (s *SlidingTimeWindows) receive() {
-	s.Add(1)
 	defer s.Done()
 	for elem := range s.in {
 		// even if the incoming elements do not follow strict order,
@@ -222,6 +222,7 @@ func (s *SlidingTimeWindows) Teardown(ctx context.Context) error {
 }
 
 func (s *SlidingTimeWindows) Exec(downstream flow.Inlet) {
+	s.Add(1)
 	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 

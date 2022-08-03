@@ -45,12 +45,12 @@ func (s *sourceChan) Setup(ctx context.Context) error {
 		return errors.New("invalid channel")
 	}
 
+	s.Add(1)
 	go s.run(ctx, chanVal)
 	return nil
 }
 
 func (s *sourceChan) run(ctx context.Context, chanVal reflect.Value) {
-	s.Add(1)
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
@@ -77,6 +77,7 @@ func (s *sourceChan) Teardown(ctx context.Context) error {
 }
 
 func (s *sourceChan) Exec(downstream flow.Inlet) {
+	s.Add(1)
 	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 

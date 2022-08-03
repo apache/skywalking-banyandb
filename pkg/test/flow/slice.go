@@ -73,6 +73,7 @@ func (s *sourceSlice) Teardown(ctx context.Context) error {
 }
 
 func (s *sourceSlice) Exec(downstream flow.Inlet) {
+	s.Add(1)
 	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 

@@ -20,7 +20,6 @@ package flow
 // Transmit provides a helper function to connect the current component with the downstream component.
 // It should be run in another goroutine.
 func Transmit(state *ComponentState, downstream Inlet, current Outlet) {
-	state.Add(1)
 	defer state.Done()
 	for elem := range current.Out() {
 		downstream.In() <- elem

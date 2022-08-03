@@ -60,6 +60,7 @@ func (u *unaryOperator) Setup(ctx context.Context) error {
 }
 
 func (u *unaryOperator) Exec(downstream flow.Inlet) {
+	u.Add(1)
 	// start a background job for transmission
 	go flow.Transmit(&u.ComponentState, downstream, u)
 }

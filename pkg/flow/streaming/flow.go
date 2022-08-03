@@ -80,39 +80,37 @@ func (f *streamingFlow) Open() <-chan error {
 		return f.drain
 	}
 
-	// open stream
-	go func() {
-		// setup sources
-		if err := f.source.Setup(f.ctx); err != nil {
-			f.drainErr(err)
-			return
-		}
+	// setup sources
+	if err := f.source.Setup(f.ctx); err != nil {
+		go f.drainErr(err)
+		return f.drain
+	}
 
-		// setup all operators one by one
-		for _, op := range f.ops {
-			if err := op.Setup(f.ctx); err != nil {
-				f.drainErr(err)
-				return
-			}
+	// setup all operators one by one
+	for _, op := range f.ops {
+		if err := op.Setup(f.ctx); err != nil {
+			go f.drainErr(err)
+			return f.drain
 		}
+	}
 
-		// setup sink
-		if err := f.sink.Setup(f.ctx); err != nil {
-			f.drainErr(err)
-		}
+	// setup sink
+	if err := f.sink.Setup(f.ctx); err != nil {
+		go f.drainErr(err)
+		return f.drain
+	}
 
-		// connect all operator and sink
-		for i := len(f.ops) - 1; i >= 0; i-- {
-			last := i == len(f.ops)-1
-			if last {
-				f.ops[i].Exec(f.sink)
-			} else {
-				f.ops[i].Exec(f.ops[i+1])
-			}
+	// connect all operator and sink
+	for i := len(f.ops) - 1; i >= 0; i-- {
+		last := i == len(f.ops)-1
+		if last {
+			f.ops[i].Exec(f.sink)
+		} else {
+			f.ops[i].Exec(f.ops[i+1])
 		}
-		// finally connect sources and the first operator
-		f.source.Exec(f.ops[0])
-	}()
+	}
+	// finally connect sources and the first operator
+	f.source.Exec(f.ops[0])
 
 	return f.drain
 }

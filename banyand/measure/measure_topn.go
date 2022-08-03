@@ -86,12 +86,12 @@ func (t *topNStreamingProcessor) In() chan<- flow.StreamRecord {
 }
 
 func (t *topNStreamingProcessor) Setup(ctx context.Context) error {
+	t.Add(1)
 	go t.run(ctx)
 	return nil
 }
 
 func (t *topNStreamingProcessor) run(ctx context.Context) {
-	t.Add(1)
 	defer t.Done()
 	for {
 		select {

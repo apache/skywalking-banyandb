@@ -43,6 +43,8 @@ type Flow interface {
 	// To pipes data to the given sink
 	To(sink Sink) Flow
 	// Open opens the flow in the async mode for streaming scenario.
+	// The first error is the error combination while opening all components,
+	// while the second is a channel for receiving async errors.
 	Open() <-chan error
 }
 
