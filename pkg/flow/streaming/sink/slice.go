@@ -19,6 +19,7 @@ package sink
 
 import (
 	"context"
+	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
@@ -26,6 +27,7 @@ import (
 var _ flow.Sink = (*Slice)(nil)
 
 type Slice struct {
+	sync.RWMutex
 	flow.ComponentState
 	slice []interface{}
 	in    chan flow.StreamRecord
@@ -39,6 +41,8 @@ func NewSlice() *Slice {
 }
 
 func (s *Slice) Value() []interface{} {
+	s.RLock()
+	defer s.RUnlock()
 	return s.slice
 }
 
@@ -63,7 +67,9 @@ func (s *Slice) run(ctx context.Context) {
 			if !ok {
 				return
 			}
+			s.Lock()
 			s.slice = append(s.slice, item)
+			s.Unlock()
 		case <-ctx.Done():
 			return
 		}

@@ -23,6 +23,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -284,6 +285,10 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure
 type topNProcessorManager struct {
+	// RWMutex here is to protect the processorMap from data race, i.e.
+	// the send operation to the underlying channel vs. the close of the channel
+	// TODO: this can be optimized if the bus Listener can be synchronously finished,
+	sync.RWMutex
 	l            *logger.Logger
 	m            *measure
 	topNSchemas  []*databasev1.TopNAggregation
@@ -291,6 +296,8 @@ type topNProcessorManager struct {
 }
 
 func (manager *topNProcessorManager) Close() error {
+	manager.Lock()
+	defer manager.Unlock()
 	var err error
 	for _, processor := range manager.processorMap {
 		err = multierr.Append(err, processor.Close())
@@ -299,6 +306,8 @@ func (manager *topNProcessorManager) Close() error {
 }
 
 func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) error {
+	manager.RLock()
+	defer manager.RUnlock()
 	for _, processor := range manager.processorMap {
 		processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
 	}
