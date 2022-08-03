@@ -43,7 +43,6 @@ import (
 
 const (
 	componentMain              = "main"
-	componentPrimaryIdx        = "primary"
 	componentSecondInvertedIdx = "inverted"
 	componentSecondLSMIdx      = "lsm"
 )
@@ -58,7 +57,6 @@ type block struct {
 	position common.Position
 
 	store         kv.TimeSeriesStore
-	primaryIndex  index.Store
 	invertedIndex index.Store
 	lsmIndex      index.Store
 	closableLst   []io.Closer
@@ -144,13 +142,7 @@ func (b *block) open() (err error) {
 	); err != nil {
 		return err
 	}
-	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   path.Join(b.path, componentPrimaryIdx),
-		Logger: b.l.Named(componentPrimaryIdx),
-	}); err != nil {
-		return err
-	}
-	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
+	b.closableLst = append(b.closableLst, b.store)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
 		Path:   path.Join(b.path, componentSecondInvertedIdx),
 		Logger: b.l.Named(componentSecondInvertedIdx),
@@ -222,8 +214,8 @@ func (b *block) String() string {
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {
-	names = append(names, componentMain, componentPrimaryIdx, componentSecondInvertedIdx, componentSecondLSMIdx)
-	stats = append(stats, b.store.Stats(), b.primaryIndex.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
+	names = append(names, componentMain, componentSecondInvertedIdx, componentSecondLSMIdx)
+	stats = append(stats, b.store.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
 	return names, stats
 }
 
@@ -237,7 +229,7 @@ type blockDelegate interface {
 	dataReader() kv.TimeSeriesReader
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
-	primaryIndexReader() index.Searcher
+	primaryIndexReader() index.FieldIterable
 	identity() (segID uint16, blockID uint16)
 	startTime() time.Time
 	String() string
@@ -261,8 +253,8 @@ func (d *bDelegate) invertedIndexReader() index.Searcher {
 	return d.delegate.invertedIndex
 }
 
-func (d *bDelegate) primaryIndexReader() index.Searcher {
-	return d.delegate.primaryIndex
+func (d *bDelegate) primaryIndexReader() index.FieldIterable {
+	return d.delegate.lsmIndex
 }
 
 func (d *bDelegate) startTime() time.Time {
@@ -278,20 +270,14 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.primaryIndex.Write(field, id)
+	return d.delegate.lsmIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeLSMIndex(field index.Field, id common.ItemID) error {
-	if d.delegate.lsmIndex == nil {
-		return nil
-	}
 	return d.delegate.lsmIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) error {
-	if d.delegate.invertedIndex == nil {
-		return nil
-	}
 	return d.delegate.invertedIndex.Write(field, id)
 }
 
