@@ -39,7 +39,6 @@ const (
 
 var (
 	_ flow.Operator       = (*SlidingTimeWindows)(nil)
-	_ TriggerContext      = (*SlidingTimeWindows)(nil)
 	_ flow.WindowAssigner = (*SlidingTimeWindows)(nil)
 	_ flow.Window         = (*timeWindow)(nil)
 )
@@ -47,9 +46,10 @@ var (
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	switch v := w.(type) {
 	case *SlidingTimeWindows:
+		v.errorHandler = f.drainErr
 		f.ops = append(f.ops, v)
 	default:
-		f.drainErr(errors.New("window is not supported"))
+		f.drainErr(errors.New("window type is not supported"))
 	}
 
 	return &windowedFlow{
@@ -69,19 +69,20 @@ func (s *windowedFlow) Aggregate(aggrFunc flow.AggregateFunction) flow.Flow {
 }
 
 type SlidingTimeWindows struct {
+	// internal state of the sliding time window
 	flow.ComponentState
+	// errorHandler is the error handler and set by the streamingFlow
+	errorHandler func(error)
 	// For SlidingTimeWindows
-	currentWindow timeWindow
-	size          int64
-	slide         int64
-	queue         *flow.DedupPriorityQueue
+	size  int64
+	slide int64
+	queue *flow.DedupPriorityQueue
 	// guard queue
 	queueMu          sync.Mutex
 	currentWatermark int64
 	timerHeap        *flow.DedupPriorityQueue
 	// guard timerHeap
 	timerMu  sync.Mutex
-	trigger  EventTimeTrigger
 	aggrFunc flow.AggregateFunction
 
 	// For api.Operator
@@ -89,19 +90,6 @@ type SlidingTimeWindows struct {
 	out          chan flow.StreamRecord
 	done         chan struct{}
 	purgedWindow chan timeWindow
-}
-
-func (s *SlidingTimeWindows) GetCurrentWatermark() int64 {
-	return s.currentWatermark
-}
-
-func (s *SlidingTimeWindows) RegisterEventTimeTimer(triggerTime int64) {
-	s.timerMu.Lock()
-	defer s.timerMu.Unlock()
-	heap.Push(s.timerHeap, &internalTimer{
-		triggerTimeMillis: triggerTime,
-		w:                 s.currentWindow,
-	})
 }
 
 func (s *SlidingTimeWindows) In() chan<- flow.StreamRecord {
@@ -125,43 +113,47 @@ func (s *SlidingTimeWindows) emit() {
 	s.Add(1)
 	defer s.Done()
 	for w := range s.purgedWindow {
-		s.queueMu.Lock()
-		// build a window slice and send it to the out chan
-		var windowBottomIndex int
-		windowUpperIndex := s.queue.Len()
-		slideUpperIndex := windowUpperIndex
-		slideUpperTime := w.start + s.slide
-		windowBottomTime := w.start
-		for i, item := range s.queue.Items {
-			if item.(*TimestampedValue).TimestampMillis() < windowBottomTime {
-				windowBottomIndex = i
+		if err := func(window timeWindow) error {
+			s.queueMu.Lock()
+			defer s.queueMu.Unlock()
+			// build a window slice and send it to the out chan
+			var windowBottomIndex int
+			windowUpperIndex := s.queue.Len()
+			slideUpperIndex := windowUpperIndex
+			slideUpperTime := window.start + s.slide
+			windowBottomTime := window.start
+			for i, item := range s.queue.Items {
+				if item.(*TimestampedValue).TimestampMillis() < windowBottomTime {
+					windowBottomIndex = i
+				}
+				if item.(*TimestampedValue).TimestampMillis() > slideUpperTime {
+					slideUpperIndex = i
+					break
+				}
 			}
-			if item.(*TimestampedValue).TimestampMillis() > slideUpperTime {
-				slideUpperIndex = i
-				break
+			slidingSlices := s.queue.Slice(windowBottomIndex, slideUpperIndex)
+			// if we've collected some items, reallocate queue
+			if len(slidingSlices) > 0 {
+				remainingItems := s.queue.Slice(slideUpperIndex, windowUpperIndex)
+				// reset the queue
+				var err error
+				s.queue, err = s.queue.WithNewItems(remainingItems)
+				if err != nil {
+					return err
+				}
+				heap.Init(s.queue)
 			}
-		}
-		slidingSlices := s.queue.Slice(windowBottomIndex, slideUpperIndex)
-		// if we've collected some items, reallocate queue
-		if len(slidingSlices) > 0 {
-			remainingItems := s.queue.Slice(slideUpperIndex, windowUpperIndex)
-			// reset the queue
-			var err error
-			s.queue, err = s.queue.WithNewItems(remainingItems)
-			if err != nil {
-				// TODO: drain error
-				panic("drain error")
-			}
-			heap.Init(s.queue)
-		}
-		s.queueMu.Unlock()
 
-		if len(slidingSlices) > 0 {
-			data := make([]interface{}, 0, len(slidingSlices))
-			for _, elem := range slidingSlices {
-				data = append(data, elem.(*TimestampedValue).Data())
+			if len(slidingSlices) > 0 {
+				data := make([]interface{}, 0, len(slidingSlices))
+				for _, elem := range slidingSlices {
+					data = append(data, elem.(*TimestampedValue).Data())
+				}
+				s.out <- flow.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
 			}
-			s.out <- flow.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
+			return nil
+		}(w); err != nil {
+			s.errorHandler(err)
 		}
 	}
 }
@@ -198,13 +190,16 @@ func (s *SlidingTimeWindows) receive() {
 
 		assignedWindows, err := s.AssignWindows(elem.TimestampMillis())
 		if err != nil {
-			// TODO: drainError
+			s.errorHandler(err)
 			continue
+		}
+		ctx := triggerContext{
+			delegation: s,
 		}
 		for _, w := range assignedWindows {
 			tw := w.(timeWindow)
-			s.currentWindow = tw
-			result := s.trigger.OnElement(elem.TimestampMillis(), tw, s)
+			ctx.window = tw
+			result := ctx.OnElement(elem)
 			if result == FIRE {
 				s.purgedWindow <- tw
 			}
@@ -238,7 +233,6 @@ func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {
 		out:              make(chan flow.StreamRecord),
 		done:             make(chan struct{}),
 		purgedWindow:     make(chan timeWindow),
-		trigger:          EventTimeTrigger{},
 		currentWatermark: 0,
 	}
 }
@@ -277,9 +271,8 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 	return timestamp - remainder
 }
 
-type EventTimeTrigger struct{}
-
-func (t EventTimeTrigger) OnElement(timestamp int64, window timeWindow, ctx TriggerContext) TriggerResult {
+// eventTimeTriggerOnElement processes element(s) with EventTimeTrigger
+func eventTimeTriggerOnElement(window timeWindow, ctx TriggerContext) TriggerResult {
 	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
 		// if the watermark is already past the window fire immediately
 		return FIRE
@@ -288,16 +281,36 @@ func (t EventTimeTrigger) OnElement(timestamp int64, window timeWindow, ctx Trig
 	return CONTINUE
 }
 
-func (t EventTimeTrigger) OnEventTime(time int64, window timeWindow, ctx TriggerContext) TriggerResult {
-	if time == window.MaxTimestamp() {
-		return FIRE
-	}
-	return CONTINUE
-}
+var (
+	_ TriggerContext = (*triggerContext)(nil)
+)
 
 type TriggerContext interface {
 	GetCurrentWatermark() int64
 	RegisterEventTimeTimer(int64)
+	OnElement(flow.StreamRecord) TriggerResult
+}
+
+type triggerContext struct {
+	window     timeWindow
+	delegation *SlidingTimeWindows
+}
+
+func (ctx *triggerContext) GetCurrentWatermark() int64 {
+	return ctx.delegation.currentWatermark
+}
+
+func (ctx *triggerContext) RegisterEventTimeTimer(triggerTime int64) {
+	ctx.delegation.timerMu.Lock()
+	defer ctx.delegation.timerMu.Unlock()
+	heap.Push(ctx.delegation.timerHeap, &internalTimer{
+		triggerTimeMillis: triggerTime,
+		w:                 ctx.window,
+	})
+}
+
+func (ctx *triggerContext) OnElement(record flow.StreamRecord) TriggerResult {
+	return eventTimeTriggerOnElement(ctx.window, ctx)
 }
 
 var _ flow.Element = (*TimestampedValue)(nil)
