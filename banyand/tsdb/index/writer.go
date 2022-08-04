@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type CallbackFn func()
@@ -61,7 +62,7 @@ type Writer struct {
 	l              *logger.Logger
 	db             tsdb.Supplier
 	shardNum       uint32
-	ch             chan Message
+	ch             *run.Chan[Message]
 	indexRuleIndex []*partition.IndexRuleLocator
 }
 
@@ -76,31 +77,25 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	w.shardNum = options.ShardNum
 	w.db = options.DB
 	w.indexRuleIndex = partition.ParseIndexRuleLocators(options.Families, options.IndexRules)
-	w.ch = make(chan Message)
+	w.ch = run.NewChan[Message](make(chan Message))
 	w.bootIndexGenerator()
 	return w
 }
 
 func (s *Writer) Write(value Message) {
 	go func(m Message) {
-		defer func() {
-			if recover() != nil {
-				_ = m.BlockCloser.Close()
-			}
-		}()
-		s.ch <- m
+		s.ch.Write(m)
 	}(value)
 }
 
 func (s *Writer) Close() error {
-	close(s.ch)
-	return nil
+	return s.ch.Close()
 }
 
 func (s *Writer) bootIndexGenerator() {
 	go func() {
 		for {
-			m, more := <-s.ch
+			m, more := s.ch.Read()
 			if !more {
 				return
 			}
@@ -130,6 +125,9 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRu
 	values, _, err := getIndexValue(ruleIndex, value)
 	if err != nil {
 		return err
+	}
+	if values == nil {
+		return nil
 	}
 	var errWriting error
 	for _, val := range values {
@@ -176,6 +174,9 @@ func writeLocalIndex(writer tsdb.Writer, ruleIndex *partition.IndexRuleLocator, 
 	if err != nil {
 		return err
 	}
+	if values == nil {
+		return nil
+	}
 	var errWriting error
 	for _, val := range values {
 		rule := ruleIndex.Rule
@@ -221,6 +222,9 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 		existInt = true
 	}
 	fv, err := pbv1.ParseIndexFieldValue(tag)
+	if errors.Is(err, pbv1.ErrNullValue) {
+		return nil, existInt, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}

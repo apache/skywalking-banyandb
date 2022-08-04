@@ -58,7 +58,7 @@ type indexDB struct {
 
 func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 	result := make([]GlobalItemID, 0)
-	f, err := field.MarshalStraight()
+	f, err := field.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func (i *indexWriter) WriteLSMIndex(field index.Field) error {
 	if i.scope != nil {
 		field.Key.SeriesID = GlobalSeriesID(i.scope)
 	}
-	key, err := field.MarshalStraight()
+	key, err := field.Marshal()
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (i *indexWriter) WriteInvertedIndex(field index.Field) error {
 	if i.scope != nil {
 		field.Key.SeriesID = GlobalSeriesID(i.scope)
 	}
-	key, err := field.MarshalStraight()
+	key, err := field.Marshal()
 	if err != nil {
 		return err
 	}

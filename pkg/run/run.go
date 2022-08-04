@@ -22,7 +22,6 @@ import (
 	"os"
 	"path"
 	"sync"
-	"time"
 
 	"github.com/oklog/run"
 	"github.com/pkg/errors"
@@ -119,21 +118,31 @@ type Service interface {
 // to manage service lifecycles. It allows for easy composition of elegant
 // monoliths as well as adding signal handlers, metrics services, etc.
 type Group struct {
-	// Name of the Group managed service. If omitted, the binaryname will be
-	// used as found at runtime.
-	Name string
+	name string
 
-	f   *FlagSet
-	r   run.Group
-	c   []Config
-	p   []PreRunner
-	s   []Service
-	swg *sync.WaitGroup
-	log *logger.Logger
+	f       *FlagSet
+	r       run.Group
+	c       []Config
+	p       []PreRunner
+	s       []Service
+	readyCh chan struct{}
+	log     *logger.Logger
 
 	showRunGroup bool
 
 	configured bool
+}
+
+func NewGroup(name string) Group {
+	return Group{
+		name:    name,
+		readyCh: make(chan struct{}),
+	}
+}
+
+// Name shows the name of the group
+func (g Group) Name() string {
+	return g.name
 }
 
 // Register will inspect the provided objects implementing the Unit interface to
@@ -144,7 +153,7 @@ type Group struct {
 // Units, signalling for each provided Unit if it successfully registered with
 // Group for at least one of the bootstrap phases or if it was ignored.
 func (g *Group) Register(units ...Unit) []bool {
-	g.log = logger.GetLogger(g.Name)
+	g.log = logger.GetLogger(g.name)
 	hasRegistered := make([]bool, len(units))
 	for idx := range units {
 		if !g.configured {
@@ -169,7 +178,7 @@ func (g *Group) Register(units ...Unit) []bool {
 
 func (g *Group) RegisterFlags() *FlagSet {
 	// run configuration stage
-	g.f = NewFlagSet(g.Name)
+	g.f = NewFlagSet(g.name)
 	g.f.SortFlags = false // keep order of flag registration
 	g.f.Usage = func() {
 		fmt.Printf("Flags:\n")
@@ -178,7 +187,7 @@ func (g *Group) RegisterFlags() *FlagSet {
 
 	gFS := NewFlagSet("Common Service options")
 	gFS.SortFlags = false
-	gFS.StringVarP(&g.Name, "name", "n", g.Name, `name of this service`)
+	gFS.StringVarP(&g.name, "name", "n", g.name, `name of this service`)
 	gFS.BoolVar(&g.showRunGroup, "show-rungroup-units", false, "show rungroup units")
 	g.f.AddFlagSet(gFS.FlagSet)
 
@@ -216,12 +225,12 @@ func (g *Group) RegisterFlags() *FlagSet {
 // If an error is returned the application must shut down as it is considered
 // fatal.
 func (g *Group) RunConfig() (interrupted bool, err error) {
-	g.log = logger.GetLogger(g.Name)
+	g.log = logger.GetLogger(g.name)
 	g.configured = true
 
-	if g.Name == "" {
+	if g.name == "" {
 		// use the binary name if custom name has not been provided
-		g.Name = path.Base(os.Args[0])
+		g.name = path.Base(os.Args[0])
 	}
 
 	defer func() {
@@ -314,8 +323,12 @@ func (g *Group) Run() (err error) {
 		}
 	}
 
-	g.swg = &sync.WaitGroup{}
-	g.swg.Add(len(g.s))
+	swg := &sync.WaitGroup{}
+	swg.Add(len(g.s))
+	go func() {
+		swg.Wait()
+		close(g.readyCh)
+	}()
 	// feed our registered services to our internal run.Group
 	for idx := range g.s {
 		// a Service might have been deregistered during Run
@@ -327,7 +340,7 @@ func (g *Group) Run() (err error) {
 		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
 			notify := s.Serve()
-			g.swg.Done()
+			swg.Done()
 			<-notify
 			return nil
 		}, func(_ error) {
@@ -374,12 +387,9 @@ func (g Group) ListUnits() string {
 		}
 	}
 
-	return fmt.Sprintf("Group: %s [%s]%s", g.Name, t, s)
+	return fmt.Sprintf("Group: %s [%s]%s", g.name, t, s)
 }
 
 func (g *Group) WaitTillReady() {
-	for g.swg == nil {
-		time.Sleep(100 * time.Microsecond)
-	}
-	g.swg.Wait()
+	<-g.readyCh
 }

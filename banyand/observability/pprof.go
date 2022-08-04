@@ -45,7 +45,7 @@ type pprofService struct {
 
 func (p *pprofService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("prof")
-	flagSet.StringVar(&p.listenAddr, "pprof-listener-addr", "127.0.0.1:6060", "listen addr for pprof")
+	flagSet.StringVar(&p.listenAddr, "pprof-listener-addr", ":6060", "listen addr for pprof")
 	return flagSet
 }
 

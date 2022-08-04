@@ -18,16 +18,16 @@
 -->
 
 <template>
-  <div id="app">
+  <div id="app" @mousedown="appMouseDown">
     <el-container>
       <el-header v-if="show">
         <header-component :active="activePath" :showButton="showButton"></header-component>
       </el-header>
       <el-main>
         <keep-alive>
-          <router-view v-if="$route.meta.keepAlive"/>
+          <router-view v-if="$route.meta.keepAlive" />
         </keep-alive>
-          <router-view v-if="!$route.meta.keepAlive"></router-view>
+        <router-view v-if="!$route.meta.keepAlive"></router-view>
       </el-main>
     </el-container>
   </div>
@@ -43,12 +43,15 @@ export default {
       showButton: true,
     }
   },
+
   components: {
     HeaderComponent
   },
+
   beforeCreate() {
     this.$loading.create()
   },
+
   created() {
     let path = this.$route.path
     let name = this.$route.name
@@ -63,9 +66,16 @@ export default {
       this.$store.commit('changeShowButton', false)
     }
   },
+
   mounted() {
     this.$loading.close()
   },
+
+  methods: {
+    appMouseDown() {
+      this.$store.commit("changeShowRightMenu", false)
+    }
+  }
 }
 </script>
 

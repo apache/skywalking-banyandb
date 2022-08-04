@@ -22,32 +22,30 @@ TEST_TAGS ?= $(BUILD_TAGS)
 TEST_PKG_LIST ?= ./...
 
 TEST_COVERAGE_DIR ?= build/coverage
-TEST_COVERAGE_PROFILE := $(TEST_COVERAGE_DIR)/coverage.out
+TEST_COVERAGE_PROFILE_NAME := coverprofile.out
+TEST_COVERAGE_PROFILE := $(TEST_COVERAGE_DIR)/$(TEST_COVERAGE_PROFILE_NAME)
 TEST_COVERAGE_REPORT := $(TEST_COVERAGE_DIR)/coverage.html
 TEST_COVERAGE_PKG_LIST ?= $(TEST_PKG_LIST)
-TEST_COVERAGE_OPTS ?= -covermode=atomic -coverpkg=./...
+TEST_COVERAGE_OPTS ?= --covermode atomic --coverpkg ./...
 TEST_COVERAGE_EXTRA_OPTS ?=
 
 ##@ Test targets
 
-GINKGO := $(tool_bin)/ginkgo
-$(GINKGO):
-	@echo "Install ginkgo..."
-	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install github.com/onsi/ginkgo/v2/ginkgo@v2.1.4
+include $(root_dir)/scripts/build/ginkgo.mk
 
 .PHONY: test
 test: $(GINKGO) generate ## Run all the unit tests
 	$(GINKGO) $(TEST_OPTS) $(TEST_EXTRA_OPTS) -tags "$(TEST_TAGS)" $(TEST_PKG_LIST)
 
 .PHONY: test-race
-test-race: TEST_OPTS=-race
+test-race: TEST_OPTS=--race
 test-race: test  ## Run all the unit tests with race detector on
 
 .PHONY: test-coverage
-test-coverage: ## Run all the unit tests with coverage analysis on
+test-coverage: $(GINKGO) generate ## Run all the unit tests with coverage analysis on
 	mkdir -p "$(TEST_COVERAGE_DIR)"
-	go test $(TEST_COVERAGE_OPTS) $(TEST_COVERAGE_EXTRA_OPTS) -coverprofile="$(TEST_COVERAGE_PROFILE)" -tags "$(TEST_TAGS)" $(TEST_COVERAGE_PKG_LIST)
+	$(GINKGO) --cover $(TEST_COVERAGE_OPTS) $(TEST_COVERAGE_EXTRA_OPTS)  --tags "$(TEST_TAGS)" $(TEST_COVERAGE_PKG_LIST) \
+	   && mv $(TEST_COVERAGE_PROFILE_NAME) $(TEST_COVERAGE_DIR)
 	go tool cover -html="$(TEST_COVERAGE_PROFILE)" -o "$(TEST_COVERAGE_REPORT)"
 	@echo "Test coverage report has been saved to $(TEST_COVERAGE_REPORT)"
 

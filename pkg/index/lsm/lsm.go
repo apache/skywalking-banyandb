@@ -18,23 +18,19 @@
 package lsm
 
 import (
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var _ index.Store = (*store)(nil)
 
 type store struct {
-	lsm          kv.Store
-	termMetadata metadata.Term
-	l            *logger.Logger
+	lsm kv.Store
+	l   *logger.Logger
 }
 
 func (*store) Flush() error {
@@ -46,11 +42,11 @@ func (s *store) Stats() observability.Statistics {
 }
 
 func (s *store) Close() error {
-	return multierr.Combine(s.lsm.Close(), s.termMetadata.Close())
+	return s.lsm.Close()
 }
 
 func (s *store) Write(field index.Field, itemID common.ItemID) error {
-	f, err := field.Marshal(s.termMetadata)
+	f, err := field.Marshal()
 	if err != nil {
 		return err
 	}
@@ -69,16 +65,8 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	if lsm, err = kv.OpenStore(0, opts.Path+"/lsm", kv.StoreWithLogger(opts.Logger)); err != nil {
 		return nil, err
 	}
-	var md metadata.Term
-	if md, err = metadata.NewTerm(metadata.TermOpts{
-		Path:   opts.Path + "/tmd",
-		Logger: opts.Logger,
-	}); err != nil {
-		return nil, err
-	}
 	return &store{
-		lsm:          lsm,
-		termMetadata: md,
-		l:            opts.Logger,
+		lsm: lsm,
+		l:   opts.Logger,
 	}, nil
 }

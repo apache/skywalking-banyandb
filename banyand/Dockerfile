@@ -55,6 +55,7 @@ COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 EXPOSE 17912
 EXPOSE 17913
+EXPOSE 6060
 
 ENTRYPOINT ["/banyand-server"]
 
@@ -65,5 +66,6 @@ COPY --from=base /bin/grpc-health-probe /grpc-health-probe
 
 EXPOSE 17912
 EXPOSE 17913
+EXPOSE 6060
 
 ENTRYPOINT ["/banyand-server"]

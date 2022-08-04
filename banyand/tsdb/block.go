@@ -37,12 +37,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
 	componentMain              = "main"
-	componentPrimaryIdx        = "primary"
 	componentSecondInvertedIdx = "inverted"
 	componentSecondLSMIdx      = "lsm"
 )
@@ -57,7 +57,6 @@ type block struct {
 	position common.Position
 
 	store         kv.TimeSeriesStore
-	primaryIndex  index.Store
 	invertedIndex index.Store
 	lsmIndex      index.Store
 	closableLst   []io.Closer
@@ -66,7 +65,8 @@ type block struct {
 	segID          uint16
 	blockID        uint16
 	encodingMethod EncodingMethod
-	flushCh        chan struct{}
+	flushCh        *run.Chan[struct{}]
+	flushChQueue   chan *run.Chan[struct{}]
 }
 
 type blockOpts struct {
@@ -101,11 +101,24 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		Reporter:       bucket.NewTimeBasedReporter(timeRange, clock),
 		closed:         atomic.NewBool(true),
 		encodingMethod: encodingMethodObject.(EncodingMethod),
+		flushChQueue:   make(chan *run.Chan[struct{}]),
 	}
 	position := ctx.Value(common.PositionKey)
 	if position != nil {
 		b.position = position.(common.Position)
 	}
+	go func() {
+		for {
+			ch := <-b.flushChQueue
+			for {
+				_, more := ch.Read()
+				if !more {
+					break
+				}
+				b.flush()
+			}
+		}
+	}()
 	return b, err
 }
 
@@ -116,34 +129,20 @@ func (b *block) open() (err error) {
 		return nil
 	}
 	b.ref = z.NewCloser(1)
-	b.flushCh = make(chan struct{})
-	go func() {
-		for {
-			_, more := <-b.flushCh
-			if !more {
-				return
-			}
-			b.flush()
-		}
-	}()
+	b.flushCh = run.NewChan(make(chan struct{}))
+	b.flushChQueue <- b.flushCh
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
 		kv.TSSWithFlushCallback(func() {
-			b.flushCh <- struct{}{}
+			b.flushCh.Write(struct{}{})
 		}),
 	); err != nil {
 		return err
 	}
-	if b.primaryIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:   path.Join(b.path, componentPrimaryIdx),
-		Logger: b.l.Named(componentPrimaryIdx),
-	}); err != nil {
-		return err
-	}
-	b.closableLst = append(b.closableLst, b.store, b.primaryIndex)
+	b.closableLst = append(b.closableLst, b.store)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
 		Path:   path.Join(b.path, componentSecondInvertedIdx),
 		Logger: b.l.Named(componentSecondInvertedIdx),
@@ -203,7 +202,7 @@ func (b *block) close() {
 		_ = closer.Close()
 	}
 	b.closed.Store(true)
-	close(b.flushCh)
+	b.flushCh.Close()
 }
 
 func (b *block) isClosed() bool {
@@ -215,8 +214,8 @@ func (b *block) String() string {
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {
-	names = append(names, componentMain, componentPrimaryIdx, componentSecondInvertedIdx, componentSecondLSMIdx)
-	stats = append(stats, b.store.Stats(), b.primaryIndex.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
+	names = append(names, componentMain, componentSecondInvertedIdx, componentSecondLSMIdx)
+	stats = append(stats, b.store.Stats(), b.invertedIndex.Stats(), b.lsmIndex.Stats())
 	return names, stats
 }
 
@@ -230,7 +229,7 @@ type blockDelegate interface {
 	dataReader() kv.TimeSeriesReader
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
-	primaryIndexReader() index.Searcher
+	primaryIndexReader() index.FieldIterable
 	identity() (segID uint16, blockID uint16)
 	startTime() time.Time
 	String() string
@@ -254,8 +253,8 @@ func (d *bDelegate) invertedIndexReader() index.Searcher {
 	return d.delegate.invertedIndex
 }
 
-func (d *bDelegate) primaryIndexReader() index.Searcher {
-	return d.delegate.primaryIndex
+func (d *bDelegate) primaryIndexReader() index.FieldIterable {
+	return d.delegate.lsmIndex
 }
 
 func (d *bDelegate) startTime() time.Time {
@@ -271,20 +270,14 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.primaryIndex.Write(field, id)
+	return d.delegate.lsmIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeLSMIndex(field index.Field, id common.ItemID) error {
-	if d.delegate.lsmIndex == nil {
-		return nil
-	}
 	return d.delegate.lsmIndex.Write(field, id)
 }
 
 func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) error {
-	if d.delegate.invertedIndex == nil {
-		return nil
-	}
 	return d.delegate.invertedIndex.Write(field, id)
 }
 

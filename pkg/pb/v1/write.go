@@ -35,7 +35,10 @@ type ID string
 
 var strDelimiter = []byte("\n")
 
-var ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
+var (
+	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
+	ErrNullValue                   = errors.New("the tag value is null")
+)
 
 func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
 	fv, err := ParseIndexFieldValue(tagValue)
@@ -114,6 +117,8 @@ func (fv *FieldValue) marshalArr() []byte {
 
 func ParseIndexFieldValue(tagValue *modelv1.TagValue) (FieldValue, error) {
 	switch x := tagValue.GetValue().(type) {
+	case *modelv1.TagValue_Null:
+		return FieldValue{}, ErrNullValue
 	case *modelv1.TagValue_Str:
 		return newValue([]byte(x.Str.GetValue())), nil
 	case *modelv1.TagValue_Int:

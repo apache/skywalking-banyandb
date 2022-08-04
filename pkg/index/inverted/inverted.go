@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -38,11 +37,11 @@ import (
 var _ index.Store = (*store)(nil)
 
 type store struct {
-	termMetadata      metadata.Term
 	diskTable         kv.IndexStore
 	memTable          *memTable
 	immutableMemTable *memTable
 	rwMutex           sync.RWMutex
+	closed            bool
 
 	l *logger.Logger
 }
@@ -57,23 +56,15 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	var md metadata.Term
-	if md, err = metadata.NewTerm(metadata.TermOpts{
-		Path:   opts.Path + "/tmd",
-		Logger: opts.Logger,
-	}); err != nil {
-		return nil, err
-	}
 	return &store{
-		memTable:     newMemTable(),
-		diskTable:    diskTable,
-		termMetadata: md,
-		l:            opts.Logger,
+		memTable:  newMemTable(),
+		diskTable: diskTable,
+		l:         opts.Logger,
 	}, nil
 }
 
 func (s *store) Close() error {
-	return multierr.Combine(s.diskTable.Close(), s.termMetadata.Close())
+	return s.flush(true)
 }
 
 func (s *store) Write(field index.Field, chunkID common.ItemID) error {
@@ -81,18 +72,28 @@ func (s *store) Write(field index.Field, chunkID common.ItemID) error {
 }
 
 func (s *store) Flush() error {
+	return s.flush(false)
+}
+
+func (s *store) flush(toClose bool) error {
+	s.rwMutex.Lock()
+	defer func() {
+		if toClose && !s.closed {
+			_ = s.diskTable.Close()
+			s.closed = true
+		}
+		s.rwMutex.Unlock()
+	}()
 	state := s.memTable.Stats()
 	if state.MemBytes <= 0 {
 		return nil
 	}
-	s.rwMutex.Lock()
-	defer s.rwMutex.Unlock()
 	if s.immutableMemTable == nil {
 		s.immutableMemTable = s.memTable
 		s.memTable = newMemTable()
 	}
 	err := s.diskTable.
-		Handover(s.immutableMemTable.Iter(s.termMetadata))
+		Handover(s.immutableMemTable.Iter())
 	if err != nil {
 		return err
 	}
@@ -100,10 +101,16 @@ func (s *store) Flush() error {
 	return nil
 }
 
-func (s *store) Stats() (stat observability.Statistics) {
+func (s *store) Stats() observability.Statistics {
+	stat := s.mainStats()
+	disk := s.diskTable.Stats()
+	stat.MaxMemBytes = disk.MaxMemBytes
+	return stat
+}
+
+func (s *store) mainStats() (stat observability.Statistics) {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
-	// TODO: add MaxMem
 	main := s.memTable.Stats()
 	stat.MemBytes += main.MemBytes
 	if s.immutableMemTable != nil {
@@ -118,7 +125,7 @@ func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, error) {
 }
 
 func (s *store) MatchTerms(field index.Field) (posting.List, error) {
-	f, err := field.Marshal(s.termMetadata)
+	f, err := field.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +195,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		}
 		iters = append(iters, it)
 	}
-	it, err := index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.diskTable, s.termMetadata,
+	it, err := index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.diskTable,
 		func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			list := roaring.NewPostingList()
 			err := list.Unmarshall(val)
@@ -205,7 +212,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 				f := index.Field{
 					Key: fieldKey,
 				}
-				err := f.Unmarshal(s.termMetadata, delegated.Key())
+				err := f.Unmarshal(delegated.Key())
 				if err != nil {
 					return nil, err
 				}

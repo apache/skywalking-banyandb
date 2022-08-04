@@ -22,6 +22,7 @@ import Vuex from 'vuex'
 import header from './header'
 import aside from './aside'
 import tags from './tags'
+import menuState from './menuState'
 Vue.use(Vuex)
 
 export default new Vuex.Store({
@@ -34,6 +35,7 @@ export default new Vuex.Store({
   modules: {
     header,
     aside,
-    tags
+    tags,
+    menuState
   }
 })

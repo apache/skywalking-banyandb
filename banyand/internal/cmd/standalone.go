@@ -40,7 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var g = run.Group{Name: "standalone"}
+var g = run.NewGroup("standalone")
 
 func newStandaloneCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
@@ -107,7 +107,7 @@ func newStandaloneCmd() *cobra.Command {
 			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
 			if err := g.Run(); err != nil {
-				logger.GetLogger().Error().Err(err).Stack().Str("name", g.Name).Msg("Exit")
+				logger.GetLogger().Error().Err(err).Stack().Str("name", g.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil

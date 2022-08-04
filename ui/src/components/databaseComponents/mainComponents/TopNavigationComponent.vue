@@ -23,10 +23,6 @@
             class="buttonItem poiner">
             <top-button :icon="item.icon" :name="item.name"></top-button>
         </div>
-        <!--el-drawer title="我是标题" :wrapperClosable="false" :size="450" :visible.sync="drawer" :modal="false"
-            :append-to-body="true" direction="rtl" :close-on-press-escape="false" :before-close="handleClose">
-            <span>我来啦!</span>
-        </el-drawer-->
     </div>
 
 </template>
