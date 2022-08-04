@@ -18,9 +18,9 @@
 package cmd
 
 import (
-	"github.com/spf13/cobra"
-
 	"github.com/apache/skywalking-banyandb/pkg/version"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // NewRoot returns the root command
@@ -29,7 +29,17 @@ func NewRoot() *cobra.Command {
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
+			viper.SetConfigType("yaml")
+			viper.SetConfigName("config")
+			viper.AddConfigPath("./bydbctl/internal/config")
+			return viper.ReadInConfig()
+		},
 	}
-	// cmd.AddCommand(...)
+	cmd.AddCommand(newBanyanDBCmd()...)
+	Addr := ""
+	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "127.0.0.1:17913", "default ip/port") // 这都能读取到？
+	Json := ""
+	cmd.PersistentFlags().StringVarP(&Json, "json", "j", `{}`, "accept json args to call banyandb's http interface")
 	return cmd
 }

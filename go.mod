@@ -33,6 +33,8 @@ require (
 
 require (
 	github.com/envoyproxy/protoc-gen-validate v0.1.0
+	github.com/ghodss/yaml v1.0.0
+	github.com/go-resty/resty/v2 v2.7.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.10.3
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/prometheus/client_golang v1.12.2
