@@ -94,9 +94,12 @@ func (it *itemIter) init() {
 // pushIterator pushes the given iterator into the underlying deque.
 // Status will be immediately checked if the Iterator has a next value.
 // 1 - If not, it will be close at once and will not be added to the slice,
-//     which means inactive iterator does not exist in the deq.
+//
+//	which means inactive iterator does not exist in the deq.
+//
 // 2 - If so, it will be wrapped into a container and push to the deq.
-//     Then we call SliceStable sort to sort the deq.
+//
+//	Then we call SliceStable sort to sort the deq.
 func (it *itemIter) pushIterator(iter tsdb.Iterator) {
 	if !iter.Next() {
 		_ = iter.Close()
