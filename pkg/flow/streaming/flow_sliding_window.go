@@ -20,7 +20,6 @@ package streaming
 import (
 	"container/heap"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -38,8 +37,8 @@ const (
 )
 
 var (
-	_ flow.Operator       = (*SlidingTimeWindows)(nil)
-	_ flow.WindowAssigner = (*SlidingTimeWindows)(nil)
+	_ flow.Operator       = (*TumblingTimeWindows)(nil)
+	_ flow.WindowAssigner = (*TumblingTimeWindows)(nil)
 	_ flow.Window         = (*timeWindow)(nil)
 
 	_ TriggerContext = (*triggerContext)(nil)
@@ -47,7 +46,7 @@ var (
 
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	switch v := w.(type) {
-	case *SlidingTimeWindows:
+	case *TumblingTimeWindows:
 		v.errorHandler = f.drainErr
 		f.ops = append(f.ops, v)
 	default:
@@ -60,32 +59,40 @@ func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	}
 }
 
-func (s *windowedFlow) Aggregate(aggrFunc flow.AggregateFunction) flow.Flow {
+func (s *windowedFlow) AllowedLateness(lateness time.Duration) flow.Flow {
 	switch v := s.wa.(type) {
-	case *SlidingTimeWindows:
-		v.Aggregate(aggrFunc)
+	case *TumblingTimeWindows:
+		v.lateness = lateness.Milliseconds()
 	default:
-		s.f.drainErr(errors.New("aggregation is not supported"))
+		s.f.drainErr(errors.New("lateness is not supported"))
 	}
 	return s.f
 }
 
-type SlidingTimeWindows struct {
+type TumblingTimeWindows struct {
 	// internal state of the sliding time window
 	flow.ComponentState
 	// errorHandler is the error handler and set by the streamingFlow
 	errorHandler func(error)
-	// For SlidingTimeWindows
-	size  int64
-	slide int64
-	queue *flow.DedupPriorityQueue
-	// guard queue
-	queueMu          sync.Mutex
+	// For TumblingTimeWindows
+	// Unit: Millisecond
+	size int64
+	// lateness is the maximum allowed lateness for incoming elements
+	// Unit: Millisecond
+	lateness int64
+
+	// guard snapshots
+	snapshotsMu sync.Mutex
+	snapshots   map[int64]flow.AggregationOp
+	acc         flow.AggregationOp
+
 	currentWatermark int64
-	timerHeap        *flow.DedupPriorityQueue
 	// guard timerHeap
-	timerMu  sync.Mutex
-	aggrFunc flow.AggregateFunction
+	timerMu   sync.Mutex
+	timerHeap *flow.DedupPriorityQueue
+
+	// aggregationFactory is the factory for creating aggregation operator
+	aggregationFactory flow.AggregationOpFactory
 
 	// For api.Operator
 	in           chan flow.StreamRecord
@@ -94,15 +101,15 @@ type SlidingTimeWindows struct {
 	purgedWindow chan timeWindow
 }
 
-func (s *SlidingTimeWindows) In() chan<- flow.StreamRecord {
+func (s *TumblingTimeWindows) In() chan<- flow.StreamRecord {
 	return s.in
 }
 
-func (s *SlidingTimeWindows) Out() <-chan flow.StreamRecord {
+func (s *TumblingTimeWindows) Out() <-chan flow.StreamRecord {
 	return s.out
 }
 
-func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
+func (s *TumblingTimeWindows) Setup(ctx context.Context) error {
 	// start processing
 	s.Add(1)
 	go s.receive()
@@ -113,47 +120,21 @@ func (s *SlidingTimeWindows) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlidingTimeWindows) emit() {
+func (s *TumblingTimeWindows) emit() {
 	defer s.Done()
 	for w := range s.purgedWindow {
 		if err := func(window timeWindow) error {
-			s.queueMu.Lock()
-			defer s.queueMu.Unlock()
-			// build a window slice and send it to the out chan
-			var windowBottomIndex int
-			windowUpperIndex := s.queue.Len()
-			slideUpperIndex := windowUpperIndex
-			slideUpperTime := window.start + s.slide
-			windowBottomTime := window.start
-			for i, item := range s.queue.Items {
-				if item.(*TimestampedValue).TimestampMillis() < windowBottomTime {
-					windowBottomIndex = i
-				}
-				if item.(*TimestampedValue).TimestampMillis() > slideUpperTime {
-					slideUpperIndex = i
-					break
-				}
-			}
-			slidingSlices := s.queue.Slice(windowBottomIndex, slideUpperIndex)
-			// if we've collected some items, reallocate queue
-			if len(slidingSlices) > 0 {
-				remainingItems := s.queue.Slice(slideUpperIndex, windowUpperIndex)
-				// reset the queue
-				var err error
-				s.queue, err = s.queue.WithNewItems(remainingItems)
-				if err != nil {
+			s.snapshotsMu.Lock()
+			defer s.snapshotsMu.Unlock()
+
+			if snapshot, ok := s.snapshots[window.MaxTimestamp()]; ok {
+				if err := s.acc.Merge(snapshot); err != nil {
 					return err
 				}
-				heap.Init(s.queue)
+
+				s.out <- flow.NewStreamRecord(s.acc.Snapshot(), window.start)
 			}
 
-			if len(slidingSlices) > 0 {
-				data := make([]interface{}, 0, len(slidingSlices))
-				for _, elem := range slidingSlices {
-					data = append(data, elem.(*TimestampedValue).Data())
-				}
-				s.out <- flow.NewStreamRecord(s.aggrFunc(data), slideUpperTime)
-			}
 			return nil
 		}(w); err != nil {
 			s.errorHandler(err)
@@ -161,7 +142,7 @@ func (s *SlidingTimeWindows) emit() {
 	}
 }
 
-func (s *SlidingTimeWindows) purgeOutdatedWindows() {
+func (s *TumblingTimeWindows) purgeOutdatedWindows() {
 	s.timerMu.Lock()
 	defer s.timerMu.Unlock()
 	for {
@@ -176,20 +157,10 @@ func (s *SlidingTimeWindows) purgeOutdatedWindows() {
 	}
 }
 
-func (s *SlidingTimeWindows) receive() {
+func (s *TumblingTimeWindows) receive() {
 	defer s.Done()
-	for elem := range s.in {
-		// even if the incoming elements do not follow strict order,
-		// the watermark could increase monotonically.
-		if elem.TimestampMillis() > s.currentWatermark {
-			s.currentWatermark = elem.TimestampMillis()
-		}
-		// TODO: add various strategies to allow lateness items, which come later than the current watermark
-		// Currently, assume the current watermark is t,
-		// then we allow lateness items coming after t-windowSize+slideSize, but before t,
-		// i.e. [t-windowSize+slideSize, t)
-		s.purgeOutdatedWindows()
 
+	for elem := range s.in {
 		assignedWindows, err := s.AssignWindows(elem.TimestampMillis())
 		if err != nil {
 			s.errorHandler(err)
@@ -199,38 +170,69 @@ func (s *SlidingTimeWindows) receive() {
 			delegation: s,
 		}
 		for _, w := range assignedWindows {
+			// drop if the window is late
+			if s.isWindowLate(w) {
+				continue
+			}
 			tw := w.(timeWindow)
 			ctx.window = tw
+			// add elem to the bucket
+			s.snapshotsMu.Lock()
+			if oldAggr, ok := s.snapshots[tw.MaxTimestamp()]; ok {
+				oldAggr.Add([]interface{}{elem})
+			} else {
+				newAggr := s.aggregationFactory()
+				newAggr.Add([]interface{}{elem})
+				s.snapshots[tw.MaxTimestamp()] = newAggr
+			}
+			s.snapshotsMu.Unlock()
+
 			result := ctx.OnElement(elem)
 			if result == FIRE {
 				s.purgedWindow <- tw
 			}
 		}
-		item := &TimestampedValue{elem, 0}
-		s.queueMu.Lock()
-		heap.Push(s.queue, item)
-		s.queueMu.Unlock()
+
+		// even if the incoming elements do not follow strict order,
+		// the watermark could increase monotonically.
+		if elem.TimestampMillis() > s.currentWatermark {
+			s.currentWatermark = elem.TimestampMillis()
+
+			// TODO: add various strategies to allow lateness items, which come later than the current watermark
+			// Currently, assume the current watermark is t,
+			// then we allow lateness items coming after t-windowSize+slideSize, but before t,
+			// i.e. [t-windowSize+slideSize, t)
+			// NOTE: This call is the normal path to flush outdated windows immediately
+			// without considering lateness.
+			// The purged windows may be accumulated again due to non-zero lateness.
+			s.purgeOutdatedWindows()
+		}
 	}
 	close(s.purgedWindow)
 	close(s.done)
 	close(s.out)
 }
 
-func (s *SlidingTimeWindows) Teardown(ctx context.Context) error {
+// isWindowLate checks whether this window is valid
+func (s *TumblingTimeWindows) isWindowLate(w flow.Window) bool {
+	return w.MaxTimestamp()+s.lateness <= s.currentWatermark
+}
+
+func (s *TumblingTimeWindows) Teardown(ctx context.Context) error {
 	s.Wait()
 	return nil
 }
 
-func (s *SlidingTimeWindows) Exec(downstream flow.Inlet) {
+func (s *TumblingTimeWindows) Exec(downstream flow.Inlet) {
 	s.Add(1)
 	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 
-func NewSlidingTimeWindows(size, slide time.Duration) *SlidingTimeWindows {
-	return &SlidingTimeWindows{
+func NewTumblingTimeWindows(size time.Duration) *TumblingTimeWindows {
+	return &TumblingTimeWindows{
 		size:             size.Milliseconds(),
-		slide:            slide.Milliseconds(),
-		queue:            flow.NewPriorityQueue(true),
+		lateness:         0,
+		snapshots:        make(map[int64]flow.AggregationOp),
 		timerHeap:        flow.NewPriorityQueue(false),
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
@@ -249,21 +251,16 @@ func (t timeWindow) MaxTimestamp() int64 {
 	return t.end - 1
 }
 
-func (s *SlidingTimeWindows) Aggregate(aggrFunc flow.AggregateFunction) {
-	s.aggrFunc = aggrFunc
-}
-
-func (s *SlidingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
+// AssignWindows assigns windows according to the given timestamp
+func (s *TumblingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
 	if timestamp > math.MinInt64 {
-		windows := make([]flow.Window, 0, s.size/s.slide)
-		lastStart := getWindowStart(timestamp, s.slide)
-		for start := lastStart; start > timestamp-s.size; start -= s.slide {
-			windows = append(windows, timeWindow{
+		start := getWindowStart(timestamp, s.size)
+		return []flow.Window{
+			timeWindow{
 				start: start,
 				end:   start + s.size,
-			})
-		}
-		return windows, nil
+			},
+		}, nil
 	}
 	return nil, errors.New("invalid timestamp from the element")
 }
@@ -292,7 +289,7 @@ type TriggerContext interface {
 
 type triggerContext struct {
 	window     timeWindow
-	delegation *SlidingTimeWindows
+	delegation *TumblingTimeWindows
 }
 
 func (ctx *triggerContext) GetCurrentWatermark() int64 {
@@ -310,29 +307,6 @@ func (ctx *triggerContext) RegisterEventTimeTimer(triggerTime int64) {
 
 func (ctx *triggerContext) OnElement(record flow.StreamRecord) TriggerResult {
 	return eventTimeTriggerOnElement(ctx.window, ctx)
-}
-
-var _ flow.Element = (*TimestampedValue)(nil)
-
-type TimestampedValue struct {
-	flow.StreamRecord
-	index int
-}
-
-func (t *TimestampedValue) String() string {
-	return fmt.Sprintf("TimestampedValue{timestamp=%d}", t.TimestampMillis())
-}
-
-func (t *TimestampedValue) GetIndex() int {
-	return t.index
-}
-
-func (t *TimestampedValue) SetIndex(i int) {
-	t.index = i
-}
-
-func (t *TimestampedValue) Compare(other flow.Element) int {
-	return int(t.StreamRecord.TimestampMillis() - other.(*TimestampedValue).TimestampMillis())
 }
 
 var _ flow.Element = (*internalTimer)(nil)

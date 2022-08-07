@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -51,16 +52,16 @@ type Flow interface {
 // WindowedFlow is a flow which processes incoming elements based on window.
 // The WindowedFlow can be created with a WindowAssigner.
 type WindowedFlow interface {
+	AllowedLateness(lateness time.Duration) Flow
 	// TopN applies a TopNAggregation to each Window.
 	TopN(topNum int, opts ...any) Flow
-	// Aggregate applies the user-defined aggregation function to each Window.
-	Aggregate(aggrFunc AggregateFunction) Flow
 }
 
 // Window is a bucket of elements with a finite size.
 // timedWindow is the only implementation now.
 type Window interface {
 	// MaxTimestamp returns the upper bound of the Window.
+	// Unit: Millisecond
 	MaxTimestamp() int64
 }
 
@@ -71,9 +72,17 @@ type WindowAssigner interface {
 	AssignWindows(timestamp int64) ([]Window, error)
 }
 
-// AggregateFunction is the core operator for aggregation. It takes a slice of elements as the input,
-// and returns a snapshot of the stateful operator.
-type AggregateFunction func([]interface{}) interface{}
+// AggregationOp defines the stateful operation for aggregation.
+type AggregationOp interface {
+	// Add puts a slice of elements as the input
+	Add([]interface{})
+	// Merge merges the argument with the current Op
+	Merge(AggregationOp) error
+	// Snapshot takes a snapshot of the current state of the AggregationOp
+	Snapshot() interface{}
+}
+
+type AggregationOpFactory func() AggregationOp
 
 // StreamRecord is a container wraps user data and timestamp.
 // It is the underlying transmission medium for the streaming processing.
@@ -118,8 +127,9 @@ func (sr StreamRecord) Data() interface{} {
 	return sr.data
 }
 
-//go:generate mockgen -destination=./inlet_mock.go -package=flow github.com/apache/skywalking-banyandb/pkg/flow Inlet
 // Inlet represents a type that exposes one open input.
+//
+//go:generate mockgen -destination=./inlet_mock.go -package=flow github.com/apache/skywalking-banyandb/pkg/flow Inlet
 type Inlet interface {
 	In() chan<- StreamRecord
 }

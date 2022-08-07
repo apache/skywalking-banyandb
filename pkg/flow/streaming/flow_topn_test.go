@@ -86,9 +86,9 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 					return int64(elem.(flow.Data)[1].(int))
 				},
 			}
-			result := topN.Add(input)
-			require.Len(result, 3)
-			require.Equal(tt.expected, result)
+			topN.Add(input)
+			require.Len(topN.Snapshot(), 3)
+			require.Equal(tt.expected, topN.Snapshot())
 		})
 	}
 }

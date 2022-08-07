@@ -28,26 +28,50 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 )
 
+var _ flow.AggregationOp = (*intSumAggregator)(nil)
+
+type intSumAggregator struct {
+	sum int
+}
+
+func (i *intSumAggregator) Add(input []interface{}) {
+	for _, item := range input {
+		i.sum += item.(flow.StreamRecord).Data().(int)
+	}
+}
+
+func (i *intSumAggregator) Merge(op flow.AggregationOp) error {
+	i.sum += op.Snapshot().(int)
+	return nil
+}
+
+func (i *intSumAggregator) Snapshot() interface{} {
+	return i.sum
+}
+
 var _ = Describe("Sliding Window", func() {
 	var (
-		num            int
 		baseTs         time.Time
 		snk            *sink.Slice
 		input          []flow.StreamRecord
-		slidingWindows *SlidingTimeWindows
+		slidingWindows *TumblingTimeWindows
 
-		aggrFunc flow.AggregateFunction = func(i []interface{}) interface{} {
-			num++
-			return nil
+		aggrFactory = func() flow.AggregationOp {
+			return &intSumAggregator{}
 		}
 	)
 
-	JustBeforeEach(func() {
-		num = 0
-		snk = sink.NewSlice()
+	BeforeEach(func() {
 		baseTs = time.Now()
-		slidingWindows = NewSlidingTimeWindows(time.Minute*1, time.Second*15)
-		slidingWindows.Aggregate(aggrFunc)
+	})
+
+	JustBeforeEach(func() {
+		snk = sink.NewSlice()
+
+		slidingWindows = NewTumblingTimeWindows(time.Second * 15)
+		slidingWindows.aggregationFactory = aggrFactory
+		slidingWindows.acc = aggrFactory()
+
 		Expect(slidingWindows.Setup(context.TODO())).Should(Succeed())
 		Expect(snk.Setup(context.TODO())).Should(Succeed())
 		slidingWindows.Exec(snk)
@@ -70,7 +94,7 @@ var _ = Describe("Sliding Window", func() {
 
 		It("Should receive nothing", func() {
 			Eventually(func(g Gomega) {
-				g.Expect(num).Should(Equal(0))
+				g.Expect(slidingWindows.acc.Snapshot()).Should(Equal(0))
 			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})
@@ -87,6 +111,26 @@ var _ = Describe("Sliding Window", func() {
 			Eventually(func(g Gomega) {
 				g.Expect(snk.Value()).ShouldNot(BeNil())
 				g.Expect(snk.Value()).Should(HaveLen(1))
+				g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo(1))
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+		})
+	})
+
+	When("input three elements", func() {
+		BeforeEach(func() {
+			input = []flow.StreamRecord{
+				flow.NewStreamRecord(1, baseTs.UnixMilli()),
+				flow.NewStreamRecord(2, baseTs.Add(time.Second*30).UnixMilli()),
+				flow.NewStreamRecord(3, baseTs.Add(time.Minute*1).UnixMilli()),
+			}
+		})
+
+		It("Should trigger twice and merge", func() {
+			Eventually(func(g Gomega) {
+				g.Expect(snk.Value()).ShouldNot(BeNil())
+				g.Expect(snk.Value()).Should(HaveLen(2))
+				g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo(1))
+				g.Expect(snk.Value()[1].(flow.StreamRecord).Data()).Should(BeEquivalentTo(3))
 			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})

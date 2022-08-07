@@ -147,7 +147,7 @@ var _ = Describe("Streaming", func() {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
-				Window(NewSlidingTimeWindows(60*time.Second, 15*time.Second)).
+				Window(NewTumblingTimeWindows(15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(elem interface{}) int64 {
 					return elem.(flow.Data)[1].(int64)
 				})).

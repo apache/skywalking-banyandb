@@ -33,28 +33,30 @@ type windowedFlow struct {
 }
 
 func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
-	topNAggrFunc := &topNAggregator{
-		cacheSize: topNum,
-		sort:      modelv1.Sort_SORT_UNSPECIFIED,
-	}
-	// apply user customized options
-	for _, opt := range opts {
-		if applier, ok := opt.(TopNOption); ok {
-			applier(topNAggrFunc)
+	s.wa.(*TumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
+		topNAggrFunc := &topNAggregator{
+			cacheSize: topNum,
+			sort:      modelv1.Sort_SORT_UNSPECIFIED,
 		}
-	}
-	if topNAggrFunc.sortKeyExtractor == nil {
-		s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
-	}
-	if topNAggrFunc.sort == modelv1.Sort_SORT_DESC {
-		topNAggrFunc.comparator = func(a, b interface{}) int {
-			return utils.Int64Comparator(b, a)
+		// apply user customized options
+		for _, opt := range opts {
+			if applier, ok := opt.(TopNOption); ok {
+				applier(topNAggrFunc)
+			}
 		}
-	} else {
-		topNAggrFunc.comparator = utils.Int64Comparator
+		if topNAggrFunc.sortKeyExtractor == nil {
+			s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
+		}
+		if topNAggrFunc.sort == modelv1.Sort_SORT_DESC {
+			topNAggrFunc.comparator = func(a, b interface{}) int {
+				return utils.Int64Comparator(b, a)
+			}
+		} else {
+			topNAggrFunc.comparator = utils.Int64Comparator
+		}
+		topNAggrFunc.treeMap = treemap.NewWith(topNAggrFunc.comparator)
+		return topNAggrFunc
 	}
-	topNAggrFunc.treeMap = treemap.NewWith(topNAggrFunc.comparator)
-	s.wa.(*SlidingTimeWindows).aggrFunc = topNAggrFunc.Add
 	return s.f
 }
 
@@ -87,28 +89,39 @@ func OrderBy(sort modelv1.Sort) TopNOption {
 	}
 }
 
-func (t *topNAggregator) Add(input []interface{}) interface{} {
+func (t *topNAggregator) Add(input []interface{}) {
 	for _, item := range input {
 		sortKey := t.sortKeyExtractor(item)
 		// check
 		if t.checkSortKeyInBufferRange(sortKey) {
 			t.put(sortKey, item)
-			// do cleanup: maintain the treeMap size
-			if t.currentTopNum > t.cacheSize {
-				lastKey, lastValues := t.treeMap.Max()
-				size := len(lastValues.([]interface{}))
-				// remove last one
-				if size <= 1 {
-					t.currentTopNum -= size
-					t.treeMap.Remove(lastKey)
-				} else {
-					t.currentTopNum--
-					t.treeMap.Put(lastKey, lastValues.([]interface{})[0:size-1])
-				}
-			}
+			t.doCleanUp()
 		}
 	}
-	return t.getResult()
+}
+
+func (t *topNAggregator) doCleanUp() {
+	// do cleanup: maintain the treeMap size
+	if t.currentTopNum > t.cacheSize {
+		lastKey, lastValues := t.treeMap.Max()
+		size := len(lastValues.([]interface{}))
+		// remove last one
+		if size <= 1 {
+			t.currentTopNum -= size
+			t.treeMap.Remove(lastKey)
+		} else {
+			t.currentTopNum--
+			t.treeMap.Put(lastKey, lastValues.([]interface{})[0:size-1])
+		}
+	}
+}
+
+func (t *topNAggregator) Merge(other flow.AggregationOp) error {
+	for _, tuple2 := range other.Snapshot().([]*Tuple2) {
+		t.put(tuple2.V1.(int64), tuple2.V1)
+	}
+	t.doCleanUp()
+	return nil
 }
 
 func (t *topNAggregator) put(sortKey int64, data interface{}) {
@@ -145,7 +158,7 @@ func (t *Tuple2) Equal(other *Tuple2) bool {
 	return cmp.Equal(t.V1, other.V1) && cmp.Equal(t.V2, other.V2)
 }
 
-func (t *topNAggregator) getResult() interface{} {
+func (t *topNAggregator) Snapshot() interface{} {
 	iter := t.treeMap.Iterator()
 	items := make([]*Tuple2, 0, t.currentTopNum)
 	for iter.Next() {
