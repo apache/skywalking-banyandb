@@ -21,8 +21,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -182,9 +180,9 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		blockSize:   blockSize,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
-	var entries []fs.FileInfo
+	var entries []os.DirEntry
 	var err error
-	if entries, err = ioutil.ReadDir(opts.Location); err != nil {
+	if entries, err = os.ReadDir(opts.Location); err != nil {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
@@ -262,7 +260,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 type WalkFn func(suffix, absolutePath string) error
 
 func WalkDir(root, prefix string, walkFn WalkFn) error {
-	files, err := ioutil.ReadDir(root)
+	files, err := os.ReadDir(root)
 	if err != nil {
 		return errors.Wrapf(err, "failed to walk the database path: %s", root)
 	}

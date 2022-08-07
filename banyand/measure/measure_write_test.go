@@ -22,9 +22,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/golang/protobuf/jsonpb"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -133,7 +133,7 @@ func writeDataWithBaseTime(baseTime time.Time, dataFile string, measure measure.
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
 		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
-		Expect(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue)).ShouldNot(HaveOccurred())
+		Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(HaveOccurred())
 		errInner := measure.Write(dataPointValue)
 		Expect(errInner).ShouldNot(HaveOccurred())
 	}
