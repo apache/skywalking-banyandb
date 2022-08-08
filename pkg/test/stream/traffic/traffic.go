@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
+
 package traffic
 
 import (
@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
-	"github.com/golang/protobuf/jsonpb"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -45,7 +45,7 @@ import (
 
 var (
 	//go:embed searchable_template.json
-	content string
+	content []byte
 	l       = logger.GetLogger("test_stream_traffic")
 )
 
@@ -57,7 +57,7 @@ type TestCase struct {
 
 func SendWrites(ts TestCase) (*z.Closer, error) {
 	searchTagFamily := &modelv1.TagFamilyForWrite{}
-	err := jsonpb.UnmarshalString(content, searchTagFamily)
+	err := protojson.Unmarshal(content, searchTagFamily)
 	if err != nil {
 		l.Err(err).Msg("unmarshal template")
 		return nil, err

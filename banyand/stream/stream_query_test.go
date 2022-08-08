@@ -28,10 +28,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/golang/protobuf/jsonpb"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -990,7 +990,7 @@ func setupQueryData(dataFile string, stream *stream) (baseTime time.Time) {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		searchTagFamily := &modelv1.TagFamilyForWrite{}
-		Expect(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily)).ShouldNot(HaveOccurred())
+		Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(HaveOccurred())
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
