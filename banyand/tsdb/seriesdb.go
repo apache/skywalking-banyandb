@@ -132,8 +132,8 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(timeRange timestamp.TimeRange) []blockDelegate
-	block(id GlobalItemID) blockDelegate
+	span(timeRange timestamp.TimeRange) ([]blockDelegate, error)
+	block(id GlobalItemID) (blockDelegate, error)
 }
 
 var (
@@ -172,16 +172,12 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	return newSeries(s.context(), id, s), nil
 }
 
-func (s *seriesDB) block(id GlobalItemID) blockDelegate {
+func (s *seriesDB) block(id GlobalItemID) (blockDelegate, error) {
 	seg := s.segCtrl.get(id.segID)
 	if seg == nil {
-		return nil
+		return nil, nil
 	}
-	block := seg.blockController.get(id.blockID)
-	if block == nil {
-		return nil
-	}
-	return block.delegate()
+	return seg.blockController.get(id.blockID)
 }
 
 func (s *seriesDB) shardID() common.ShardID {
@@ -238,18 +234,20 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(timeRange timestamp.TimeRange) []blockDelegate {
+func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) {
 	// TODO: return correct blocks
 	result := make([]blockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
-		for _, b := range s.blockController.span(timeRange) {
-			bd := b.delegate()
-			if bd != nil {
-				result = append(result, bd)
-			}
+		dd, err := s.blockController.span(timeRange)
+		if err != nil {
+			return nil, err
 		}
+		if dd == nil {
+			continue
+		}
+		result = append(result, dd...)
 	}
-	return result
+	return result, nil
 }
 
 func (s *seriesDB) context() context.Context {
@@ -270,8 +268,19 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		segCtrl: segCtrl,
 		l:       logger.Fetch(ctx, "series_database"),
 	}
+	memSize := int64(1 << 20)
+	o := ctx.Value(optionsKey)
+	if o != nil {
+		options := o.(DatabaseOpts)
+		if options.SeriesMemSize > 1 {
+			memSize = options.SeriesMemSize
+		}
+	}
 	var err error
-	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md", kv.StoreWithNamedLogger("metadata", sdb.l))
+	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md",
+		kv.StoreWithNamedLogger("metadata", sdb.l),
+		kv.StoreWithMemTableSize(memSize),
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -18,8 +18,6 @@
 package bucket
 
 import (
-	"sync"
-
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -39,9 +37,7 @@ type Strategy struct {
 	ctrl       Controller
 	current    Reporter
 	next       Reporter
-	mux        sync.Mutex
 	logger     *logger.Logger
-	stopCh     chan struct{}
 }
 
 type StrategyOptions func(*Strategy)
@@ -68,9 +64,8 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 		return nil, errors.Wrap(ErrInvalidParameter, "controller is absent")
 	}
 	strategy := &Strategy{
-		ctrl:   ctrl,
-		ratio:  0.8,
-		stopCh: make(chan struct{}),
+		ctrl:  ctrl,
+		ratio: 0.8,
 	}
 	for _, opt := range options {
 		opt(strategy)
@@ -93,44 +88,41 @@ func (s *Strategy) Run() {
 	}
 	reset()
 	go func(s *Strategy) {
-		var err error
-	bucket:
-		c := s.current.Report()
 		for {
-			select {
-			case status, closed := <-c:
-				if !closed {
-					reset()
-					goto bucket
-				}
-				ratio := Ratio(status.Volume) / Ratio(status.Capacity)
-				if ratio >= s.ratio && s.next == nil {
-					s.next, err = s.ctrl.Next()
-					if errors.Is(err, ErrNoMoreBucket) {
-						return
-					}
-					if err != nil {
-						s.logger.Err(err).Msg("failed to create the next bucket")
-					}
-				}
-				if ratio >= 1.0 {
-					s.mux.Lock()
-					s.ctrl.OnMove(s.current, s.next)
-					s.current = s.next
-					s.next = nil
-					s.mux.Unlock()
-					goto bucket
-				}
-			case <-s.stopCh:
+			if s.current == nil {
 				return
 			}
+			c := s.current.Report()
+			s.observe(c)
 		}
 	}(s)
 }
 
+func (s *Strategy) observe(c Channel) {
+	var err error
+	moreBucket := true
+	for status := range c {
+		ratio := Ratio(status.Volume) / Ratio(status.Capacity)
+		if ratio >= s.ratio && s.next == nil && moreBucket {
+			s.next, err = s.ctrl.Next()
+			if errors.Is(err, ErrNoMoreBucket) {
+				moreBucket = false
+			} else if err != nil {
+				s.logger.Err(err).Msg("failed to create the next bucket")
+			}
+		}
+		if ratio >= 1.0 {
+			s.move()
+			return
+		}
+	}
+}
+
+func (s *Strategy) move() {
+	s.ctrl.OnMove(s.current, s.next)
+	s.current = s.next
+	s.next = nil
+}
+
 func (s *Strategy) Close() {
-	close(s.stopCh)
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.ctrl.OnMove(s.current, nil)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -49,11 +50,13 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
+	root   string
+	dbOpts tsdb.DatabaseOpts
+
 	schemaRepo    schemaRepo
 	writeListener *writeCallback
 	l             *logger.Logger
 	metadata      metadata.Repo
-	root          string
 	pipeline      queue.Queue
 	repo          discovery.ServiceRepo
 	// stop channel for the service
@@ -71,6 +74,9 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
+	flagS.Int64Var(&s.dbOpts.BlockMemSize, "stream-block-mem-size", 8<<20, "block memory size")
+	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", 1<<20, "series metadata memory size")
+	flagS.Int64Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", 2<<20, "global index memory size")
 	return flagS
 }
 
@@ -93,7 +99,7 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.l)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			continue
@@ -149,5 +155,8 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		metadata: metadata,
 		repo:     repo,
 		pipeline: pipeline,
+		dbOpts: tsdb.DatabaseOpts{
+			EnableGlobalIndex: true,
+		},
 	}, nil
 }

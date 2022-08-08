@@ -337,7 +337,6 @@ type TagValue struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Value:
-	//
 	//	*TagValue_Null
 	//	*TagValue_Str
 	//	*TagValue_StrArray
@@ -535,7 +534,6 @@ type FieldValue struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Value:
-	//
 	//	*FieldValue_Null
 	//	*FieldValue_Str
 	//	*FieldValue_Int

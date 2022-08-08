@@ -93,10 +93,11 @@ func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Lo
 
 	sm.db = db
 	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
-		DB:         db,
-		ShardNum:   shardNum,
-		Families:   spec.schema.TagFamilies,
-		IndexRules: spec.indexRules,
+		DB:                db,
+		ShardNum:          shardNum,
+		Families:          spec.schema.TagFamilies,
+		IndexRules:        spec.indexRules,
+		EnableGlobalIndex: true,
 	})
 	return sm, nil
 }

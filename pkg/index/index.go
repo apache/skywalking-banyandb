@@ -46,15 +46,8 @@ func (f FieldKey) Marshal() []byte {
 }
 
 func (f *FieldKey) Unmarshal(raw []byte) error {
-	switch len(raw) {
-	case 12:
-		f.SeriesID = common.SeriesID(convert.BytesToUint64(raw[0:8]))
-		f.IndexRuleID = convert.BytesToUint32(raw[8:])
-	case 4:
-		f.IndexRuleID = convert.BytesToUint32(raw)
-	default:
-		return errors.Wrap(ErrMalformed, "unmarshal field key")
-	}
+	f.SeriesID = common.SeriesID(convert.BytesToUint64(raw[0:8]))
+	f.IndexRuleID = convert.BytesToUint32(raw[8:])
 	return nil
 }
 
@@ -72,14 +65,17 @@ func (f Field) Marshal() ([]byte, error) {
 }
 
 func (f *Field) Unmarshal(raw []byte) error {
+	if len(raw) < 13 {
+		return errors.WithMessagef(ErrMalformed, "malformed field: expected more than 12, got %d", len(raw))
+	}
 	fk := &f.Key
-	err := fk.Unmarshal(raw[:len(raw)-8])
+	err := fk.Unmarshal(raw[:12])
 	if err != nil {
 		return errors.Wrap(err, "unmarshal a field")
 	}
-	termID := raw[len(raw)-8:]
-	f.Term = make([]byte, len(termID))
-	copy(f.Term, termID)
+	term := raw[12:]
+	f.Term = make([]byte, len(term))
+	copy(f.Term, term)
 	return nil
 }
 

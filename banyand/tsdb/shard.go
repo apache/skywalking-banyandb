@@ -126,7 +126,7 @@ func (s *shard) State() (shardState ShardState) {
 					BlockID: b.blockID,
 				},
 				TimeRange: b.TimeRange,
-				Closed:    b.isClosed(),
+				Closed:    b.Closed(),
 			})
 		}
 	}
@@ -135,6 +135,7 @@ func (s *shard) State() (shardState ShardState) {
 	for i, v := range s.segmentController.blockQueue.All() {
 		shardState.OpenBlocks[i] = v.(BlockID)
 	}
+	s.l.Info().Interface("", shardState).Msg("state")
 	return shardState
 }
 
@@ -295,7 +296,6 @@ func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) 
 	event := sc.l.Info()
 	if prev != nil {
 		event.Stringer("prev", prev)
-		prev.(*segment).blockManageStrategy.Close()
 	}
 	if next != nil {
 		event.Stringer("next", next)

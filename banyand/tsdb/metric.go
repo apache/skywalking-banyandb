@@ -66,11 +66,11 @@ func (s *shard) runStat() {
 }
 
 func (s *shard) stat() {
-	defer func() {
-		if r := recover(); r != nil {
-			s.l.Warn().Interface("r", r).Msg("recovered")
-		}
-	}()
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		s.l.Warn().Interface("r", r).Msg("recovered")
+	// 	}
+	// }()
 	seriesStat := s.seriesDatabase.Stats()
 	s.curry(mtBytes).WithLabelValues("series").Set(float64(seriesStat.MemBytes))
 	s.curry(maxMtBytes).WithLabelValues("series").Set(float64(seriesStat.MaxMemBytes))
@@ -81,7 +81,7 @@ func (s *shard) stat() {
 		segStats.MaxMemBytes += segStat.MaxMemBytes
 		segStats.MemBytes += segStat.MemBytes
 		for _, b := range seg.blockController.blocks() {
-			if b.closed.Load() {
+			if b.Closed() {
 				continue
 			}
 			names, bss := b.stats()

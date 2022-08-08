@@ -95,7 +95,10 @@ type series struct {
 }
 
 func (s *series) Get(id GlobalItemID) (Item, io.Closer, error) {
-	b := s.blockDB.block(id)
+	b, err := s.blockDB.block(id)
+	if err != nil {
+		return nil, nil, err
+	}
 	if b == nil {
 		return nil, nil, errors.WithMessagef(ErrBlockAbsent, "id: %v", id)
 	}
@@ -111,7 +114,10 @@ func (s *series) ID() common.SeriesID {
 }
 
 func (s *series) Span(timeRange timestamp.TimeRange) (SeriesSpan, error) {
-	blocks := s.blockDB.span(timeRange)
+	blocks, err := s.blockDB.span(timeRange)
+	if err != nil {
+		return nil, err
+	}
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
 	}
