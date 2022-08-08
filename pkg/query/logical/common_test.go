@@ -213,10 +213,10 @@ func setupMeasureQueryData(testing *testing.T, dataFile string, measure measure.
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
 		dataPointValue := &measurev1.DataPointValue{}
+		t.NoError(protojson.Unmarshal(rawDataPointValue, dataPointValue))
 		if dataPointValue.Timestamp == nil {
 			dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		}
-		t.NoError(protojson.Unmarshal(rawDataPointValue, dataPointValue))
 		errInner := measure.Write(dataPointValue)
 		t.NoError(errInner)
 	}
