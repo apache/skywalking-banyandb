@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package cmd is an internal package defining cli commands for BanyanDB
 package cmd
 
 import (
