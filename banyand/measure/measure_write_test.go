@@ -132,10 +132,9 @@ func writeDataWithBaseTime(baseTime time.Time, dataFile string, measure measure.
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
-		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(HaveOccurred())
-		errInner := measure.Write(dataPointValue)
-		Expect(errInner).ShouldNot(HaveOccurred())
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
+		Expect(measure.Write(dataPointValue)).Should(Succeed())
 	}
 	return baseTime
 }
