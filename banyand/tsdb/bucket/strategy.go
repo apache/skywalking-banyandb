@@ -124,7 +124,6 @@ func (s *Strategy) observe(c Channel) {
 			if next != nil {
 				s.current.Store(next)
 			}
-			next = nil
 			return
 		}
 	}
