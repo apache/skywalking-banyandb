@@ -20,6 +20,7 @@ package tsdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -117,7 +118,7 @@ func (s *segment) closeBlock(id uint16) {
 }
 
 func (s segment) String() string {
-	return s.Reporter.String()
+	return fmt.Sprintf("SegID-%d", s.id)
 }
 
 func (s *segment) Stats() observability.Statistics {

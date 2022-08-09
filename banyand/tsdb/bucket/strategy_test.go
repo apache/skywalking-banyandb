@@ -123,18 +123,18 @@ func (c *controller) isFull() bool {
 
 type reporter struct {
 	capacity int
-	volume   int
 	step     int
 }
 
 func (r *reporter) Report() bucket.Channel {
 	ch := make(bucket.Channel)
 	go func() {
+		var volume int
 		for i := 0; i < r.capacity; i++ {
-			r.volume += r.step
+			volume += r.step
 			ch <- bucket.Status{
 				Capacity: r.capacity,
-				Volume:   r.volume,
+				Volume:   volume,
 			}
 		}
 		close(ch)

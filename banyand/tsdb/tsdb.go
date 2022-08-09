@@ -115,8 +115,9 @@ type BlockState struct {
 	Closed    bool
 }
 type ShardState struct {
-	Blocks     []BlockState
-	OpenBlocks []BlockID
+	Blocks           []BlockState
+	OpenBlocks       []BlockID
+	StrategyManagers []string
 }
 
 type database struct {

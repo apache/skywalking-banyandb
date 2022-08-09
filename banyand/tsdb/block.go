@@ -19,6 +19,7 @@ package tsdb
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path"
 	"runtime"
@@ -256,7 +257,7 @@ func (b *block) Closed() bool {
 }
 
 func (b *block) String() string {
-	return b.Reporter.String()
+	return fmt.Sprintf("BlockID-%d-%d", b.segID, b.blockID)
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {
