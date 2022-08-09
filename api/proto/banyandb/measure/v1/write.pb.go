@@ -41,7 +41,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-//DataPointValue is the data point for writing. It only contains values.
+// DataPointValue is the data point for writing. It only contains values.
 type DataPointValue struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
