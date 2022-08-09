@@ -43,6 +43,8 @@ const (
 	componentMain              = "main"
 	componentSecondInvertedIdx = "inverted"
 	componentSecondLSMIdx      = "lsm"
+
+	defaultMainMemorySize = 8 << 20
 )
 
 type block struct {
@@ -125,14 +127,13 @@ func (b *block) options(ctx context.Context) {
 	}
 	b.encodingMethod = options.EncodingMethod
 	if options.BlockMemSize < 1 {
-		b.memSize = 8 << 20 // 8MB
+		b.memSize = defaultMainMemorySize
 	} else {
 		b.memSize = options.BlockMemSize
 	}
 	b.lsmMemSize = b.memSize / 8
-	defaultLSMMemSize := int64(1 << 20)
-	if b.lsmMemSize < defaultLSMMemSize {
-		b.lsmMemSize = defaultLSMMemSize
+	if b.lsmMemSize < defaultKVMemorySize {
+		b.lsmMemSize = defaultKVMemorySize
 	}
 }
 

@@ -31,7 +31,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const defaultBlockQueueSize = 1 << 4
+const (
+	defaultBlockQueueSize = 1 << 4
+	defaultKVMemorySize   = 1 << 20
+)
 
 var _ Shard = (*shard)(nil)
 

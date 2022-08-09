@@ -83,7 +83,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		if options.EnableGlobalIndex {
 			memSize := options.GlobalIndexMemSize
 			if memSize == 0 {
-				memSize = 1 << 20
+				memSize = defaultKVMemorySize
 			}
 			if s.globalIndex, err = kv.OpenStore(
 				0,

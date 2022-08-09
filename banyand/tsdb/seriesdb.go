@@ -268,13 +268,17 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		segCtrl: segCtrl,
 		l:       logger.Fetch(ctx, "series_database"),
 	}
-	memSize := int64(1 << 20)
 	o := ctx.Value(optionsKey)
+	var memSize int64
 	if o != nil {
 		options := o.(DatabaseOpts)
 		if options.SeriesMemSize > 1 {
 			memSize = options.SeriesMemSize
+		} else {
+			memSize = defaultKVMemorySize
 		}
+	} else {
+		memSize = defaultKVMemorySize
 	}
 	var err error
 	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md",
