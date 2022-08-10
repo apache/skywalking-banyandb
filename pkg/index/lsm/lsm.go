@@ -55,14 +55,19 @@ func (s *store) Write(field index.Field, itemID common.ItemID) error {
 }
 
 type StoreOpts struct {
-	Path   string
-	Logger *logger.Logger
+	Path         string
+	Logger       *logger.Logger
+	MemTableSize int64
 }
 
 func NewStore(opts StoreOpts) (index.Store, error) {
 	var err error
 	var lsm kv.Store
-	if lsm, err = kv.OpenStore(0, opts.Path+"/lsm", kv.StoreWithLogger(opts.Logger)); err != nil {
+	if lsm, err = kv.OpenStore(
+		0,
+		opts.Path+"/lsm",
+		kv.StoreWithLogger(opts.Logger),
+		kv.StoreWithMemTableSize(opts.MemTableSize)); err != nil {
 		return nil, err
 	}
 	return &store{

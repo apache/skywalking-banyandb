@@ -81,7 +81,7 @@ func (s *shard) stat() {
 		segStats.MaxMemBytes += segStat.MaxMemBytes
 		segStats.MemBytes += segStat.MemBytes
 		for _, b := range seg.blockController.blocks() {
-			if b.closed.Load() {
+			if b.Closed() {
 				continue
 			}
 			names, bss := b.stats()

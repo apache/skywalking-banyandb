@@ -17,8 +17,9 @@
 package helpers
 
 import (
+	"sync/atomic"
+
 	"github.com/onsi/gomega/types"
-	"go.uber.org/atomic"
 )
 
 type FailInterceptor struct {
@@ -29,7 +30,7 @@ type FailInterceptor struct {
 func NewFailInterceptor(fail types.GomegaFailHandler) *FailInterceptor {
 	return &FailInterceptor{
 		ginkgoFail: fail,
-		didFail:    atomic.NewBool(false),
+		didFail:    &atomic.Bool{},
 	}
 }
 

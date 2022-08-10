@@ -20,6 +20,7 @@ package tsdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -77,9 +78,25 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 	if err != nil {
 		return nil, err
 	}
-	if s.globalIndex, err = kv.OpenStore(0, indexPath, kv.StoreWithLogger(s.l)); err != nil {
-		return nil, err
+	o := ctx.Value(optionsKey)
+	if o != nil {
+		options := o.(DatabaseOpts)
+		if options.EnableGlobalIndex {
+			memSize := options.GlobalIndexMemSize
+			if memSize == 0 {
+				memSize = defaultKVMemorySize
+			}
+			if s.globalIndex, err = kv.OpenStore(
+				0,
+				indexPath,
+				kv.StoreWithLogger(s.l),
+				kv.StoreWithMemTableSize(memSize),
+			); err != nil {
+				return nil, err
+			}
+		}
 	}
+
 	s.blockManageStrategy, err = bucket.NewStrategy(s.blockController, bucket.WithLogger(s.l))
 	if err != nil {
 		return nil, err
@@ -90,7 +107,9 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 
 func (s *segment) close() {
 	s.blockController.close()
-	s.globalIndex.Close()
+	if s.globalIndex != nil {
+		s.globalIndex.Close()
+	}
 	s.Stop()
 }
 
@@ -99,10 +118,13 @@ func (s *segment) closeBlock(id uint16) {
 }
 
 func (s segment) String() string {
-	return s.Reporter.String()
+	return fmt.Sprintf("SegID-%d", s.id)
 }
 
 func (s *segment) Stats() observability.Statistics {
+	if s.globalIndex == nil {
+		return observability.Statistics{}
+	}
 	return s.globalIndex.Stats()
 }
 
@@ -159,7 +181,6 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 	if errors.Is(err, ErrEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
 	}
-	err = reporter.open()
 	if err != nil {
 		return nil, err
 	}
@@ -201,18 +222,30 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) span(timeRange timestamp.TimeRange) (bb []*block) {
-	return bc.ensureBlockOpen(bc.search(func(b *block) bool {
+func (bc *blockController) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) {
+	bb := bc.search(func(b *block) bool {
 		return b.Overlapping(timeRange)
-	}))
+	})
+	if bb == nil {
+		return nil, nil
+	}
+	dd := make([]blockDelegate, len(bb))
+	for i, b := range bb {
+		d, err := b.delegate()
+		if err != nil {
+			return nil, err
+		}
+		dd[i] = d
+	}
+	return dd, nil
 }
 
-func (bc *blockController) get(blockID uint16) *block {
+func (bc *blockController) get(blockID uint16) (blockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
-		return bc.ensureBlockOpen([]*block{b})[0]
+		return b.delegate()
 	}
-	return nil
+	return nil, nil
 }
 
 func (bc *blockController) getBlock(blockID uint16) *block {
@@ -248,26 +281,6 @@ func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
 		}
 	}
 	return bb
-}
-
-func (bc *blockController) ensureBlockOpen(blocks []*block) (openedBlocks []*block) {
-	if blocks == nil {
-		return nil
-	}
-	for _, b := range blocks {
-		if b.isClosed() {
-			if err := b.open(); err != nil {
-				bc.l.Error().Err(err).Stringer("block", b).Msg("fail to open block")
-				continue
-			}
-		}
-		openedBlocks = append(openedBlocks, b)
-		bc.blockQueue.Push(BlockID{
-			BlockID: b.blockID,
-			SegID:   b.segID,
-		})
-	}
-	return openedBlocks
 }
 
 func (bc *blockController) closeBlock(blockID uint16) {
@@ -309,11 +322,8 @@ func (bc *blockController) open() error {
 		return err
 	}
 	if bc.Current() == nil {
-		b, err := bc.create(bc.clock.Now())
+		_, err := bc.create(bc.clock.Now())
 		if err != nil {
-			return err
-		}
-		if err = b.open(); err != nil {
 			return err
 		}
 	}
@@ -351,6 +361,7 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 			startTime: starTime,
 			suffix:    suffix,
 			blockSize: bc.blockSize,
+			queue:     bc.blockQueue,
 		}); err != nil {
 		return nil, err
 	}

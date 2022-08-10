@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -50,11 +51,13 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
+	root   string
+	dbOpts tsdb.DatabaseOpts
+
 	schemaRepo    schemaRepo
 	writeListener *writeCallback
 	l             *logger.Logger
 	metadata      metadata.Repo
-	root          string
 	pipeline      queue.Queue
 	repo          discovery.ServiceRepo
 	// stop channel for the service
@@ -76,6 +79,8 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
+	flagS.Int64Var(&s.dbOpts.BlockMemSize, "measure-block-mem-size", 16<<20, "block memory size")
+	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", 1<<20, "series metadata memory size")
 	return flagS
 }
 
@@ -98,7 +103,7 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.l)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			continue

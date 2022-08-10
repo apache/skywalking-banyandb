@@ -59,10 +59,10 @@ var (
 	ErrInvalidShardID = errors.New("invalid shard id")
 	ErrOpenDatabase   = errors.New("fails to open the database")
 
-	encodingMethodKey = contextEncodingMethodKey{}
+	optionsKey = contextOptionsKey{}
 )
 
-type contextEncodingMethodKey struct{}
+type contextOptionsKey struct{}
 
 type Supplier interface {
 	SupplyTSDB() Database
@@ -84,11 +84,15 @@ type Shard interface {
 var _ Database = (*database)(nil)
 
 type DatabaseOpts struct {
-	Location       string
-	ShardNum       uint32
-	EncodingMethod EncodingMethod
-	SegmentSize    IntervalRule
-	BlockSize      IntervalRule
+	Location           string
+	ShardNum           uint32
+	EncodingMethod     EncodingMethod
+	SegmentSize        IntervalRule
+	BlockSize          IntervalRule
+	BlockMemSize       int64
+	SeriesMemSize      int64
+	EnableGlobalIndex  bool
+	GlobalIndexMemSize int64
 }
 
 type EncodingMethod struct {
@@ -111,8 +115,9 @@ type BlockState struct {
 	Closed    bool
 }
 type ShardState struct {
-	Blocks     []BlockState
-	OpenBlocks []BlockID
+	Blocks           []BlockState
+	OpenBlocks       []BlockID
+	StrategyManagers []string
 }
 
 type database struct {
@@ -186,7 +191,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
-	thisContext = context.WithValue(thisContext, encodingMethodKey, opts.EncodingMethod)
+	thisContext = context.WithValue(thisContext, optionsKey, opts)
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)
 	}

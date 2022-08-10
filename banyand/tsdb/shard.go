@@ -19,6 +19,7 @@ package tsdb
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -31,7 +32,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const defaultBlockQueueSize = 1 << 4
+const (
+	defaultBlockQueueSize = 1 << 4
+	defaultKVMemorySize   = 1 << 20
+)
 
 var _ Shard = (*shard)(nil)
 
@@ -118,7 +122,9 @@ func (s *shard) Index() IndexDatabase {
 }
 
 func (s *shard) State() (shardState ShardState) {
+	shardState.StrategyManagers = append(shardState.StrategyManagers, s.segmentManageStrategy.String())
 	for _, seg := range s.segmentController.segments() {
+		shardState.StrategyManagers = append(shardState.StrategyManagers, seg.blockManageStrategy.String())
 		for _, b := range seg.blockController.blocks() {
 			shardState.Blocks = append(shardState.Blocks, BlockState{
 				ID: BlockID{
@@ -126,7 +132,7 @@ func (s *shard) State() (shardState ShardState) {
 					BlockID: b.blockID,
 				},
 				TimeRange: b.TimeRange,
-				Closed:    b.isClosed(),
+				Closed:    b.Closed(),
 			})
 		}
 	}
@@ -135,6 +141,15 @@ func (s *shard) State() (shardState ShardState) {
 	for i, v := range s.segmentController.blockQueue.All() {
 		shardState.OpenBlocks[i] = v.(BlockID)
 	}
+	sort.Slice(shardState.OpenBlocks, func(i, j int) bool {
+		x := shardState.OpenBlocks[i]
+		y := shardState.OpenBlocks[j]
+		if x.SegID == y.SegID {
+			return x.BlockID < y.BlockID
+		}
+		return x.SegID < y.SegID
+	})
+	s.l.Info().Interface("", shardState).Msg("state")
 	return shardState
 }
 
@@ -295,7 +310,6 @@ func (sc *segmentController) OnMove(prev bucket.Reporter, next bucket.Reporter) 
 	event := sc.l.Info()
 	if prev != nil {
 		event.Stringer("prev", prev)
-		prev.(*segment).blockManageStrategy.Close()
 	}
 	if next != nil {
 		event.Stringer("next", next)

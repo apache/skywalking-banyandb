@@ -18,7 +18,9 @@
 package bucket
 
 import (
-	"sync"
+	"fmt"
+	"math"
+	"sync/atomic"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -34,14 +36,12 @@ var (
 type Ratio float64
 
 type Strategy struct {
-	optionsErr error
-	ratio      Ratio
-	ctrl       Controller
-	current    Reporter
-	next       Reporter
-	mux        sync.Mutex
-	logger     *logger.Logger
-	stopCh     chan struct{}
+	optionsErr   error
+	ratio        Ratio
+	ctrl         Controller
+	current      atomic.Value
+	currentRatio uint64
+	logger       *logger.Logger
 }
 
 type StrategyOptions func(*Strategy)
@@ -68,9 +68,8 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 		return nil, errors.Wrap(ErrInvalidParameter, "controller is absent")
 	}
 	strategy := &Strategy{
-		ctrl:   ctrl,
-		ratio:  0.8,
-		stopCh: make(chan struct{}),
+		ctrl:  ctrl,
+		ratio: 0.8,
 	}
 	for _, opt := range options {
 		opt(strategy)
@@ -85,52 +84,50 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 }
 
 func (s *Strategy) Run() {
-	reset := func() {
-		for s.current == nil {
-			s.current = s.ctrl.Current()
-		}
-		s.next = nil
+	for s.current.Load() == nil {
+		s.current.Store(s.ctrl.Current())
 	}
-	reset()
 	go func(s *Strategy) {
-		var err error
-	bucket:
-		c := s.current.Report()
 		for {
-			select {
-			case status, closed := <-c:
-				if !closed {
-					reset()
-					goto bucket
-				}
-				ratio := Ratio(status.Volume) / Ratio(status.Capacity)
-				if ratio >= s.ratio && s.next == nil {
-					s.next, err = s.ctrl.Next()
-					if errors.Is(err, ErrNoMoreBucket) {
-						return
-					}
-					if err != nil {
-						s.logger.Err(err).Msg("failed to create the next bucket")
-					}
-				}
-				if ratio >= 1.0 {
-					s.mux.Lock()
-					s.ctrl.OnMove(s.current, s.next)
-					s.current = s.next
-					s.next = nil
-					s.mux.Unlock()
-					goto bucket
-				}
-			case <-s.stopCh:
-				return
-			}
+			c := s.current.Load().(Reporter).Report()
+			s.observe(c)
 		}
 	}(s)
 }
 
+func (s *Strategy) String() string {
+	c := s.current.Load()
+	if c == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%s:%f", c.(Reporter).String(),
+		math.Float64frombits(atomic.LoadUint64(&s.currentRatio)))
+}
+
+func (s *Strategy) observe(c Channel) {
+	var err error
+	var next Reporter
+	moreBucket := true
+	for status := range c {
+		ratio := Ratio(status.Volume) / Ratio(status.Capacity)
+		atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
+		if ratio >= s.ratio && next == nil && moreBucket {
+			next, err = s.ctrl.Next()
+			if errors.Is(err, ErrNoMoreBucket) {
+				moreBucket = false
+			} else if err != nil {
+				s.logger.Err(err).Msg("failed to create the next bucket")
+			}
+		}
+		if ratio >= 1.0 {
+			s.ctrl.OnMove(s.current.Load().(Reporter), next)
+			if next != nil {
+				s.current.Store(next)
+			}
+			return
+		}
+	}
+}
+
 func (s *Strategy) Close() {
-	close(s.stopCh)
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.ctrl.OnMove(s.current, nil)
 }
