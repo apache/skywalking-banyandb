@@ -110,7 +110,10 @@ func (s *segment) close() {
 	if s.globalIndex != nil {
 		s.globalIndex.Close()
 	}
-	s.Stop()
+	s.blockManageStrategy.Close()
+	if s.Reporter != nil {
+		s.Stop()
+	}
 }
 
 func (s *segment) closeBlock(id uint16) {
@@ -373,6 +376,6 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 
 func (bc *blockController) close() {
 	for _, s := range bc.lst {
-		s.close()
+		s.stopThenClose()
 	}
 }

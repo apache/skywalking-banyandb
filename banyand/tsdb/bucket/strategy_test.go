@@ -21,11 +21,18 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 )
 
 var _ = Describe("Strategy", func() {
+	BeforeEach(func() {
+		goods := gleak.Goroutines()
+		DeferCleanup(func() {
+			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		})
+	})
 	Context("Applying the strategy", func() {
 		var strategy *bucket.Strategy
 		It("uses the golden settings", func() {
@@ -127,7 +134,7 @@ type reporter struct {
 }
 
 func (r *reporter) Report() bucket.Channel {
-	ch := make(bucket.Channel)
+	ch := make(bucket.Channel, r.capacity)
 	go func() {
 		var volume int
 		for i := 0; i < r.capacity; i++ {

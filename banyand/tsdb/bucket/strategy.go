@@ -42,6 +42,7 @@ type Strategy struct {
 	current      atomic.Value
 	currentRatio uint64
 	logger       *logger.Logger
+	stopCh       chan struct{}
 }
 
 type StrategyOptions func(*Strategy)
@@ -68,8 +69,9 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 		return nil, errors.Wrap(ErrInvalidParameter, "controller is absent")
 	}
 	strategy := &Strategy{
-		ctrl:  ctrl,
-		ratio: 0.8,
+		ctrl:   ctrl,
+		ratio:  0.8,
+		stopCh: make(chan struct{}),
 	}
 	for _, opt := range options {
 		opt(strategy)
@@ -89,8 +91,11 @@ func (s *Strategy) Run() {
 	}
 	go func(s *Strategy) {
 		for {
+
 			c := s.current.Load().(Reporter).Report()
-			s.observe(c)
+			if !s.observe(c) {
+				return
+			}
 		}
 	}(s)
 }
@@ -104,30 +109,39 @@ func (s *Strategy) String() string {
 		math.Float64frombits(atomic.LoadUint64(&s.currentRatio)))
 }
 
-func (s *Strategy) observe(c Channel) {
+func (s *Strategy) observe(c Channel) bool {
 	var err error
 	var next Reporter
 	moreBucket := true
-	for status := range c {
-		ratio := Ratio(status.Volume) / Ratio(status.Capacity)
-		atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
-		if ratio >= s.ratio && next == nil && moreBucket {
-			next, err = s.ctrl.Next()
-			if errors.Is(err, ErrNoMoreBucket) {
-				moreBucket = false
-			} else if err != nil {
-				s.logger.Err(err).Msg("failed to create the next bucket")
+	for {
+		select {
+		case status, more := <-c:
+			if !more {
+				return true
 			}
-		}
-		if ratio >= 1.0 {
-			s.ctrl.OnMove(s.current.Load().(Reporter), next)
-			if next != nil {
-				s.current.Store(next)
+			ratio := Ratio(status.Volume) / Ratio(status.Capacity)
+			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
+			if ratio >= s.ratio && next == nil && moreBucket {
+				next, err = s.ctrl.Next()
+				if errors.Is(err, ErrNoMoreBucket) {
+					moreBucket = false
+				} else if err != nil {
+					s.logger.Err(err).Msg("failed to create the next bucket")
+				}
 			}
-			return
+			if ratio >= 1.0 {
+				s.ctrl.OnMove(s.current.Load().(Reporter), next)
+				if next != nil {
+					s.current.Store(next)
+				}
+				return true
+			}
+		case <-s.stopCh:
+			return false
 		}
 	}
 }
 
 func (s *Strategy) Close() {
+	close(s.stopCh)
 }

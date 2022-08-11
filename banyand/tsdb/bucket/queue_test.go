@@ -19,6 +19,7 @@ package bucket_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 )
@@ -36,6 +37,12 @@ func entryID(id uint16) queueEntryID {
 }
 
 var _ = Describe("Queue", func() {
+	BeforeEach(func() {
+		goods := gleak.Goroutines()
+		DeferCleanup(func() {
+			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		})
+	})
 	It("pushes data", func() {
 		evictLst := make([]queueEntryID, 0)
 		l, err := bucket.NewQueue(128, func(id interface{}) {

@@ -70,6 +70,7 @@ type block struct {
 	blockID        uint16
 	encodingMethod EncodingMethod
 	flushCh        chan struct{}
+	stopCh         chan struct{}
 }
 
 type blockOpts struct {
@@ -96,7 +97,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		l:         logger.Fetch(ctx, "block"),
 		TimeRange: timeRange,
 		Reporter:  bucket.NewTimeBasedReporter(timeRange, clock),
-		flushCh:   make(chan struct{}),
+		flushCh:   make(chan struct{}, 1),
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},
 		queue:     opts.queue,
@@ -106,11 +107,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	if position != nil {
 		b.position = position.(common.Position)
 	}
-	go func() {
-		for range b.flushCh {
-			b.flush()
-		}
-	}()
+
 	return b, b.open()
 }
 
@@ -167,6 +164,17 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
+	b.stopCh = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-b.flushCh:
+				b.flush()
+			case <-b.stopCh:
+				return
+			}
+		}
+	}()
 	b.closed.Store(false)
 	return nil
 }
@@ -245,11 +253,22 @@ func (b *block) flush() {
 func (b *block) close() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+	if b.closed.Load() {
+		return
+	}
 	b.closed.Store(true)
 	b.waitDone()
 	for _, closer := range b.closableLst {
 		_ = closer.Close()
 	}
+	close(b.stopCh)
+}
+
+func (b *block) stopThenClose() {
+	if b.Reporter != nil {
+		b.Stop()
+	}
+	b.close()
 }
 
 func (b *block) Closed() bool {

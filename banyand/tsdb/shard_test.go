@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -35,8 +36,10 @@ var _ = Describe("Shard", func() {
 		var deferFn func()
 		var shard tsdb.Shard
 		var clock timestamp.MockClock
+		var goods []gleak.Goroutine
 
 		BeforeEach(func() {
+			goods = gleak.Goroutines()
 			var err error
 			tmp, deferFn, err = test.NewSpace()
 			Expect(err).NotTo(HaveOccurred())
@@ -48,6 +51,7 @@ var _ = Describe("Shard", func() {
 			GinkgoWriter.Printf("shard state:%+v \n", shard.State())
 			shard.Close()
 			deferFn()
+			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 		})
 		It("generates several segments and blocks", func() {
 			By("open 4 blocks")
