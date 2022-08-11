@@ -89,10 +89,5 @@ func (tr *timeBasedReporter) Report() Channel {
 }
 
 func (tr *timeBasedReporter) Stop() {
-	// defer func() {
-	// 	if r := recover(); r != nil {
-	// 		logger.GetLogger().Err(errors.New("close")).Stack().Interface("r", r).Msg("recovered")
-	// 	}
-	// }()
 	close(tr.reporterStopCh)
 }
