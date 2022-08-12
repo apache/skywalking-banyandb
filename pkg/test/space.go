@@ -19,7 +19,6 @@ package test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +26,7 @@ import (
 
 func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 	var tempDirErr error
-	tempDir, tempDirErr = ioutil.TempDir("", "banyandb-test-*")
+	tempDir, tempDirErr = os.MkdirTemp("", "banyandb-test-*")
 	t.Nil(tempDirErr)
 	return tempDir, func() {
 		if err := os.RemoveAll(tempDir); err != nil {
@@ -37,7 +36,7 @@ func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 }
 
 func NewSpace() (tempDir string, deferFunc func(), err error) {
-	tempDir, err = ioutil.TempDir("", "banyandb-test-*")
+	tempDir, err = os.MkdirTemp("", "banyandb-test-*")
 	return tempDir, func() {
 		if err = os.RemoveAll(tempDir); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Error while removing dir: %v\n", err)

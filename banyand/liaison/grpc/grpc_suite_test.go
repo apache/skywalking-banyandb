@@ -27,7 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var defaultEventallyTimeout = 30 * time.Second
+var defaultEventuallyTimeout = 30 * time.Second
 
 func TestGrpc(t *testing.T) {
 	RegisterFailHandler(Fail)

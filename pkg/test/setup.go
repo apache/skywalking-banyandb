@@ -134,7 +134,7 @@ func (tf *testFlow) Error() error {
 
 func SetUpModules(flags []string, units ...run.Unit) func() {
 	closer := run.NewTester("closer")
-	g := run.Group{Name: "standalone-test"}
+	g := run.NewGroup("standalone-test")
 	g.Register(append([]run.Unit{closer}, units...)...)
 	err := g.RegisterFlags().Parse(flags)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

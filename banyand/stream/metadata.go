@@ -41,7 +41,9 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo, l *logger.Logger) schemaRepo {
+func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
+	dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+) schemaRepo {
 	return schemaRepo{
 		l:        l,
 		metadata: metadata,
@@ -49,7 +51,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, l),
+			newSupplier(path, metadata, dbOpts, l),
 			event.StreamTopicShardEvent,
 			event.StreamTopicEntityEvent,
 		),
@@ -170,13 +172,19 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	path     string
+	dbOpts   tsdb.DatabaseOpts
 	metadata metadata.Repo
 	l        *logger.Logger
 }
 
-func newSupplier(path string, metadata metadata.Repo, l *logger.Logger) *supplier {
+func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
+	dbOpts.EncodingMethod = tsdb.EncodingMethod{
+		EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
+		DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
+	}
 	return &supplier{
 		path:     path,
+		dbOpts:   dbOpts,
 		metadata: metadata,
 		l:        l,
 	}
@@ -197,17 +205,13 @@ func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (re
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
+	opts := s.dbOpts
+	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
+	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{
 			Module:   "stream",
 			Database: groupSchema.Metadata.Name,
 		}),
-		tsdb.DatabaseOpts{
-			Location: path.Join(s.path, groupSchema.Metadata.Name),
-			ShardNum: groupSchema.ResourceOpts.ShardNum,
-			EncodingMethod: tsdb.EncodingMethod{
-				EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
-				DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
-			},
-		})
+		opts)
 }

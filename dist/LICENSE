@@ -256,7 +256,7 @@ BSD-3-Clause licenses
     github.com/grpc-ecosystem/grpc-gateway/v2 v2.10.3 BSD-3-Clause
     github.com/pmezard/go-difflib v1.0.0 BSD-3-Clause
     github.com/spf13/pflag v1.0.5 BSD-3-Clause
-    golang.org/x/crypto v0.0.0-20220525230936-793ad666bf5e BSD-3-Clause
+    golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 BSD-3-Clause
     golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f BSD-3-Clause
     golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3 BSD-3-Clause
     golang.org/x/net v0.0.0-20220520000938-2e3eb7b945c2 BSD-3-Clause
@@ -282,7 +282,7 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    github.com/SkyAPM/clock v1.3.1-0.20220416123716-97dcb111a8d8 MIT
+    github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97 MIT
     github.com/beorn7/perks v1.0.1 MIT
     github.com/cespare/xxhash v1.1.0 MIT
     github.com/cespare/xxhash/v2 v2.1.2 MIT
@@ -292,7 +292,7 @@ MIT licenses
     github.com/json-iterator/go v1.1.12 MIT
     github.com/mitchellh/mapstructure v1.5.0 MIT
     github.com/onsi/ginkgo/v2 v2.1.4 MIT
-    github.com/onsi/gomega v1.19.0 MIT
+    github.com/onsi/gomega v1.20.0 MIT
     github.com/pelletier/go-toml/v2 v2.0.1 MIT
     github.com/rs/zerolog v1.26.1 MIT
     github.com/sirupsen/logrus v1.7.0 MIT
@@ -305,7 +305,7 @@ MIT licenses
     github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 MIT
     github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 MIT
     go.etcd.io/bbolt v1.3.6 MIT
-    go.uber.org/atomic v1.9.0 MIT
+    go.uber.org/atomic v1.7.0 MIT
     go.uber.org/multierr v1.8.0 MIT
     go.uber.org/zap v1.17.0 MIT
     gopkg.in/natefinch/lumberjack.v2 v2.0.0 MIT

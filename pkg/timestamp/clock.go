@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
 package timestamp
 
 import (
@@ -35,6 +34,8 @@ type MockClock interface {
 	Add(d time.Duration)
 	// Set sets the current time of the mock clock to a specific one.
 	Set(t time.Time)
+	// TriggerTimer sends the current time to timer.C
+	TriggerTimer() bool
 }
 
 // NewClock returns an instance of a real-time clock.

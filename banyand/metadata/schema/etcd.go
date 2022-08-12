@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -84,6 +85,7 @@ type etcdSchemaRegistry struct {
 	server   *embed.Etcd
 	kv       clientv3.KV
 	handlers []*eventHandler
+	mux      sync.RWMutex
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -98,6 +100,8 @@ type etcdSchemaRegistryConfig struct {
 }
 
 func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
 	e.handlers = append(e.handlers, &eventHandler{
 		interestKeys: kind,
 		handler:      handler,
@@ -105,7 +109,10 @@ func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
 }
 
 func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
-	for _, h := range e.handlers {
+	e.mux.RLock()
+	hh := e.handlers
+	e.mux.RUnlock()
+	for _, h := range hh {
 		if h.InterestOf(metadata.Kind) {
 			h.handler.OnAddOrUpdate(metadata)
 		}
@@ -113,7 +120,10 @@ func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
 }
 
 func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
-	for _, h := range e.handlers {
+	e.mux.RLock()
+	hh := e.handlers
+	e.mux.RUnlock()
+	for _, h := range hh {
 		if h.InterestOf(metadata.Kind) {
 			h.handler.OnDelete(metadata)
 		}

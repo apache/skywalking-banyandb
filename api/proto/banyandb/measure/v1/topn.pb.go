@@ -41,7 +41,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-//TopNList contains a series of topN items
+// TopNList contains a series of topN items
 type TopNList struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
