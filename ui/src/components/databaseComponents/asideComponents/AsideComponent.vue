@@ -92,6 +92,7 @@
  
 <script>
 import { mapState } from 'vuex'
+import { getGroupList } from '@/api/index'
 import RightMenuComponent from './RightMenuComponent.vue'
 export default {
     name: 'AsideComponent',
@@ -337,7 +338,7 @@ export default {
         RightMenuComponent
     },
 
-    async created() {
+    created() {
         console.log('this is aside created')
         this.getGroupLists()
     },
@@ -351,7 +352,13 @@ export default {
     },
 
     methods: {
-        async getGroupLists() {
+        getGroupLists() {
+            getGroupList()
+                .then(res => {
+                    console.log(res)
+                })
+        },
+        /*async getGroupLists() {
             try {
                 const data = await this.$http.get('/api/v1/group/schema/lists')
                 if (data.status != 200) {
@@ -364,7 +371,7 @@ export default {
                 console.log(err)
                 this.$message.errorNet()
             }
-        },
+        },*/
         stopPropagation(e) {
             e = e || window.event;
             if (e.stopPropagation) { //W3C阻止冒泡方法  

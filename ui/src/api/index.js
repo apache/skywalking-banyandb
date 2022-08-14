@@ -17,7 +17,14 @@
  * under the License.
  */
 
+// api file
 
-/**
- * api file
- */
+import request from '@/utils/axios'
+
+// Some request methods
+export function getGroupList() {
+    return request({
+        url: "/api/v1/group/schema/lists",
+        method: "get",
+    })
+}
