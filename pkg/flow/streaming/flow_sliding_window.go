@@ -110,6 +110,9 @@ func (s *TumblingTimeWindows) Out() <-chan flow.StreamRecord {
 }
 
 func (s *TumblingTimeWindows) Setup(ctx context.Context) error {
+	if s.acc == nil {
+		s.acc = s.aggregationFactory()
+	}
 	// start processing
 	s.Add(1)
 	go s.receive()
@@ -179,10 +182,10 @@ func (s *TumblingTimeWindows) receive() {
 			// add elem to the bucket
 			s.snapshotsMu.Lock()
 			if oldAggr, ok := s.snapshots[tw.MaxTimestamp()]; ok {
-				oldAggr.Add([]interface{}{elem})
+				oldAggr.Add([]flow.StreamRecord{elem})
 			} else {
 				newAggr := s.aggregationFactory()
-				newAggr.Add([]interface{}{elem})
+				newAggr.Add([]flow.StreamRecord{elem})
 				s.snapshots[tw.MaxTimestamp()] = newAggr
 			}
 			s.snapshotsMu.Unlock()

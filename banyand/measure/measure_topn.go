@@ -138,7 +138,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	var err error
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
-		data := tuple.V2.(flow.Data)
+		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
 		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
@@ -266,8 +266,8 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.slideSize)).
 		TopN(int(t.topNSchema.GetCountersNumber()),
-			streaming.WithSortKeyExtractor(func(elem interface{}) int64 {
-				return elem.(flow.Data)[1].(int64)
+			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
+				return record.Data().(flow.Data)[1].(int64)
 			}),
 			streaming.OrderBy(t.topNSchema.GetFieldValueSort()),
 		).To(t).Open()

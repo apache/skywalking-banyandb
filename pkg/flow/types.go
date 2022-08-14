@@ -75,7 +75,7 @@ type WindowAssigner interface {
 // AggregationOp defines the stateful operation for aggregation.
 type AggregationOp interface {
 	// Add puts a slice of elements as the input
-	Add([]interface{})
+	Add([]StreamRecord)
 	// Merge merges the argument with the current Op
 	Merge(AggregationOp) error
 	// Snapshot takes a snapshot of the current state of the AggregationOp

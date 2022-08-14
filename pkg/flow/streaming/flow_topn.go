@@ -69,7 +69,7 @@ type topNAggregator struct {
 	treeMap       *treemap.Map
 	// sortKeyExtractor is an extractor to fetch sort key from the record
 	// TODO: currently we only support sorting numeric field, i.e. int64
-	sortKeyExtractor func(interface{}) int64
+	sortKeyExtractor func(flow.StreamRecord) int64
 	// sort indicates the order of results
 	sort       modelv1.Sort
 	comparator utils.Comparator
@@ -77,7 +77,7 @@ type topNAggregator struct {
 
 type TopNOption func(aggregator *topNAggregator)
 
-func WithSortKeyExtractor(sortKeyExtractor func(interface{}) int64) TopNOption {
+func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
 	return func(aggregator *topNAggregator) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
 	}
@@ -89,7 +89,7 @@ func OrderBy(sort modelv1.Sort) TopNOption {
 	}
 }
 
-func (t *topNAggregator) Add(input []interface{}) {
+func (t *topNAggregator) Add(input []flow.StreamRecord) {
 	for _, item := range input {
 		sortKey := t.sortKeyExtractor(item)
 		// check
@@ -118,13 +118,13 @@ func (t *topNAggregator) doCleanUp() {
 
 func (t *topNAggregator) Merge(other flow.AggregationOp) error {
 	for _, tuple2 := range other.Snapshot().([]*Tuple2) {
-		t.put(tuple2.V1.(int64), tuple2.V1)
+		t.put(tuple2.V1.(int64), tuple2.V2.(flow.StreamRecord))
 	}
 	t.doCleanUp()
 	return nil
 }
 
-func (t *topNAggregator) put(sortKey int64, data interface{}) {
+func (t *topNAggregator) put(sortKey int64, data flow.StreamRecord) {
 	t.currentTopNum++
 	if existingList, ok := t.treeMap.Get(sortKey); ok {
 		existingList = append(existingList.([]interface{}), data)

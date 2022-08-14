@@ -148,8 +148,8 @@ var _ = Describe("Streaming", func() {
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
 				Window(NewTumblingTimeWindows(15*time.Second)).
-				TopN(3, WithSortKeyExtractor(func(elem interface{}) int64 {
-					return elem.(flow.Data)[1].(int64)
+				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
+					return record.Data().(flow.Data)[1].(int64)
 				})).
 				To(snk)
 

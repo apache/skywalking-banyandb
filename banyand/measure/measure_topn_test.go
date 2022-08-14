@@ -106,13 +106,13 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 		}, &commonv1.Metadata{
 			Name:  "service_cpm_minute_top100",
 			Group: "sw_metric",
-		}, "service_cpm_minute_data.json", 3),
+		}, "service_cpm_minute_data.json", 2),
 		Entry("service_cpm_minute without groupBy", &commonv1.Metadata{
 			Name:  "service_cpm_minute",
 			Group: "sw_metric",
 		}, &commonv1.Metadata{
 			Name:  "service_cpm_minute_no_group_by_top100",
 			Group: "sw_metric",
-		}, "service_cpm_minute_data.json", 3),
+		}, "service_cpm_minute_data.json", 2),
 	)
 })

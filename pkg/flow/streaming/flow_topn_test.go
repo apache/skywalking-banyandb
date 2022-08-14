@@ -29,18 +29,18 @@ import (
 )
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
-	input := []interface{}{
+	input := []flow.StreamRecord{
 		// 1. string
 		// 2. number
 		// 3. slices of groupBy values
-		flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}},
-		flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}},
-		flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}},
-		flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}},
-		flow.Data{"e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}},
-		flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}},
-		flow.Data{"e2e-service-consumer", 9800, []interface{}{"e2e-service-consumer"}},
-		flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}},
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9800, []interface{}{"e2e-service-consumer"}}),
+		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}}),
 	}
 	tests := []struct {
 		name     string
@@ -51,18 +51,18 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			name: "DESC",
 			sort: modelv1.Sort_SORT_DESC,
 			expected: []*Tuple2{
-				{int64(10000), flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}}},
-				{int64(9900), flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}}},
-				{int64(9800), flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}}},
+				{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
+				{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
+				{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
 			},
 		},
 		{
 			name: "ASC",
 			sort: modelv1.Sort_SORT_ASC,
 			expected: []*Tuple2{
-				{int64(9500), flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}}},
-				{int64(9600), flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}}},
-				{int64(9700), flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}}},
+				{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
+				{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
+				{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
 			},
 		},
 	}
@@ -82,8 +82,8 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 				sort:       tt.sort,
 				comparator: comparator,
 				treeMap:    treemap.NewWith(comparator),
-				sortKeyExtractor: func(elem interface{}) int64 {
-					return int64(elem.(flow.Data)[1].(int))
+				sortKeyExtractor: func(record flow.StreamRecord) int64 {
+					return int64(record.Data().(flow.Data)[1].(int))
 				},
 			}
 			topN.Add(input)

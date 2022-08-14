@@ -34,9 +34,9 @@ type intSumAggregator struct {
 	sum int
 }
 
-func (i *intSumAggregator) Add(input []interface{}) {
+func (i *intSumAggregator) Add(input []flow.StreamRecord) {
 	for _, item := range input {
-		i.sum += item.(flow.StreamRecord).Data().(int)
+		i.sum += item.Data().(int)
 	}
 }
 

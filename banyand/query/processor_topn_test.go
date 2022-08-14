@@ -47,8 +47,8 @@ func setupMeasureQueryData(dataFile string, measureSchema measure.Measure,
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		Expect(errMarshal).ShouldNot(HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
-		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * interval))
 		Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(HaveOccurred())
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * interval))
 		errInner := measureSchema.Write(dataPointValue)
 		Expect(errInner).ShouldNot(HaveOccurred())
 		if i == len(templates)-1 {
