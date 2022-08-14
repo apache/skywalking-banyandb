@@ -19,8 +19,8 @@
 
 <template>
     <div style="width:100%; height:100%">
-        <el-menu :default-active="currentMenu ? currentMenu.metadata.group + currentMenu.metadata.name : ''" active-text-color="#6E38F7"
-            style="height: 100%;" :collapse="isCollapse" :collapse-transition="false">
+        <el-menu :default-active="currentMenu ? currentMenu.metadata.group + currentMenu.metadata.name : ''"
+            active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse" :collapse-transition="false">
             <div v-for="(item, index) in groupLists" :key="item.metadata.name"
                 @contextmenu.prevent="rightClickGroup($event, index)">
                 <el-submenu :index="item.metadata.name + '-' + index">
@@ -31,7 +31,19 @@
                                     item.metadata.name
                             }}</span>
                     </template>
-                    <div @contextmenu.prevent="rightClickFolder($event, index, 'stream')">
+                    <div v-for="(itemChildren, indexChildren) in item.children" :key="itemChildren.metadata.name">
+                        <div @contextmenu.prevent="rightClick($event, index, indexChildren)">
+                            <el-menu-item :index="itemChildren.metadata.group + itemChildren.metadata.name"
+                                @click="openFile(index, indexChildren)">
+                                <template slot="title">
+                                    <i class="el-icon-document"></i>
+                                    <span slot="title" :title="itemChildren.metadata.name" style="width: 90%"
+                                        class="text-overflow-hidden">{{ itemChildren.metadata.name }}</span>
+                                </template>
+                            </el-menu-item>
+                        </div>
+                    </div>
+                    <!--div @contextmenu.prevent="rightClickFolder($event, index, 'stream')">
                         <el-submenu :index="item.metadata.name + '-' + index + '-stream'">
                             <template slot="title">
                                 <i class="el-icon-folder"></i>
@@ -47,8 +59,8 @@
                                 </el-menu-item>
                             </div>
                         </el-submenu>
-                    </div>
-                    <div @contextmenu.prevent="rightClickFolder($event, index, 'measure')">
+                    </div-->
+                    <!--div @contextmenu.prevent="rightClickFolder($event, index, 'measure')">
                         <el-submenu :index="item.metadata.name + '-' + index + '-measure'">
                             <template slot="title">
                                 <i class="el-icon-folder"></i>
@@ -67,7 +79,7 @@
                                 </div>
                             </div>
                         </el-submenu>
-                    </div>
+                    </div-->
                 </el-submenu>
             </div>
         </el-menu>
@@ -100,7 +112,7 @@ export default {
                     "ttl": "420d"
                 },
                 "updatedAt": null,
-                "measure": [
+                "children": [
                     {
                         "metadata": {
                             "group": "measure-default",
@@ -297,6 +309,10 @@ export default {
                 name: "new Group",
                 id: "create Group"
             }, {
+                icon: "el-icon-document",
+                name: "new File",
+                id: "create File"
+            }, {
                 icon: "el-icon-refresh-right",
                 name: "refresh",
                 id: "refresh Group"
@@ -370,11 +386,11 @@ export default {
             console.log('rightClick')
         },
         // open folder right menu
-        rightClickFolder(e, index, type) {
+        /*rightClickFolder(e, index, type) {
             this.rightMenuList = this.rightMenuListOne
             this.openRightMenu(e)
             console.log('rightClickFolder')
-        },
+        },*/
         // open group right menu
         rightClickGroup(e, index) {
             this.rightMenuList = this.rightMenuListTwo
@@ -385,8 +401,12 @@ export default {
 
 
         },
-        openMeasureFile(index, indexMeasure) {
-            let item = this.groupLists[index].measure[indexMeasure]
+        openFile(index, indexChildren) {
+            let item = this.groupLists[index].children[indexChildren]
+            /**
+             * Todo
+             * Measure or Stream?
+             */
             item.metadata.type = "measure"
             this.$store.commit('selectMenu', item)
         }
