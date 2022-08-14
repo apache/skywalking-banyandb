@@ -175,9 +175,9 @@ var _ = Describe("Streaming", func() {
 				Eventually(func(g Gomega) {
 					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
 					g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo([]*Tuple2{
-						{int64(9500), flow.Data{"e2e-service-consumer", int64(9500)}},
-						{int64(9600), flow.Data{"e2e-service-consumer", int64(9600)}},
-						{int64(9700), flow.Data{"e2e-service-consumer", int64(9700)}},
+						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500)}, 7000)},
+						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600)}, 6000)},
+						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700)}, 4000)},
 					}))
 				}).WithTimeout(10 * time.Second).Should(Succeed())
 			})

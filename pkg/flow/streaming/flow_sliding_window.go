@@ -143,6 +143,7 @@ func (s *TumblingTimeWindows) emit() {
 			s.errorHandler(err)
 		}
 	}
+	close(s.done)
 }
 
 func (s *TumblingTimeWindows) purgeOutdatedWindows() {
@@ -212,7 +213,7 @@ func (s *TumblingTimeWindows) receive() {
 		}
 	}
 	close(s.purgedWindow)
-	close(s.done)
+	<-s.done
 	close(s.out)
 }
 
