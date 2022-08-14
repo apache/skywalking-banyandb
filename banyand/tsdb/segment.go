@@ -225,14 +225,14 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) {
+func (bc *blockController) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
 	bb := bc.search(func(b *block) bool {
 		return b.Overlapping(timeRange)
 	})
 	if bb == nil {
 		return nil, nil
 	}
-	dd := make([]blockDelegate, len(bb))
+	dd := make([]BlockDelegate, len(bb))
 	for i, b := range bb {
 		d, err := b.delegate()
 		if err != nil {
@@ -243,7 +243,7 @@ func (bc *blockController) span(timeRange timestamp.TimeRange) ([]blockDelegate,
 	return dd, nil
 }
 
-func (bc *blockController) get(blockID uint16) (blockDelegate, error) {
+func (bc *blockController) get(blockID uint16) (BlockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
 		return b.delegate()
