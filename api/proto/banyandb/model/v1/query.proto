@@ -65,15 +65,18 @@ message Condition {
         BINARY_OP_NOT_IN = 10;
         BINARY_OP_MATCH = 11;
     }
-    string name = 1;
-    BinaryOp op = 2;
-    TagValue value = 3;
+    string tag_family_name = 1;
+    string name = 2;
+    BinaryOp op = 3;
+    TagValue value = 4;
 }
 
 // tag_families are indexed.
 message Criteria {
-   repeated LogicalExpression les = 1;
-   repeated Criteria inners = 2;
+    oneof exp {
+        LogicalExpression le = 1;
+        Condition condition = 2;
+    }
 }
 
 // LogicalExpression supports logical operation
@@ -85,10 +88,8 @@ message LogicalExpression {
     }
     // op is a logial operation
     LogicalOp op = 1;
-    // tag_family_name indicates the tag family to which the tag name in the condition belongs.
-    string tag_family_name = 2;
-    // condition is a binary operation
-    model.v1.Condition condition = 3; 
+    Criteria left = 2;
+    Criteria right = 3;
 }
 
 enum Sort {
