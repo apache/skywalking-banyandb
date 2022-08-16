@@ -19,7 +19,7 @@
 <template>
     <div class="drawer-container flex column">
         <div class="text-secondary-color text-tips text-start text-family detail-title">Details</div>
-        <div class="detail-content border-radius">
+        <div class="detail-content border-radius-little">
             <div class="detail-content-container margin-all">
                 <div class="detail-content-title flex justify-between">
                     <div class="text-main-color text-title text-family">Name DB</div>
@@ -94,9 +94,9 @@ export default {
 
 <style lang="scss" scoped>
 .drawer-container {
-    width: calc(100% - 30px);
-    height: calc(100% - 30px);
-    margin: 15px;
+    width: calc(100% - 20px);
+    height: calc(100% - 20px);
+    margin: 10px;
 
     .detail-title {
         width: 100%;

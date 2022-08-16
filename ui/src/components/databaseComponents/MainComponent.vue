@@ -22,8 +22,8 @@
         <div :style="showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
             <tag-navigation-component></tag-navigation-component>
             <el-card style="max-height: 90%;">
-                <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
-                <second-navigation-component class="margin-top-bottom-little"></second-navigation-component>
+                <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
+                <second-navigation-component @openDetail="openDetail" :showDrawer="showDrawer" class="margin-top-bottom-little"></second-navigation-component>
                 <data-table-component class="margin-all-little"></data-table-component>
             </el-card>
         </div>
@@ -34,7 +34,7 @@
 </template>
 
 <script>
-import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
+// import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
 import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
 import TagNavigationComponent from './TagNavigationComponent.vue'
 import DrawerRightComponent from './mainComponents/DrawerRightComponent.vue'
@@ -48,18 +48,21 @@ export default {
         }
     },
     components: {
-        TopNavigationComponent,
+        // TopNavigationComponent,
         SecondNavigationComponent,
         TagNavigationComponent,
         DrawerRightComponent,
         DataTableComponent
     },
     methods: {
-        handleNavigation(item, index) {
+        openDetail() {
+            this.showDrawer = !this.showDrawer
+        },
+        /*handleNavigation(item, index) {
             if (item.name == "Detail") {
                 this.showDrawer = !this.showDrawer
             }
-        },
+        },*/
         closeDetail() {
             this.showDrawer = false
         }
@@ -69,8 +72,9 @@ export default {
 
 <style lang="scss">
 .el-card {
-    margin: 20px;
+    margin: 10px;
     padding: 0;
+    height: 100%;
 }
 
 .el-card__body {

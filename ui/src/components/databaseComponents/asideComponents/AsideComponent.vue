@@ -404,17 +404,17 @@ export default {
             this.openRightMenu(e)
             console.log('rightClickGroup')
         },
-        openStreamFile() {
-
-
-        },
         openFile(index, indexChildren) {
             let item = this.groupLists[index].children[indexChildren]
             /**
              * Todo
              * Measure or Stream?
              */
-            item.metadata.type = "measure"
+            if(this.groupLists[index].catalog == "CATALOG_MEASURE") {
+                item.metadata.type = "measure"
+            } else {
+                item.metadata.type = "stream"
+            }
             this.$store.commit('selectMenu', item)
         }
     },

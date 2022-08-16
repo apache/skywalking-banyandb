@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import { Message } from "element-ui"
 
 export default {
     state: {
@@ -24,12 +25,19 @@ export default {
     },
     mutations: {
         selectMenu(state, val) {
-            console.log(val)
-            state.currentMenu = val
-            let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
-            result === -1 ? state.tagsList.push(val) : ''
-            window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
-            window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
+            // console.log(val)
+            if (state.tagsList.length == 8) {
+                Message({
+                    message: "Open up to 8 files at the same time! Please close some files and try again!",
+                    type: "warning"
+                })
+            } else {
+                state.currentMenu = val
+                let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
+                result === -1 ? state.tagsList.push(val) : ''
+                window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
+                window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
+            }
         },
         closeTag(state, val) {
             let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)

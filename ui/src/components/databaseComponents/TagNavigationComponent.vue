@@ -72,10 +72,10 @@ export default {
 
 <style lang="scss" scoped>
 div {
-  margin: 20px 20px 0 20px;
+  margin: 10px 10px 0 10px;
 
   .el-tag {
-    margin-right: 15px;
+    margin-right: 5px;
   }
 }
 </style>

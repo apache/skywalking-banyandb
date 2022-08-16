@@ -18,23 +18,27 @@
 -->
 <template>
     <div class="flex second-nav-contain align-item-center justify-around">
-        <el-button class="nav-button" @click="checkAll">Check All</el-button>
-        <el-button class="nav-button" @click="checkNone">Check None</el-button>
-        <div class="flex align-item-center date-picker">
+        <!--div class="flex align-item-center date-picker">
             <div class="text-family text-main-color text-normal">Time</div>
-            <el-date-picker class="picker" v-model="value" align="right" type="date" placeholder="Select time"
-                :picker-options="pickerOptions">
+            <el-date-picker class="picker date-picker" v-model="value" align="right" type="date"
+                placeholder="Select time" :picker-options="pickerOptions">
             </el-date-picker>
-        </div>
+        </div-->
+        <el-date-picker class="picker date-picker" v-model="value" align="right" type="date" placeholder="Select time"
+            :picker-options="pickerOptions">
+        </el-date-picker>
         <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query">
             <el-button slot="append" icon="el-icon-search"></el-button>
         </el-input>
-        <div class="flex refresh align-item-center justify-around pointer border-radius-little"
+        <!--div class="flex refresh align-item-center justify-around pointer border-radius-little"
             :style="{ fontColor: refreshStyle.fontColor, color: refreshStyle.color, backgroundColor: refreshStyle.backgroundColor }"
             @mouseover="handleOver" @mouseleave="handleLeave">
             <i class="el-icon-refresh-right icon"></i>
             <div>Refresh</div>
-        </div>
+        </div-->
+        <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right">Refresh</el-button>
+        <el-button class="nav-button" @click="openDetail">{{ showDrawer ? "Close Detail" : "Open Detail" }}</el-button>
+        <el-button class="nav-button" @click="openDesign">Open Design</el-button>
     </div>
 </template>
 
@@ -77,6 +81,12 @@ export default {
             },
         }
     },
+    props: {
+        showDrawer: {
+            type: Boolean,
+            default: false
+        }
+    },
     methods: {
         handleOver() {
             this.refreshStyle.fontColor = "var(--color-main)"
@@ -88,12 +98,18 @@ export default {
             this.refreshStyle.color = "var(--color-main-font)"
             this.refreshStyle.backgroundColor = "var(--color-white)"
         },
-        checkAll() {
+        openDetail() {
+            this.$emit('openDetail')
+        },
+        openDesign() {
+
+        }
+        /*checkAll() {
             this.$bus.$emit('checkAll')
         },
         checkNone() {
             this.$bus.$emit('checkNone')
-        }
+        }*/
     },
 }
 </script>
@@ -101,6 +117,7 @@ export default {
 <style lang="scss" scoped>
 .nav-button {
     width: 8%;
+    margin: 0;
 }
 
 .second-nav-contain {
@@ -109,10 +126,12 @@ export default {
 
     .date-picker {
         width: 35%;
+        margin: 0;
     }
 
     .search-input {
         width: 35%;
+        margin: 0;
     }
 
     .refresh {
