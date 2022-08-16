@@ -160,9 +160,16 @@ message IndexRule {
     google.protobuf.Timestamp updated_at = 5;
     enum Analyzer {
         ANALYZER_UNSPECIFIED = 0;
+        // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
         ANALYZER_KEYWORD = 1;
+        // Standard analyzer provides grammar based tokenization
         ANALYZER_STANDARD = 2;
+        // Simple analyzer breaks text into tokens at any non-letter character, 
+        // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, 
+        // and changes uppercase to lowercase.
         ANAKYZER_SIMPLE = 3;
+        // Stop analyzer is the same as the simple analyzer but adds support for removing stop words,
+        // The stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html
         ANAKYZER_STOP = 4;
     }
     // analyzer analyzes tag value to support the full-text searching

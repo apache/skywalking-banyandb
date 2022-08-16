@@ -348,10 +348,17 @@ type IndexRule_Analyzer int32
 
 const (
 	IndexRule_ANALYZER_UNSPECIFIED IndexRule_Analyzer = 0
-	IndexRule_ANALYZER_KEYWORD     IndexRule_Analyzer = 1
-	IndexRule_ANALYZER_STANDARD    IndexRule_Analyzer = 2
-	IndexRule_ANAKYZER_SIMPLE      IndexRule_Analyzer = 3
-	IndexRule_ANAKYZER_STOP        IndexRule_Analyzer = 4
+	// Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
+	IndexRule_ANALYZER_KEYWORD IndexRule_Analyzer = 1
+	// Standard analyzer provides grammar based tokenization
+	IndexRule_ANALYZER_STANDARD IndexRule_Analyzer = 2
+	// Simple analyzer breaks text into tokens at any non-letter character,
+	// such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
+	// and changes uppercase to lowercase.
+	IndexRule_ANAKYZER_SIMPLE IndexRule_Analyzer = 3
+	// Stop analyzer is the same as the simple analyzer but adds support for removing stop words,
+	// The stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html
+	IndexRule_ANAKYZER_STOP IndexRule_Analyzer = 4
 )
 
 // Enum value maps for IndexRule_Analyzer.

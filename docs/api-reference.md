@@ -37,6 +37,7 @@
     - [Condition](#banyandb-model-v1-Condition)
     - [Criteria](#banyandb-model-v1-Criteria)
     - [Expression](#banyandb-model-v1-Expression)
+    - [LogicalExpression](#banyandb-model-v1-LogicalExpression)
     - [QueryOrder](#banyandb-model-v1-QueryOrder)
     - [Tag](#banyandb-model-v1-Tag)
     - [TagFamily](#banyandb-model-v1-TagFamily)
@@ -45,7 +46,7 @@
     - [TimeRange](#banyandb-model-v1-TimeRange)
   
     - [Condition.BinaryOp](#banyandb-model-v1-Condition-BinaryOp)
-    - [Expression.LogicalOp](#banyandb-model-v1-Expression-LogicalOp)
+    - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
@@ -621,12 +622,28 @@ tag_families are indexed.
 <a name="banyandb-model-v1-Expression"></a>
 
 ### Expression
-
+Expression is either a logical expression or an inner expression.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| op | [Expression.LogicalOp](#banyandb-model-v1-Expression-LogicalOp) |  | op is a logial operation |
+| le | [LogicalExpression](#banyandb-model-v1-LogicalExpression) |  |  |
+| inner | [Expression](#banyandb-model-v1-Expression) |  |  |
+
+
+
+
+
+
+<a name="banyandb-model-v1-LogicalExpression"></a>
+
+### LogicalExpression
+LogicalExpression supports logical operation
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logial operation |
 | tag_family_name | [string](#string) |  | tag_family_name indicates the tag family to which the tag name in the condition belongs. |
 | condition | [Condition](#banyandb-model-v1-Condition) |  | condition is a binary operation |
 
@@ -765,9 +782,9 @@ Each item in a string array is seen as a token instead of a query expression.
 
 
 
-<a name="banyandb-model-v1-Expression-LogicalOp"></a>
+<a name="banyandb-model-v1-LogicalExpression-LogicalOp"></a>
 
-### Expression.LogicalOp
+### LogicalExpression.LogicalOp
 
 
 | Name | Number | Description |
@@ -1037,10 +1054,10 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | ANALYZER_UNSPECIFIED | 0 |  |
-| ANALYZER_KEYWORD | 1 |  |
-| ANALYZER_STANDARD | 2 |  |
-| ANAKYZER_SIMPLE | 3 |  |
-| ANAKYZER_STOP | 4 |  |
+| ANALYZER_KEYWORD | 1 | Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token. |
+| ANALYZER_STANDARD | 2 | Standard analyzer provides grammar based tokenization |
+| ANAKYZER_SIMPLE | 3 | Simple analyzer breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. |
+| ANAKYZER_STOP | 4 | Stop analyzer is the same as the simple analyzer but adds support for removing stop words, The stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html |
 
 
 
