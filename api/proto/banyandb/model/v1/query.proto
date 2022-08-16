@@ -72,7 +72,8 @@ message Condition {
 
 // tag_families are indexed.
 message Criteria {
-    repeated Expression exps = 1;
+   repeated LogicalExpression les = 1;
+   repeated Criteria inners = 2;
 }
 
 // LogicalExpression supports logical operation
@@ -88,14 +89,6 @@ message LogicalExpression {
     string tag_family_name = 2;
     // condition is a binary operation
     model.v1.Condition condition = 3; 
-}
-
-// Expression is either a logical expression or an inner expression.
-message Expression {
-    oneof exp {
-        LogicalExpression le = 1;
-        Expression inner = 2;
-    }
 }
 
 enum Sort {

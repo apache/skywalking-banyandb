@@ -1372,11 +1372,11 @@
         "ANALYZER_UNSPECIFIED",
         "ANALYZER_KEYWORD",
         "ANALYZER_STANDARD",
-        "ANAKYZER_SIMPLE",
-        "ANAKYZER_STOP"
+        "ANALYZER_SIMPLE",
+        "ANALYZER_STOP"
       ],
       "default": "ANALYZER_UNSPECIFIED",
-      "title": "- ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANAKYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase.\n - ANAKYZER_STOP: Stop analyzer is the same as the simple analyzer but adds support for removing stop words,\nThe stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html"
+      "title": "- ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase.\n - ANALYZER_STOP: Stop analyzer is the same as the simple analyzer but adds support for removing stop words,\nThe stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html"
     },
     "LogicalExpressionLogicalOp": {
       "type": "string",
@@ -1457,10 +1457,16 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "exps": {
+        "le": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Expression"
+            "$ref": "#/definitions/v1LogicalExpression"
+          }
+        },
+        "inner": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Criteria"
           }
         }
       },
@@ -1484,18 +1490,6 @@
           }
         }
       }
-    },
-    "v1Expression": {
-      "type": "object",
-      "properties": {
-        "le": {
-          "$ref": "#/definitions/v1LogicalExpression"
-        },
-        "inner": {
-          "$ref": "#/definitions/v1Expression"
-        }
-      },
-      "description": "Expression is either a logical expression or an inner expression."
     },
     "v1FieldSpec": {
       "type": "object",

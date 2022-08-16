@@ -36,7 +36,6 @@
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
     - [Criteria](#banyandb-model-v1-Criteria)
-    - [Expression](#banyandb-model-v1-Expression)
     - [LogicalExpression](#banyandb-model-v1-LogicalExpression)
     - [QueryOrder](#banyandb-model-v1-QueryOrder)
     - [Tag](#banyandb-model-v1-Tag)
@@ -612,23 +611,8 @@ tag_families are indexed.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| exps | [Expression](#banyandb-model-v1-Expression) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-model-v1-Expression"></a>
-
-### Expression
-Expression is either a logical expression or an inner expression.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| le | [LogicalExpression](#banyandb-model-v1-LogicalExpression) |  |  |
-| inner | [Expression](#banyandb-model-v1-Expression) |  |  |
+| le | [LogicalExpression](#banyandb-model-v1-LogicalExpression) | repeated |  |
+| inner | [Criteria](#banyandb-model-v1-Criteria) | repeated |  |
 
 
 
@@ -1056,8 +1040,8 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | ANALYZER_UNSPECIFIED | 0 |  |
 | ANALYZER_KEYWORD | 1 | Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token. |
 | ANALYZER_STANDARD | 2 | Standard analyzer provides grammar based tokenization |
-| ANAKYZER_SIMPLE | 3 | Simple analyzer breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. |
-| ANAKYZER_STOP | 4 | Stop analyzer is the same as the simple analyzer but adds support for removing stop words, The stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html |
+| ANALYZER_SIMPLE | 3 | Simple analyzer breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. |
+| ANALYZER_STOP | 4 | Stop analyzer is the same as the simple analyzer but adds support for removing stop words, The stop words are list at https://www.elastic.co/guide/en/elasticsearch/reference/8.3/analysis-stop-tokenfilter.html |
 
 
 

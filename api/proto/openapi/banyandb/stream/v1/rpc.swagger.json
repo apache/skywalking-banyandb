@@ -158,10 +158,16 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "exps": {
+        "le": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Expression"
+            "$ref": "#/definitions/v1LogicalExpression"
+          }
+        },
+        "inner": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Criteria"
           }
         }
       },
@@ -209,18 +215,6 @@
           "title": "the order of tag_families' items match the stream schema"
         }
       }
-    },
-    "v1Expression": {
-      "type": "object",
-      "properties": {
-        "le": {
-          "$ref": "#/definitions/v1LogicalExpression"
-        },
-        "inner": {
-          "$ref": "#/definitions/v1Expression"
-        }
-      },
-      "description": "Expression is either a logical expression or an inner expression."
     },
     "v1ID": {
       "type": "object",

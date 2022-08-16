@@ -246,10 +246,16 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "exps": {
+        "le": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Expression"
+            "$ref": "#/definitions/v1LogicalExpression"
+          }
+        },
+        "inner": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1Criteria"
           }
         }
       },
@@ -304,18 +310,6 @@
         }
       },
       "description": "DataPointValue is the data point for writing. It only contains values."
-    },
-    "v1Expression": {
-      "type": "object",
-      "properties": {
-        "le": {
-          "$ref": "#/definitions/v1LogicalExpression"
-        },
-        "inner": {
-          "$ref": "#/definitions/v1Expression"
-        }
-      },
-      "description": "Expression is either a logical expression or an inner expression."
     },
     "v1FieldValue": {
       "type": "object",
