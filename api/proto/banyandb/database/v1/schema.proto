@@ -158,6 +158,15 @@ message IndexRule {
     Location location = 4;
     // updated_at indicates when the IndexRule is updated
     google.protobuf.Timestamp updated_at = 5;
+    enum Analyzer {
+        ANALYZER_UNSPECIFIED = 0;
+        ANALYZER_KEYWORD = 1;
+        ANALYZER_STANDARD = 2;
+        ANAKYZER_SIMPLE = 3;
+        ANAKYZER_STOP = 4;
+    }
+    // analyzer analyzes tag value to support the full-text searching
+    Analyzer analyzer = 6;
 }
 
 // Subject defines which stream or measure would generate indices

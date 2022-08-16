@@ -36,6 +36,7 @@
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
     - [Criteria](#banyandb-model-v1-Criteria)
+    - [Expression](#banyandb-model-v1-Expression)
     - [QueryOrder](#banyandb-model-v1-QueryOrder)
     - [Tag](#banyandb-model-v1-Tag)
     - [TagFamily](#banyandb-model-v1-TagFamily)
@@ -44,6 +45,7 @@
     - [TimeRange](#banyandb-model-v1-TimeRange)
   
     - [Condition.BinaryOp](#banyandb-model-v1-Condition-BinaryOp)
+    - [Expression.LogicalOp](#banyandb-model-v1-Expression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
@@ -61,6 +63,7 @@
     - [CompressionMethod](#banyandb-database-v1-CompressionMethod)
     - [EncodingMethod](#banyandb-database-v1-EncodingMethod)
     - [FieldType](#banyandb-database-v1-FieldType)
+    - [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer)
     - [IndexRule.Location](#banyandb-database-v1-IndexRule-Location)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
@@ -608,8 +611,24 @@ tag_families are indexed.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tag_family_name | [string](#string) |  |  |
-| conditions | [Condition](#banyandb-model-v1-Condition) | repeated |  |
+| exps | [Expression](#banyandb-model-v1-Expression) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-model-v1-Expression"></a>
+
+### Expression
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| op | [Expression.LogicalOp](#banyandb-model-v1-Expression-LogicalOp) |  | op is a logial operation |
+| tag_family_name | [string](#string) |  | tag_family_name indicates the tag family to which the tag name in the condition belongs. |
+| condition | [Condition](#banyandb-model-v1-Condition) |  | condition is a binary operation |
 
 
 
@@ -725,6 +744,9 @@ BinaryOp specifies the operation imposed to the given query condition
 For EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.
 HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.
 For example, &#34;keyA&#34; contains &#34;valueA&#34; **and** &#34;valueB&#34;
+MATCH performances a full-text search if the tag is analyzed.
+The string value applies to the same analyzer as the tag, but string array value does not.
+Each item in a string array is seen as a token instead of a query expression.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
@@ -739,6 +761,20 @@ For example, &#34;keyA&#34; contains &#34;valueA&#34; **and** &#34;valueB&#34;
 | BINARY_OP_NOT_HAVING | 8 |  |
 | BINARY_OP_IN | 9 |  |
 | BINARY_OP_NOT_IN | 10 |  |
+| BINARY_OP_MATCH | 11 |  |
+
+
+
+<a name="banyandb-model-v1-Expression-LogicalOp"></a>
+
+### Expression.LogicalOp
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| LOGICAL_OP_UNSPECIFIED | 0 |  |
+| LOGICAL_OP_AND | 1 |  |
+| LOGICAL_OP_OR | 2 |  |
 
 
 
@@ -816,6 +852,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | location | [IndexRule.Location](#banyandb-database-v1-IndexRule-Location) |  | location indicates where to store index. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
+| analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching |
 
 
 
@@ -989,6 +1026,21 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | FIELD_TYPE_STRING | 1 |  |
 | FIELD_TYPE_INT | 2 |  |
 | FIELD_TYPE_DATA_BINARY | 3 |  |
+
+
+
+<a name="banyandb-database-v1-IndexRule-Analyzer"></a>
+
+### IndexRule.Analyzer
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ANALYZER_UNSPECIFIED | 0 |  |
+| ANALYZER_KEYWORD | 1 |  |
+| ANALYZER_STANDARD | 2 |  |
+| ANAKYZER_SIMPLE | 3 |  |
+| ANAKYZER_STOP | 4 |  |
 
 
 

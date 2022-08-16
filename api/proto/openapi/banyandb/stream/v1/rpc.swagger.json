@@ -64,10 +64,20 @@
         "BINARY_OP_HAVING",
         "BINARY_OP_NOT_HAVING",
         "BINARY_OP_IN",
-        "BINARY_OP_NOT_IN"
+        "BINARY_OP_NOT_IN",
+        "BINARY_OP_MATCH"
       ],
       "default": "BINARY_OP_UNSPECIFIED",
-      "title": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\""
+      "description": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\"\nMATCH performances a full-text search if the tag is analyzed.\nThe string value applies to the same analyzer as the tag, but string array value does not.\nEach item in a string array is seen as a token instead of a query expression."
+    },
+    "ExpressionLogicalOp": {
+      "type": "string",
+      "enum": [
+        "LOGICAL_OP_UNSPECIFIED",
+        "LOGICAL_OP_AND",
+        "LOGICAL_OP_OR"
+      ],
+      "default": "LOGICAL_OP_UNSPECIFIED"
     },
     "modelv1Tag": {
       "type": "object",
@@ -148,13 +158,10 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "tagFamilyName": {
-          "type": "string"
-        },
-        "conditions": {
+        "exps": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/v1Condition"
+            "$ref": "#/definitions/v1Expression"
           }
         }
       },
@@ -200,6 +207,23 @@
             "$ref": "#/definitions/v1TagFamilyForWrite"
           },
           "title": "the order of tag_families' items match the stream schema"
+        }
+      }
+    },
+    "v1Expression": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "$ref": "#/definitions/ExpressionLogicalOp",
+          "title": "op is a logial operation"
+        },
+        "tagFamilyName": {
+          "type": "string",
+          "description": "tag_family_name indicates the tag family to which the tag name in the condition belongs."
+        },
+        "condition": {
+          "$ref": "#/definitions/v1Condition",
+          "title": "condition is a binary operation"
         }
       }
     },
