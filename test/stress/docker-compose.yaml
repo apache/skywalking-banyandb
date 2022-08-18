@@ -24,9 +24,12 @@ services:
       target: ${TARGET}
     volumes:
     - ../..:/app:rw,delegated
+    # Uncomment below line to mount an external volume
+    # - /tmp:/tmp:rw,delgated
     ports:
     - 17913:17913
     - 6060:6060
+    - 2121:2121
     networks:
       - test
       - monitoring

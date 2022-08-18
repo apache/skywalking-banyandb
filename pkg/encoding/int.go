@@ -25,8 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/apache/skywalking-banyandb/pkg/bit"
 	"github.com/apache/skywalking-banyandb/pkg/buffer"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -44,13 +42,15 @@ var (
 )
 
 type intEncoderPoolDelegator struct {
+	name string
 	pool *sync.Pool
 	size int
 	fn   ParseInterval
 }
 
-func NewIntEncoderPool(size int, fn ParseInterval) SeriesEncoderPool {
+func NewIntEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
 	return &intEncoderPoolDelegator{
+		name: name,
 		pool: &intEncoderPool,
 		size: size,
 		fn:   fn,
@@ -59,6 +59,7 @@ func NewIntEncoderPool(size int, fn ParseInterval) SeriesEncoderPool {
 
 func (b *intEncoderPoolDelegator) Get(metadata []byte) SeriesEncoder {
 	encoder := b.pool.Get().(*intEncoder)
+	encoder.name = b.name
 	encoder.size = b.size
 	encoder.fn = b.fn
 	encoder.Reset(metadata)
@@ -73,13 +74,15 @@ func (b *intEncoderPoolDelegator) Put(encoder SeriesEncoder) {
 }
 
 type intDecoderPoolDelegator struct {
+	name string
 	pool *sync.Pool
 	size int
 	fn   ParseInterval
 }
 
-func NewIntDecoderPool(size int, fn ParseInterval) SeriesDecoderPool {
+func NewIntDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
 	return &intDecoderPoolDelegator{
+		name: name,
 		pool: &intDecoderPool,
 		size: size,
 		fn:   fn,
@@ -88,6 +91,7 @@ func NewIntDecoderPool(size int, fn ParseInterval) SeriesDecoderPool {
 
 func (b *intDecoderPoolDelegator) Get(_ []byte) SeriesDecoder {
 	decoder := b.pool.Get().(*intDecoder)
+	decoder.name = b.name
 	decoder.size = b.size
 	decoder.fn = b.fn
 	return decoder
@@ -105,6 +109,7 @@ var _ SeriesEncoder = (*intEncoder)(nil)
 type ParseInterval = func(key []byte) time.Duration
 
 type intEncoder struct {
+	name      string
 	buff      *bytes.Buffer
 	bw        *bit.Writer
 	values    *XOREncoder
@@ -148,8 +153,8 @@ func (ie *intEncoder) Append(ts uint64, value []byte) {
 	ie.bw.WriteBool(l > 0)
 	ie.values.Write(convert.BytesToUint64(value))
 	ie.num++
-	itemsNum.With(prometheus.Labels{"type": "int"}).Inc()
-	rawSize.With(prometheus.Labels{"type": "int"}).Add(float64(l + 8))
+	itemsNum.WithLabelValues(ie.name, "int").Inc()
+	rawSize.WithLabelValues(ie.name, "int").Add(float64(l + 8))
 }
 
 func (ie *intEncoder) IsFull() bool {
@@ -169,7 +174,7 @@ func (ie *intEncoder) Encode() ([]byte, error) {
 	buffWriter.PutUint64(ie.startTime)
 	buffWriter.PutUint16(uint16(ie.size))
 	bb := buffWriter.Bytes()
-	encodedSize.With(prometheus.Labels{"type": "int"}).Add(float64(len(bb)))
+	encodedSize.WithLabelValues(ie.name, "int").Add(float64(len(bb)))
 	return bb, nil
 }
 
@@ -180,6 +185,7 @@ func (ie *intEncoder) StartTime() uint64 {
 var _ SeriesDecoder = (*intDecoder)(nil)
 
 type intDecoder struct {
+	name      string
 	fn        ParseInterval
 	size      int
 	interval  time.Duration

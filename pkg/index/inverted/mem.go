@@ -106,15 +106,13 @@ func (m *memTable) Iterator(fieldKey index.FieldKey, rangeOpts index.RangeOpts,
 	}
 	fValue := fieldsValues.value
 	var terms [][]byte
-	{
-		fValue.mutex.RLock()
-		defer fValue.mutex.RUnlock()
-		for _, value := range fValue.repo {
-			if rangeOpts.Between(value.Term) == 0 {
-				terms = append(terms, value.Term)
-			}
+	fValue.mutex.RLock()
+	for _, value := range fValue.repo {
+		if rangeOpts.Between(value.Term) == 0 {
+			terms = append(terms, value.Term)
 		}
 	}
+	fValue.mutex.RUnlock()
 	if len(terms) < 1 {
 		return nil, nil
 	}
@@ -206,16 +204,22 @@ func (i *flushIterator) Close() error {
 }
 
 func (i *flushIterator) setCurr() bool {
+	i.fields.mutex.RLock()
 	if i.fieldIdx >= len(i.fields.lst) {
+		i.fields.mutex.RUnlock()
 		return false
 	}
 	fieldID := i.fields.lst[i.fieldIdx]
 	term := i.fields.repo[fieldID]
+	i.fields.mutex.RUnlock()
+	term.value.mutex.RLock()
 	if i.termIdx >= len(term.value.lst) {
+		term.value.mutex.RUnlock()
 		return false
 	}
 	valueID := term.value.lst[i.termIdx]
 	value := term.value.repo[valueID]
+	term.value.mutex.RUnlock()
 	v, err := value.Value.Marshall()
 	if err != nil {
 		i.err = multierr.Append(i.err, err)
