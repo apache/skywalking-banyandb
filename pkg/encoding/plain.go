@@ -26,7 +26,6 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/apache/skywalking-banyandb/pkg/buffer"
 )
@@ -43,12 +42,14 @@ var (
 )
 
 type plainEncoderPoolDelegator struct {
+	name string
 	pool *sync.Pool
 	size int
 }
 
-func NewPlainEncoderPool(size int) SeriesEncoderPool {
+func NewPlainEncoderPool(name string, size int) SeriesEncoderPool {
 	return &plainEncoderPoolDelegator{
+		name: name,
 		pool: &plainEncoderPool,
 		size: size,
 	}
@@ -56,6 +57,7 @@ func NewPlainEncoderPool(size int) SeriesEncoderPool {
 
 func (b *plainEncoderPoolDelegator) Get(metadata []byte) SeriesEncoder {
 	encoder := b.pool.Get().(*plainEncoder)
+	encoder.name = b.name
 	encoder.Reset(metadata)
 	encoder.valueSize = b.size
 	return encoder
@@ -69,12 +71,14 @@ func (b *plainEncoderPoolDelegator) Put(encoder SeriesEncoder) {
 }
 
 type plainDecoderPoolDelegator struct {
+	name string
 	pool *sync.Pool
 	size int
 }
 
-func NewPlainDecoderPool(size int) SeriesDecoderPool {
+func NewPlainDecoderPool(name string, size int) SeriesDecoderPool {
 	return &plainDecoderPoolDelegator{
+		name: name,
 		pool: &plainDecoderPool,
 		size: size,
 	}
@@ -82,6 +86,7 @@ func NewPlainDecoderPool(size int) SeriesDecoderPool {
 
 func (b *plainDecoderPoolDelegator) Get(_ []byte) SeriesDecoder {
 	decoder := b.pool.Get().(*plainDecoder)
+	decoder.name = b.name
 	decoder.valueSize = b.size
 	return decoder
 }
@@ -102,6 +107,7 @@ var (
 
 // plainEncoder backport to reduced value
 type plainEncoder struct {
+	name      string
 	tsBuff    *buffer.Writer
 	valBuff   *buffer.Writer
 	len       uint32
@@ -160,9 +166,9 @@ func (t *plainEncoder) Encode() ([]byte, error) {
 	result.Write(dst)
 	result.PutUint16(uint16(l))
 	dd := result.Bytes()
-	itemsNum.With(prometheus.Labels{"type": "plain"}).Inc()
-	rawSize.With(prometheus.Labels{"type": "plain"}).Add(float64(l))
-	encodedSize.With(prometheus.Labels{"type": "plain"}).Add(float64(len(dd)))
+	itemsNum.WithLabelValues(t.name, "plain").Inc()
+	rawSize.WithLabelValues(t.name, "plain").Add(float64(l))
+	encodedSize.WithLabelValues(t.name, "plain").Add(float64(len(dd)))
 	return dd, nil
 }
 
@@ -183,6 +189,7 @@ var ErrInvalidValue = errors.New("invalid encoded value")
 
 // plainDecoder decodes encoded time index
 type plainDecoder struct {
+	name      string
 	ts        []byte
 	val       []byte
 	len       uint32

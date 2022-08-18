@@ -118,10 +118,10 @@ func (b *block) options(ctx context.Context) {
 		options = o.(DatabaseOpts)
 	}
 	if options.EncodingMethod.EncoderPool == nil {
-		options.EncodingMethod.EncoderPool = encoding.NewPlainEncoderPool(0)
+		options.EncodingMethod.EncoderPool = encoding.NewPlainEncoderPool("tsdb", 0)
 	}
 	if options.EncodingMethod.EncoderPool == nil {
-		options.EncodingMethod.DecoderPool = encoding.NewPlainDecoderPool(0)
+		options.EncodingMethod.DecoderPool = encoding.NewPlainDecoderPool("tsdb", 0)
 	}
 	b.encodingMethod = options.EncodingMethod
 	if options.BlockMemSize < 1 {

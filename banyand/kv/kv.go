@@ -256,6 +256,9 @@ func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexSto
 		opt(bdb)
 	}
 	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
+	bdb.dbOpts = bdb.dbOpts.WithNumCompactors(2)
+	bdb.dbOpts = bdb.dbOpts.WithMemTableSize(2 << 20)
+	bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)
