@@ -65,6 +65,11 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 }
 
 func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) error {
+	group := stream.Metadata.GetGroup()
+	_, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return err
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindStream,

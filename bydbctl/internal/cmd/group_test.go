@@ -22,6 +22,4 @@ import (
 )
 
 var _ = Describe("Group", func() {
-	It("foo", func() {
-	})
 })

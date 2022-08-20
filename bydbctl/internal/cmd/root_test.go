@@ -17,11 +17,7 @@
 
 package cmd_test
 
-import (
-	. "github.com/onsi/ginkgo/v2"
-)
-
-var _ = Describe("Root", func() {
-	It("foo", func() {
-	})
-})
+//var _ = Describe("Root", func() {
+//	It("foo", func() {
+//	})
+//})

@@ -18,6 +18,8 @@
 package cmd
 
 import (
+	"fmt"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -32,13 +34,22 @@ func NewRoot() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			viper.SetConfigType("yaml")
 			viper.SetConfigName("config")
-			viper.AddConfigPath("./bydbctl/internal/config")
-			return viper.ReadInConfig()
+			viper.AddConfigPath("$HOME/.bydbctl")
+			if err := viper.ReadInConfig(); err != nil {
+				if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+					fmt.Println("Config file not found")
+					logger.GetLogger().Fatal().Err(err).Msg("Config file not found")
+				} else {
+					logger.GetLogger().Fatal().Err(err).Msg("Config file was found but another error was produced")
+				}
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.AddCommand(newBanyanDBCmd()...)
 	Addr := ""
-	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "127.0.0.1:17913", "default ip/port") // 这都能读取到？
+	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "localhost:17913", "default ip/port")
 	Json := ""
 	cmd.PersistentFlags().StringVarP(&Json, "json", "j", `{}`, "accept json args to call banyandb's http interface")
 	return cmd

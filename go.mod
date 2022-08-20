@@ -38,6 +38,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.10.3
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/prometheus/client_golang v1.12.2
+	github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04
 	go.uber.org/atomic v1.9.0
 	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f
 	golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3

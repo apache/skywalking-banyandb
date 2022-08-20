@@ -35,33 +35,13 @@ func newStreamCmd() *cobra.Command {
 		Use:     "stream",
 		Version: version.Build(),
 		Short:   "banyandb stream schema related Operation",
-		//PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-		//	if err = config.Load("logging", cmd.Flags()); err != nil {
-		//		return err
-		//	}
-		//	return logger.Init(logging)
-		//},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 	}
 
-	type Metadata struct { // "{\"group\":\"group1\",\"name\":\"name1\"}"
-		Group string `json:"group"`
-		Name  string `json:"name"`
-	}
-
-	type Stream struct {
-		Metadata Metadata `json:"metadata"`
-		// todo: add support for other properties except for metadata
-	}
-
-	type StreamReq struct {
-		Stream Stream `json:"stream"`
-	}
-
 	StreamCreateCmd := &cobra.Command{
-		Use:     "create",
+		Use:     "create", // "{\"stream\":{\"metadata\":{\"group\":\"\",\"name\":\"naonao\"}}}"
 		Version: version.Build(),
 		Short:   "banyandb stream schema create Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -75,18 +55,27 @@ func newStreamCmd() *cobra.Command {
 				return err
 			}
 			body, err := cmd.Flags().GetString("json")
-			streamReq := StreamReq{}
-			err = json.Unmarshal([]byte(body), &streamReq)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			if streamReq.Stream.Metadata.Group == "" {
-				streamReq.Stream.Metadata.Group = fmt.Sprintf("%v", viper.Get("group"))
-				if streamReq.Stream.Metadata.Group == "" {
-					return errors.New("should choose a group")
-				}
+			stream, ok := data["stream"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
 			}
-			resp, err := client.R().SetBody(streamReq).Post("http://" + addr + "/api/v1/stream/schema")
+			metadata, ok := stream["metadata"].(map[string]interface{})
+			//switch .type
+			//case
+			if !ok {
+				return errors.New("input json format error")
+			}
+			_, ok = metadata["group"].(string)
+			if !ok {
+				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+			}
+			fmt.Println(data)
+			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/schema")
 			if err != nil {
 				return err
 			}
@@ -119,21 +108,37 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			streamReq := StreamReq{}
-			err = json.Unmarshal([]byte(body), &streamReq)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			if streamReq.Stream.Metadata.Group == "" {
-				streamReq.Stream.Metadata.Group = fmt.Sprintf("%v", viper.Get("group"))
-				if streamReq.Stream.Metadata.Group == "" {
-					return errors.New("should choose a group")
-				}
+			fmt.Print("data: ")
+			fmt.Println(data)
+			stream, ok := data["stream"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
 			}
-			resp, err := client.R().SetBody(streamReq).Put("http://" + addr + "/api/v1/stream/schema")
+			metadata, ok := stream["metadata"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
+			}
+			group, ok := metadata["group"].(string)
+			if !ok {
+				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+				group = fmt.Sprintf("%v", viper.Get("group"))
+			}
+			name, ok := metadata["name"].(string)
+			if !ok {
+				return errors.New("input json format error")
+			}
+			fmt.Println(data)
+			resp, err := client.R().SetBody(data).Put("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
+			logger.GetLogger().Info().Msg("http request: put " + "http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
+			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -144,7 +149,7 @@ func newStreamCmd() *cobra.Command {
 	}
 
 	StreamGetCmd := &cobra.Command{
-		Use:     "get",
+		Use:     "get", // "{\"metadata\":{\"group\":\"mxm\",\"name\":\"naonao\"}}"
 		Version: version.Build(),
 		Short:   "banyandb stream schema Get Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -158,22 +163,29 @@ func newStreamCmd() *cobra.Command {
 				return err
 			}
 			body, err := cmd.Flags().GetString("json")
-			stream := Stream{} // metadata
-			err = json.Unmarshal([]byte(body), &stream)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			if stream.Metadata.Group == "" {
-				stream.Metadata.Group = fmt.Sprintf("%v", viper.Get("group"))
-				if stream.Metadata.Group == "" {
-					return errors.New("should choose a group")
-				}
+			fmt.Println(data)
+			metadata, ok := data["metadata"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
 			}
-			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/" + stream.Metadata.Group + "/" + stream.Metadata.Name)
+			name, ok := metadata["name"].(string)
+			if !ok {
+				return errors.New("input json format error")
+			}
+			group, ok := metadata["group"].(string)
+			if !ok {
+				group = fmt.Sprintf("%v", viper.Get("group"))
+			}
+			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: get " + addr + "/api/v1/stream/schema/" + stream.Metadata.Group + "/" + stream.Metadata.Name)
+			logger.GetLogger().Info().Msg("http request: get " + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
@@ -199,22 +211,29 @@ func newStreamCmd() *cobra.Command {
 				return err
 			}
 			body, err := cmd.Flags().GetString("json")
-			stream := Stream{} // metadata
-			err = json.Unmarshal([]byte(body), &stream)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			if stream.Metadata.Group == "" {
-				stream.Metadata.Group = fmt.Sprintf("%v", viper.Get("group"))
-				if stream.Metadata.Group == "" {
-					return errors.New("should choose a group")
-				}
+			fmt.Println(data)
+			metadata, ok := data["metadata"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
 			}
-			resp, err := client.R().Delete("http://" + addr + "/api/v1/stream/schema/" + stream.Metadata.Group + "/" + stream.Metadata.Name)
+			name, ok := metadata["name"].(string)
+			if !ok {
+				return errors.New("input json format error")
+			}
+			group, ok := metadata["group"].(string)
+			if !ok {
+				group = fmt.Sprintf("%v", viper.Get("group"))
+			}
+			resp, err := client.R().Delete("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: delete " + addr + "/api/v1/stream/schema/" + stream.Metadata.Group + "/" + stream.Metadata.Name)
+			logger.GetLogger().Info().Msg("http request: delete " + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
@@ -243,22 +262,20 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var meta Metadata
-			err = json.Unmarshal([]byte(body), &meta)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			if meta.Group == "" {
-				meta.Group = fmt.Sprintf("%v", viper.Get("group"))
-				if meta.Group == "" {
-					return errors.New("should choose a group")
-				}
+			group, ok := data["group"].(string)
+			if !ok {
+				group = fmt.Sprintf("%v", viper.Get("group"))
 			}
-			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/lists/" + meta.Group)
+			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/lists/" + group)
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: list " + "http://" + addr + "/api/v1/stream/schema/" + meta.Group)
+			logger.GetLogger().Info().Msg("http request: list " + "http://" + addr + "/api/v1/stream/schema/" + group)
 			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
@@ -269,23 +286,6 @@ func newStreamCmd() *cobra.Command {
 		},
 	}
 
-	// todo: replace the complex struct with map?
-	//type Timestamp struct {
-	//	seconds int64
-	//	nanos   int32
-	//}
-	//
-	//type TimeRange struct {
-	//	begin Timestamp
-	//	end   Timestamp
-	//}
-	//
-	//type QueryRequest struct {
-	//	metadata  Metadata
-	//	timeRange TimeRange
-	//  ...
-	//}
-
 	StreamQueryCmd := &cobra.Command{
 		Use:     "query",
 		Version: version.Build(),
@@ -294,35 +294,41 @@ func newStreamCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			//logger.GetLogger().Info().Msg("banyandb stream schema Query Operation")
-			//client := resty.New()
-			//addr, err := cmd.Flags().GetString("addr")
-			//if err != nil {
-			//	return err
-			//}
-			//body, err := cmd.Flags().GetString("json")
-			//queryReq := QueryRequest{}
-			//err = json.Unmarshal([]byte(body), &queryReq)
-			//if err != nil {
-			//	return err
-			//}
-			//if queryReq.metadata.Group == "" {
-			//	queryReq.metadata.Group = fmt.Sprintf("%v", viper.Get("group"))
-			//	if queryReq.metadata.Group == "" {
-			//		return errors.New("error: should choose a group")
-			//	}
-			//}
-			//resp, err := client.R().SetBody(queryReq).Post("http://" + addr + "/api/v1/stream/data")
-			//if err != nil {
-			//	return err
-			//}
-			//logger.GetLogger().Info().Msg("http request: post " + addr + "/api/v1/stream/data")
-			//logger.GetLogger().Info().Msg("http response: " + resp.Status())
-			//yamlResult, err := yaml.JSONToYAML(resp.Body())
-			//if err != nil {
-			//	return err
-			//}
-			//fmt.Println(string(yamlResult))
+			logger.GetLogger().Info().Msg("banyandb stream schema Query Operation")
+			client := resty.New()
+			addr, err := cmd.Flags().GetString("addr")
+			if err != nil {
+				return err
+			}
+			body, err := cmd.Flags().GetString("json")
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
+			if err != nil {
+				return err
+			}
+			err = json.Unmarshal([]byte(body), &data)
+			if err != nil {
+				return err
+			}
+			metadata, ok := data["metadata"].(map[string]interface{})
+			if !ok {
+				return errors.New("input json format error")
+			}
+			_, ok = metadata["group"].(string)
+			if !ok {
+				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+			}
+			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/data")
+			if err != nil {
+				return err
+			}
+			logger.GetLogger().Info().Msg("http request: post " + addr + "/api/v1/stream/data")
+			logger.GetLogger().Info().Msg("http response: " + resp.Status())
+			yamlResult, err := yaml.JSONToYAML(resp.Body())
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(yamlResult))
 			return nil
 		},
 	}

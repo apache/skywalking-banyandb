@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -37,7 +38,7 @@ func newGroupCmd() *cobra.Command {
 		},
 	}
 
-	type MetaData struct { // "{\"group\":\"mxm\",\"name\":\"naonao\"}"
+	type MetaData struct { // "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"naonao\"}}}"
 		Group string `json:"group"`
 		Name  string `json:"name"`
 	}
@@ -50,33 +51,29 @@ func newGroupCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			//logger.GetLogger().Info().Msg("banyandb group schema Create Operation")
-			//client := resty.New()
-			//addr, err := cmd.Flags().GetString("addr")
-			//if err != nil {
-			//	return err
-			//}
-			//metaData, err := cmd.Flags().GetString("json")
-			//if err != nil {
-			//	return err
-			//}
-			//var meta MetaData
-			//err = json.Unmarshal([]byte(metaData), &meta)
-			//if err != nil {
-			//	return err
-			//}
-			//
-			//fmt.Println("http://" + addr + "/api/v1/group/schema")
-			//resp, err := client.R().Post("http://" + addr + "/api/v1/group/schema") //.SetBody()
-			//if err != nil {
-			//	return err
-			//}
-			//
-			//yamlResult, err := yaml.JSONToYAML(resp.Body())
-			//if err != nil {
-			//	return err
-			//}
-			//fmt.Println(string(yamlResult))
+			logger.GetLogger().Info().Msg("banyandb group schema Create Operation")
+			client := resty.New()
+			addr, err := cmd.Flags().GetString("addr")
+			if err != nil {
+				return err
+			}
+			body, err := cmd.Flags().GetString("json")
+			//fmt.Println("body: " + body)
+			var data map[string]interface{}
+			err = json.Unmarshal([]byte(body), &data)
+			if err != nil {
+				return err
+			}
+			fmt.Println("http://" + addr + "/api/v1/group/schema")
+			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/group/schema")
+			if err != nil {
+				return err
+			}
+			yamlResult, err := yaml.JSONToYAML(resp.Body())
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(yamlResult))
 			return nil
 		},
 	}
