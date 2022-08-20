@@ -49,6 +49,9 @@ type timeBasedReporter struct {
 }
 
 func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) Reporter {
+	if timeRange.End.Before(clock.Now()) {
+		return nil
+	}
 	return &timeBasedReporter{
 		TimeRange:      timeRange,
 		reporterStopCh: make(chan struct{}),
@@ -57,7 +60,7 @@ func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) 
 }
 
 func (tr *timeBasedReporter) Report() Channel {
-	ch := make(Channel)
+	ch := make(Channel, 1)
 	interval := tr.Duration() >> 4
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond

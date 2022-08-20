@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type CallbackFn func()
@@ -52,18 +51,20 @@ type Value struct {
 }
 
 type WriterOptions struct {
-	ShardNum   uint32
-	Families   []*databasev1.TagFamilySpec
-	IndexRules []*databasev1.IndexRule
-	DB         tsdb.Supplier
+	ShardNum          uint32
+	Families          []*databasev1.TagFamilySpec
+	IndexRules        []*databasev1.IndexRule
+	DB                tsdb.Supplier
+	EnableGlobalIndex bool
 }
 
 type Writer struct {
-	l              *logger.Logger
-	db             tsdb.Supplier
-	shardNum       uint32
-	ch             *run.Chan[Message]
-	indexRuleIndex []*partition.IndexRuleLocator
+	l                 *logger.Logger
+	db                tsdb.Supplier
+	shardNum          uint32
+	enableGlobalIndex bool
+	ch                chan Message
+	indexRuleIndex    []*partition.IndexRuleLocator
 }
 
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
@@ -76,29 +77,26 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	}
 	w.shardNum = options.ShardNum
 	w.db = options.DB
+	w.enableGlobalIndex = options.EnableGlobalIndex
 	w.indexRuleIndex = partition.ParseIndexRuleLocators(options.Families, options.IndexRules)
-	w.ch = run.NewChan[Message](make(chan Message))
+	w.ch = make(chan Message)
 	w.bootIndexGenerator()
 	return w
 }
 
 func (s *Writer) Write(value Message) {
 	go func(m Message) {
-		s.ch.Write(m)
+		s.ch <- m
 	}(value)
 }
 
 func (s *Writer) Close() error {
-	return s.ch.Close()
+	return nil
 }
 
 func (s *Writer) bootIndexGenerator() {
 	go func() {
-		for {
-			m, more := s.ch.Read()
-			if !more {
-				return
-			}
+		for m := range s.ch {
 			var err error
 			for _, ruleIndex := range s.indexRuleIndex {
 				rule := ruleIndex.Rule
@@ -106,6 +104,10 @@ func (s *Writer) bootIndexGenerator() {
 				case databasev1.IndexRule_LOCATION_SERIES:
 					err = multierr.Append(err, writeLocalIndex(m.LocalWriter, ruleIndex, m.Value))
 				case databasev1.IndexRule_LOCATION_GLOBAL:
+					if !s.enableGlobalIndex {
+						s.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
+						continue
+					}
 					err = multierr.Append(err, s.writeGlobalIndex(m.Scope, ruleIndex, m.LocalWriter.ItemID(), m.Value))
 				}
 			}

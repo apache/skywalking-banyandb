@@ -282,24 +282,23 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 //
 // The following phases are executed in the following sequence:
 //
-//   Config phase (serially, in order of Unit registration)
-//     - FlagSet()        Get & register all FlagSets from Config Units.
-//     - Flag Parsing     Using the provided args (os.Args if empty)
-//     - Validate()       Validate Config Units. Exit on first error.
+//	Config phase (serially, in order of Unit registration)
+//	  - FlagSet()        Get & register all FlagSets from Config Units.
+//	  - Flag Parsing     Using the provided args (os.Args if empty)
+//	  - Validate()       Validate Config Units. Exit on first error.
 //
-//   PreRunner phase (serially, in order of Unit registration)
-//     - PreRun()         Execute PreRunner Units. Exit on first error.
+//	PreRunner phase (serially, in order of Unit registration)
+//	  - PreRun()         Execute PreRunner Units. Exit on first error.
 //
-//   Service phase (concurrently)
-//     - Serve()          Execute all Service Units in separate Go routines.
-//     - Wait             Block until one of the Serve() methods returns
-//     - GracefulStop()   Call interrupt handlers of all Service Units.
+//	Service phase (concurrently)
+//	  - Serve()          Execute all Service Units in separate Go routines.
+//	  - Wait             Block until one of the Serve() methods returns
+//	  - GracefulStop()   Call interrupt handlers of all Service Units.
 //
-//   Run will return with the originating error on:
-//   - first Config.Validate()  returning an error
-//   - first PreRunner.PreRun() returning an error
-//   - first Service.Serve()    returning (error or nil)
-//
+//	Run will return with the originating error on:
+//	- first Config.Validate()  returning an error
+//	- first PreRunner.PreRun() returning an error
+//	- first Service.Serve()    returning (error or nil)
 func (g *Group) Run() (err error) {
 	// run config registration and flag parsing stages
 	if interrupted, errRun := g.RunConfig(); interrupted || errRun != nil {

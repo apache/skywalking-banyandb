@@ -140,8 +140,9 @@ func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequ
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition,
-//     i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
-//     we use service_id + service_instance_id + state as the compound sharding keys.
+//
+//	i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
+//	we use service_id + service_instance_id + state as the compound sharding keys.
 func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s Schema) (UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 

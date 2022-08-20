@@ -86,8 +86,8 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 		assert.Equal(t, key, k)
 		return 1 * time.Minute
 	}
-	encoderPool := NewIntEncoderPool(3, fn)
-	decoderPool := NewIntDecoderPool(3, fn)
+	encoderPool := NewIntEncoderPool("minute", 3, fn)
+	decoderPool := NewIntDecoderPool("minute", 3, fn)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

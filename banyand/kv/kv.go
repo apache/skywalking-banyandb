@@ -126,6 +126,17 @@ func TSSWithFlushCallback(callback func()) TimeSeriesOptions {
 	}
 }
 
+func TSSWithMemTableSize(size int64) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if size < 1 {
+			return
+		}
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.dbOpts.MemTableSize = size
+		}
+	}
+}
+
 type Iterator interface {
 	Next()
 	Rewind()
@@ -160,6 +171,9 @@ func OpenTimeSeriesStore(shardID int, path string, options ...TimeSeriesOptions)
 	}
 	// Put all values into LSM
 	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
+	if btss.dbOpts.MemTableSize < 8<<20 {
+		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
+	}
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
 	if err != nil {
@@ -187,6 +201,18 @@ func StoreWithNamedLogger(name string, l *logger.Logger) StoreOptions {
 	}
 }
 
+// StoreWithMemTableSize sets MemTable size
+func StoreWithMemTableSize(size int64) StoreOptions {
+	return func(store Store) {
+		if size < 1 {
+			return
+		}
+		if bdb, ok := store.(*badgerDB); ok {
+			bdb.dbOpts = bdb.dbOpts.WithMemTableSize(size)
+		}
+	}
+}
+
 // OpenStore creates a new Store
 func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error) {
 	bdb := new(badgerDB)
@@ -196,6 +222,9 @@ func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error)
 		opt(bdb)
 	}
 	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
+	if bdb.dbOpts.MemTableSize > 0 && bdb.dbOpts.MemTableSize < 8<<20 {
+		bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
+	}
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)
@@ -227,6 +256,9 @@ func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexSto
 		opt(bdb)
 	}
 	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
+	bdb.dbOpts = bdb.dbOpts.WithNumCompactors(2)
+	bdb.dbOpts = bdb.dbOpts.WithMemTableSize(2 << 20)
+	bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)

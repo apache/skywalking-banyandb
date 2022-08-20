@@ -76,8 +76,8 @@ func openDatabase(t *require.Assertions, path string) (db Database) {
 			Location: path,
 			ShardNum: 1,
 			EncodingMethod: EncodingMethod{
-				EncoderPool: encoding.NewPlainEncoderPool(0),
-				DecoderPool: encoding.NewPlainDecoderPool(0),
+				EncoderPool: encoding.NewPlainEncoderPool("tsdb", 0),
+				DecoderPool: encoding.NewPlainDecoderPool("tsdb", 0),
 			},
 		})
 	t.NoError(err)

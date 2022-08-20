@@ -27,9 +27,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -63,7 +63,7 @@ func setupQueryData(testing *testing.T, dataFile string, stream stream.Stream) (
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
 		searchTagFamily := &modelv1.TagFamilyForWrite{}
-		t.NoError(jsonpb.UnmarshalString(string(rawSearchTagFamily), searchTagFamily))
+		t.NoError(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily))
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(500 * time.Millisecond * time.Duration(i))),
@@ -213,10 +213,10 @@ func setupMeasureQueryData(testing *testing.T, dataFile string, measure measure.
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		t.NoError(errMarshal)
 		dataPointValue := &measurev1.DataPointValue{}
+		t.NoError(protojson.Unmarshal(rawDataPointValue, dataPointValue))
 		if dataPointValue.Timestamp == nil {
 			dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		}
-		t.NoError(jsonpb.UnmarshalString(string(rawDataPointValue), dataPointValue))
 		errInner := measure.Write(dataPointValue)
 		t.NoError(errInner)
 	}
