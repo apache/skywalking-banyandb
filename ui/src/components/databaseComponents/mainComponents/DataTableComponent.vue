@@ -19,7 +19,7 @@
 
 <template>
     <div>
-        <el-table ref="multipleTable" max-height=625 stripe :data="tableData" highlight-current-row
+        <el-table ref="multipleTable" max-height=700 stripe :data="tableData" highlight-current-row
             tooltip-effect="dark" @selection-change="handleSelectionChange">
             <el-table-column type="selection" width="55">
             </el-table-column>
