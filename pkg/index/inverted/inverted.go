@@ -68,6 +68,8 @@ func (s *store) Close() error {
 }
 
 func (s *store) Write(field index.Field, chunkID common.ItemID) error {
+	s.rwMutex.Lock()
+	defer s.rwMutex.Unlock()
 	return s.memTable.Write(field, chunkID)
 }
 

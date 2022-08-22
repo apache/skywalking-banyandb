@@ -178,10 +178,6 @@ type supplier struct {
 }
 
 func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
-	dbOpts.EncodingMethod = tsdb.EncodingMethod{
-		EncoderPool: encoding.NewPlainEncoderPool(chunkSize),
-		DecoderPool: encoding.NewPlainDecoderPool(chunkSize),
-	}
 	return &supplier{
 		path:     path,
 		dbOpts:   dbOpts,
@@ -205,13 +201,18 @@ func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (re
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
+	name := groupSchema.Metadata.Name
 	opts := s.dbOpts
 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
+	opts.EncodingMethod = tsdb.EncodingMethod{
+		EncoderPool: encoding.NewPlainEncoderPool(name, chunkSize),
+		DecoderPool: encoding.NewPlainDecoderPool(name, chunkSize),
+	}
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{
 			Module:   "stream",
-			Database: groupSchema.Metadata.Name,
+			Database: name,
 		}),
 		opts)
 }

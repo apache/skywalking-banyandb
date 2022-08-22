@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/badger/v3 v3.0.0-20220403004319-fea65bd5e9e4 Apache-2.0
+    github.com/SkyAPM/badger/v3 v3.0.0-20220817114744-b3711444d876 Apache-2.0
     github.com/coreos/go-semver v0.3.0 Apache-2.0
     github.com/coreos/go-systemd/v22 v22.3.2 Apache-2.0
     github.com/dgraph-io/ristretto v0.1.0 Apache-2.0

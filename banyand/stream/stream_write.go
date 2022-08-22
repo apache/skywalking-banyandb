@@ -19,6 +19,8 @@ package stream
 
 import (
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,7 +33,21 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var ErrMalformedElement = errors.New("element is malformed")
+var (
+	ErrMalformedElement = errors.New("element is malformed")
+	writtenBytes        *prometheus.CounterVec
+)
+
+func init() {
+	labels := []string{"group"}
+	writtenBytes = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "banyand_written_stream_bytes",
+			Help: "written stream in bytes",
+		},
+		labels,
+	)
+}
 
 func (s *stream) Write(value *streamv1.ElementValue) error {
 	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)
@@ -81,6 +97,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 	}
 	writeFn := func() (tsdb.Writer, error) {
 		builder := wp.WriterBuilder().Time(t)
+		size := 0
 		for fi, family := range value.GetTagFamilies() {
 			familySpec := sm.GetTagFamilies()[fi]
 			if len(family.GetTags()) > len(familySpec.GetTags()) {
@@ -101,6 +118,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 				return nil, errMarshal
 			}
 			builder.Family(tsdb.Hash([]byte(sm.GetTagFamilies()[fi].GetName())), bb)
+			size += len(bb)
 		}
 		builder.Val([]byte(value.GetElementId()))
 		writer, errWrite := builder.Build()
@@ -108,6 +126,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
+		writtenBytes.WithLabelValues(s.group).Add(float64(size))
 		s.l.Debug().
 			Time("ts", t).
 			Int("ts_nano", t.Nanosecond()).
