@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -98,13 +99,13 @@ var _ = Describe("Metadata", func() {
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
-			Eventually(func() bool {
+			Eventually(func() error {
 				_, err := svcs.measure.Measure(&commonv1.Metadata{
 					Name:  "service_cpm_minute",
 					Group: "sw_metric",
 				})
-				return err != nil
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+				return err
+			}).WithTimeout(30 * time.Second).Should(MatchError(measure.ErrMeasureNotExist))
 		})
 
 		Context("Update a measure", func() {

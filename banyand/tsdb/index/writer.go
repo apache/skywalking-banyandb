@@ -51,18 +51,20 @@ type Value struct {
 }
 
 type WriterOptions struct {
-	ShardNum   uint32
-	Families   []*databasev1.TagFamilySpec
-	IndexRules []*databasev1.IndexRule
-	DB         tsdb.Supplier
+	ShardNum          uint32
+	Families          []*databasev1.TagFamilySpec
+	IndexRules        []*databasev1.IndexRule
+	DB                tsdb.Supplier
+	EnableGlobalIndex bool
 }
 
 type Writer struct {
-	l              *logger.Logger
-	db             tsdb.Supplier
-	shardNum       uint32
-	ch             chan Message
-	indexRuleIndex []*partition.IndexRuleLocator
+	l                 *logger.Logger
+	db                tsdb.Supplier
+	shardNum          uint32
+	enableGlobalIndex bool
+	ch                chan Message
+	indexRuleIndex    []*partition.IndexRuleLocator
 }
 
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
@@ -75,6 +77,7 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	}
 	w.shardNum = options.ShardNum
 	w.db = options.DB
+	w.enableGlobalIndex = options.EnableGlobalIndex
 	w.indexRuleIndex = partition.ParseIndexRuleLocators(options.Families, options.IndexRules)
 	w.ch = make(chan Message)
 	w.bootIndexGenerator()
@@ -83,27 +86,17 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 
 func (s *Writer) Write(value Message) {
 	go func(m Message) {
-		defer func() {
-			if recover() != nil {
-				_ = m.BlockCloser.Close()
-			}
-		}()
 		s.ch <- m
 	}(value)
 }
 
 func (s *Writer) Close() error {
-	close(s.ch)
 	return nil
 }
 
 func (s *Writer) bootIndexGenerator() {
 	go func() {
-		for {
-			m, more := <-s.ch
-			if !more {
-				return
-			}
+		for m := range s.ch {
 			var err error
 			for _, ruleIndex := range s.indexRuleIndex {
 				rule := ruleIndex.Rule
@@ -111,6 +104,10 @@ func (s *Writer) bootIndexGenerator() {
 				case databasev1.IndexRule_LOCATION_SERIES:
 					err = multierr.Append(err, writeLocalIndex(m.LocalWriter, ruleIndex, m.Value))
 				case databasev1.IndexRule_LOCATION_GLOBAL:
+					if !s.enableGlobalIndex {
+						s.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
+						continue
+					}
 					err = multierr.Append(err, s.writeGlobalIndex(m.Scope, ruleIndex, m.LocalWriter.ItemID(), m.Value))
 				}
 			}

@@ -30,17 +30,17 @@ var (
 		Name:        "banyand_encoding_raw_size",
 		Help:        "The raw size of series",
 		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"type"})
+	}, []string{"name", "type"})
 	encodedSize = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name:        "banyand_encoding_encoded_size",
 		Help:        "The encoded size of series",
 		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"type"})
+	}, []string{"name", "type"})
 	itemsNum = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name:        "banyand_encoding_items_num",
 		Help:        "The number of items in a encoded series",
 		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"type"})
+	}, []string{"name", "type"})
 )
 
 type SeriesEncoderPool interface {

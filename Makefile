@@ -54,10 +54,17 @@ test: PROJECTS:=$(PROJECTS) pkg
 test: default          ## Run the unit tests in all projects
 
 test-race: TARGET=test-race
+test-race: PROJECTS:=$(PROJECTS) pkg
 test-race: default     ## Run the unit tests in all projects with race detector on
 
 test-coverage: TARGET=test-coverage
+test-coverage: PROJECTS:=$(PROJECTS) pkg
 test-coverage: default ## Run the unit tests in all projects with coverage analysis on
+
+include scripts/build/ginkgo.mk
+
+test-ci: $(GINKGO) ## Run the unit tests in CI
+	$(GINKGO) -v --skip-package=test/stress --race --cover --covermode atomic --coverprofile=coverage.out ./... 
 
 ##@ Code quality targets
 
@@ -164,6 +171,6 @@ release-assembly: release-binary release-sign ## Generate release package
 
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push
-.PHONY: test test-race test-coverage 
+.PHONY: test test-race test-coverage test-ci
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly

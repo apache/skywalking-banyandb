@@ -121,7 +121,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		p.queryService.log.Warn().Msg("invalid event data type")
 		return
 	}
-	p.log.Info().Msg("received a query event")
+	p.log.Debug().Msg("received a query event")
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.measureService.Measure(meta)

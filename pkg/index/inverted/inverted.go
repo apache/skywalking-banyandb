@@ -41,6 +41,7 @@ type store struct {
 	memTable          *memTable
 	immutableMemTable *memTable
 	rwMutex           sync.RWMutex
+	closed            bool
 
 	l *logger.Logger
 }
@@ -63,20 +64,32 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 }
 
 func (s *store) Close() error {
-	return s.diskTable.Close()
+	return s.flush(true)
 }
 
 func (s *store) Write(field index.Field, chunkID common.ItemID) error {
+	s.rwMutex.Lock()
+	defer s.rwMutex.Unlock()
 	return s.memTable.Write(field, chunkID)
 }
 
 func (s *store) Flush() error {
+	return s.flush(false)
+}
+
+func (s *store) flush(toClose bool) error {
+	s.rwMutex.Lock()
+	defer func() {
+		if toClose && !s.closed {
+			_ = s.diskTable.Close()
+			s.closed = true
+		}
+		s.rwMutex.Unlock()
+	}()
 	state := s.memTable.Stats()
 	if state.MemBytes <= 0 {
 		return nil
 	}
-	s.rwMutex.Lock()
-	defer s.rwMutex.Unlock()
 	if s.immutableMemTable == nil {
 		s.immutableMemTable = s.memTable
 		s.memTable = newMemTable()

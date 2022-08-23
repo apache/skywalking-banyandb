@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
 package measure
 
 import (
@@ -40,7 +39,9 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo, l *logger.Logger) schemaRepo {
+func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
+	dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+) schemaRepo {
 	return schemaRepo{
 		l:        l,
 		metadata: metadata,
@@ -48,7 +49,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, l),
+			newSupplier(path, metadata, dbOpts, l),
 			event.MeasureTopicShardEvent,
 			event.MeasureTopicEntityEvent,
 		),
@@ -169,13 +170,15 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	path     string
+	dbOpts   tsdb.DatabaseOpts
 	metadata metadata.Repo
 	l        *logger.Logger
 }
 
-func newSupplier(path string, metadata metadata.Repo, l *logger.Logger) *supplier {
+func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
 	return &supplier{
 		path:     path,
+		dbOpts:   dbOpts,
 		metadata: metadata,
 		l:        l,
 	}
@@ -196,17 +199,18 @@ func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (re
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
+	opts := s.dbOpts
+	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
+	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
+	name := groupSchema.Metadata.Name
+	opts.EncodingMethod = tsdb.EncodingMethod{
+		EncoderPool: newEncoderPool(name, plainChunkSize, intChunkSize, s.l),
+		DecoderPool: newDecoderPool(name, plainChunkSize, intChunkSize, s.l),
+	}
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{
 			Module:   "measure",
-			Database: groupSchema.Metadata.Name,
+			Database: name,
 		}),
-		tsdb.DatabaseOpts{
-			Location: path.Join(s.path, groupSchema.Metadata.Name),
-			ShardNum: groupSchema.ResourceOpts.ShardNum,
-			EncodingMethod: tsdb.EncodingMethod{
-				EncoderPool: newEncoderPool(plainChunkSize, intChunkSize, s.l),
-				DecoderPool: newDecoderPool(plainChunkSize, intChunkSize, s.l),
-			},
-		})
+		opts)
 }

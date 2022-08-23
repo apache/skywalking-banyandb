@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,12 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
 package helpers
 
 import (
+	"sync/atomic"
+
 	"github.com/onsi/gomega/types"
-	"go.uber.org/atomic"
 )
 
 type FailInterceptor struct {
@@ -30,7 +30,7 @@ type FailInterceptor struct {
 func NewFailInterceptor(fail types.GomegaFailHandler) *FailInterceptor {
 	return &FailInterceptor{
 		ginkgoFail: fail,
-		didFail:    atomic.NewBool(false),
+		didFail:    &atomic.Bool{},
 	}
 }
 

@@ -64,7 +64,7 @@ var _ = Describe("Measure", func() {
 		measureWrite(conn)
 		Eventually(func() (int, error) {
 			return measureQuery(conn)
-		}).Should(Equal(1))
+		}, defaultEventuallyTimeout).Should(Equal(1))
 		_ = conn.Close()
 		gracefulStop()
 		By("Verifying an existing server")
@@ -78,7 +78,7 @@ var _ = Describe("Measure", func() {
 				return 0
 			}
 			return num
-		}, defaultEventallyTimeout).Should(Equal(1))
+		}, defaultEventuallyTimeout).Should(Equal(1))
 	})
 	It("is a TLS server", func() {
 		flags := []string{
@@ -103,7 +103,7 @@ var _ = Describe("Measure", func() {
 		measureWrite(conn)
 		Eventually(func() (int, error) {
 			return measureQuery(conn)
-		}, defaultEventallyTimeout).Should(Equal(1))
+		}, defaultEventuallyTimeout).Should(Equal(1))
 	})
 	AfterEach(func() {
 		_ = conn.Close()

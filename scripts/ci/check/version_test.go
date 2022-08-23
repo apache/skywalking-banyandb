@@ -28,7 +28,7 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-const GoVersion = "1.18.3"
+const GoVersion = "1.19"
 
 func TestGoVersion(t *testing.T) {
 	goversion, err := exec.Command("go", "version").Output()
@@ -36,17 +36,17 @@ func TestGoVersion(t *testing.T) {
 
 	currentVersion := strings.Split(string(goversion), " ")[2][2:]
 
-	currentMayorMinor, currentPatch := splitVersion(currentVersion)
-	expectedMayorMinor, expectedPatch := splitVersion(GoVersion)
+	currentMajorMinor, currentPatch := splitVersion(currentVersion)
+	expectedMajorMinor, expectedPatch := splitVersion(GoVersion)
 
-	require.Equal(t, currentMayorMinor, expectedMayorMinor,
+	require.Equal(t, currentMajorMinor, expectedMajorMinor,
 		"go version <mayor>.<minor> mismatch: current[%s], want[%s]",
-		currentMayorMinor, expectedMayorMinor)
+		currentMajorMinor, expectedMajorMinor)
 
 	require.True(t, currentPatch >= expectedPatch,
 		"go version unsupported, current[%s.%s], minimum[%s.%s]",
-		currentMayorMinor, currentPatch,
-		currentMayorMinor, expectedPatch,
+		currentMajorMinor, currentPatch,
+		currentMajorMinor, expectedPatch,
 	)
 
 	path, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
@@ -59,14 +59,18 @@ func TestGoVersion(t *testing.T) {
 
 	m := parseGoMod(t, root+"/go.mod")
 
-	require.Equal(t, expectedMayorMinor, m.Go.Version,
+	require.Equal(t, expectedMajorMinor, m.Go.Version,
 		"go.mod version mismatch: current[%s], want[%s]",
-		m.Go.Version, expectedMayorMinor)
+		m.Go.Version, expectedMajorMinor)
 }
 
 func splitVersion(v string) (string, string) {
-	lastDotPos := strings.LastIndex(v, ".")
-	return v[:lastDotPos], v[lastDotPos+1:]
+	versionParts := strings.SplitN(v, ".", 3)
+	// if v only has two parts, it can be <major>.<minor>
+	if len(versionParts) == 2 {
+		return v, "0"
+	}
+	return strings.Join(versionParts[0:2], "."), versionParts[2]
 }
 
 func parseGoMod(t *testing.T, gomod string) *modfile.File {

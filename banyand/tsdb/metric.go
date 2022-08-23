@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//
 package tsdb
 
 import (
@@ -82,7 +81,7 @@ func (s *shard) stat() {
 		segStats.MaxMemBytes += segStat.MaxMemBytes
 		segStats.MemBytes += segStat.MemBytes
 		for _, b := range seg.blockController.blocks() {
-			if b.closed.Load() {
+			if b.Closed() {
 				continue
 			}
 			names, bss := b.stats()
@@ -114,7 +113,6 @@ func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
 func newBlockStat() map[string]*observability.Statistics {
 	return map[string]*observability.Statistics{
 		componentMain:              {},
-		componentPrimaryIdx:        {},
 		componentSecondInvertedIdx: {},
 		componentSecondLSMIdx:      {},
 	}
