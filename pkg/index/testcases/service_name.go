@@ -88,15 +88,15 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 func SetUp(t *assert.Assertions, store SimpleStore) {
 	for i := 0; i < 100; i++ {
 		if i < 100/2 {
-			t.NoError(store.Write(index.Field{
+			t.NoError(store.Write([]index.Field{{
 				Key:  serviceName,
 				Term: []byte("gateway"),
-			}, common.ItemID(i)))
+			}}, common.ItemID(i)))
 		} else {
-			t.NoError(store.Write(index.Field{
+			t.NoError(store.Write([]index.Field{{
 				Key:  serviceName,
 				Term: []byte("webpage"),
-			}, common.ItemID(i)))
+			}}, common.ItemID(i)))
 		}
 	}
 }

@@ -295,8 +295,8 @@ type blockDelegate interface {
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
 	writePrimaryIndex(field index.Field, id common.ItemID) error
-	writeLSMIndex(field index.Field, id common.ItemID) error
-	writeInvertedIndex(field index.Field, id common.ItemID) error
+	writeLSMIndex(fields []index.Field, id common.ItemID) error
+	writeInvertedIndex(fields []index.Field, id common.ItemID) error
 	dataReader() kv.TimeSeriesReader
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
@@ -341,15 +341,15 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.lsmIndex.Write(field, id)
+	return d.delegate.lsmIndex.Write([]index.Field{field}, id)
 }
 
-func (d *bDelegate) writeLSMIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.lsmIndex.Write(field, id)
+func (d *bDelegate) writeLSMIndex(fields []index.Field, id common.ItemID) error {
+	return d.delegate.lsmIndex.Write(fields, id)
 }
 
-func (d *bDelegate) writeInvertedIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.invertedIndex.Write(field, id)
+func (d *bDelegate) writeInvertedIndex(fields []index.Field, id common.ItemID) error {
+	return d.delegate.invertedIndex.Write(fields, id)
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {

@@ -145,14 +145,20 @@ func (w *writer) ItemID() GlobalItemID {
 	return *w.itemID
 }
 
-func (w *writer) WriteLSMIndex(field index.Field) error {
-	field.Key.SeriesID = w.itemID.SeriesID
-	return w.block.writeLSMIndex(field, w.itemID.ID)
+func (w *writer) WriteLSMIndex(fields []index.Field) error {
+	for i, f := range fields {
+		f.Key.SeriesID = w.itemID.SeriesID
+		fields[i] = f
+	}
+	return w.block.writeLSMIndex(fields, w.itemID.ID)
 }
 
-func (w *writer) WriteInvertedIndex(field index.Field) error {
-	field.Key.SeriesID = w.itemID.SeriesID
-	return w.block.writeInvertedIndex(field, w.itemID.ID)
+func (w *writer) WriteInvertedIndex(fields []index.Field) error {
+	for i, f := range fields {
+		f.Key.SeriesID = w.itemID.SeriesID
+		fields[i] = f
+	}
+	return w.block.writeInvertedIndex(fields, w.itemID.ID)
 }
 
 func (w *writer) String() string {

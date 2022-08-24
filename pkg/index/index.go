@@ -45,6 +45,10 @@ func (f FieldKey) Marshal() []byte {
 	}, nil)
 }
 
+func (f FieldKey) MarshalToStr() string {
+	return string(f.Marshal())
+}
+
 func (f *FieldKey) Unmarshal(raw []byte) error {
 	f.SeriesID = common.SeriesID(convert.BytesToUint64(raw[0:8]))
 	f.IndexRuleID = convert.BytesToUint32(raw[8:])
@@ -118,13 +122,29 @@ type FieldIterator interface {
 	Close() error
 }
 
+var EmptyFieldIterator = &emptyIterator{}
+
+type emptyIterator struct{}
+
+func (i *emptyIterator) Next() bool {
+	return false
+}
+
+func (i *emptyIterator) Val() *PostingValue {
+	return nil
+}
+
+func (i *emptyIterator) Close() error {
+	return nil
+}
+
 type PostingValue struct {
 	Term  []byte
 	Value posting.List
 }
 
 type Writer interface {
-	Write(field Field, itemID common.ItemID) error
+	Write(fields []Field, itemID common.ItemID) error
 }
 
 type FieldIterable interface {
