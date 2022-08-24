@@ -164,13 +164,14 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
-	b.stopCh = make(chan struct{})
+	stopCh := make(chan struct{})
+	b.stopCh = stopCh
 	go func() {
 		for {
 			select {
 			case <-b.flushCh:
 				b.flush()
-			case <-b.stopCh:
+			case <-stopCh:
 				return
 			}
 		}
