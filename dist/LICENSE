@@ -363,7 +363,7 @@ BSD-3-Clause licenses
 ISC licenses
 ========================================================================
 
-    vue/node_modules/picocolors 1.0.0 ISC
+    picocolors 1.0.0 ISC
 
 ========================================================================
 MIT licenses
@@ -380,10 +380,10 @@ MIT licenses
     deepmerge 1.5.2 MIT
     element-ui 2.15.9 MIT
     nanoid 3.3.4 MIT
+    postcss 8.4.16 MIT
     resize-observer-polyfill 1.5.1 MIT
     throttle-debounce 1.1.0 MIT
     vue 2.7.8 MIT
     vue-router 3.5.4 MIT
     vue/node_modules/@vue/compiler-sfc 2.7.8 MIT
-    vue/node_modules/postcss 8.4.16 MIT
     vuex 3.6.2 MIT
