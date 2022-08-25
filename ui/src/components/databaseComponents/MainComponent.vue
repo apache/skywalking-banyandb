@@ -20,10 +20,13 @@
 <template>
     <div class="flex" style="height:100%; width:100%;">
         <div :style="showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
-            <tag-navigation-component></tag-navigation-component>
-            <el-card style="max-height: 90%;">
-                <top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component>
-                <second-navigation-component class="margin-top-bottom-little"></second-navigation-component>
+            <el-card style="max-height: 97.5%;">
+                <div style="width: 100%; height: 40px;">
+                    <tag-navigation-component></tag-navigation-component>
+                </div>
+                <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
+                <second-navigation-component @openDetail="openDetail" :showDrawer="showDrawer"
+                    ></second-navigation-component>
                 <data-table-component class="margin-all-little"></data-table-component>
             </el-card>
         </div>
