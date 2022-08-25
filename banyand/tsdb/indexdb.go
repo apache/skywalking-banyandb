@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -36,8 +37,8 @@ type IndexDatabase interface {
 }
 
 type IndexWriter interface {
-	WriteLSMIndex(field index.Field) error
-	WriteInvertedIndex(field index.Field) error
+	WriteLSMIndex(field []index.Field) error
+	WriteInvertedIndex(field []index.Field) error
 }
 
 type IndexWriterBuilder interface {
@@ -150,26 +151,34 @@ type indexWriter struct {
 	itemID *GlobalItemID
 }
 
-func (i *indexWriter) WriteLSMIndex(field index.Field) error {
-	if i.scope != nil {
-		field.Key.SeriesID = GlobalSeriesID(i.scope)
+func (i *indexWriter) WriteLSMIndex(fields []index.Field) (err error) {
+	for _, field := range fields {
+		if i.scope != nil {
+			field.Key.SeriesID = GlobalSeriesID(i.scope)
+		}
+		key, errInternal := field.Marshal()
+		if errInternal != nil {
+			err = multierr.Append(err, errInternal)
+			continue
+		}
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano())))
 	}
-	key, err := field.Marshal()
-	if err != nil {
-		return err
-	}
-	return i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano()))
+	return err
 }
 
-func (i *indexWriter) WriteInvertedIndex(field index.Field) error {
-	if i.scope != nil {
-		field.Key.SeriesID = GlobalSeriesID(i.scope)
+func (i *indexWriter) WriteInvertedIndex(fields []index.Field) (err error) {
+	for _, field := range fields {
+		if i.scope != nil {
+			field.Key.SeriesID = GlobalSeriesID(i.scope)
+		}
+		key, errInternal := field.Marshal()
+		if errInternal != nil {
+			err = multierr.Append(err, errInternal)
+			continue
+		}
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano())))
 	}
-	key, err := field.Marshal()
-	if err != nil {
-		return err
-	}
-	return i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano()))
+	return err
 }
 
 func GlobalSeriesID(scope Entry) common.SeriesID {

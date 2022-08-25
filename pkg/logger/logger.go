@@ -44,6 +44,10 @@ type Logger struct {
 	*zerolog.Logger
 }
 
+func (l Logger) Module() string {
+	return l.module
+}
+
 func (l *Logger) Named(name string) *Logger {
 	module := strings.Join([]string{l.module, name}, ".")
 	subLogger := root.l.With().Str("module", module).Logger()

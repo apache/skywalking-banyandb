@@ -23,8 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -46,23 +44,6 @@ func TestStore_MatchTerm(t *testing.T) {
 	testcases.RunServiceName(t, s)
 }
 
-func TestStore_MatchTerm_AfterFlush(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
-	s, err := NewStore(StoreOpts{
-		Path:   path,
-		Logger: logger.GetLogger("test"),
-	})
-	defer func() {
-		tester.NoError(s.Close())
-		fn()
-	}()
-	tester.NoError(err)
-	testcases.SetUp(tester, s)
-	tester.NoError(s.(*store).Flush())
-	testcases.RunServiceName(t, s)
-}
-
 func TestStore_Iterator(t *testing.T) {
 	tester := assert.New(t)
 	path, fn := setUp(require.New(t))
@@ -76,60 +57,6 @@ func TestStore_Iterator(t *testing.T) {
 	}()
 	tester.NoError(err)
 	data := testcases.SetUpDuration(tester, s)
-	testcases.RunDuration(t, data, s)
-}
-
-func TestStore_Iterator_AfterFlush(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
-	s, err := NewStore(StoreOpts{
-		Path:   path,
-		Logger: logger.GetLogger("test"),
-	})
-	defer func() {
-		tester.NoError(s.Close())
-		fn()
-	}()
-	tester.NoError(err)
-	data := testcases.SetUpDuration(tester, s)
-	tester.NoError(s.(*store).Flush())
-	testcases.RunDuration(t, data, s)
-}
-
-func TestStore_Iterator_Hybrid(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
-	s, err := NewStore(StoreOpts{
-		Path:   path,
-		Logger: logger.GetLogger("test"),
-	})
-	defer func() {
-		tester.NoError(s.Close())
-		fn()
-	}()
-	tester.NoError(err)
-	r := map[int]posting.List{
-		50:   roaring.NewPostingList(),
-		200:  nil,
-		500:  roaring.NewPostingList(),
-		1000: nil,
-		2000: roaring.NewPostingList(),
-	}
-	data1 := testcases.SetUpPartialDuration(tester, s, r)
-	tester.NoError(s.(*store).Flush())
-	r = map[int]posting.List{
-		50:   nil,
-		200:  roaring.NewPostingList(),
-		500:  nil,
-		1000: roaring.NewPostingList(),
-		2000: nil,
-	}
-	data := testcases.SetUpPartialDuration(tester, s, r)
-	for i, list := range data {
-		if list == nil {
-			data[i] = data1[i]
-		}
-	}
 	testcases.RunDuration(t, data, s)
 }
 
