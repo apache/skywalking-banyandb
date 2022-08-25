@@ -20,6 +20,8 @@ package cmd_test
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -30,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/zenizh/go-capturer"
@@ -50,9 +53,11 @@ var _ = Describe("Stream", func() {
 			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
 		}
 		gracefulStop = setup(true, flags)
+		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
 	})
 
-	It("create stream schema", func() {
+	FIt("create stream schema", func() {
+		time.Sleep(1 * time.Second)
 		rootCmd := cmd.NewRoot()
 		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
 		out := capturer.CaptureOutput(func() {

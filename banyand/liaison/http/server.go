@@ -90,7 +90,7 @@ func (p *service) PreRun() error {
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 
-	gwMux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(&healthCheckClient{}))
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 

@@ -37,7 +37,7 @@ func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commo
 	var entity commonv1.Group
 	err := e.get(ctx, formatGroupKey(group), &entity)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessagef(err, "GetGroup[%s]", group)
 	}
 	return &entity, nil
 }
