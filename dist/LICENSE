@@ -355,22 +355,35 @@ BSD-3-Clause licenses
 ========================================================================
 
     normalize-wheel 1.0.1 BSD-3-Clause
+    source-map 0.6.1 BSD-3-Clause
+    source-map-js 1.0.2 BSD-3-Clause
     zrender 5.3.2 BSD-3-Clause
+
+========================================================================
+ISC licenses
+========================================================================
+
+    vue/node_modules/picocolors 1.0.0 ISC
 
 ========================================================================
 MIT licenses
 ========================================================================
 
+    @babel/parser 7.18.11 MIT
     async-validator  MIT
     babel-helper-vue-jsx-merge-props 2.0.3 MIT
     babel-runtime 6.26.0 MIT
     babel-runtime/node_modules/core-js 2.6.12 MIT
     babel-runtime/node_modules/regenerator-runtime 0.11.1 MIT
-    core-js 3.22.8 MIT
+    core-js 3.24.1 MIT
+    csstype 3.1.0 MIT
     deepmerge 1.5.2 MIT
     element-ui 2.15.9 MIT
+    nanoid 3.3.4 MIT
     resize-observer-polyfill 1.5.1 MIT
     throttle-debounce 1.1.0 MIT
-    vue 2.6.14 MIT
+    vue 2.7.8 MIT
     vue-router 3.5.4 MIT
+    vue/node_modules/@vue/compiler-sfc 2.7.8 MIT
+    vue/node_modules/postcss 8.4.16 MIT
     vuex 3.6.2 MIT
