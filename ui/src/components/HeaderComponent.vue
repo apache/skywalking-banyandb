@@ -137,7 +137,7 @@ export default {
 
 .el-menu-item {
     font-weight: var(--weight-lt);
-    font-size: var(--size-title);
+    font-size: var(--size-lt);
     font-family: var(--font-family-main);
 }
 
