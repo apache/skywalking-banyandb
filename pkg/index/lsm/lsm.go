@@ -24,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"go.uber.org/multierr"
 )
 
 var _ index.Store = (*store)(nil)
@@ -45,13 +46,17 @@ func (s *store) Close() error {
 	return s.lsm.Close()
 }
 
-func (s *store) Write(field index.Field, itemID common.ItemID) error {
-	f, err := field.Marshal()
-	if err != nil {
-		return err
+func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
+	for _, field := range fields {
+		f, errInternal := field.Marshal()
+		if errInternal != nil {
+			err = multierr.Append(err, errInternal)
+			continue
+		}
+		itemIDInt := uint64(itemID)
+		err = multierr.Append(err, s.lsm.PutWithVersion(f, convert.Uint64ToBytes(itemIDInt), itemIDInt))
 	}
-	itemIDInt := uint64(itemID)
-	return s.lsm.PutWithVersion(f, convert.Uint64ToBytes(itemIDInt), itemIDInt)
+	return err
 }
 
 type StoreOpts struct {

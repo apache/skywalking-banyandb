@@ -70,7 +70,7 @@ var _ = Describe("Stream", func() {
 		streamWrite(conn)
 		Eventually(func() (int, error) {
 			return streamQuery(conn)
-		}).Should(Equal(1))
+		}, defaultEventuallyTimeout).Should(Equal(1))
 		_ = conn.Close()
 		gracefulStop()
 		By("Verifying an existing server")
