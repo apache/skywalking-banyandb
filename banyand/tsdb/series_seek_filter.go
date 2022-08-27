@@ -31,13 +31,15 @@ type Condition map[string][]index.ConditionValue
 
 func (s *seekerBuilder) Filter(indexRule *databasev1.IndexRule, condition Condition) SeekerBuilder {
 	s.conditions = append(s.conditions, struct {
-		indexRuleType databasev1.IndexRule_Type
-		indexRuleID   uint32
-		condition     Condition
+		indexRuleType     databasev1.IndexRule_Type
+		indexRuleID       uint32
+		indexRuleAnalyzer databasev1.IndexRule_Analyzer
+		condition         Condition
 	}{
-		indexRuleType: indexRule.GetType(),
-		indexRuleID:   indexRule.GetMetadata().GetId(),
-		condition:     condition,
+		indexRuleType:     indexRule.GetType(),
+		indexRuleID:       indexRule.GetMetadata().GetId(),
+		indexRuleAnalyzer: indexRule.Analyzer,
+		condition:         condition,
 	})
 	return s
 }
@@ -61,6 +63,7 @@ func (s *seekerBuilder) buildConditions() ([]condWithIRT, error) {
 		term := index.FieldKey{
 			SeriesID:    s.seriesSpan.seriesID,
 			IndexRuleID: condition.indexRuleID,
+			Analyzer:    condition.indexRuleAnalyzer,
 		}
 		for _, c := range condition.condition {
 			cond[term] = c

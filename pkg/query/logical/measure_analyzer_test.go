@@ -343,3 +343,45 @@ func TestMeasureAnalyzer_Fields_IndexNotDefined(t *testing.T) {
 	_, err = ana.Analyze(context.TODO(), criteria, metadata, schema)
 	assert.ErrorIs(err, logical.ErrIndexNotDefined)
 }
+
+func TestMeasureAnalyzer_Searchable(t *testing.T) {
+	assert := require.New(t)
+
+	ana, stopFunc, err := setUpMeasureAnalyzer()
+	assert.NoError(err)
+	assert.NotNil(ana)
+	defer stopFunc()
+
+	sT, eT := time.Now().Add(-3*time.Hour), time.Now()
+
+	criteria := pb.NewMeasureQueryRequestBuilder().
+		Metadata("sw_metric", "service_instance_traffic").
+		TagProjection("default", "id", "name").
+		TagsInTagFamily("default", "name", "match", "abc").
+		TimeRange(sT, eT).
+		Build()
+
+	metadata := criteria.GetMetadata()
+
+	schema, err := ana.BuildMeasureSchema(context.TODO(), metadata)
+	assert.NoError(err)
+
+	plan, err := ana.Analyze(context.TODO(), criteria, metadata, schema)
+	assert.NoError(err)
+	assert.NotNil(plan)
+
+	correctPlan, err := logical.MeasureLimit(
+		logical.MeasureIndexScan(sT, eT, metadata,
+			[]logical.Expr{
+				logical.Match(logical.NewTagRef("default", "name"), logical.Str("abc")),
+			},
+			tsdb.Entity{nil},
+			[][]*logical.Tag{logical.NewTags("default", "id", "name")},
+			nil,
+			false,
+			nil,
+		), 0, logical.DefaultLimit).Analyze(schema)
+	assert.NoError(err)
+	assert.NotNil(correctPlan)
+	assert.True(cmp.Equal(plan, correctPlan), "plan is not equal to correct plan")
+}

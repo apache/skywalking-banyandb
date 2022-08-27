@@ -18,15 +18,126 @@
 package inverted
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+var serviceName = index.FieldKey{
+	// http_method
+	IndexRuleID: 6,
+	EncodeTerm:  false,
+	Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+}
+
+func TestStore_Match(t *testing.T) {
+	tester := assert.New(t)
+	path, fn := setUp(require.New(t))
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+	tester.NoError(err)
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("GET::/product/order"),
+	}}, common.ItemID(1)))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("GET::/root/product"),
+	}}, common.ItemID(2)))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
+	}}, common.ItemID(3)))
+
+	tests := []struct {
+		matches []string
+		want    posting.List
+		wantErr bool
+	}{
+		{
+			matches: []string{"root"},
+			want:    roaring.NewPostingListWithInitialData(2),
+		},
+		{
+			matches: []string{"product"},
+			want:    roaring.NewPostingListWithInitialData(1, 2),
+		},
+		{
+			matches: []string{"order"},
+			want:    roaring.NewPostingListWithInitialData(1, 3),
+		},
+		{
+			matches: []string{"/root/product"},
+			want:    roaring.NewPostingListWithInitialData(1, 2),
+		},
+		{
+			matches: []string{"/product/order"},
+			want:    roaring.NewPostingListWithInitialData(1, 2, 3),
+		},
+		{
+			matches: []string{"GET"},
+			want:    roaring.NewPostingListWithInitialData(1, 2),
+		},
+		{
+			matches: []string{"GET::/root"},
+			want:    roaring.NewPostingListWithInitialData(1, 2),
+		},
+		{
+			matches: []string{"org"},
+			want:    roaring.NewPostingListWithInitialData(3),
+		},
+		{
+			matches: []string{"org.apache"},
+			want:    roaring.NewPostingListWithInitialData(3),
+		},
+		{
+			matches: []string{"org.apache....OrderService"},
+			want:    roaring.NewPostingListWithInitialData(3),
+		},
+		{
+			matches: []string{"OrderService.order"},
+			want:    roaring.NewPostingListWithInitialData(1, 3),
+		},
+		{
+			matches: []string{"root", "product"},
+			want:    roaring.NewPostingListWithInitialData(2),
+		},
+		{
+			matches: []string{"OrderService", "order"},
+			want:    roaring.NewPostingListWithInitialData(3),
+		},
+	}
+	for _, tt := range tests {
+		name := strings.Join(tt.matches, " and ")
+		t.Run(name, func(t *testing.T) {
+			list, err := s.Match(serviceName, tt.matches)
+			if tt.wantErr {
+				tester.Error(err)
+				return
+			}
+			tester.NoError(err, name)
+			tester.NotNil(list, name)
+			tester.Equal(tt.want, list, name)
+		})
+	}
+}
 
 func TestStore_MatchTerm(t *testing.T) {
 	tester := assert.New(t)

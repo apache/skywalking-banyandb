@@ -32,6 +32,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
+var ErrUnsupportedOperation = errors.New("unsupported operation")
+
 func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
 	return s.Range(fieldKey, index.RangeOpts{})
 }
@@ -88,4 +90,8 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 			}
 			return pv, nil
 		})
+}
+
+func (s *store) Match(_ index.FieldKey, _ []string) (posting.List, error) {
+	return nil, errors.WithMessage(ErrUnsupportedOperation, "LSM-Tree index doesn't support full-text searching")
 }

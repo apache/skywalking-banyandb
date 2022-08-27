@@ -144,7 +144,7 @@ func TestStreamAnalyzer_ComplexQuery(t *testing.T) {
 		OrderBy("duration", modelv1.Sort_SORT_DESC).
 		Metadata("default", "sw").
 		Projection("searchable", "http.method", "service_id", "duration").
-		TagsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "=", "GET", "mq.topic", "=", "event_topic").
+		TagsInTagFamily("searchable", "service_id", "=", "my_app", "http.method", "match", "GET", "mq.topic", "=", "event_topic").
 		TimeRange(sT, eT).
 		Build()
 
@@ -162,7 +162,7 @@ func TestStreamAnalyzer_ComplexQuery(t *testing.T) {
 			logical.TagFilter(sT, eT, metadata,
 				[]logical.Expr{
 					logical.Eq(logical.NewSearchableTagRef("mq.topic"), logical.Str("event_topic")),
-					logical.Eq(logical.NewSearchableTagRef("http.method"), logical.Str("GET")),
+					logical.Match(logical.NewSearchableTagRef("http.method"), logical.Str("GET")),
 				}, tsdb.Entity{tsdb.Entry("my_app"), tsdb.AnyEntry, tsdb.AnyEntry},
 				logical.OrderBy("duration", modelv1.Sort_SORT_DESC),
 				logical.NewTags("searchable", "http.method", "service_id", "duration")),

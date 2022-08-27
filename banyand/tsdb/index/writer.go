@@ -164,6 +164,7 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ref tsdb.GlobalItemID, value
 				rr = append(rr, index.Field{
 					Key: index.FieldKey{
 						IndexRuleID: rule.GetMetadata().GetId(),
+						Analyzer:    rule.Analyzer,
 					},
 					Term: val,
 				})
@@ -203,7 +204,7 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ref tsdb.GlobalItemID, value
 
 func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
 	collect := func(ruleIndexes []*partition.IndexRuleLocator, fn func(fields []index.Field) error) error {
-		var fields []index.Field
+		fields := make([]index.Field, 0)
 		for _, ruleIndex := range ruleIndexes {
 			values, _, err := getIndexValue(ruleIndex, value)
 			if err != nil {
@@ -217,6 +218,7 @@ func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
 				fields = append(fields, index.Field{
 					Key: index.FieldKey{
 						IndexRuleID: rule.GetMetadata().GetId(),
+						Analyzer:    rule.Analyzer,
 					},
 					Term: val,
 				})
