@@ -38,13 +38,8 @@ func newGroupCmd() *cobra.Command {
 		},
 	}
 
-	type MetaData struct { // "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"naonao\"}}}"
-		Group string `json:"group"`
-		Name  string `json:"name"`
-	}
-
 	GroupCreateCmd := &cobra.Command{
-		Use:     "create",
+		Use:     "create", // "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"mxm\"}}}"
 		Version: version.Build(),
 		Short:   "banyandb group schema Create Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -58,22 +53,22 @@ func newGroupCmd() *cobra.Command {
 				return err
 			}
 			body, err := cmd.Flags().GetString("json")
-			//fmt.Println("body: " + body)
 			var data map[string]interface{}
 			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
 				return err
 			}
-			fmt.Println("http://" + addr + "/api/v1/group/schema")
 			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/group/schema")
 			if err != nil {
 				return err
 			}
+			logger.GetLogger().Info().Msg("http://" + addr + "/api/v1/group/schema")
+			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}

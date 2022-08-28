@@ -19,9 +19,8 @@ package cmd_test
 
 import (
 	"context"
-	"fmt"
-	"time"
-
+	"encoding/base64"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -31,11 +30,18 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/zenizh/go-capturer"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"io"
+	"strings"
+	"time"
 )
 
 var _ = Describe("Stream", func() {
@@ -52,58 +58,144 @@ var _ = Describe("Stream", func() {
 			"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
 			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
 		}
-		gracefulStop = setup(true, flags)
+		gracefulStop = setup(false, flags)
 		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
-	})
-
-	FIt("create stream schema", func() {
+		// stream is based on group
 		time.Sleep(1 * time.Second)
 		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
+		rootCmd.SetArgs([]string{"group", "create", "-j", "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"group1\"}}}"})
 		out := capturer.CaptureOutput(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		fmt.Println("out:\n" + out)
+		Expect(out).To(Equal("{}\n"))
+		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
+		out = capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(Equal("{}\n"))
+	})
+
+	It("create stream schema", func() {
+		// test code for creating is in BeforeEach()
 	})
 
 	It("get stream schema", func() {
 		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
-		err := rootCmd.Execute()
-		Expect(err).NotTo(HaveOccurred())
 		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
 		out := capturer.CaptureOutput(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		fmt.Println("out:\n" + out)
+		s := strings.Split(out, "\n")
+		Expect(s[0]).To(Equal("stream:"))
+		Expect(s[2]).To(Equal("  metadata:"))
+		Expect(s[4]).To(Equal("    group: group1"))
+		Expect(s[7]).To(Equal("    name: name1"))
 	})
 
-	//It("update stream schema", func() {
-	//	// create
-	//	// get
-	//	// update
-	//	// get
-	//})
-	//
-	//It("delete stream schema", func() {
-	//	// create
-	//	// get
-	//	// delete
-	//	// get
-	//})
-	//
-	//It("list stream schema", func() {
-	//	// create * 2 or pre-load stream
-	//	// list
-	//})
-	//
-	//It("query stream data", func() {
-	//	// create
-	//	// insert data
-	//	// query
-	//})
+	It("update stream schema", func() {
+		rootCmd := cmd.NewRoot()
+		rootCmd.SetArgs([]string{"stream", "update", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"entity\":{\"tag_names\":[\"tag1\"]}}}"})
+		out := capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(Equal("{}\n"))
+
+		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		s := strings.Split(out, "\n")
+		Expect(s[0]).To(Equal("stream:"))
+		Expect(s[1]).To(Equal("  entity:"))
+		Expect(s[2]).To(Equal("    tagNames:"))
+		Expect(s[3]).To(Equal("    - tag1"))
+		Expect(s[4]).To(Equal("  metadata:"))
+		Expect(s[6]).To(Equal("    group: group1"))
+		Expect(s[9]).To(Equal("    name: name1"))
+	})
+
+	It("delete stream schema", func() {
+		// get
+		rootCmd := cmd.NewRoot()
+		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out := capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		s := strings.Split(out, "\n")
+		Expect(s[0]).To(Equal("stream:"))
+		Expect(s[2]).To(Equal("  metadata:"))
+		Expect(s[4]).To(Equal("    group: group1"))
+		Expect(s[7]).To(Equal("    name: name1"))
+		// delete
+		rootCmd.SetArgs([]string{"stream", "delete", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(Equal("deleted: true\n"))
+		// get again
+		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		s = strings.Split(out, "\n")
+		Expect(s[2]).To(Equal("message: 'banyandb: resource not found'"))
+	})
+
+	It("list stream schema", func() {
+		// create another stream schema for list operation
+		rootCmd := cmd.NewRoot()
+		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name2\"}}}"})
+		out := capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(Equal("{}\n"))
+		// list
+		rootCmd.SetArgs([]string{"stream", "list", "-j", "{\"group\":\"group1\"}"})
+		out = capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		s := strings.Split(out, "\n")
+		Expect(s[0]).To(Equal("stream:"))
+		Expect(s[2]).To(Equal("  metadata:"))
+		Expect(s[4]).To(Equal("    group: group1"))
+		Expect(s[7]).To(Equal("    name: name1"))
+		Expect(s[11]).To(Equal("  metadata:"))
+		Expect(s[13]).To(Equal("    group: group1"))
+		Expect(s[16]).To(Equal("    name: name2"))
+	})
+
+	It("query stream data", func() {
+		// insert data
+		var err error
+		conn, err := grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		Expect(err).NotTo(HaveOccurred())
+		streamWrite(conn)
+		_ = conn.Close()
+		// query
+		rootCmd := cmd.NewRoot()
+		rootCmd.SetArgs([]string{"stream", "query", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"projection\":{\"tag_families\":[{\"name\":\"\",\"tags\":[\"webapp_id\"]}]}}"})
+		out := capturer.CaptureOutput(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		//s = strings.Split(out, "\n")
+		//for i, x := range s {
+		//	fmt.Print(i)
+		//	fmt.Print(" ")
+		//	fmt.Println(x)
+		//}
+		Expect(out).To(Equal("{}\n"))
+	})
 
 	AfterEach(func() {
 		gracefulStop()
@@ -111,7 +203,45 @@ var _ = Describe("Stream", func() {
 	})
 })
 
-func setup(loadMetadata bool, flags []string) func() { // start banyand-server
+func streamWrite(conn *grpclib.ClientConn) {
+	c := streamv1.NewStreamServiceClient(conn)
+	ctx := context.Background()
+	var writeClient streamv1.StreamService_WriteClient
+	Eventually(func(g Gomega) {
+		var err error
+		writeClient, err = c.Write(ctx)
+		g.Expect(err).NotTo(HaveOccurred())
+	}).Should(Succeed())
+	Eventually(func() error {
+		return writeClient.Send(writeStreamData())
+	}).ShouldNot(HaveOccurred())
+	Expect(writeClient.CloseSend()).Should(Succeed())
+	Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}).Should(Equal(io.EOF))
+}
+
+func writeStreamData() *streamv1.WriteRequest {
+	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
+	return pbv1.NewStreamWriteRequestBuilder().
+		ID("1").
+		Metadata("group1", "name1").
+		Timestamp(timestamp.NowMilli()).
+		TagFamily(bb).
+		TagFamily(
+			"trace_id-xxfff.111",
+			0,
+			"webapp_id",
+			"10.0.0.1_id",
+			"/home_id",
+			300,
+			1622933202000000000,
+		).
+		Build()
+}
+
+func setup(loadMetadata bool, flags []string) func() {
 	// Init `Discovery` module
 	repo, err := discovery.NewServiceRepo(context.Background())
 	Expect(err).NotTo(HaveOccurred())

@@ -74,7 +74,6 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
 			}
-			fmt.Println(data)
 			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/schema")
 			if err != nil {
 				return err
@@ -85,7 +84,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
@@ -113,8 +112,8 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Print("data: ")
-			fmt.Println(data)
+			//fmt.Print("data: ")
+			//fmt.Println(data)
 			stream, ok := data["stream"].(map[string]interface{})
 			if !ok {
 				return errors.New("input json format error")
@@ -132,7 +131,7 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				return errors.New("input json format error")
 			}
-			fmt.Println(data)
+			//fmt.Println(data)
 			resp, err := client.R().SetBody(data).Put("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			logger.GetLogger().Info().Msg("http request: put " + "http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
@@ -143,7 +142,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
@@ -168,7 +167,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(data)
 			metadata, ok := data["metadata"].(map[string]interface{})
 			if !ok {
 				return errors.New("input json format error")
@@ -191,7 +189,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
@@ -216,7 +214,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(data)
 			metadata, ok := data["metadata"].(map[string]interface{})
 			if !ok {
 				return errors.New("input json format error")
@@ -239,7 +236,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
@@ -281,7 +278,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
@@ -318,6 +315,8 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
 			}
+			//fmt.Println("data:")
+			//fmt.Println(data)
 			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/data")
 			if err != nil {
 				return err
@@ -328,7 +327,7 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(yamlResult))
+			fmt.Print(string(yamlResult))
 			return nil
 		},
 	}
