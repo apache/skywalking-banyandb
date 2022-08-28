@@ -38,6 +38,7 @@ RUN GOBIN=/bin go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.11 \
     && chmod 755 /bin/grpc-health-probe
 
 FROM base AS builder
+
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
             BUILD_DIR=/out make -C banyand all
