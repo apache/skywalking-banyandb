@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
@@ -41,14 +40,13 @@ func newStreamCmd() *cobra.Command {
 	}
 
 	StreamCreateCmd := &cobra.Command{
-		Use:     "create", // "{\"stream\":{\"metadata\":{\"group\":\"\",\"name\":\"naonao\"}}}"
+		Use:     "create",
 		Version: version.Build(),
 		Short:   "banyandb stream schema create Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema Create Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -65,8 +63,6 @@ func newStreamCmd() *cobra.Command {
 				return errors.New("input json format error")
 			}
 			metadata, ok := stream["metadata"].(map[string]interface{})
-			//switch .type
-			//case
 			if !ok {
 				return errors.New("input json format error")
 			}
@@ -78,8 +74,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: post " + addr + "/api/v1/stream/schema")
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -97,7 +91,6 @@ func newStreamCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema Update Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -112,8 +105,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			//fmt.Print("data: ")
-			//fmt.Println(data)
 			stream, ok := data["stream"].(map[string]interface{})
 			if !ok {
 				return errors.New("input json format error")
@@ -131,13 +122,10 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				return errors.New("input json format error")
 			}
-			//fmt.Println(data)
 			resp, err := client.R().SetBody(data).Put("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
-			logger.GetLogger().Info().Msg("http request: put " + "http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -148,14 +136,13 @@ func newStreamCmd() *cobra.Command {
 	}
 
 	StreamGetCmd := &cobra.Command{
-		Use:     "get", // "{\"metadata\":{\"group\":\"mxm\",\"name\":\"naonao\"}}"
+		Use:     "get",
 		Version: version.Build(),
 		Short:   "banyandb stream schema Get Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema Get Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -183,8 +170,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: get " + addr + "/api/v1/stream/schema/" + group + "/" + name)
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -202,7 +187,6 @@ func newStreamCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema Delete Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -230,8 +214,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: delete " + addr + "/api/v1/stream/schema/" + group + "/" + name)
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -249,7 +231,6 @@ func newStreamCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema List Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -272,8 +253,6 @@ func newStreamCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: list " + "http://" + addr + "/api/v1/stream/schema/" + group)
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -291,7 +270,6 @@ func newStreamCmd() *cobra.Command {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb stream schema Query Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -315,14 +293,10 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
 			}
-			//fmt.Println("data:")
-			//fmt.Println(data)
 			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/data")
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: post " + addr + "/api/v1/stream/data")
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err

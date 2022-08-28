@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
@@ -39,14 +38,13 @@ func newGroupCmd() *cobra.Command {
 	}
 
 	GroupCreateCmd := &cobra.Command{
-		Use:     "create", // "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"mxm\"}}}"
+		Use:     "create",
 		Version: version.Build(),
 		Short:   "banyandb group schema Create Operation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb group schema Create Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -62,8 +60,6 @@ func newGroupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http://" + addr + "/api/v1/group/schema")
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -80,9 +76,7 @@ func newGroupCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
-
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			logger.GetLogger().Info().Msg("banyandb group schema List Operation")
 			client := resty.New()
 			addr, err := cmd.Flags().GetString("addr")
 			if err != nil {
@@ -92,8 +86,6 @@ func newGroupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http://" + addr + "/api/v1/group/schema/lists")
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			yamlResult, err := yaml.JSONToYAML(resp.Body())
 			if err != nil {
 				return err
@@ -103,7 +95,7 @@ func newGroupCmd() *cobra.Command {
 		},
 	}
 
-	// GroupGetCmd, GroupUpdateCmd, GroupDeleteCmd
+	// todo:GroupGetCmd, GroupUpdateCmd, GroupDeleteCmd
 	GroupCmd.AddCommand(GroupCreateCmd, GroupListCmd)
 	return GroupCmd
 }

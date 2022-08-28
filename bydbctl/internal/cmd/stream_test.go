@@ -19,8 +19,6 @@ package cmd_test
 
 import (
 	"context"
-	"encoding/base64"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -30,16 +28,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/zenizh/go-capturer"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"io"
 	"strings"
 	"time"
 )
@@ -60,8 +53,8 @@ var _ = Describe("Stream", func() {
 		}
 		gracefulStop = setup(false, flags)
 		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
-		// stream is based on group
 		time.Sleep(1 * time.Second)
+		// extracting the operation of creating stream schema
 		rootCmd := cmd.NewRoot()
 		rootCmd.SetArgs([]string{"group", "create", "-j", "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"group1\"}}}"})
 		out := capturer.CaptureOutput(func() {
@@ -78,7 +71,7 @@ var _ = Describe("Stream", func() {
 	})
 
 	It("create stream schema", func() {
-		// test code for creating is in BeforeEach()
+		// test code for creating stream schema is in BeforeEach()
 	})
 
 	It("get stream schema", func() {
@@ -174,72 +167,11 @@ var _ = Describe("Stream", func() {
 		Expect(s[16]).To(Equal("    name: name2"))
 	})
 
-	It("query stream data", func() {
-		// insert data
-		var err error
-		conn, err := grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
-		streamWrite(conn)
-		_ = conn.Close()
-		// query
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "query", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"projection\":{\"tag_families\":[{\"name\":\"\",\"tags\":[\"webapp_id\"]}]}}"})
-		out := capturer.CaptureOutput(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		//s = strings.Split(out, "\n")
-		//for i, x := range s {
-		//	fmt.Print(i)
-		//	fmt.Print(" ")
-		//	fmt.Println(x)
-		//}
-		Expect(out).To(Equal("{}\n"))
-	})
-
 	AfterEach(func() {
 		gracefulStop()
 		deferFunc()
 	})
 })
-
-func streamWrite(conn *grpclib.ClientConn) {
-	c := streamv1.NewStreamServiceClient(conn)
-	ctx := context.Background()
-	var writeClient streamv1.StreamService_WriteClient
-	Eventually(func(g Gomega) {
-		var err error
-		writeClient, err = c.Write(ctx)
-		g.Expect(err).NotTo(HaveOccurred())
-	}).Should(Succeed())
-	Eventually(func() error {
-		return writeClient.Send(writeStreamData())
-	}).ShouldNot(HaveOccurred())
-	Expect(writeClient.CloseSend()).Should(Succeed())
-	Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}).Should(Equal(io.EOF))
-}
-
-func writeStreamData() *streamv1.WriteRequest {
-	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
-	return pbv1.NewStreamWriteRequestBuilder().
-		ID("1").
-		Metadata("group1", "name1").
-		Timestamp(timestamp.NowMilli()).
-		TagFamily(bb).
-		TagFamily(
-			"trace_id-xxfff.111",
-			0,
-			"webapp_id",
-			"10.0.0.1_id",
-			"/home_id",
-			300,
-			1622933202000000000,
-		).
-		Build()
-}
 
 func setup(loadMetadata bool, flags []string) func() {
 	// Init `Discovery` module
@@ -300,7 +232,7 @@ type preloadMeasureService struct {
 }
 
 func (p *preloadStreamService) Name() string {
-	return "preload-stream" // query才需要，预加载schema
+	return "preload-stream"
 }
 
 func (p *preloadMeasureService) Name() string {
