@@ -119,6 +119,8 @@ func (s *TumblingTimeWindows) Setup(ctx context.Context) error {
 func (s *TumblingTimeWindows) purgeWindow(w timeWindow) {
 	s.snapshotsMu.Lock()
 	if snapshot, ok := s.snapshots[w.MaxTimestamp()]; ok {
+		// get and remove the key/value
+		delete(s.snapshots, w.MaxTimestamp())
 		s.snapshotsMu.Unlock()
 		if err := s.acc.Merge(snapshot); err != nil {
 			s.errorHandler(err)
