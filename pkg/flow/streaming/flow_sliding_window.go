@@ -40,8 +40,6 @@ var (
 	_ flow.Operator       = (*TumblingTimeWindows)(nil)
 	_ flow.WindowAssigner = (*TumblingTimeWindows)(nil)
 	_ flow.Window         = (*timeWindow)(nil)
-
-	_ TriggerContext = (*triggerContext)(nil)
 )
 
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
@@ -95,10 +93,8 @@ type TumblingTimeWindows struct {
 	aggregationFactory flow.AggregationOpFactory
 
 	// For api.Operator
-	in           chan flow.StreamRecord
-	out          chan flow.StreamRecord
-	done         chan struct{}
-	purgedWindow chan timeWindow
+	in  chan flow.StreamRecord
+	out chan flow.StreamRecord
 }
 
 func (s *TumblingTimeWindows) In() chan<- flow.StreamRecord {
@@ -116,34 +112,23 @@ func (s *TumblingTimeWindows) Setup(ctx context.Context) error {
 	// start processing
 	s.Add(1)
 	go s.receive()
-	// start emitting
-	s.Add(1)
-	go s.emit()
 
 	return nil
 }
 
-func (s *TumblingTimeWindows) emit() {
-	defer s.Done()
-	for w := range s.purgedWindow {
-		if err := func(window timeWindow) error {
-			s.snapshotsMu.Lock()
-			defer s.snapshotsMu.Unlock()
-
-			if snapshot, ok := s.snapshots[window.MaxTimestamp()]; ok {
-				if err := s.acc.Merge(snapshot); err != nil {
-					return err
-				}
-
-				s.out <- flow.NewStreamRecord(s.acc.Snapshot(), window.start)
-			}
-
-			return nil
-		}(w); err != nil {
+func (s *TumblingTimeWindows) purgeWindow(w timeWindow) {
+	s.snapshotsMu.Lock()
+	if snapshot, ok := s.snapshots[w.MaxTimestamp()]; ok {
+		s.snapshotsMu.Unlock()
+		if err := s.acc.Merge(snapshot); err != nil {
 			s.errorHandler(err)
+			return
 		}
+
+		s.out <- flow.NewStreamRecord(s.acc.Snapshot(), w.start)
+		return
 	}
-	close(s.done)
+	s.snapshotsMu.Unlock()
 }
 
 func (s *TumblingTimeWindows) purgeOutdatedWindows() {
@@ -153,7 +138,7 @@ func (s *TumblingTimeWindows) purgeOutdatedWindows() {
 		if lookAhead, ok := s.timerHeap.Peek().(*internalTimer); ok {
 			if lookAhead.triggerTimeMillis <= s.currentWatermark {
 				oldestTimer := heap.Pop(s.timerHeap).(*internalTimer)
-				s.purgedWindow <- oldestTimer.w
+				s.purgeWindow(oldestTimer.w)
 				continue
 			}
 		}
@@ -193,7 +178,7 @@ func (s *TumblingTimeWindows) receive() {
 
 			result := ctx.OnElement(elem)
 			if result == FIRE {
-				s.purgedWindow <- tw
+				s.purgeWindow(tw)
 			}
 		}
 
@@ -212,8 +197,6 @@ func (s *TumblingTimeWindows) receive() {
 			s.purgeOutdatedWindows()
 		}
 	}
-	close(s.purgedWindow)
-	<-s.done
 	close(s.out)
 }
 
@@ -240,8 +223,6 @@ func NewTumblingTimeWindows(size time.Duration) *TumblingTimeWindows {
 		timerHeap:        flow.NewPriorityQueue(false),
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
-		done:             make(chan struct{}),
-		purgedWindow:     make(chan timeWindow),
 		currentWatermark: 0,
 	}
 }
@@ -276,19 +257,13 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 }
 
 // eventTimeTriggerOnElement processes element(s) with EventTimeTrigger
-func eventTimeTriggerOnElement(window timeWindow, ctx TriggerContext) TriggerResult {
+func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) TriggerResult {
 	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
 		// if the watermark is already past the window fire immediately
 		return FIRE
 	}
 	ctx.RegisterEventTimeTimer(window.MaxTimestamp())
 	return CONTINUE
-}
-
-type TriggerContext interface {
-	GetCurrentWatermark() int64
-	RegisterEventTimeTimer(int64)
-	OnElement(flow.StreamRecord) TriggerResult
 }
 
 type triggerContext struct {

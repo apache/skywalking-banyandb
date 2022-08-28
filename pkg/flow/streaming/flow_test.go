@@ -130,7 +130,61 @@ var _ = Describe("Streaming", func() {
 		})
 	})
 
-	Context("With TopN operator", func() {
+	Context("With TopN operator order by ASC", func() {
+		type record struct {
+			service  string
+			instance string
+			value    int
+		}
+
+		var input []flow.StreamRecord
+
+		JustBeforeEach(func() {
+			snk = sink.NewSlice()
+
+			f = New(flowTest.NewSlice(input)).
+				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
+					// groupBy
+					return flow.Data{item.(*record).service, int64(item.(*record).value)}
+				})).
+				Window(NewTumblingTimeWindows(15*time.Second)).
+				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
+					return record.Data().(flow.Data)[1].(int64)
+				}), OrderBy(ASC)).
+				To(snk)
+
+			errCh = f.Open()
+			Expect(errCh).ShouldNot(BeNil())
+		})
+
+		When("Top3", func() {
+			BeforeEach(func() {
+				input = []flow.StreamRecord{
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-001", 10000}, 1000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9900}, 2000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 3000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-002", 9700}, 4000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-003", 9700}, 5000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-004", 9600}, 6000),
+					flow.NewStreamRecord(&record{"e2e-service-consumer", "instance-001", 9500}, 7000),
+					flow.NewStreamRecord(&record{"e2e-service-provider", "instance-002", 9800}, 61000),
+				}
+			})
+
+			It("Should take top 3 elements", func() {
+				Eventually(func(g Gomega) {
+					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo([]*Tuple2{
+						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500)}, 7000)},
+						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600)}, 6000)},
+						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700)}, 4000)},
+					}))
+				}).WithTimeout(10 * time.Second).Should(Succeed())
+			})
+		})
+	})
+
+	Context("With TopN operator order by DESC", func() {
 		type record struct {
 			service  string
 			instance string
@@ -175,9 +229,9 @@ var _ = Describe("Streaming", func() {
 				Eventually(func(g Gomega) {
 					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
 					g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo([]*Tuple2{
-						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500)}, 7000)},
-						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600)}, 6000)},
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700)}, 4000)},
+						{int64(10000), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000)}, 1000)},
+						{int64(9900), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9900)}, 2000)},
+						{int64(9800), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800)}, 3000)},
 					}))
 				}).WithTimeout(10 * time.Second).Should(Succeed())
 			})

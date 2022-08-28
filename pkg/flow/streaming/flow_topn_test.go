@@ -24,7 +24,6 @@ import (
 	"github.com/emirpasic/gods/utils"
 	"github.com/stretchr/testify/require"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
@@ -44,12 +43,21 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 	}
 	tests := []struct {
 		name     string
-		sort     modelv1.Sort
+		sort     TopNSort
 		expected []*Tuple2
 	}{
 		{
 			name: "DESC",
-			sort: modelv1.Sort_SORT_DESC,
+			sort: DESC,
+			expected: []*Tuple2{
+				{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
+				{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
+				{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+			},
+		},
+		{
+			name: "DESC by default",
+			sort: 0,
 			expected: []*Tuple2{
 				{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
 				{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
@@ -58,7 +66,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 		},
 		{
 			name: "ASC",
-			sort: modelv1.Sort_SORT_ASC,
+			sort: ASC,
 			expected: []*Tuple2{
 				{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
 				{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
@@ -70,7 +78,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
 			var comparator utils.Comparator
-			if tt.sort == modelv1.Sort_SORT_DESC {
+			if tt.sort == DESC {
 				comparator = func(a, b interface{}) int {
 					return utils.Int64Comparator(b, a)
 				}

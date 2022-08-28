@@ -23,8 +23,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+)
+
+type TopNSort uint8
+
+const (
+	DESC TopNSort = iota
+	ASC
 )
 
 type windowedFlow struct {
@@ -36,7 +42,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 	s.wa.(*TumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
 		topNAggrFunc := &topNAggregator{
 			cacheSize: topNum,
-			sort:      modelv1.Sort_SORT_UNSPECIFIED,
+			sort:      DESC,
 		}
 		// apply user customized options
 		for _, opt := range opts {
@@ -47,12 +53,12 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 		if topNAggrFunc.sortKeyExtractor == nil {
 			s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
 		}
-		if topNAggrFunc.sort == modelv1.Sort_SORT_DESC {
+		if topNAggrFunc.sort == ASC {
+			topNAggrFunc.comparator = utils.Int64Comparator
+		} else { // DESC
 			topNAggrFunc.comparator = func(a, b interface{}) int {
 				return utils.Int64Comparator(b, a)
 			}
-		} else {
-			topNAggrFunc.comparator = utils.Int64Comparator
 		}
 		topNAggrFunc.treeMap = treemap.NewWith(topNAggrFunc.comparator)
 		return topNAggrFunc
@@ -71,7 +77,7 @@ type topNAggregator struct {
 	// TODO: currently we only support sorting numeric field, i.e. int64
 	sortKeyExtractor func(flow.StreamRecord) int64
 	// sort indicates the order of results
-	sort       modelv1.Sort
+	sort       TopNSort
 	comparator utils.Comparator
 }
 
@@ -83,7 +89,7 @@ func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOp
 	}
 }
 
-func OrderBy(sort modelv1.Sort) TopNOption {
+func OrderBy(sort TopNSort) TopNOption {
 	return func(aggregator *topNAggregator) {
 		aggregator.sort = sort
 	}

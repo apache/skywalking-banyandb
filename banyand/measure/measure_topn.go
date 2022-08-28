@@ -269,10 +269,17 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[1].(int64)
 			}),
-			streaming.OrderBy(t.topNSchema.GetFieldValueSort()),
+			OrderBy(t.topNSchema.GetFieldValueSort()),
 		).To(t).Open()
 	go t.handleError()
 	return t
+}
+
+func OrderBy(sort modelv1.Sort) streaming.TopNOption {
+	if sort == modelv1.Sort_SORT_ASC {
+		return streaming.OrderBy(streaming.ASC)
+	}
+	return streaming.OrderBy(streaming.DESC)
 }
 
 func (t *topNStreamingProcessor) handleError() {
