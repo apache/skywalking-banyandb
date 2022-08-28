@@ -33,13 +33,11 @@ ENV GOPATH "/go"
 ENV GO111MODULE "on"
 WORKDIR /src
 COPY go.* ./
-ENV GOPROXY="https://goproxy.cn"
 RUN go mod download
 RUN GOBIN=/bin go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.11 \
     && chmod 755 /bin/grpc-health-probe
 
 FROM base AS builder
-ENV GOPROXY="https://goproxy.cn"
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
             BUILD_DIR=/out make -C banyand all
