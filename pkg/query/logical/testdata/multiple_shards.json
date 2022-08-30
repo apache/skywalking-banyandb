@@ -18,7 +18,12 @@
       {"str":{"value": "10.0.0.3_id"}},
       {"str":{"value": "/product_id"}},
       {"int":{"value": 500}},
-      {"int":{"value": 1622933202000000000}}
+      {"int":{"value": 1622933202000000000}},
+      {"null":0},
+      {"null":0},
+      {"null":0},
+      {"str":{"value":"mysql"}},
+      {"str":{"value":"jdbc:mysql://localhost:3306/bar"}}
     ]
   },
   {
@@ -31,7 +36,10 @@
       {"int":{"value": 30}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
-      {"int":{"value": 500}}
+      {"int":{"value": 500}},
+      {"null":0},
+      {"str":{"value":"mysql"}},
+      {"str":{"value":"jdbc:mysql://test:3306/bar"}}
     ]
   },
   {
@@ -44,7 +52,10 @@
       {"int":{"value": 60}},
       {"int":{"value": 1622933202000000000}},
       {"str":{"value": "GET"}},
-      {"int":{"value": 400}}
+      {"int":{"value": 400}},
+      {"null":0},
+      {"str":{"value":"postgresql"}},
+      {"str":{"value":"jdbc:postgresql://test:5432/bar"}}
     ]
   },
   {

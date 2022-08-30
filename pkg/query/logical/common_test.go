@@ -144,7 +144,7 @@ func setup(t *require.Assertions) (stream.Stream, metadata.Service, func()) {
 	}
 }
 
-func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, func()) {
+func setupMeasure(t *require.Assertions, name string) (measure.Measure, metadata.Service, func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -188,7 +188,7 @@ func setupMeasure(t *require.Assertions) (measure.Measure, metadata.Service, fun
 	t.NoError(err)
 
 	m, err := measureSvc.Measure(&commonv1.Metadata{
-		Name:  "service_cpm_minute",
+		Name:  name,
 		Group: "sw_metric",
 	})
 	t.NoError(err)

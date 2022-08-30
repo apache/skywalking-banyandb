@@ -653,6 +653,10 @@
                       "type": "string",
                       "format": "date-time",
                       "title": "updated_at indicates when the IndexRule is updated"
+                    },
+                    "analyzer": {
+                      "$ref": "#/definitions/IndexRuleAnalyzer",
+                      "description": "analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices."
                     }
                   },
                   "description": "IndexRule defines how to generate indices based on tags and the index type\nIndexRule should bind to a subject through an IndexRuleBinding to generate proper indices."
@@ -1356,10 +1360,22 @@
         "BINARY_OP_HAVING",
         "BINARY_OP_NOT_HAVING",
         "BINARY_OP_IN",
-        "BINARY_OP_NOT_IN"
+        "BINARY_OP_NOT_IN",
+        "BINARY_OP_MATCH"
       ],
       "default": "BINARY_OP_UNSPECIFIED",
-      "title": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\""
+      "description": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\"\nMATCH performances a full-text search if the tag is analyzed.\nThe string value applies to the same analyzer as the tag, but string array value does not.\nEach item in a string array is seen as a token instead of a query expression."
+    },
+    "IndexRuleAnalyzer": {
+      "type": "string",
+      "enum": [
+        "ANALYZER_UNSPECIFIED",
+        "ANALYZER_KEYWORD",
+        "ANALYZER_STANDARD",
+        "ANALYZER_SIMPLE"
+      ],
+      "default": "ANALYZER_UNSPECIFIED",
+      "description": " - ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase."
     },
     "protobufAny": {
       "type": "object",
@@ -1592,6 +1608,10 @@
           "type": "string",
           "format": "date-time",
           "title": "updated_at indicates when the IndexRule is updated"
+        },
+        "analyzer": {
+          "$ref": "#/definitions/IndexRuleAnalyzer",
+          "description": "analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices."
         }
       },
       "description": "IndexRule defines how to generate indices based on tags and the index type\nIndexRule should bind to a subject through an IndexRuleBinding to generate proper indices."

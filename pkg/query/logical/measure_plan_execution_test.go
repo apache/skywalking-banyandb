@@ -34,7 +34,7 @@ import (
 
 func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 	tester := require.New(t)
-	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	measureSvc, metaService, deferFunc := setupMeasure(tester, "service_cpm_minute")
 	defer deferFunc()
 	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
 
@@ -127,7 +127,7 @@ func TestMeasurePlanExecution_IndexScan(t *testing.T) {
 
 func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 	tester := require.New(t)
-	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	measureSvc, metaService, deferFunc := setupMeasure(tester, "service_cpm_minute")
 	defer deferFunc()
 	baseTs := setupMeasureQueryData(t, "measure_query_data.json", measureSvc)
 
@@ -218,7 +218,7 @@ func TestMeasurePlanExecution_GroupByAndIndexScan(t *testing.T) {
 
 func TestMeasurePlanExecution_Cursor(t *testing.T) {
 	tester := require.New(t)
-	measureSvc, metaService, deferFunc := setupMeasure(tester)
+	measureSvc, metaService, deferFunc := setupMeasure(tester, "service_cpm_minute")
 	defer deferFunc()
 	baseTs := setupMeasureQueryData(t, "measure_top_data.json", measureSvc)
 
@@ -356,6 +356,88 @@ func TestMeasurePlanExecution_Cursor(t *testing.T) {
 				}
 			}
 			tester.Equal(tt.want, got)
+		})
+	}
+}
+
+func TestMeasurePlanExecution_Searchable(t *testing.T) {
+	tester := require.New(t)
+	measureSvc, metaService, deferFunc := setupMeasure(tester, "service_instance_traffic")
+	defer deferFunc()
+	baseTs := setupMeasureQueryData(t, "measure_search_data.json", measureSvc)
+
+	metadata := &commonv1.Metadata{
+		Name:  "service_instance_traffic",
+		Group: "sw_metric",
+	}
+
+	sT, eT := baseTs, baseTs.Add(1*time.Hour)
+
+	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(metaService)
+	tester.NoError(err)
+	tester.NotNil(analyzer)
+
+	tests := []struct {
+		name           string
+		unresolvedPlan logical.UnresolvedPlan
+		wantLength     int
+		tagLength      []int
+		fieldLength    int
+	}{
+		{
+			name: "search node a",
+			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Match(logical.NewTagRef("default", "name"), logical.Str("nodea")),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false, nil),
+			wantLength: 2,
+		},
+		{
+			name: "search nodes in us",
+			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Match(logical.NewTagRef("default", "name"), logical.Str("us")),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false, nil),
+			wantLength: 2,
+		},
+		{
+			name: "search nodes in cn",
+			unresolvedPlan: logical.MeasureIndexScan(sT, eT, metadata, []logical.Expr{
+				logical.Match(logical.NewTagRef("default", "name"), logical.Str("cn")),
+			}, tsdb.Entity{tsdb.AnyEntry}, nil, nil, false, nil),
+			wantLength: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := require.New(t)
+			schema, err := analyzer.BuildMeasureSchema(context.TODO(), metadata)
+			tester.NoError(err)
+
+			plan, err := tt.unresolvedPlan.Analyze(schema)
+			tester.NoError(err)
+			tester.NotNil(plan)
+
+			iter, err := plan.(executor.MeasureExecutable).Execute(measureSvc)
+			tester.NoError(err)
+			defer func() {
+				err = iter.Close()
+				tester.NoError(err)
+			}()
+			dataSize := 0
+			for iter.Next() {
+				dataPoints := iter.Current()
+				if len(dataPoints) < 1 {
+					continue
+				}
+				dp := dataPoints[0]
+				dataSize++
+				tester.Len(dp.GetFields(), tt.fieldLength)
+				tester.Len(dp.GetTagFamilies(), len(tt.tagLength))
+				for tagFamilyIdx, tagFamily := range dp.GetTagFamilies() {
+					tester.Len(tagFamily.GetTags(), tt.tagLength[tagFamilyIdx])
+				}
+			}
+			tester.Equal(dataSize, tt.wantLength)
 		})
 	}
 }

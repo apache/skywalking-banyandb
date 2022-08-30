@@ -56,9 +56,10 @@ type seekerBuilder struct {
 	seriesSpan *seriesSpan
 
 	conditions []struct {
-		indexRuleType databasev1.IndexRule_Type
-		indexRuleID   uint32
-		condition     Condition
+		indexRuleType     databasev1.IndexRule_Type
+		indexRuleID       uint32
+		indexRuleAnalyzer databasev1.IndexRule_Analyzer
+		condition         Condition
 	}
 	order               modelv1.Sort
 	indexRuleForSorting *databasev1.IndexRule

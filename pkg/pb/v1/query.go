@@ -38,6 +38,7 @@ var binaryOpsMap = map[string]modelv1.Condition_BinaryOp{
 	"<=":         modelv1.Condition_BINARY_OP_LE,
 	"having":     modelv1.Condition_BINARY_OP_HAVING,
 	"not having": modelv1.Condition_BINARY_OP_NOT_HAVING,
+	"match":      modelv1.Condition_BINARY_OP_MATCH,
 }
 
 type StreamQueryRequestBuilder struct {

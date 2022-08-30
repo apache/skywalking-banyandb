@@ -25,12 +25,14 @@ import (
 	"math"
 
 	"github.com/blugelabs/bluge"
+	"github.com/blugelabs/bluge/analysis"
 	"github.com/blugelabs/bluge/analysis/analyzer"
 	"github.com/blugelabs/bluge/search"
 	"github.com/dgraph-io/badger/v3/y"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -42,7 +44,15 @@ import (
 
 const docID = "_id"
 
-var defaultAnalyzer = analyzer.NewKeywordAnalyzer()
+var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
+
+func init() {
+	analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
+		databasev1.IndexRule_ANALYZER_KEYWORD:  analyzer.NewKeywordAnalyzer(),
+		databasev1.IndexRule_ANALYZER_SIMPLE:   analyzer.NewSimpleAnalyzer(),
+		databasev1.IndexRule_ANALYZER_STANDARD: analyzer.NewStandardAnalyzer(),
+	}
+}
 
 var _ index.Store = (*store)(nil)
 
@@ -57,7 +67,7 @@ type store struct {
 
 func NewStore(opts StoreOpts) (index.Store, error) {
 	config := bluge.DefaultConfig(opts.Path)
-	config.DefaultSearchAnalyzer = defaultAnalyzer
+	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
@@ -79,7 +89,11 @@ func (s *store) Close() error {
 func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
 	doc := bluge.NewDocument(string(convert.Uint64ToBytes(uint64(itemID))))
 	for _, f := range fields {
-		doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable())
+		field := bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable()
+		if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+			field.WithAnalyzer(analyzers[f.Key.Analyzer])
+		}
+		doc.AddField(field)
 	}
 	return s.writer.Insert(doc)
 }
@@ -137,6 +151,45 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 		return nil, err
 	}
 	return iter.Val().Value, nil
+}
+
+func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
+	if len(matches) == 0 {
+		return roaring.EmptyPostingList, nil
+	}
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	fk := fieldKey.MarshalToStr()
+	var query bluge.Query
+	getMatchQuery := func(match string) bluge.Query {
+		q := bluge.NewMatchQuery(match).SetField(fk)
+		if fieldKey.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+			q.SetAnalyzer(analyzers[fieldKey.Analyzer])
+		}
+		return q
+	}
+	if len(matches) == 1 {
+		query = getMatchQuery(matches[0])
+	} else {
+		bq := bluge.NewBooleanQuery()
+		for _, m := range matches {
+			bq.AddMust(getMatchQuery(m))
+		}
+		query = bq
+	}
+	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
+	if err != nil {
+		return nil, err
+	}
+	iter := newBlugeMatchIterator(documentMatchIterator, fk)
+	list := roaring.NewPostingList()
+	for iter.Next() {
+		err = multierr.Append(err, list.Union(iter.Val().Value))
+	}
+	err = multierr.Append(err, iter.Close())
+	return list, err
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
