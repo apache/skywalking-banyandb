@@ -85,6 +85,8 @@ func BuildTree(searcher Searcher, condMap Condition) (Tree, error) {
 			switch cond.Op {
 			case modelv1.Condition_BINARY_OP_EQ:
 				root.addEq(key, cond.Values)
+			case modelv1.Condition_BINARY_OP_MATCH:
+				root.addMatch(key, cond.Values)
 			case modelv1.Condition_BINARY_OP_NE:
 				root.addNot(key, root.newEq(key, cond.Values))
 			case modelv1.Condition_BINARY_OP_HAVING:
@@ -134,6 +136,20 @@ func (n *node) newEq(key FieldKey, values [][]byte) *eq {
 			searcher: n.searcher,
 		},
 	}
+}
+
+func (n *node) newMatch(key FieldKey, values [][]byte) *match {
+	return &match{
+		leaf: &leaf{
+			Key:      key,
+			Values:   values,
+			searcher: n.searcher,
+		},
+	}
+}
+
+func (n *node) addMatch(key FieldKey, values [][]byte) {
+	n.SubNodes = append(n.SubNodes, n.newMatch(key, values))
 }
 
 func (n *node) addEq(key FieldKey, values [][]byte) {
@@ -292,6 +308,27 @@ func (eq *eq) Execute() (posting.List, error) {
 func (eq *eq) MarshalJSON() ([]byte, error) {
 	data := make(map[string]interface{}, 1)
 	data["eq"] = eq.leaf
+	return json.Marshal(data)
+}
+
+type match struct {
+	*leaf
+}
+
+func (match *match) Execute() (posting.List, error) {
+	matches := make([]string, len(match.Values))
+	for i, v := range match.Values {
+		matches[i] = string(v)
+	}
+	return match.searcher.Match(
+		match.Key,
+		matches,
+	)
+}
+
+func (match *match) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["match"] = match.leaf
 	return json.Marshal(data)
 }
 

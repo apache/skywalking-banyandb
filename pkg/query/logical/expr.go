@@ -34,6 +34,7 @@ var binaryOpFactory = map[modelv1.Condition_BinaryOp]func(l, r Expr) Expr{
 	modelv1.Condition_BINARY_OP_GE:         Ge,
 	modelv1.Condition_BINARY_OP_HAVING:     Having,
 	modelv1.Condition_BINARY_OP_NOT_HAVING: NotHaving,
+	modelv1.Condition_BINARY_OP_MATCH:      Match,
 }
 
 var _ ResolvableExpr = (*TagRef)(nil)
@@ -182,6 +183,14 @@ func (b *binaryExpr) String() string {
 func Eq(l, r Expr) Expr {
 	return &binaryExpr{
 		op: modelv1.Condition_BINARY_OP_EQ,
+		l:  l,
+		r:  r,
+	}
+}
+
+func Match(l, r Expr) Expr {
+	return &binaryExpr{
+		op: modelv1.Condition_BINARY_OP_MATCH,
 		l:  l,
 		r:  r,
 	}

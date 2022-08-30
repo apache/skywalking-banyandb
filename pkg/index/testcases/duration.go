@@ -292,7 +292,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 					items: toArray(data[w]),
 				})
 			}
-			tester.Equal(wants, got)
+			tester.Equal(wants, got, tt.name)
 		})
 	}
 }

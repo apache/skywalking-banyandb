@@ -293,6 +293,13 @@ func TestPlanExecution_IndexScan(t *testing.T) {
 			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
 			wantLength: 0,
 		},
+		{
+			name: "Full text searching",
+			unresolvedPlan: logical.TagFilter(sT, eT, metadata, []logical.Expr{
+				logical.Match(logical.NewTagRef("searchable", "db.instance"), logical.Str("mysql")),
+			}, tsdb.Entity{tsdb.AnyEntry, tsdb.AnyEntry, tsdb.AnyEntry}, nil),
+			wantLength: 2,
+		},
 	}
 
 	for _, tt := range tests {
