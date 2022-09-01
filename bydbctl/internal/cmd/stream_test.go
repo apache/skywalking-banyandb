@@ -19,6 +19,9 @@ package cmd_test
 
 import (
 	"context"
+	"strings"
+	"time"
+
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -33,8 +36,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/zenizh/go-capturer"
-	"strings"
-	"time"
 )
 
 var _ = Describe("Stream", func() {
