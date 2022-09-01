@@ -45,14 +45,13 @@ func newUserGroupCmd() *cobra.Command {
 			}
 			if resp.StatusCode() == 404 { // check if the group exists
 				return errors.New("no such group")
-			} else {
-				viper.Set("group", args[0])
-				err = viper.WriteConfig()
-				if err != nil {
-					return err
-				}
-				fmt.Println("switched to ", viper.Get("group"), "group")
 			}
+			viper.Set("group", args[0])
+			err = viper.WriteConfig()
+			if err != nil {
+				return err
+			}
+			fmt.Println("switched to ", viper.Get("group"), "group")
 			return nil
 		},
 	}
