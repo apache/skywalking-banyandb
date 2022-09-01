@@ -36,7 +36,7 @@ func NewRoot() *cobra.Command {
 			viper.SetConfigType("yaml")
 			viper.SetConfigName("config")
 			viper.AddConfigPath("$HOME/.bydbctl")
-			if err := viper.SafeWriteConfig(); err != nil {
+			if err = viper.SafeWriteConfig(); err != nil {
 				if os.IsNotExist(err) {
 					err = viper.WriteConfig()
 					if err != nil {
@@ -58,7 +58,7 @@ func NewRoot() *cobra.Command {
 	cmd.AddCommand(newBanyanDBCmd()...)
 	Addr := ""
 	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "localhost:17913", "default ip/port")
-	Json := ""
-	cmd.PersistentFlags().StringVarP(&Json, "json", "j", `{}`, "accept json args to call banyandb's http interface")
+	JSON := ""
+	cmd.PersistentFlags().StringVarP(&JSON, "json", "j", `{}`, "accept json args to call banyandb's http interface")
 	return cmd
 }

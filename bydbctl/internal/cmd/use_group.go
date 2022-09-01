@@ -48,6 +48,9 @@ func newUserGroupCmd() *cobra.Command {
 			} else {
 				viper.Set("group", args[0])
 				err = viper.WriteConfig()
+				if err != nil {
+					return err
+				}
 				fmt.Println("switched to ", viper.Get("group"), "group")
 			}
 			return nil

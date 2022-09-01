@@ -51,6 +51,9 @@ func newGroupCmd() *cobra.Command {
 				return err
 			}
 			body, err := cmd.Flags().GetString("json")
+			if err != nil {
+				return err
+			}
 			var data map[string]interface{}
 			err = json.Unmarshal([]byte(body), &data)
 			if err != nil {
