@@ -20,7 +20,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
@@ -44,12 +43,9 @@ func newUserGroupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("http request: get " + addr + "/api/v1/group/schema/" + args[0])
-			logger.GetLogger().Info().Msg("http response: " + resp.Status())
 			if resp.StatusCode() == 404 { // check if the group exists
 				return errors.New("no such group")
 			} else {
-				fmt.Println(resp.StatusCode())
 				viper.Set("group", args[0])
 				err = viper.WriteConfig()
 				fmt.Println("switched to ", viper.Get("group"), "group")

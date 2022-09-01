@@ -27,8 +27,6 @@ import (
 )
 
 type healthCheckClient struct {
-	status grpc_health_v1.HealthCheckResponse_ServingStatus
-	code   codes.Code
 }
 
 func (g *healthCheckClient) Check(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {

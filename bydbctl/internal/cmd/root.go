@@ -19,11 +19,11 @@
 package cmd
 
 import (
-	"fmt"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"os"
 )
 
 // NewRoot returns the root command
@@ -36,9 +36,16 @@ func NewRoot() *cobra.Command {
 			viper.SetConfigType("yaml")
 			viper.SetConfigName("config")
 			viper.AddConfigPath("$HOME/.bydbctl")
-			if err := viper.ReadInConfig(); err != nil {
+			if err := viper.SafeWriteConfig(); err != nil {
+				if os.IsNotExist(err) {
+					err = viper.WriteConfig()
+					if err != nil {
+						return err
+					}
+				}
+			}
+			if err = viper.ReadInConfig(); err != nil {
 				if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-					fmt.Println("Config file not found")
 					logger.GetLogger().Fatal().Err(err).Msg("Config file not found")
 				} else {
 					logger.GetLogger().Fatal().Err(err).Msg("Config file was found but another error was produced")
