@@ -40,7 +40,7 @@ func NewRoot() *cobra.Command {
 			viper.AddConfigPath(configPath)
 			_, err = os.Stat(configPath)
 			if !os.IsExist(err) {
-				err = os.MkdirAll(configPath, 0777)
+				err = os.MkdirAll(configPath, 0o777)
 				if err != nil {
 					return err
 				}
