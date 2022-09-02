@@ -36,7 +36,15 @@ func NewRoot() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			viper.SetConfigType("yaml")
 			viper.SetConfigName("config")
-			viper.AddConfigPath("$HOME/.bydbctl")
+			configPath := os.Getenv("HOME") + "/.bydbctl"
+			viper.AddConfigPath(configPath)
+			_, err = os.Stat(configPath)
+			if !os.IsExist(err) {
+				err = os.MkdirAll(configPath, 0777)
+				if err != nil {
+					return err
+				}
+			}
 			if err = viper.SafeWriteConfig(); err != nil {
 				if os.IsNotExist(err) {
 					err = viper.WriteConfig()

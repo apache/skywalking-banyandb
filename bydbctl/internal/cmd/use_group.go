@@ -51,7 +51,7 @@ func newUserGroupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println("switched to ", viper.Get("group"), "group")
+			fmt.Println("switched to", viper.Get("group"), "group")
 			return nil
 		},
 	}
