@@ -36,6 +36,7 @@
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
     - [Criteria](#banyandb-model-v1-Criteria)
+    - [LogicalExpression](#banyandb-model-v1-LogicalExpression)
     - [QueryOrder](#banyandb-model-v1-QueryOrder)
     - [Tag](#banyandb-model-v1-Tag)
     - [TagFamily](#banyandb-model-v1-TagFamily)
@@ -44,6 +45,7 @@
     - [TimeRange](#banyandb-model-v1-TimeRange)
   
     - [Condition.BinaryOp](#banyandb-model-v1-Condition-BinaryOp)
+    - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
@@ -609,8 +611,25 @@ tag_families are indexed.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tag_family_name | [string](#string) |  |  |
-| conditions | [Condition](#banyandb-model-v1-Condition) | repeated |  |
+| le | [LogicalExpression](#banyandb-model-v1-LogicalExpression) |  |  |
+| condition | [Condition](#banyandb-model-v1-Condition) |  |  |
+
+
+
+
+
+
+<a name="banyandb-model-v1-LogicalExpression"></a>
+
+### LogicalExpression
+LogicalExpression supports logical operation
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logial operation |
+| left | [Criteria](#banyandb-model-v1-Criteria) |  |  |
+| right | [Criteria](#banyandb-model-v1-Criteria) |  |  |
 
 
 
@@ -744,6 +763,19 @@ Each item in a string array is seen as a token instead of a query expression.
 | BINARY_OP_IN | 9 |  |
 | BINARY_OP_NOT_IN | 10 |  |
 | BINARY_OP_MATCH | 11 |  |
+
+
+
+<a name="banyandb-model-v1-LogicalExpression-LogicalOp"></a>
+
+### LogicalExpression.LogicalOp
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| LOGICAL_OP_UNSPECIFIED | 0 |  |
+| LOGICAL_OP_AND | 1 |  |
+| LOGICAL_OP_OR | 2 |  |
 
 
 
@@ -2047,7 +2079,7 @@ QueryRequest is the request contract for query.
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is required |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) | repeated | tag_families are indexed. |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
 | field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
 | group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
@@ -2595,7 +2627,7 @@ QueryRequest is the request contract for query.
 | offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned |
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) | repeated | tag_families are indexed. |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
 | projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
 
 

@@ -29,7 +29,7 @@ import (
 type Schema interface {
 	Scope() tsdb.Entry
 	EntityList() []string
-	IndexDefined(*Tag) (bool, *databasev1.IndexRule)
+	IndexDefined(tagName string) (bool, *databasev1.IndexRule)
 	IndexRuleDefined(string) (bool, *databasev1.IndexRule)
 	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
@@ -105,10 +105,10 @@ func (cs *commonSchema) EntityList() []string {
 }
 
 // IndexDefined checks whether the field given is indexed
-func (cs *commonSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
+func (cs *commonSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	for _, idxRule := range cs.indexRules {
 		for _, tagName := range idxRule.GetTags() {
-			if tag.GetTagName() == tagName {
+			if tagName == tagName {
 				return true, idxRule
 			}
 		}
@@ -167,8 +167,8 @@ func (s *streamSchema) TraceIDFieldName() string {
 }
 
 // IndexDefined checks whether the field given is indexed
-func (s *streamSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
-	return s.common.IndexDefined(tag)
+func (s *streamSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return s.common.IndexDefined(tagName)
 }
 
 func (s *streamSchema) Equal(s2 Schema) bool {
@@ -236,8 +236,8 @@ func (m *measureSchema) EntityList() []string {
 	return m.common.EntityList()
 }
 
-func (m *measureSchema) IndexDefined(tag *Tag) (bool, *databasev1.IndexRule) {
-	return m.common.IndexDefined(tag)
+func (m *measureSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return m.common.IndexDefined(tagName)
 }
 
 func (m *measureSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {

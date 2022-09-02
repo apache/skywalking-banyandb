@@ -22,7 +22,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -45,10 +44,6 @@ type globalIndexScan struct {
 }
 
 func (t *globalIndexScan) String() string {
-	if len(t.projectionTagRefs) == 0 {
-		return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},condition=%s; projection=None",
-			t.metadata.GetGroup(), t.metadata.GetName(), t.expr.String())
-	}
 	return fmt.Sprintf("GlobalIndexScan: Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		t.metadata.GetGroup(), t.metadata.GetName(),
 		t.expr.String(), formatTagRefs(", ", t.projectionTagRefs...))
@@ -58,25 +53,8 @@ func (t *globalIndexScan) Children() []Plan {
 	return []Plan{}
 }
 
-func (t *globalIndexScan) Type() PlanType {
-	return PlanGlobalIndexScan
-}
-
 func (t *globalIndexScan) Schema() Schema {
 	return t.schema
-}
-
-func (t *globalIndexScan) Equal(plan Plan) bool {
-	if plan.Type() != PlanGlobalIndexScan {
-		return false
-	}
-	other := plan.(*globalIndexScan)
-	return t.metadata.GetGroup() == other.metadata.GetGroup() &&
-		t.metadata.GetName() == other.metadata.GetName() &&
-		cmp.Equal(t.projectionTagRefs, other.projectionTagRefs) &&
-		cmp.Equal(t.schema, other.schema) &&
-		cmp.Equal(t.globalIndexRule.GetMetadata().GetId(), other.globalIndexRule.GetMetadata().GetId()) &&
-		cmp.Equal(t.expr, other.expr)
 }
 
 func (t *globalIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {

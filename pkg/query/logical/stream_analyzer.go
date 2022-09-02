@@ -21,11 +21,8 @@ import (
 	"context"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var DefaultLimit uint32 = 100
@@ -155,57 +152,6 @@ func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metad
 		projTags[i] = projTagInFamily
 	}
 
-	var tagExprs []Expr
-
-	entityList := s.EntityList()
-	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, len(entityList))
-	for idx, e := range entityList {
-		entityMap[e] = idx
-		// fill AnyEntry by default
-		entity[idx] = tsdb.AnyEntry
-	}
-
-	for _, criteriaFamily := range criteria.GetCriteria() {
-		for _, pairQuery := range criteriaFamily.GetConditions() {
-			op := pairQuery.GetOp()
-			typedTagValue := pairQuery.GetValue()
-			var e Expr
-			switch v := typedTagValue.GetValue().(type) {
-			case *modelv1.TagValue_Str:
-				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-					entity[entityIdx] = []byte(v.Str.GetValue())
-				} else {
-					e = &strLiteral{
-						string: v.Str.GetValue(),
-					}
-				}
-			case *modelv1.TagValue_StrArray:
-				e = &strArrLiteral{
-					arr: v.StrArray.GetValue(),
-				}
-			case *modelv1.TagValue_Int:
-				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-					entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
-				} else {
-					e = &int64Literal{
-						int64: v.Int.GetValue(),
-					}
-				}
-			case *modelv1.TagValue_IntArray:
-				e = &int64ArrLiteral{
-					arr: v.IntArray.GetValue(),
-				}
-			default:
-				return nil, ErrInvalidConditionType
-			}
-			// we collect Condition only if it is not a part of entity
-			if e != nil {
-				tagExprs = append(tagExprs, binaryOpFactory[op](NewTagRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
-			}
-		}
-	}
-
 	return TagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagExprs, entity, nil, projTags...), nil
+		criteria.Criteria, nil, projTags...), nil
 }

@@ -24,12 +24,10 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -43,41 +41,15 @@ type unresolvedMeasureIndexScan struct {
 	startTime         time.Time
 	endTime           time.Time
 	metadata          *commonv1.Metadata
-	conditions        []Expr
+	predicator        Predicator
 	projectionTags    [][]*Tag
 	projectionFields  []*Field
-	entity            tsdb.Entity
+	entities          []tsdb.Entity
 	groupByEntity     bool
 	unresolvedOrderBy *UnresolvedOrderBy
 }
 
 func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
-	localConditionMap := make(map[*databasev1.IndexRule][]Expr)
-	for _, cond := range uis.conditions {
-		if resolvable, ok := cond.(ResolvableExpr); ok {
-			err := resolvable.Resolve(s)
-			if err != nil {
-				return nil, err
-			}
-
-			if bCond, ok := cond.(*binaryExpr); ok {
-				tag := bCond.l.(*TagRef).tag
-				if defined, indexObj := s.IndexDefined(tag); defined {
-					if indexObj.GetLocation() == databasev1.IndexRule_LOCATION_SERIES {
-						if v, exist := localConditionMap[indexObj]; exist {
-							v = append(v, cond)
-							localConditionMap[indexObj] = v
-						} else {
-							localConditionMap[indexObj] = []Expr{cond}
-						}
-					}
-				} else {
-					return nil, errors.Wrap(ErrIndexNotDefined, tag.GetCompoundName())
-				}
-			}
-		}
-	}
-
 	var projTagsRefs [][]*TagRef
 	if len(uis.projectionTags) > 0 {
 		var err error
@@ -108,8 +80,8 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
-		conditionMap:         localConditionMap,
-		entity:               uis.entity,
+		predicator:           uis.predicator,
+		entities:             uis.entities,
 		groupByEntity:        uis.groupByEntity,
 		orderBy:              orderBySubPlan,
 	}, nil
@@ -122,15 +94,15 @@ type localMeasureIndexScan struct {
 	timeRange            timestamp.TimeRange
 	schema               Schema
 	metadata             *commonv1.Metadata
-	conditionMap         map[*databasev1.IndexRule][]Expr
+	predicator           Predicator
 	projectionTagsRefs   [][]*TagRef
 	projectionFieldsRefs []*FieldRef
-	entity               tsdb.Entity
+	entities             []tsdb.Entity
 	groupByEntity        bool
 }
 
 func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	shards, err := ec.Shards(i.entity)
+	shards, err := ec.Shards(i.entities)
 	if err != nil {
 		return nil, err
 	}
@@ -255,17 +227,17 @@ func (i *localMeasureIndexScan) Equal(plan Plan) bool {
 		cmp.Equal(i.orderBy, other.orderBy)
 }
 
-func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, conditions []Expr, entity tsdb.Entity,
+func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, predicator Predicator, entities []tsdb.Entity,
 	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool, unresolvedOrderBy *UnresolvedOrderBy,
 ) UnresolvedPlan {
 	return &unresolvedMeasureIndexScan{
 		startTime:         startTime,
 		endTime:           endTime,
 		metadata:          metadata,
-		conditions:        conditions,
+		predicator:        predicator,
 		projectionTags:    projectionTags,
 		projectionFields:  projectionFields,
-		entity:            entity,
+		entities:          entities,
 		groupByEntity:     groupByEntity,
 		unresolvedOrderBy: unresolvedOrderBy,
 	}

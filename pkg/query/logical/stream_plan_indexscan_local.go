@@ -18,16 +18,12 @@
 package logical
 
 import (
-	"bytes"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -42,26 +38,47 @@ type localIndexScan struct {
 	timeRange         timestamp.TimeRange
 	schema            Schema
 	metadata          *commonv1.Metadata
-	conditionMap      map[*databasev1.IndexRule][]Expr
 	projectionTagRefs [][]*TagRef
-	entity            tsdb.Entity
+	entities          []tsdb.Entity
+	filter            index.Filter
 }
 
 func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
-	shards, err := ec.Shards(i.entity)
-	if err != nil {
-		return nil, err
+	var seriesList tsdb.SeriesList
+	for _, e := range i.entities {
+		shards, err := ec.Shards(e)
+		if err != nil {
+			return nil, err
+		}
+		for _, shard := range shards {
+			sl, err := shard.Series().List(tsdb.NewPath(e))
+			if err != nil {
+				return nil, err
+			}
+			seriesList = append(seriesList, sl...)
+		}
 	}
-	var iters []tsdb.Iterator
-	for _, shard := range shards {
-		itersInShard, innerErr := i.executeInShard(shard)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		if itersInShard == nil {
-			continue
-		}
-		iters = append(iters, itersInShard...)
+	if len(seriesList) == 0 {
+		return nil, nil
+	}
+	var builders []seekerBuilder
+	if i.index != nil {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByIndex(i.index, i.sort)
+		})
+	} else {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByTime(i.sort)
+		})
+	}
+	if i.filter != nil {
+		builders = append(builders, func(b tsdb.SeekerBuilder) {
+			b.Filter(i.filter)
+		})
+	}
+	iters, innerErr := executeForShard(seriesList, i.timeRange, builders...)
+	if innerErr != nil {
+		return nil, innerErr
 	}
 
 	var elems []*streamv1.Element
@@ -91,59 +108,10 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 	return elems, nil
 }
 
-func (i *localIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
-	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
-	if err != nil {
-		return nil, err
-	}
-
-	if len(seriesList) == 0 {
-		return nil, nil
-	}
-
-	var builders []seekerBuilder
-
-	if i.index != nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.index, i.sort)
-		})
-	} else {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByTime(i.sort)
-		})
-	}
-
-	if i.conditionMap != nil && len(i.conditionMap) > 0 {
-		builders = append(builders, func(b tsdb.SeekerBuilder) {
-			for idxRule, exprs := range i.conditionMap {
-				b.Filter(idxRule, exprToCondition(exprs))
-			}
-		})
-	}
-
-	return executeForShard(seriesList, i.timeRange, builders...)
-}
-
 func (i *localIndexScan) String() string {
-	exprStr := make([]string, 0, len(i.conditionMap))
-	for _, conditions := range i.conditionMap {
-		var conditionStr []string
-		for _, cond := range conditions {
-			conditionStr = append(conditionStr, cond.String())
-		}
-		exprStr = append(exprStr, fmt.Sprintf("(%s)", strings.Join(conditionStr, " AND ")))
-	}
-	if len(i.projectionTagRefs) == 0 {
-		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=None",
-			i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(), strings.Join(exprStr, " AND "))
-	}
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		strings.Join(exprStr, " AND "), formatTagRefs(", ", i.projectionTagRefs...))
-}
-
-func (i *localIndexScan) Type() PlanType {
-	return PlanLocalIndexScan
+		i.filter, formatTagRefs(", ", i.projectionTagRefs...))
 }
 
 func (i *localIndexScan) Children() []Plan {
@@ -155,45 +123,4 @@ func (i *localIndexScan) Schema() Schema {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagRefs...)
-}
-
-func (i *localIndexScan) Equal(plan Plan) bool {
-	if plan.Type() != PlanLocalIndexScan {
-		return false
-	}
-	other := plan.(*localIndexScan)
-	return i.metadata.GetGroup() == other.metadata.GetGroup() &&
-		i.metadata.GetName() == other.metadata.GetName() &&
-		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
-		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
-		len(i.entity) == len(other.entity) &&
-		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
-		cmp.Equal(i.projectionTagRefs, other.projectionTagRefs) &&
-		cmp.Equal(i.schema, other.schema) &&
-		cmp.Equal(i.conditionMap, other.conditionMap) &&
-		cmp.Equal(i.orderBy, other.orderBy)
-}
-
-func exprToCondition(exprs []Expr) tsdb.Condition {
-	cond := make(map[string][]index.ConditionValue)
-	for _, expr := range exprs {
-		bExpr := expr.(*binaryExpr)
-		l := bExpr.l.(*TagRef)
-		r := bExpr.r.(LiteralExpr)
-		if existingList, ok := cond[l.tag.GetTagName()]; ok {
-			existingList = append(existingList, index.ConditionValue{
-				Values: r.Bytes(),
-				Op:     bExpr.op,
-			})
-			cond[l.tag.GetTagName()] = existingList
-		} else {
-			cond[l.tag.GetTagName()] = []index.ConditionValue{
-				{
-					Values: r.Bytes(),
-					Op:     bExpr.op,
-				},
-			}
-		}
-	}
-	return cond
 }

@@ -22,10 +22,8 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 type Field struct {
@@ -166,8 +164,6 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 		projFields[i] = NewField(fieldNameProj)
 	}
 
-	var tagExprs []Expr
-
 	entityList := s.EntityList()
 	entityMap := make(map[string]int)
 	entity := make([]tsdb.Entry, len(entityList))
@@ -176,49 +172,9 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
 	}
-
-	for _, criteriaFamily := range criteria.GetCriteria() {
-		for _, pairQuery := range criteriaFamily.GetConditions() {
-			op := pairQuery.GetOp()
-			typedTagValue := pairQuery.GetValue()
-			var e Expr
-			switch v := typedTagValue.GetValue().(type) {
-			case *modelv1.TagValue_Str:
-				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-					entity[entityIdx] = []byte(v.Str.GetValue())
-				} else {
-					e = Str(v.Str.GetValue())
-				}
-			case *modelv1.TagValue_Id:
-				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-					entity[entityIdx] = []byte(v.Id.GetValue())
-				} else {
-					e = ID(v.Id.GetValue())
-				}
-			case *modelv1.TagValue_StrArray:
-				e = &strArrLiteral{
-					arr: v.StrArray.GetValue(),
-				}
-			case *modelv1.TagValue_Int:
-				if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-					entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
-				} else {
-					e = &int64Literal{
-						int64: v.Int.GetValue(),
-					}
-				}
-			case *modelv1.TagValue_IntArray:
-				e = &int64ArrLiteral{
-					arr: v.IntArray.GetValue(),
-				}
-			default:
-				return nil, ErrInvalidConditionType
-			}
-			// we collect Condition only if it is not a part of entity
-			if e != nil {
-				tagExprs = append(tagExprs, binaryOpFactory[op](NewTagRef(criteriaFamily.GetTagFamilyName(), pairQuery.GetName()), e))
-			}
-		}
+	predicator, entities, err := buildLocalFilter(criteria.Criteria, s, entityMap, entity)
+	if err != nil {
+		return nil, err
 	}
 
 	// parse orderBy
@@ -229,5 +185,5 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 	}
 
 	return MeasureIndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagExprs, entity, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
+		predicator, entities, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
 }

@@ -59,6 +59,20 @@ func (e Entity) Prepend(entry Entry) Entity {
 	return d
 }
 
+func (e Entity) Copy() Entity {
+	a := make(Entity, len(e))
+	copy(a, e)
+	return a
+}
+
+func NewEntity(len int) Entity {
+	e := make(Entity, len)
+	for i := 0; i < len; i++ {
+		e[i] = AnyEntry
+	}
+	return e
+}
+
 type Path struct {
 	prefix   []byte
 	seekKey  []byte

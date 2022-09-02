@@ -22,114 +22,28 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
 var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
 
-type Condition map[string][]index.ConditionValue
-
-func (s *seekerBuilder) Filter(indexRule *databasev1.IndexRule, condition Condition) SeekerBuilder {
-	s.conditions = append(s.conditions, struct {
-		indexRuleType     databasev1.IndexRule_Type
-		indexRuleID       uint32
-		indexRuleAnalyzer databasev1.IndexRule_Analyzer
-		condition         Condition
-	}{
-		indexRuleType:     indexRule.GetType(),
-		indexRuleID:       indexRule.GetMetadata().GetId(),
-		indexRuleAnalyzer: indexRule.Analyzer,
-		condition:         condition,
-	})
+func (s *seekerBuilder) Filter(predicator index.Filter) SeekerBuilder {
+	s.predicator = predicator
 	return s
 }
 
-type condWithIRT struct {
-	indexRuleType databasev1.IndexRule_Type
-	condition     index.Condition
-}
-
-func (s *seekerBuilder) buildConditions() ([]condWithIRT, error) {
-	if len(s.conditions) < 1 {
-		return nil, nil
-	}
-	conditions := make([]condWithIRT, 0, len(s.conditions))
-	for _, condition := range s.conditions {
-		if len(condition.condition) > 1 {
-			// TODO:// should support composite index rule
-			return nil, ErrUnsupportedIndexRule
-		}
-		cond := make(index.Condition)
-		term := index.FieldKey{
-			SeriesID:    s.seriesSpan.seriesID,
-			IndexRuleID: condition.indexRuleID,
-			Analyzer:    condition.indexRuleAnalyzer,
-		}
-		for _, c := range condition.condition {
-			cond[term] = c
-			break
-		}
-		conditions = append(conditions, condWithIRT{indexRuleType: condition.indexRuleType, condition: cond})
-	}
-	return conditions, nil
-}
-
-func (s *seekerBuilder) buildIndexFilter(block blockDelegate, conditions []condWithIRT) (filterFn, error) {
-	var allItemIDs posting.List
-	addIDs := func(allList posting.List, searcher index.Searcher, cond index.Condition) (posting.List, bool, error) {
-		tree, err := index.BuildTree(searcher, cond)
-		if err != nil {
-			return nil, false, err
-		}
-		rangeOpts, found := tree.TrimRangeLeaf(index.FieldKey{
-			SeriesID:    s.seriesSpan.seriesID,
-			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
-		})
-		if found {
-			s.rangeOptsForSorting = rangeOpts
-		}
-		list, err := tree.Execute()
-		if errors.Is(err, index.ErrEmptyTree) {
-			return allList, false, nil
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		if allList == nil {
-			allList = list
-		} else {
-			err = allList.Intersect(list)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		return allList, true, nil
-	}
-	allInvalid := true
-	for i, condition := range conditions {
-		var valid bool
-		var err error
-		switch condition.indexRuleType {
+func (s *seekerBuilder) buildIndexFilter(block blockDelegate) (filterFn, error) {
+	allItemIDs, err := s.predicator.Execute(func(typ databasev1.IndexRule_Type) (index.Searcher, error) {
+		switch typ {
 		case databasev1.IndexRule_TYPE_INVERTED:
-			allItemIDs, valid, err = addIDs(allItemIDs, block.invertedIndexReader(), condition.condition)
+			return block.invertedIndexReader(), nil
 		case databasev1.IndexRule_TYPE_TREE:
-			allItemIDs, valid, err = addIDs(allItemIDs, block.lsmIndexReader(), condition.condition)
+			return block.lsmIndexReader(), nil
 		default:
 			return nil, ErrUnsupportedIndexRule
 		}
-		if err != nil {
-			return nil, err
-		}
-		if i > 0 && allItemIDs.IsEmpty() {
-			return func(_ Item) bool {
-				return false
-			}, nil
-		}
-		allInvalid = allInvalid && !valid
-	}
-
-	if allInvalid {
-		return nil, nil
+	}, s.seriesSpan.seriesID)
+	if err != nil {
+		return nil, err
 	}
 	return func(item Item) bool {
 		valid := allItemIDs.Contains(item.ID())

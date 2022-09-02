@@ -47,14 +47,14 @@ func (s *seekerBuilder) OrderByTime(order modelv1.Sort) SeekerBuilder {
 	return s
 }
 
-func (s *seekerBuilder) buildSeries(conditions []condWithIRT) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeries() ([]Iterator, error) {
 	if s.indexRuleForSorting == nil {
-		return s.buildSeriesByTime(conditions)
+		return s.buildSeriesByTime()
 	}
-	return s.buildSeriesByIndex(conditions)
+	return s.buildSeriesByIndex()
 }
 
-func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []Iterator, err error) {
+func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 	timeFilter := func(item Item) bool {
 		valid := s.seriesSpan.timeRange.Contains(item.Time())
 		timeRange := s.seriesSpan.timeRange
@@ -71,7 +71,7 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 		}
 		filters := []filterFn{timeFilter}
-		filter, err := s.buildIndexFilter(b, conditions)
+		filter, err := s.buildIndexFilter(b)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +94,7 @@ func (s *seekerBuilder) buildSeriesByIndex(conditions []condWithIRT) (series []I
 	return
 }
 
-func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator, error) {
+func (s *seekerBuilder) buildSeriesByTime() ([]Iterator, error) {
 	bb := s.seriesSpan.blocks
 	switch s.order {
 	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
@@ -129,7 +129,7 @@ func (s *seekerBuilder) buildSeriesByTime(conditions []condWithIRT) ([]Iterator,
 			return nil, err
 		}
 		if inner != nil {
-			filter, err := s.buildIndexFilter(b, conditions)
+			filter, err := s.buildIndexFilter(b)
 			if err != nil {
 				return nil, err
 			}

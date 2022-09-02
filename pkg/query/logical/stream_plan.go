@@ -52,17 +52,6 @@ func (l *limit) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element
 	return entities, nil
 }
 
-func (l *limit) Equal(plan Plan) bool {
-	if plan.Type() != PlanLimit {
-		return false
-	}
-	other := plan.(*limit)
-	if l.limitNum == other.limitNum {
-		return l.input.Equal(other.input)
-	}
-	return false
-}
-
 func (l *limit) Analyze(s Schema) (Plan, error) {
 	var err error
 	l.input, err = l.unresolvedInput.Analyze(s)
@@ -82,10 +71,6 @@ func (l *limit) String() string {
 
 func (l *limit) Children() []Plan {
 	return []Plan{l.input}
-}
-
-func (l *limit) Type() PlanType {
-	return PlanLimit
 }
 
 func Limit(input UnresolvedPlan, num uint32) UnresolvedPlan {
@@ -120,17 +105,6 @@ func (l *offset) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Elemen
 	return []*streamv1.Element{}, nil
 }
 
-func (l *offset) Equal(plan Plan) bool {
-	if plan.Type() != PlanOffset {
-		return false
-	}
-	other := plan.(*offset)
-	if l.offsetNum == other.offsetNum {
-		return l.input.Equal(other.input)
-	}
-	return false
-}
-
 func (l *offset) Analyze(s Schema) (Plan, error) {
 	var err error
 	l.input, err = l.unresolvedInput.Analyze(s)
@@ -150,10 +124,6 @@ func (l *offset) String() string {
 
 func (l *offset) Children() []Plan {
 	return []Plan{l.input}
-}
-
-func (l *offset) Type() PlanType {
-	return PlanOffset
 }
 
 func Offset(input UnresolvedPlan, num uint32) UnresolvedPlan {
