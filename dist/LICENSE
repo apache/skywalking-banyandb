@@ -301,6 +301,7 @@ MIT licenses
     github.com/dustin/go-humanize v1.0.0 MIT
     github.com/form3tech-oss/jwt-go v3.2.3+incompatible MIT
     github.com/go-chi/chi/v5 v5.0.7 MIT
+    github.com/go-resty/resty/v2 v2.7.0 MIT
     github.com/json-iterator/go v1.1.12 MIT
     github.com/mitchellh/mapstructure v1.5.0 MIT
     github.com/onsi/ginkgo/v2 v2.1.4 MIT
@@ -316,8 +317,9 @@ MIT licenses
     github.com/subosito/gotenv v1.3.0 MIT
     github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 MIT
     github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 MIT
+    github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04 MIT
     go.etcd.io/bbolt v1.3.6 MIT
-    go.uber.org/atomic v1.7.0 MIT
+    go.uber.org/atomic v1.9.0 MIT
     go.uber.org/multierr v1.8.0 MIT
     go.uber.org/zap v1.17.0 MIT
     gopkg.in/natefinch/lumberjack.v2 v2.0.0 MIT
@@ -333,6 +335,7 @@ MIT and Apache-2.0 licenses
 MIT and BSD-3-Clause licenses
 ========================================================================
 
+    github.com/ghodss/yaml v1.0.0 MIT and BSD-3-Clause
     sigs.k8s.io/yaml v1.2.0 MIT and BSD-3-Clause
 
 ========================================================================
