@@ -138,7 +138,7 @@ func (s *TumblingTimeWindows) purgeOutdatedWindows() {
 	defer s.timerMu.Unlock()
 	for {
 		if lookAhead, ok := s.timerHeap.Peek().(*internalTimer); ok {
-			if lookAhead.triggerTimeMillis <= s.currentWatermark {
+			if lookAhead.triggerTimeMillis+s.lateness <= s.currentWatermark {
 				oldestTimer := heap.Pop(s.timerHeap).(*internalTimer)
 				s.purgeWindow(oldestTimer.w)
 				continue
@@ -189,13 +189,10 @@ func (s *TumblingTimeWindows) receive() {
 		if elem.TimestampMillis() > s.currentWatermark {
 			s.currentWatermark = elem.TimestampMillis()
 
-			// TODO: add various strategies to allow lateness items, which come later than the current watermark
 			// Currently, assume the current watermark is t,
-			// then we allow lateness items coming after t-windowSize+slideSize, but before t,
-			// i.e. [t-windowSize+slideSize, t)
-			// NOTE: This call is the normal path to flush outdated windows immediately
-			// without considering lateness.
-			// The purged windows may be accumulated again due to non-zero lateness.
+			// then we allow lateness items by not purging the window
+			// of which the flush trigger time is less and equal than t - lateness,
+			// i.e. triggerTime + lateness <= t
 			s.purgeOutdatedWindows()
 		}
 	}
@@ -260,8 +257,8 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 
 // eventTimeTriggerOnElement processes element(s) with EventTimeTrigger
 func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) TriggerResult {
-	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
-		// if the watermark is already past the window fire immediately
+	if window.MaxTimestamp()+ctx.delegation.lateness <= ctx.GetCurrentWatermark() {
+		// if (watermark - lateness) is already past the window fire immediately
 		return FIRE
 	}
 	ctx.RegisterEventTimeTimer(window.MaxTimestamp())
