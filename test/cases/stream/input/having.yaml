@@ -1,0 +1,16 @@
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "extended_tags"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+  condition:
+    name: "extended_tags"
+    op: "BINARY_OP_HAVING"
+    value:
+      strArray:
+        value: ["c", "b"]

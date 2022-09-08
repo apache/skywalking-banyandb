@@ -32,6 +32,9 @@ func (s *seekerBuilder) Filter(predicator index.Filter) SeekerBuilder {
 }
 
 func (s *seekerBuilder) buildIndexFilter(block blockDelegate) (filterFn, error) {
+	if s.predicator == nil {
+		return nil, nil
+	}
 	allItemIDs, err := s.predicator.Execute(func(typ databasev1.IndexRule_Type) (index.Searcher, error) {
 		switch typ {
 		case databasev1.IndexRule_TYPE_INVERTED:

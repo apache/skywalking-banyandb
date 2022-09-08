@@ -22,6 +22,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"sort"
 	"sync"
 
 	"go.uber.org/multierr"
@@ -337,4 +338,38 @@ func (a SeriesList) Less(i, j int) bool {
 
 func (a SeriesList) Swap(i, j int) {
 	a[i], a[j] = a[j], a[i]
+}
+
+func (a SeriesList) Merge(other SeriesList) SeriesList {
+	if len(other) == 0 {
+		return a
+	}
+	sort.Sort(other)
+	if len(a) == 0 {
+		return other
+	}
+	final := SeriesList{}
+	i := 0
+	j := 0
+	for i < len(a) && j < len(other) {
+		if a[i].ID() < other[j].ID() {
+			final = append(final, a[i])
+			i++
+		} else {
+			// deduplication
+			if a[i].ID() == other[j].ID() {
+				i++
+			}
+			final = append(final, other[j])
+			j++
+
+		}
+	}
+	for ; i < len(a); i++ {
+		final = append(final, a[i])
+	}
+	for ; j < len(other); j++ {
+		final = append(final, other[j])
+	}
+	return final
 }

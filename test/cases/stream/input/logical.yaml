@@ -1,0 +1,36 @@
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "duration", "service_id", "status_code"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+  le:
+    op: "LOGICAL_OP_OR"
+    right:
+      condition:
+        name: "duration"
+        op: "BINARY_OP_LT"
+        value:
+          int:
+            value: 100
+    left:
+      le:
+        op: "LOGICAL_OP_AND"
+        right:
+          condition:
+            name: "service_id"
+            op: "BINARY_OP_EQ"
+            value:
+              str:
+                value: "webapp_id"
+        left:
+          condition:
+            name: "status_code"
+            op: "BINARY_OP_LT"
+            value:
+              int:
+                value: 200

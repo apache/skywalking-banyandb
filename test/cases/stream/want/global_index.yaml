@@ -1,0 +1,14 @@
+  elements:
+  - elementId: "0"
+    tagFamilies:
+    - name: searchable
+      tags:
+      - key: trace_id
+        value:
+          str:
+            value: "1"
+    - name: data
+      tags:
+      - key: data_binary
+        value:
+          binaryData: YWJjMTIzIT8kKiYoKSctPUB+

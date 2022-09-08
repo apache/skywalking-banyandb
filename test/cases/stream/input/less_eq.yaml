@@ -1,0 +1,16 @@
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "duration"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+  condition:
+    name: "duration"
+    op: "BINARY_OP_LE"
+    value:
+      int:
+        value: 500

@@ -64,7 +64,7 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 include scripts/build/ginkgo.mk
 
 test-ci: $(GINKGO) ## Run the unit tests in CI
-	$(GINKGO) -v --skip-package=test/stress --race --cover --covermode atomic --coverprofile=coverage.out ./... 
+	$(GINKGO) -v --race --cover --covermode atomic --coverprofile=coverage.out ./... 
 
 ##@ Code quality targets
 

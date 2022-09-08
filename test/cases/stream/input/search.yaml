@@ -1,0 +1,16 @@
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "db.instance"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+  condition:
+    name: "db.instance"
+    op: "BINARY_OP_MATCH"
+    value:
+      str:
+        value: "mysql"

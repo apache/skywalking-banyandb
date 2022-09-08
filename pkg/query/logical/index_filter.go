@@ -21,29 +21,32 @@ var (
 	ErrEmptyTree         = errors.New("tree is empty")
 )
 
-type globalIndexError struct {
-	indexRule *database_v1.IndexRule
-	expr      LiteralExpr
+type GlobalIndexError struct {
+	IndexRule *database_v1.IndexRule
+	Expr      LiteralExpr
 }
 
-func (g *globalIndexError) Error() string { return g.indexRule.String() }
+func (g *GlobalIndexError) Error() string { return g.IndexRule.String() }
 
-func buildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map[string]int, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map[string]int, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+	if criteria == nil {
+		return nil, []tsdb.Entity{entity}, nil
+	}
 	switch criteria.GetExp().(type) {
 	case *model_v1.Criteria_Condition:
 		cond := criteria.GetCondition()
-		expr, entity, err := parseExprOrEntity(entityDict, entity, cond)
+		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
 			return nil, nil, err
 		}
-		if entity != nil {
-			return nil, []tsdb.Entity{entity}, nil
+		if parsedEntity != nil {
+			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
 			if indexRule.Location == database_v1.IndexRule_LOCATION_GLOBAL {
-				return nil, nil, &globalIndexError{
-					indexRule: indexRule,
-					expr:      expr,
+				return nil, nil, &GlobalIndexError{
+					IndexRule: indexRule,
+					Expr:      expr,
 				}
 			}
 			return parseCondition(cond, indexRule, expr, entity)
@@ -52,11 +55,11 @@ func buildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		}
 	case *model_v1.Criteria_Le:
 		le := criteria.GetLe()
-		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
+		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -124,6 +127,8 @@ func parseCondition(cond *model_v1.Condition, indexRule *database_v1.IndexRule, 
 }
 
 func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *model_v1.Condition) (LiteralExpr, tsdb.Entity, error) {
+	parsedEntity := make(tsdb.Entity, len(entity))
+	copy(parsedEntity, entity)
 	entityIdx, ok := entityDict[cond.Name]
 	if ok && cond.Op != model_v1.Condition_BINARY_OP_EQ {
 		return nil, nil, errors.WithMessagef(ErrInvalidConditionType, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
@@ -131,14 +136,14 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 	switch v := cond.Value.Value.(type) {
 	case *model_v1.TagValue_Str:
 		if ok {
-			entity[entityIdx] = []byte(v.Str.GetValue())
-			return nil, entity, nil
+			parsedEntity[entityIdx] = []byte(v.Str.GetValue())
+			return nil, parsedEntity, nil
 		}
 		return Str(v.Str.GetValue()), nil, nil
 	case *model_v1.TagValue_Id:
 		if ok {
-			entity[entityIdx] = []byte(v.Id.GetValue())
-			return nil, entity, nil
+			parsedEntity[entityIdx] = []byte(v.Id.GetValue())
+			return nil, parsedEntity, nil
 		}
 		return ID(v.Id.GetValue()), nil, nil
 
@@ -148,8 +153,8 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 		}, nil, nil
 	case *model_v1.TagValue_Int:
 		if ok {
-			entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
-			return nil, entity, nil
+			parsedEntity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
+			return nil, parsedEntity, nil
 		}
 		return &int64Literal{
 			int64: v.Int.GetValue(),
@@ -175,6 +180,9 @@ func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, l
 			for j := 0; j < len(mergedEntities); j++ {
 				e := mergedEntities[j][i]
 				if bytes.Equal(e, tsdb.AnyEntry) {
+					continue
+				}
+				if bytes.Equal(entry, tsdb.AnyEntry) {
 					entry = e
 				} else if !bytes.Equal(entry, e) {
 					return nil
@@ -183,9 +191,20 @@ func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, l
 			result[i] = entry
 		}
 	case model_v1.LogicalExpression_LOGICAL_OP_OR:
-		return mergedEntities
+		for i := 0; i < count; i++ {
+			entry := tsdb.AnyEntry
+			for j := 0; j < len(mergedEntities); j++ {
+				e := mergedEntities[j][i]
+				if bytes.Equal(entry, tsdb.AnyEntry) {
+					entry = e
+				} else if !bytes.Equal(entry, e) {
+					return mergedEntities
+				}
+			}
+			result[i] = entry
+		}
 	}
-	return nil
+	return []tsdb.Entity{result}
 }
 
 type FieldKey struct {
@@ -206,45 +225,38 @@ func (fk FieldKey) ToIndex(seriesID common.SeriesID) index.FieldKey {
 
 type logicalOP interface {
 	index.Filter
-	merge(posting.List) error
+	merge(...posting.List) (posting.List, error)
 }
 
 type node struct {
-	value    posting.List
 	SubNodes []index.Filter `json:"sub_nodes,omitempty"`
 }
 
 func (n *node) append(sub index.Filter) *node {
+	if sub == nil {
+		return n
+	}
 	n.SubNodes = append(n.SubNodes, sub)
 	return n
 }
 
-func (n *node) pop() (index.Filter, bool) {
-	if len(n.SubNodes) < 1 {
-		return nil, false
-	}
-	sn := n.SubNodes[0]
-	n.SubNodes = n.SubNodes[1:]
-	return sn, true
-}
-
 func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
-	ex, hasNext := n.pop()
-	if !hasNext {
-		if n.value == nil {
-			return nil, ErrEmptyTree
+	var result posting.List
+	for _, sn := range n.SubNodes {
+		r, err := sn.Execute(searcher, seriesID)
+		if err != nil {
+			return nil, err
 		}
-		return n.value, nil
+		if result == nil {
+			result = r
+			continue
+		}
+		result, err = lp.merge(result, r)
+		if err != nil {
+			return nil, err
+		}
 	}
-	r, err := ex.Execute(searcher, seriesID)
-	if err != nil {
-		return nil, err
-	}
-	err = lp.merge(r)
-	if err != nil {
-		return nil, err
-	}
-	return lp.Execute(searcher, seriesID)
+	return result, nil
 }
 
 type andNode struct {
@@ -259,15 +271,21 @@ func newAnd(size int) *andNode {
 	}
 }
 
-func (an *andNode) merge(list posting.List) error {
-	if _, ok := list.(bypassList); ok {
-		return nil
+func (an *andNode) merge(list ...posting.List) (posting.List, error) {
+	var result posting.List
+	for _, l := range list {
+		if _, ok := l.(bypassList); ok {
+			continue
+		}
+		if result == nil {
+			result = l
+			continue
+		}
+		if err := result.Intersect(l); err != nil {
+			return nil, err
+		}
 	}
-	if an.value == nil {
-		an.value = list
-		return nil
-	}
-	return an.value.Intersect(list)
+	return result, nil
 }
 
 func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
@@ -296,20 +314,23 @@ func newOr(size int) *orNode {
 	}
 }
 
-func (on *orNode) merge(list posting.List) error {
-	// If a predicator is not indexed, all predicator are ignored.
-	// The tagFilter will take up this job to filter this items.
-	if _, ok := on.value.(bypassList); ok {
-		return nil
+func (on *orNode) merge(list ...posting.List) (posting.List, error) {
+	var result posting.List
+	for _, l := range list {
+		// If a predicator is not indexed, all predicator are ignored.
+		// The tagFilter will take up this job to filter this items.
+		if _, ok := l.(bypassList); ok {
+			return bList, nil
+		}
+		if result == nil {
+			result = l
+			continue
+		}
+		if err := result.Union(l); err != nil {
+			return nil, err
+		}
 	}
-	if _, ok := list.(bypassList); ok {
-		on.value = list
-		return nil
-	}
-	if on.value == nil {
-		on.value = list
-	}
-	return on.value.Union(list)
+	return result, nil
 }
 
 func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
@@ -330,6 +351,13 @@ type leaf struct {
 	index.Filter
 	Key  FieldKey
 	Expr LiteralExpr
+}
+
+func (l *leaf) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["index"] = l.Key.IndexRule.Metadata.Name + ":" + l.Key.IndexRule.Metadata.Group
+	data["expr"] = l.Expr.String()
+	return json.Marshal(data)
 }
 
 type not struct {
@@ -487,7 +515,7 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	data["key"] = r.Key
+	data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
 	data["range"] = builder.String()
 	return json.Marshal(data)
 }

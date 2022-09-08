@@ -1,0 +1,16 @@
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+  condition:
+    name: "trace_id"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "1"
