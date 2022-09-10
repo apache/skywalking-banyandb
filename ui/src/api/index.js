@@ -35,3 +35,10 @@ export function getStreamOrMeasureList(type, name) {
         method: "get"
     })
 }
+
+export function getStreamOrMeasure(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: "get"
+    })
+}

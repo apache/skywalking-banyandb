@@ -23,7 +23,7 @@
             active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse" :collapse-transition="false">
             <div v-for="(item, index) in groupLists" :key="item.metadata.name"
                 @contextmenu.prevent="rightClickGroup($event, index)">
-                <el-submenu :index="item.metadata.name + '-' + index">
+                <el-submenu :index="item.metadata.name + '-' + index" :disabled="item.catalog == 'CATALOG_MEASURE'">
                     <template slot="title">
                         <i class="el-icon-folder"></i>
                         <span slot="title" :title="item.metadata.name" style="width: 70%"

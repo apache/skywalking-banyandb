@@ -27,11 +27,11 @@
                 <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
                 <second-navigation-component @openDetail="openDetail" :showDrawer="showDrawer"
                     ></second-navigation-component>
-                <data-table-component class="margin-all-little"></data-table-component>
+                <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
             </el-card>
         </div>
         <div class="bd-top bd-left drawer-right" v-if="showDrawer">
-            <drawer-right-component @closeDetail="closeDetail"></drawer-right-component>
+            <drawer-right-component :fileData="fileData" @closeDetail="closeDetail"></drawer-right-component>
         </div>
     </div>
 </template>
@@ -47,7 +47,8 @@ export default {
     data() {
         return {
             showDrawer: false,
-            navWidth: "0px"
+            navWidth: "0px",
+            fileData: null
         }
     },
     components: {
@@ -66,6 +67,9 @@ export default {
                 this.showDrawer = !this.showDrawer
             }
         },*/
+        drawerRight(data) {
+            this.fileData = data
+        },
         closeDetail() {
             this.showDrawer = false
         }

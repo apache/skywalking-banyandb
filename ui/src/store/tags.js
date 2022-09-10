@@ -26,15 +26,21 @@ export default {
     mutations: {
         selectMenu(state, val) {
             // console.log(val)
-            if (state.tagsList.length == 9) {
-                Message({
-                    message: "Open up to 8 files at the same time! Please close some files and try again!",
-                    type: "warning"
-                })
+            let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
+            if (result === -1) {
+                if (state.tagsList.length == 9) {
+                    Message({
+                        message: "Open up to 9 files at the same time! Please close some files and try again!",
+                        type: "warning"
+                    })
+                } else {
+                    state.currentMenu = val
+                    state.tagsList.push(val)
+                    window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
+                    window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
+                }
             } else {
                 state.currentMenu = val
-                let result = state.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
-                result === -1 ? state.tagsList.push(val) : ''
                 window.sessionStorage.setItem('tagsList', JSON.stringify(state.tagsList))
                 window.sessionStorage.setItem('currentMenu', JSON.stringify(state.currentMenu))
             }

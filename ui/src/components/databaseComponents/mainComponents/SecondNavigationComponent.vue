@@ -24,8 +24,12 @@
                 placeholder="Select time" :picker-options="pickerOptions">
             </el-date-picker>
         </div-->
-        <el-date-picker class="picker date-picker" v-model="value" align="right" type="date" placeholder="Select time"
-            :picker-options="pickerOptions">
+        <el-select v-model="tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
+            <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value">
+            </el-option>
+        </el-select>
+        <el-date-picker class="date-picker" v-model="value" type="datetimerange" :picker-options="pickerOptions" range-separator="to"
+            start-placeholder="begin" end-placeholder="end" align="right">
         </el-date-picker>
         <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query">
             <el-button slot="append" icon="el-icon-search"></el-button>
@@ -47,6 +51,8 @@ export default {
     name: 'SecondNavigationComponent',
     data() {
         return {
+            options: [],
+            tagFamily: 0,
             refreshStyle: {
                 fontColor: "var(--color-main-font)",
                 color: "var(--color-main-font)",
@@ -55,27 +61,29 @@ export default {
             query: "",
             value: "",
             pickerOptions: {
-                disabledDate(time) {
-                    return time.getTime() > Date.now();
-                },
                 shortcuts: [{
-                    text: 'Today',
+                    text: 'Last week',
                     onClick(picker) {
-                        picker.$emit('pick', new Date());
+                        const end = new Date();
+                        const start = new Date();
+                        start.setTime(start.getTime() - 3600 * 1000 * 24 * 7);
+                        picker.$emit('pick', [start, end]);
                     }
                 }, {
-                    text: 'Yesterday',
+                    text: 'Last month',
                     onClick(picker) {
-                        const date = new Date();
-                        date.setTime(date.getTime() - 3600 * 1000 * 24);
-                        picker.$emit('pick', date);
+                        const end = new Date();
+                        const start = new Date();
+                        start.setTime(start.getTime() - 3600 * 1000 * 24 * 30);
+                        picker.$emit('pick', [start, end]);
                     }
                 }, {
-                    text: 'A week ago',
+                    text: 'Last three months',
                     onClick(picker) {
-                        const date = new Date();
-                        date.setTime(date.getTime() - 3600 * 1000 * 24 * 7);
-                        picker.$emit('pick', date);
+                        const end = new Date();
+                        const start = new Date();
+                        start.setTime(start.getTime() - 3600 * 1000 * 24 * 90);
+                        picker.$emit('pick', [start, end]);
                     }
                 }]
             },
@@ -87,6 +95,11 @@ export default {
             default: false
         }
     },
+    created() {
+        this.$bus.$on('setOptions', (options) => {
+            this.options = options
+        })
+    },
     methods: {
         handleOver() {
             this.refreshStyle.fontColor = "var(--color-main)"
@@ -97,6 +110,12 @@ export default {
             this.refreshStyle.fontColor = "var(--color-main-font)"
             this.refreshStyle.color = "var(--color-main-font)"
             this.refreshStyle.backgroundColor = "var(--color-white)"
+        },
+        changeTagFamilies() {
+            this.$bus.$emit('changeTagFamilies', this.tagFamily)
+        },
+        refresh() {
+            this.$bus.$emit('refresh')
         },
         openDetail() {
             this.$emit('openDetail')
@@ -125,12 +144,12 @@ export default {
     height: 50px;
 
     .date-picker {
-        width: 35%;
+        width: 28%;
         margin: 0;
     }
 
     .search-input {
-        width: 35%;
+        width: 28%;
         margin: 0;
     }
 
