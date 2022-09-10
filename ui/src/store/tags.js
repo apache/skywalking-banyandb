@@ -26,7 +26,7 @@ export default {
     mutations: {
         selectMenu(state, val) {
             // console.log(val)
-            if (state.tagsList.length == 8) {
+            if (state.tagsList.length == 9) {
                 Message({
                     message: "Open up to 8 files at the same time! Please close some files and try again!",
                     type: "warning"

@@ -28,7 +28,7 @@
                         <i class="el-icon-folder"></i>
                         <span slot="title" :title="item.metadata.name" style="width: 70%"
                             class="text-overflow-hidden">{{
-                                    item.metadata.name
+                            item.metadata.name
                             }}</span>
                     </template>
                     <div v-for="(itemChildren, indexChildren) in item.children" :key="itemChildren.metadata.name">
@@ -43,43 +43,6 @@
                             </el-menu-item>
                         </div>
                     </div>
-                    <!--div @contextmenu.prevent="rightClickFolder($event, index, 'stream')">
-                        <el-submenu :index="item.metadata.name + '-' + index + '-stream'">
-                            <template slot="title">
-                                <i class="el-icon-folder"></i>
-                                <span slot="title">Stream</span>
-                            </template>
-                            <div @contextmenu.prevent="rightClick($event, index)">
-                                <el-menu-item :index="'streamFile1' + index" @click="openStreamFile">
-                                    <template slot="title">
-                                        <i class="el-icon-document"></i>
-                                        <span slot="title" title="streamFile" style="width: 90%"
-                                            class="text-overflow-hidden">streamFile1</span>
-                                    </template>
-                                </el-menu-item>
-                            </div>
-                        </el-submenu>
-                    </div-->
-                    <!--div @contextmenu.prevent="rightClickFolder($event, index, 'measure')">
-                        <el-submenu :index="item.metadata.name + '-' + index + '-measure'">
-                            <template slot="title">
-                                <i class="el-icon-folder"></i>
-                                <span slot="title">Measure</span>
-                            </template>
-                            <div v-for="(itemMeasure, indexMeasure) in item.measure" :key="itemMeasure.metadata.name">
-                                <div @contextmenu.prevent="rightClick($event, index, indexMeasure)">
-                                    <el-menu-item :index="itemMeasure.metadata.group + itemMeasure.metadata.name"
-                                        @click="openMeasureFile(index, indexMeasure)">
-                                        <template slot="title">
-                                            <i class="el-icon-document"></i>
-                                            <span slot="title" :title="itemMeasure.metadata.name" style="width: 90%"
-                                                class="text-overflow-hidden">{{ itemMeasure.metadata.name }}</span>
-                                        </template>
-                                    </el-menu-item>
-                                </div>
-                            </div>
-                        </el-submenu>
-                    </div-->
                 </el-submenu>
             </div>
         </el-menu>
@@ -92,203 +55,13 @@
  
 <script>
 import { mapState } from 'vuex'
-import { getGroupList } from '@/api/index'
+import { getGroupList, getStreamOrMeasureList } from '@/api/index'
 import RightMenuComponent from './RightMenuComponent.vue'
 export default {
     name: 'AsideComponent',
     data() {
         return {
-            groupLists: [{
-                "metadata": {
-                    "group": "",
-                    "name": "measure-default",
-                    "id": 0,
-                    "createRevision": "0",
-                    "modRevision": "0"
-                },
-                "catalog": "CATALOG_MEASURE",
-                "resourceOpts": {
-                    "shardNum": 1,
-                    "blockNum": 12,
-                    "ttl": "420d"
-                },
-                "updatedAt": null,
-                "children": [
-                    {
-                        "metadata": {
-                            "group": "measure-default",
-                            "name": "browser_app_error_rate",
-                            "id": 0,
-                            "createRevision": "764",
-                            "modRevision": "764"
-                        },
-                        "tagFamilies": [
-                            {
-                                "name": "default",
-                                "tags": [
-                                    {
-                                        "name": "entity_id",
-                                        "type": "TAG_TYPE_STRING"
-                                    },
-                                    {
-                                        "name": "denominator",
-                                        "type": "TAG_TYPE_INT"
-                                    },
-                                    {
-                                        "name": "numerator",
-                                        "type": "TAG_TYPE_INT"
-                                    },
-                                    {
-                                        "name": "time_bucket",
-                                        "type": "TAG_TYPE_INT"
-                                    },
-                                    {
-                                        "name": "id",
-                                        "type": "TAG_TYPE_ID"
-                                    }
-                                ]
-                            }
-                        ],
-                        "fields": [
-                            {
-                                "name": "percentage",
-                                "fieldType": "FIELD_TYPE_INT",
-                                "encodingMethod": "ENCODING_METHOD_GORILLA",
-                                "compressionMethod": "COMPRESSION_METHOD_ZSTD"
-                            }
-                        ],
-                        "entity": {
-                            "tagNames": [
-                                "id"
-                            ]
-                        },
-                        "interval": "1h",
-                        "updatedAt": null
-                    },
-                    {
-                        "metadata": {
-                            "group": "measure-default",
-                            "name": "browser_app_error_sum",
-                            "id": 0,
-                            "createRevision": "769",
-                            "modRevision": "769"
-                        },
-                        "tagFamilies": [
-                            {
-                                "name": "default",
-                                "tags": [
-                                    {
-                                        "name": "entity_id",
-                                        "type": "TAG_TYPE_STRING"
-                                    },
-                                    {
-                                        "name": "time_bucket",
-                                        "type": "TAG_TYPE_INT"
-                                    },
-                                    {
-                                        "name": "id",
-                                        "type": "TAG_TYPE_ID"
-                                    }
-                                ]
-                            }
-                        ],
-                        "fields": [
-                            {
-                                "name": "value",
-                                "fieldType": "FIELD_TYPE_INT",
-                                "encodingMethod": "ENCODING_METHOD_GORILLA",
-                                "compressionMethod": "COMPRESSION_METHOD_ZSTD"
-                            }
-                        ],
-                        "entity": {
-                            "tagNames": [
-                                "id"
-                            ]
-                        },
-                        "interval": "1h",
-                        "updatedAt": null
-                    },
-                    {
-                        "metadata": {
-                            "group": "measure-default",
-                            "name": "browser_app_page_ajax_error_sum",
-                            "id": 0,
-                            "createRevision": "790",
-                            "modRevision": "790"
-                        },
-                        "tagFamilies": [
-                            {
-                                "name": "default",
-                                "tags": [
-                                    {
-                                        "name": "entity_id",
-                                        "type": "TAG_TYPE_STRING"
-                                    },
-                                    {
-                                        "name": "service_id",
-                                        "type": "TAG_TYPE_STRING"
-                                    },
-                                    {
-                                        "name": "time_bucket",
-                                        "type": "TAG_TYPE_INT"
-                                    },
-                                    {
-                                        "name": "id",
-                                        "type": "TAG_TYPE_ID"
-                                    }
-                                ]
-                            }
-                        ],
-                        "fields": [
-                            {
-                                "name": "value",
-                                "fieldType": "FIELD_TYPE_INT",
-                                "encodingMethod": "ENCODING_METHOD_GORILLA",
-                                "compressionMethod": "COMPRESSION_METHOD_ZSTD"
-                            }
-                        ],
-                        "entity": {
-                            "tagNames": [
-                                "id"
-                            ]
-                        },
-                        "interval": "1h",
-                        "updatedAt": null
-                    }
-                ]
-            },
-            {
-                "metadata": {
-                    "group": "",
-                    "name": "stream-browser_error_log",
-                    "id": 0,
-                    "createRevision": "0",
-                    "modRevision": "0"
-                },
-                "catalog": "CATALOG_STREAM",
-                "resourceOpts": {
-                    "shardNum": 2,
-                    "blockNum": 0,
-                    "ttl": "420d"
-                },
-                "updatedAt": null
-            },
-            {
-                "metadata": {
-                    "group": "",
-                    "name": "stream-default",
-                    "id": 0,
-                    "createRevision": "0",
-                    "modRevision": "0"
-                },
-                "catalog": "CATALOG_STREAM",
-                "resourceOpts": {
-                    "shardNum": 1,
-                    "blockNum": 0,
-                    "ttl": "420d"
-                },
-                "updatedAt": null
-            },],
+            groupLists: [],
             topNumber: 0,
             leftNumber: 0,
             rightMenuListOne: [{
@@ -339,7 +112,6 @@ export default {
     },
 
     created() {
-        console.log('this is aside created')
         this.getGroupLists()
     },
 
@@ -353,25 +125,33 @@ export default {
 
     methods: {
         getGroupLists() {
+            this.$loading.create()
             getGroupList()
                 .then(res => {
-                    console.log(res)
+                    if (res.status == 200) {
+                        let group = res.data.group
+                        let length = group.length
+                        this.groupLists = group
+                        group.forEach((item, index) => {
+                            let catalog = item.catalog
+                            let type = catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+                            let name = item.metadata.name
+                            getStreamOrMeasureList(type, name)
+                                .then(res => {
+                                    if (res.status == 200) {
+                                        item.children = res.data[type]
+                                    }
+                                })
+                                .finally(() => {
+                                    if(length - 1 == index) {
+                                        this.$loading.close()
+                                    }
+                                    this.$forceUpdate()
+                                })
+                        })
+                    }
                 })
         },
-        /*async getGroupLists() {
-            try {
-                const data = await this.$http.get('/api/v1/group/schema/lists')
-                if (data.status != 200) {
-                    this.$message.error(data.status, data.statusText)
-                } else {
-                    this.groupLists = data.data.group
-                    console.log(data)
-                }
-            } catch (err) {
-                console.log(err)
-                this.$message.errorNet()
-            }
-        },*/
         stopPropagation(e) {
             e = e || window.event;
             if (e.stopPropagation) { //W3C阻止冒泡方法  
@@ -410,7 +190,7 @@ export default {
              * Todo
              * Measure or Stream?
              */
-            if(this.groupLists[index].catalog == "CATALOG_MEASURE") {
+            if (this.groupLists[index].catalog == "CATALOG_MEASURE") {
                 item.metadata.type = "measure"
             } else {
                 item.metadata.type = "stream"

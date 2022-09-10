@@ -23,7 +23,7 @@ import axios from "axios"
 import { Message } from "element-ui"
 
 const axiosService = axios.create({
-    baseURL: "http://localhost:17913",// process.env.VUE_APP_BASE_API,
+    //baseURL: "http://34.92.1.105:18913",// process.env.VUE_APP_BASE_API,
     timeout: 3000
 })
 
@@ -66,7 +66,7 @@ axiosService.interceptors.response.use(
          * Data processing operation
          */
         console.log(response)
-        return Promise.reject(response)
+        return Promise.resolve(response)
     },
     error => {
         /**

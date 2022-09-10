@@ -28,3 +28,10 @@ export function getGroupList() {
         method: "get",
     })
 }
+
+export function getStreamOrMeasureList(type, name) {
+    return request({
+        url: `/api/v1/${type}/schema/lists/${name}`,
+        method: "get"
+    })
+}
