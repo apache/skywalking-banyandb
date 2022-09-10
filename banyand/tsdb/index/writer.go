@@ -58,13 +58,20 @@ type WriterOptions struct {
 	EnableGlobalIndex bool
 }
 
+const (
+	local = 1 << iota
+	global
+	inverted
+	tree
+)
+
 type Writer struct {
 	l                 *logger.Logger
 	db                tsdb.Supplier
 	shardNum          uint32
 	enableGlobalIndex bool
 	ch                chan Message
-	indexRuleIndex    []*partition.IndexRuleLocator
+	invertRuleIndex   map[byte][]*partition.IndexRuleLocator
 }
 
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
@@ -78,7 +85,30 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	w.shardNum = options.ShardNum
 	w.db = options.DB
 	w.enableGlobalIndex = options.EnableGlobalIndex
-	w.indexRuleIndex = partition.ParseIndexRuleLocators(options.Families, options.IndexRules)
+	w.invertRuleIndex = make(map[byte][]*partition.IndexRuleLocator, 4)
+	for _, ruleIndex := range partition.ParseIndexRuleLocators(options.Families, options.IndexRules) {
+		rule := ruleIndex.Rule
+		var key byte
+		switch rule.GetLocation() {
+		case databasev1.IndexRule_LOCATION_SERIES:
+			key = key | local
+		case databasev1.IndexRule_LOCATION_GLOBAL:
+			if !w.enableGlobalIndex {
+				w.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
+				continue
+			}
+			key = key | global
+		}
+		switch rule.Type {
+		case databasev1.IndexRule_TYPE_INVERTED:
+			key = key | inverted
+		case databasev1.IndexRule_TYPE_TREE:
+			key = key | tree
+		}
+		rules := w.invertRuleIndex[key]
+		rules = append(rules, ruleIndex)
+		w.invertRuleIndex[key] = rules
+	}
 	w.ch = make(chan Message)
 	w.bootIndexGenerator()
 	return w
@@ -97,21 +127,11 @@ func (s *Writer) Close() error {
 func (s *Writer) bootIndexGenerator() {
 	go func() {
 		for m := range s.ch {
-			var err error
-			for _, ruleIndex := range s.indexRuleIndex {
-				rule := ruleIndex.Rule
-				switch rule.GetLocation() {
-				case databasev1.IndexRule_LOCATION_SERIES:
-					err = multierr.Append(err, writeLocalIndex(m.LocalWriter, ruleIndex, m.Value))
-				case databasev1.IndexRule_LOCATION_GLOBAL:
-					if !s.enableGlobalIndex {
-						s.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
-						continue
-					}
-					err = multierr.Append(err, s.writeGlobalIndex(m.Scope, ruleIndex, m.LocalWriter.ItemID(), m.Value))
-				}
-			}
-			err = multierr.Append(err, m.BlockCloser.Close())
+			err := multierr.Combine(
+				s.writeLocalIndex(m.LocalWriter, m.Value),
+				s.writeGlobalIndex(m.Scope, m.LocalWriter.ItemID(), m.Value),
+				m.BlockCloser.Close(),
+			)
 			if err != nil {
 				s.l.Error().Err(err).Msg("encounter some errors when generating indices")
 			}
@@ -123,84 +143,97 @@ func (s *Writer) bootIndexGenerator() {
 }
 
 // TODO: should listen to pipeline in a distributed cluster
-func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ruleIndex *partition.IndexRuleLocator, ref tsdb.GlobalItemID, value Value) error {
-	values, _, err := getIndexValue(ruleIndex, value)
-	if err != nil {
-		return err
-	}
-	if values == nil {
+func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ref tsdb.GlobalItemID, value Value) error {
+	collect := func(ruleIndexes []*partition.IndexRuleLocator, fn func(indexWriter tsdb.IndexWriter, fields []index.Field) error) error {
+		fields := make(map[uint][]index.Field)
+		for _, ruleIndex := range ruleIndexes {
+			values, _, err := getIndexValue(ruleIndex, value)
+			if err != nil {
+				return err
+			}
+			if values == nil {
+				continue
+			}
+			for _, val := range values {
+				indexShardID, err := partition.ShardID(val, s.shardNum)
+				if err != nil {
+					return err
+				}
+				rule := ruleIndex.Rule
+				rr := fields[indexShardID]
+				rr = append(rr, index.Field{
+					Key: index.FieldKey{
+						IndexRuleID: rule.GetMetadata().GetId(),
+						Analyzer:    rule.Analyzer,
+					},
+					Term: val,
+				})
+				fields[indexShardID] = rr
+			}
+		}
+		for shardID, rules := range fields {
+			shard, err := s.db.SupplyTSDB().Shard(common.ShardID(shardID))
+			if err != nil {
+				return err
+			}
+			builder := shard.Index().WriterBuilder()
+			indexWriter, err := builder.
+				Scope(scope).
+				GlobalItemID(ref).
+				Time(value.Timestamp).
+				Build()
+			if err != nil {
+				return err
+			}
+			err = fn(indexWriter, rules)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	}
-	var errWriting error
-	for _, val := range values {
-		indexShardID, err := partition.ShardID(val, s.shardNum)
-		if err != nil {
-			return err
-		}
-		shard, err := s.db.SupplyTSDB().Shard(common.ShardID(indexShardID))
-		if err != nil {
-			return err
-		}
-		builder := shard.Index().WriterBuilder()
-		indexWriter, err := builder.
-			Scope(scope).
-			GlobalItemID(ref).
-			Time(value.Timestamp).
-			Build()
-		if err != nil {
-			return err
-		}
-		rule := ruleIndex.Rule
-		switch rule.GetType() {
-		case databasev1.IndexRule_TYPE_INVERTED:
-			errWriting = multierr.Append(errWriting, indexWriter.WriteInvertedIndex(index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-				},
-				Term: val,
-			}))
-		case databasev1.IndexRule_TYPE_TREE:
-			errWriting = multierr.Append(errWriting, indexWriter.WriteLSMIndex(index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-				},
-				Term: val,
-			}))
-		}
-	}
-	return errWriting
+	return multierr.Combine(
+		collect(s.invertRuleIndex[global|inverted], func(indexWriter tsdb.IndexWriter, fields []index.Field) error {
+			return indexWriter.WriteInvertedIndex(fields)
+		}),
+		collect(s.invertRuleIndex[global|tree], func(indexWriter tsdb.IndexWriter, fields []index.Field) error {
+			return indexWriter.WriteLSMIndex(fields)
+		}),
+	)
 }
 
-func writeLocalIndex(writer tsdb.Writer, ruleIndex *partition.IndexRuleLocator, value Value) (err error) {
-	values, _, err := getIndexValue(ruleIndex, value)
-	if err != nil {
-		return err
-	}
-	if values == nil {
-		return nil
-	}
-	var errWriting error
-	for _, val := range values {
-		rule := ruleIndex.Rule
-		switch rule.GetType() {
-		case databasev1.IndexRule_TYPE_INVERTED:
-			errWriting = multierr.Append(errWriting, writer.WriteInvertedIndex(index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-				},
-				Term: val,
-			}))
-		case databasev1.IndexRule_TYPE_TREE:
-			errWriting = multierr.Append(errWriting, writer.WriteLSMIndex(index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-				},
-				Term: val,
-			}))
+func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
+	collect := func(ruleIndexes []*partition.IndexRuleLocator, fn func(fields []index.Field) error) error {
+		fields := make([]index.Field, 0)
+		for _, ruleIndex := range ruleIndexes {
+			values, _, err := getIndexValue(ruleIndex, value)
+			if err != nil {
+				return err
+			}
+			if values == nil {
+				continue
+			}
+			for _, val := range values {
+				rule := ruleIndex.Rule
+				fields = append(fields, index.Field{
+					Key: index.FieldKey{
+						IndexRuleID: rule.GetMetadata().GetId(),
+						Analyzer:    rule.Analyzer,
+					},
+					Term: val,
+				})
+			}
 		}
+		return fn(fields)
 	}
-
-	return errWriting
+	return multierr.Combine(
+		collect(s.invertRuleIndex[local|inverted], func(fields []index.Field) error {
+			return writer.WriteInvertedIndex(fields)
+		}),
+		collect(s.invertRuleIndex[local|tree], func(fields []index.Field) error {
+			return writer.WriteLSMIndex(fields)
+		}),
+	)
 }
 
 var ErrUnsupportedIndexType = errors.New("unsupported index type")

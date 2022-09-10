@@ -292,7 +292,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 					items: toArray(data[w]),
 				})
 			}
-			tester.Equal(wants, got)
+			tester.Equal(wants, got, tt.name)
 		})
 	}
 }
@@ -332,10 +332,10 @@ func SetUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 			if i%len(idx) != i2 || r[term] == nil {
 				continue
 			}
-			t.NoError(store.Write(index.Field{
+			t.NoError(store.Write([]index.Field{{
 				Key:  duration,
 				Term: convert.Int64ToBytes(int64(term)),
-			}, id))
+			}}, id))
 			r[term].Insert(id)
 		}
 	}

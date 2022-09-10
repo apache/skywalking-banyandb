@@ -1263,6 +1263,8 @@ func (m *IndexRule) validate(all bool) error {
 		}
 	}
 
+	// no validation rules for Analyzer
+
 	if len(errors) > 0 {
 		return IndexRuleMultiError(errors)
 	}

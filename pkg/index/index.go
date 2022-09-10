@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -36,6 +37,7 @@ type FieldKey struct {
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
 	EncodeTerm  bool
+	Analyzer    databasev1.IndexRule_Analyzer
 }
 
 func (f FieldKey) Marshal() []byte {
@@ -43,6 +45,10 @@ func (f FieldKey) Marshal() []byte {
 		f.SeriesID.Marshal(),
 		convert.Uint32ToBytes(f.IndexRuleID),
 	}, nil)
+}
+
+func (f FieldKey) MarshalToStr() string {
+	return string(f.Marshal())
 }
 
 func (f *FieldKey) Unmarshal(raw []byte) error {
@@ -118,13 +124,29 @@ type FieldIterator interface {
 	Close() error
 }
 
+var EmptyFieldIterator = &emptyIterator{}
+
+type emptyIterator struct{}
+
+func (i *emptyIterator) Next() bool {
+	return false
+}
+
+func (i *emptyIterator) Val() *PostingValue {
+	return nil
+}
+
+func (i *emptyIterator) Close() error {
+	return nil
+}
+
 type PostingValue struct {
 	Term  []byte
 	Value posting.List
 }
 
 type Writer interface {
-	Write(field Field, itemID common.ItemID) error
+	Write(fields []Field, itemID common.ItemID) error
 }
 
 type FieldIterable interface {
@@ -133,6 +155,7 @@ type FieldIterable interface {
 
 type Searcher interface {
 	FieldIterable
+	Match(fieldKey FieldKey, match []string) (list posting.List, err error)
 	MatchField(fieldKey FieldKey) (list posting.List, err error)
 	MatchTerms(field Field) (list posting.List, err error)
 	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)

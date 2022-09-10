@@ -61,6 +61,7 @@
     - [CompressionMethod](#banyandb-database-v1-CompressionMethod)
     - [EncodingMethod](#banyandb-database-v1-EncodingMethod)
     - [FieldType](#banyandb-database-v1-FieldType)
+    - [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer)
     - [IndexRule.Location](#banyandb-database-v1-IndexRule-Location)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
@@ -725,6 +726,9 @@ BinaryOp specifies the operation imposed to the given query condition
 For EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.
 HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.
 For example, &#34;keyA&#34; contains &#34;valueA&#34; **and** &#34;valueB&#34;
+MATCH performances a full-text search if the tag is analyzed.
+The string value applies to the same analyzer as the tag, but string array value does not.
+Each item in a string array is seen as a token instead of a query expression.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
@@ -739,6 +743,7 @@ For example, &#34;keyA&#34; contains &#34;valueA&#34; **and** &#34;valueB&#34;
 | BINARY_OP_NOT_HAVING | 8 |  |
 | BINARY_OP_IN | 9 |  |
 | BINARY_OP_NOT_IN | 10 |  |
+| BINARY_OP_MATCH | 11 |  |
 
 
 
@@ -816,6 +821,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | location | [IndexRule.Location](#banyandb-database-v1-IndexRule-Location) |  | location indicates where to store index. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
+| analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. |
 
 
 
@@ -989,6 +995,20 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | FIELD_TYPE_STRING | 1 |  |
 | FIELD_TYPE_INT | 2 |  |
 | FIELD_TYPE_DATA_BINARY | 3 |  |
+
+
+
+<a name="banyandb-database-v1-IndexRule-Analyzer"></a>
+
+### IndexRule.Analyzer
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ANALYZER_UNSPECIFIED | 0 |  |
+| ANALYZER_KEYWORD | 1 | Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token. |
+| ANALYZER_STANDARD | 2 | Standard analyzer provides grammar based tokenization |
+| ANALYZER_SIMPLE | 3 | Simple analyzer breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. |
 
 
 

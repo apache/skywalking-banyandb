@@ -19,155 +19,183 @@ package inverted
 
 import (
 	"bytes"
-	"sync"
+	"context"
+	"errors"
+	"log"
+	"math"
 
-	"github.com/pkg/errors"
+	"github.com/blugelabs/bluge"
+	"github.com/blugelabs/bluge/analysis"
+	"github.com/blugelabs/bluge/analysis/analyzer"
+	"github.com/blugelabs/bluge/search"
+	"github.com/dgraph-io/badger/v3/y"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var _ index.Store = (*store)(nil)
+const docID = "_id"
 
-type store struct {
-	diskTable         kv.IndexStore
-	memTable          *memTable
-	immutableMemTable *memTable
-	rwMutex           sync.RWMutex
-	closed            bool
+var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
 
-	l *logger.Logger
+func init() {
+	analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
+		databasev1.IndexRule_ANALYZER_KEYWORD:  analyzer.NewKeywordAnalyzer(),
+		databasev1.IndexRule_ANALYZER_SIMPLE:   analyzer.NewSimpleAnalyzer(),
+		databasev1.IndexRule_ANALYZER_STANDARD: analyzer.NewStandardAnalyzer(),
+	}
 }
+
+var _ index.Store = (*store)(nil)
 
 type StoreOpts struct {
 	Path   string
 	Logger *logger.Logger
 }
 
+type store struct {
+	writer *bluge.Writer
+}
+
 func NewStore(opts StoreOpts) (index.Store, error) {
-	diskTable, err := kv.OpenIndexStore(0, opts.Path+"/table", kv.IndexWithLogger(opts.Logger))
+	config := bluge.DefaultConfig(opts.Path)
+	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
+	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
+	w, err := bluge.OpenWriter(config)
 	if err != nil {
 		return nil, err
 	}
 	return &store{
-		memTable:  newMemTable(),
-		diskTable: diskTable,
-		l:         opts.Logger,
+		writer: w,
 	}, nil
 }
 
-func (s *store) Close() error {
-	return s.flush(true)
-}
-
-func (s *store) Write(field index.Field, chunkID common.ItemID) error {
-	s.rwMutex.Lock()
-	defer s.rwMutex.Unlock()
-	return s.memTable.Write(field, chunkID)
-}
-
-func (s *store) Flush() error {
-	return s.flush(false)
-}
-
-func (s *store) flush(toClose bool) error {
-	s.rwMutex.Lock()
-	defer func() {
-		if toClose && !s.closed {
-			_ = s.diskTable.Close()
-			s.closed = true
-		}
-		s.rwMutex.Unlock()
-	}()
-	state := s.memTable.Stats()
-	if state.MemBytes <= 0 {
-		return nil
-	}
-	if s.immutableMemTable == nil {
-		s.immutableMemTable = s.memTable
-		s.memTable = newMemTable()
-	}
-	err := s.diskTable.
-		Handover(s.immutableMemTable.Iter())
-	if err != nil {
-		return err
-	}
-	s.immutableMemTable = nil
-	return nil
-}
-
 func (s *store) Stats() observability.Statistics {
-	stat := s.mainStats()
-	disk := s.diskTable.Stats()
-	stat.MaxMemBytes = disk.MaxMemBytes
-	return stat
+	return observability.Statistics{}
 }
 
-func (s *store) mainStats() (stat observability.Statistics) {
-	s.rwMutex.RLock()
-	defer s.rwMutex.RUnlock()
-	main := s.memTable.Stats()
-	stat.MemBytes += main.MemBytes
-	if s.immutableMemTable != nil {
-		sub := s.immutableMemTable.Stats()
-		stat.MemBytes += sub.MemBytes
+func (s *store) Close() error {
+	return s.writer.Close()
+}
+
+func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
+	doc := bluge.NewDocument(string(convert.Uint64ToBytes(uint64(itemID))))
+	for _, f := range fields {
+		field := bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable()
+		if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+			field.WithAnalyzer(analyzers[f.Key.Analyzer])
+		}
+		doc.AddField(field)
 	}
-	return stat
+	return s.writer.Insert(doc)
 }
 
-func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (iter index.FieldIterator, err error) {
+	if termRange.Lower != nil &&
+		termRange.Upper != nil &&
+		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
+		return index.EmptyFieldIterator, nil
+	}
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	fk := fieldKey.MarshalToStr()
+	query := bluge.NewTermRangeInclusiveQuery(
+		string(termRange.Lower),
+		string(termRange.Upper),
+		termRange.IncludesLower,
+		termRange.IncludesUpper,
+	).
+		SetField(fk)
+	sortedKey := fk
+	if order == modelv1.Sort_SORT_DESC {
+		sortedKey = "-" + sortedKey
+	}
+	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewTopNSearch(math.MaxInt64, query).SortBy([]string{sortedKey}))
+	if err != nil {
+		return nil, err
+	}
+	result := newBlugeMatchIterator(documentMatchIterator, fk)
+	return &result, nil
+}
+
+func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
 	return s.Range(fieldKey, index.RangeOpts{})
 }
 
-func (s *store) MatchTerms(field index.Field) (posting.List, error) {
-	f, err := field.Marshal()
+func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
+	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
 	}
-	result := roaring.NewPostingList()
-	result, errMem := s.searchInMemTables(result, func(table *memTable) (posting.List, error) {
-		list, errInner := table.MatchTerms(field)
-		if errInner != nil {
-			return nil, errInner
+	fk := field.Key.MarshalToStr()
+	query := bluge.NewTermQuery(string(field.Term)).SetField(fk)
+	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
+	if err != nil {
+		return nil, err
+	}
+	iter := newBlugeMatchIterator(documentMatchIterator, fk)
+	if !iter.Next() {
+		return roaring.EmptyPostingList, nil
+	}
+	if err = iter.Close(); err != nil {
+		return nil, err
+	}
+	return iter.Val().Value, nil
+}
+
+func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
+	if len(matches) == 0 {
+		return roaring.EmptyPostingList, nil
+	}
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	fk := fieldKey.MarshalToStr()
+	var query bluge.Query
+	getMatchQuery := func(match string) bluge.Query {
+		q := bluge.NewMatchQuery(match).SetField(fk)
+		if fieldKey.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+			q.SetAnalyzer(analyzers[fieldKey.Analyzer])
 		}
-		return list, nil
-	})
-	if errMem != nil {
-		return nil, errors.Wrap(errMem, "mem table of inverted index")
+		return q
 	}
-	raw, errTable := s.diskTable.Get(f)
-	switch {
-	case errors.Is(errTable, kv.ErrKeyNotFound):
-		return result, nil
-	case errTable != nil:
-		return nil, errors.Wrap(errTable, "disk table of inverted index")
+	if len(matches) == 1 {
+		query = getMatchQuery(matches[0])
+	} else {
+		bq := bluge.NewBooleanQuery()
+		for _, m := range matches {
+			bq.AddMust(getMatchQuery(m))
+		}
+		query = bq
 	}
+	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
+	if err != nil {
+		return nil, err
+	}
+	iter := newBlugeMatchIterator(documentMatchIterator, fk)
 	list := roaring.NewPostingList()
-	err = list.Unmarshall(raw)
-	if err != nil {
-		return nil, err
+	for iter.Next() {
+		err = multierr.Append(err, list.Union(iter.Val().Value))
 	}
-	err = result.Union(list)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	err = multierr.Append(err, iter.Close())
+	return list, err
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
 	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
 	if err != nil {
 		return roaring.EmptyPostingList, err
-	}
-	if iter == nil {
-		return roaring.EmptyPostingList, nil
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
@@ -177,101 +205,101 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv1.Sort,
-) (index.FieldIterator, error) {
-	s.rwMutex.RLock()
-	defer s.rwMutex.RUnlock()
-	tt := []*memTable{s.memTable, s.immutableMemTable}
-	iters := make([]index.FieldIterator, 0, len(tt)+1)
-	for _, table := range tt {
-		if table == nil {
-			continue
-		}
-		it, err := table.Iterator(fieldKey, termRange, order)
-		if err != nil {
-			return nil, err
-		}
-		if it == nil {
-			continue
-		}
-		iters = append(iters, it)
-	}
-	it, err := index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.diskTable,
-		func(term, val []byte, delegated kv.Iterator) (*index.PostingValue, error) {
-			list := roaring.NewPostingList()
-			err := list.Unmarshall(val)
-			if err != nil {
-				return nil, err
-			}
-
-			pv := &index.PostingValue{
-				Term:  term,
-				Value: list,
-			}
-
-			for ; delegated.Valid(); delegated.Next() {
-				f := index.Field{
-					Key: fieldKey,
-				}
-				err := f.Unmarshal(delegated.Key())
-				if err != nil {
-					return nil, err
-				}
-				if !bytes.Equal(f.Term, term) {
-					break
-				}
-				l := roaring.NewPostingList()
-				err = l.Unmarshall(delegated.Val())
-				if err != nil {
-					return nil, err
-				}
-				err = pv.Value.Union(l)
-				if err != nil {
-					return nil, err
-				}
-			}
-			return pv, nil
-		})
-	if err != nil {
-		return nil, err
-	}
-	iters = append(iters, it)
-	if len(iters) < 1 {
-		return nil, nil
-	}
-	var fn index.SwitchFn
-	switch order {
-	case modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_UNSPECIFIED:
-		fn = func(a, b []byte) bool {
-			return bytes.Compare(a, b) > 0
-		}
-	case modelv1.Sort_SORT_DESC:
-		fn = func(a, b []byte) bool {
-			return bytes.Compare(a, b) < 0
-		}
-	}
-	return index.NewMergedIterator(iters, fn), nil
+// Flush flushed memory data to disk
+func (s *store) Flush() error {
+	return nil
 }
 
-func (s *store) searchInMemTables(result posting.List, entityFunc entityFunc) (posting.List, error) {
-	s.rwMutex.RLock()
-	defer s.rwMutex.RUnlock()
-	tt := []*memTable{s.memTable, s.immutableMemTable}
-	for _, table := range tt {
-		if table == nil {
-			continue
-		}
-		list, err := entityFunc(table)
-		if err != nil {
-			return result, err
-		}
-		err = result.Union(list)
-		if err != nil {
-			return result, err
-		}
-	}
-	return result, nil
+type blugeMatchIterator struct {
+	delegated search.DocumentMatchIterator
+	fieldKey  string
+
+	current *index.PostingValue
+	agg     *index.PostingValue
+
+	closed bool
+	err    error
 }
 
-type entityFunc func(table *memTable) (posting.List, error)
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string) blugeMatchIterator {
+	return blugeMatchIterator{
+		delegated: delegated,
+		fieldKey:  fieldKey,
+	}
+}
+
+func (bmi *blugeMatchIterator) Next() bool {
+	if bmi.err != nil || bmi.closed {
+		return false
+	}
+	for bmi.nextTerm() {
+	}
+	if bmi.err != nil || bmi.closed {
+		return false
+	}
+	return true
+}
+
+func (bmi *blugeMatchIterator) nextTerm() bool {
+	var match *search.DocumentMatch
+	match, bmi.err = bmi.delegated.Next()
+	if bmi.err != nil {
+		return false
+	}
+	if match == nil {
+		if bmi.agg == nil {
+			bmi.closed = true
+		} else {
+			bmi.current = bmi.agg
+			bmi.agg = nil
+		}
+		return false
+	}
+	i := 0
+	var itemID common.ItemID
+	var term []byte
+	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
+		if field == docID {
+			id := convert.BytesToUint64(value)
+			itemID = common.ItemID(id)
+		}
+		if field == bmi.fieldKey {
+			term = y.Copy(value)
+		}
+		i++
+		return i < 2
+	})
+	if i != 2 {
+		bmi.err = errors.New("less fields")
+		return false
+	}
+	if bmi.err != nil {
+		return false
+	}
+	if bmi.agg == nil {
+		bmi.agg = &index.PostingValue{
+			Term:  term,
+			Value: roaring.NewPostingListWithInitialData(uint64(itemID)),
+		}
+		return true
+	}
+	if bytes.Equal(bmi.agg.Term, term) {
+		bmi.agg.Value.Insert(itemID)
+		return true
+	}
+	bmi.current = bmi.agg
+	bmi.agg = &index.PostingValue{
+		Term:  term,
+		Value: roaring.NewPostingListWithInitialData(uint64(itemID)),
+	}
+	return false
+}
+
+func (bmi *blugeMatchIterator) Val() *index.PostingValue {
+	return bmi.current
+}
+
+func (bmi *blugeMatchIterator) Close() error {
+	bmi.closed = true
+	return bmi.err
+}
