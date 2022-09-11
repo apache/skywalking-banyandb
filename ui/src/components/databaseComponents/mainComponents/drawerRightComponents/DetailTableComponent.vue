@@ -20,7 +20,7 @@
 <template>
     <div>
         <el-table ref="multipleTable" height=395 stripe :data="tableData" highlight-current-row tooltip-effect="dark"
-            @selection-change="handleSelectionChange" empty-text="No data yet">
+            @selection-change="handleSelectionChange" border empty-text="No data yet">
             <el-table-column type="index" label="number" width="80">
             </el-table-column>
             <el-table-column v-for="item in options" :key="item" :prop="item" :label="item" show-overflow-tooltip>

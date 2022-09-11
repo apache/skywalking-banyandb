@@ -38,9 +38,9 @@
                 </div>
                 <div class="text-main-color text-tips text-start text-family margin-top-bottom-little"
                     style="margin-top: 20px;">Tags
-                    Configuration Information</div>
-                <div class="flex align-start">
-                    <el-select v-model="tagFamily" @change="changeTagFamilies" style="width: 100%;" filterable
+                    families</div>
+                <div class="flex align-start" style="margin-bottom: 10px;">
+                    <el-select v-model="tagFamily" style="width: 100%;" filterable
                         placeholder="Please select">
                         <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value">
                         </el-option>

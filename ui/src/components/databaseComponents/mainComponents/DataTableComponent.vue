@@ -19,13 +19,16 @@
 
 <template>
     <div>
-        <el-table ref="multipleTable" max-height=700 stripe :data="tableData" highlight-current-row
-            tooltip-effect="dark" @selection-change="handleSelectionChange" empty-text="No data yet">
+        <el-table v-loading="loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
+            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe :data="tableData"
+            highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange" border
+            empty-text="No data yet">
             <el-table-column type="selection" width="55">
             </el-table-column>
             <el-table-column type="index" label="number" width="80">
             </el-table-column>
-            <el-table-column v-for="item in tableTags" :key="item.name" :label="item.name" :prop="item.name">
+            <el-table-column v-for="item in tableTags" sortable :sort-change="sortChange" :key="item.name"
+                :label="item.name" :prop="item.name">
             </el-table-column>
         </el-table>
 
@@ -38,7 +41,7 @@
 
 <script>
 import { mapState } from "vuex"
-import { getStreamOrMeasure } from '@/api/index'
+import { getStreamOrMeasure, getTableList } from '@/api/index'
 export default {
     computed: {
         ...mapState({
@@ -59,6 +62,18 @@ export default {
             handler() {
                 this.initData()
             }
+        },
+        tableTags: {
+            handler() {
+                let tagFamily = this.fileData.tagFamilies[this.index]
+                let tags = []
+                tagFamily.tags.forEach((item) => {
+                    tags.push(item.name)
+                })
+                this.param.projection.tagFamilies[0].name = tagFamily.name
+                this.param.projection.tagFamilies[0].tags = tags
+                this.param.criteria[0].tagFamilyName = tagFamily.name
+            }
         }
     },
     data() {
@@ -73,6 +88,32 @@ export default {
             multipleSelection: [],
             checkAllFlag: false,
             fileData: {}, // stream or measure
+            loading: false,
+            index: 0,
+            param: {
+                metadata: {
+                    group: '',
+                    name: '',
+                    createRevision: '',
+                    modRevision: '',
+                    id: ''
+                },
+                offset: null,
+                limit: null,
+                criteria: [
+                    {
+                        tagFamilyName: ''
+                    }
+                ],
+                projection: {
+                    tagFamilies: [
+                        {
+                            name: '',
+                            tags: []
+                        }
+                    ]
+                }
+            }
         }
     },
 
@@ -90,7 +131,9 @@ export default {
             this.checkAllFlag = false
         })
         this.$bus.$on('changeTagFamilies', (index) => {
+            this.index = index
             this.tableTags = this.fileData.tagFamilies[index].tags
+            this.getTable()
         })
         this.$bus.$on('refresh', () => {
             this.initData()
@@ -99,21 +142,61 @@ export default {
     },
 
     methods: {
+        /**
+         * init data
+         * @author wuchusheng
+         */
         initData() {
             this.$loading.create()
             getStreamOrMeasure(this.type, this.group, this.name)
                 .then((res) => {
                     if (res.status == 200) {
                         this.fileData = res.data[this.type]
+                        this.index = 0
                         this.tableTags = this.fileData.tagFamilies[0].tags
                         this.$emit('drawerRight', this.fileData)
                         this.setTagFamily()
+                        this.getTable()
                     }
                 })
                 .finally(() => {
                     this.$loading.close()
                 })
         },
+
+        /**
+         * get table data
+         * @author wuchusheng
+         */
+        getTable() {
+            this.loading = true
+            let param = this.param
+            param.offset = this.queryInfo.pagenum
+            param.limit = this.queryInfo.pagesize
+            param.metadata = this.fileData.metadata
+            console.log(param)
+            getTableList(param)
+                .then((res) => {
+                    if(res.status == 200) {
+                        this.tableData = res.data.elements
+                    }
+                })
+                .finally(() => {
+                    this.loading = false
+                })
+        },
+
+        /**
+         * sort table data
+         */
+        sortChange(object) {
+            console.log(object);
+        },
+
+        /**
+         * set table tags
+         * @author wuchusheng
+         */
         setTagFamily() {
             let tagFamilies = this.fileData.tagFamilies
             let tagOptions = tagFamilies.map((item, index) => {

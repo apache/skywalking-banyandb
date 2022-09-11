@@ -84,7 +84,7 @@ Vue.prototype.$message.success = () => {
 }
 Vue.prototype.$loading.create = () => {
   Vue.prototype.$loading.instance = Loading.service({
-    text: '拼命加载中',
+    text: 'loading...',
     spinner: 'el-icon-loading',
     background: 'rgba(0, 0, 0, 0.8)',
   })

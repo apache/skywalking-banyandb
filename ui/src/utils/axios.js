@@ -66,7 +66,11 @@ axiosService.interceptors.response.use(
          * Data processing operation
          */
         console.log(response)
-        return Promise.resolve(response)
+        if(response.status == 200) {
+            return Promise.resolve(response)
+        } else {
+            return Promise.reject(response)
+        }
     },
     error => {
         /**

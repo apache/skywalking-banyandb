@@ -24,21 +24,29 @@ import request from '@/utils/axios'
 // Some request methods
 export function getGroupList() {
     return request({
-        url: "/api/v1/group/schema/lists",
-        method: "get",
+        url: '/api/v1/group/schema/lists',
+        method: 'get',
     })
 }
 
 export function getStreamOrMeasureList(type, name) {
     return request({
         url: `/api/v1/${type}/schema/lists/${name}`,
-        method: "get"
+        method: 'get'
     })
 }
 
 export function getStreamOrMeasure(type, group, name) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: "get"
+        method: 'get'
+    })
+}
+
+export function getTableList(data) {
+    return request({
+        url: '/api/v1/stream/data',
+        data: data,
+        method: 'post'
     })
 }
