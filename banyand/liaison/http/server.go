@@ -60,6 +60,8 @@ type service struct {
 	stopCh       chan struct{}
 	clientCloser context.CancelFunc
 	l            *logger.Logger
+
+	srv *stdhttp.Server
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -116,20 +118,28 @@ func (p *service) PreRun() error {
 		return err
 	}
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	p.srv = &stdhttp.Server{
+		Addr:    p.listenAddr,
+		Handler: p.mux,
+	}
 	return nil
 }
 
 func (p *service) Serve() run.StopNotify {
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
-		_ = stdhttp.ListenAndServe(p.listenAddr, p.mux)
+		if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
+			p.l.Error().Err(err)
+		}
 		p.stopCh <- struct{}{}
 	}()
-
 	return p.stopCh
 }
 
 func (p *service) GracefulStop() {
+	if err := p.srv.Close(); err != nil {
+		p.l.Error().Err(err)
+	}
 	p.clientCloser()
 	close(p.stopCh)
 }

@@ -33,9 +33,12 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/zenizh/go-capturer"
+
+	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 var _ = Describe("Stream", func() {
@@ -82,11 +85,12 @@ var _ = Describe("Stream", func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		s := strings.Split(out, "\n")
-		Expect(s[0]).To(Equal("stream:"))
-		Expect(s[2]).To(Equal("  metadata:"))
-		Expect(s[4]).To(Equal("    group: group1"))
-		Expect(s[7]).To(Equal("    name: name1"))
+		GinkgoWriter.Write([]byte(out))
+		resp := new(database_v1.StreamRegistryServiceGetResponse)
+		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
+		GinkgoWriter.Write([]byte(resp.String()))
+		Expect(resp.Stream.Metadata.Name).To(Equal("name1"))
+		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
 	})
 
 	It("update stream schema", func() {
