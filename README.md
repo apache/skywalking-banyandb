@@ -15,7 +15,7 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 
 ## Documents
 
-[Documents](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
+[Documents](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
 
 ## RoadMap
 
