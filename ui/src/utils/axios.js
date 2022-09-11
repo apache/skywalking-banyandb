@@ -83,7 +83,8 @@ axiosService.interceptors.response.use(
         console.log(resErr)
         Message({
             message: error.message,
-            type: "error"
+            type: "error",
+            duration: 5000
         })
         return Promise.reject(error)
     }

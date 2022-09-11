@@ -123,7 +123,6 @@ export default {
                 value: this.fileData.updatedAt == null ? 'null' : this.fileData.updatedAt
             }]
         this.detailList = detailList
-        console.log('fileData', this.fileData);
     },
     methods: {
         handleOver() {

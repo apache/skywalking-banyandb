@@ -19,11 +19,23 @@
 
 export default {
     state: {
-        showRightMenu: false
+        showRightMenu: false,
+        left: 0,
+        top: 0,
+        rightMenuList: []
     },
     mutations: {
         changeShowRightMenu(state, val) {
             state.showRightMenu = val
+        },
+        changeLeft(state, val) {
+            state.left = val
+        },
+        changeTop(state, val) {
+            state.top = val
+        },
+        changeRightMenuList(state, val) {
+            state.rightMenuList = val
         }
     }
 }

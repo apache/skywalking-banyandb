@@ -46,19 +46,35 @@
                 </el-submenu>
             </div>
         </el-menu>
-        <div v-if="showRightMenu" class="right-menu border-radius-little box-shadow"
-            :style="{ top: topNumber + 'px', left: leftNumber + 'px' }">
-            <right-menu-component :rightMenuList="rightMenuList"></right-menu-component>
-        </div>
+        <el-dialog title="Tips" :visible.sync="dialogVisible" width="25%" center>
+            <span>Are you sure to delete this {{rightClickType}}?</span>
+            <span slot="footer" class="dialog-footer">
+                <el-button @click="dialogVisible = false">cancel</el-button>
+                <el-button type="primary" @click="deleteGroupOrFile">delete</el-button>
+            </span>
+        </el-dialog>
     </div>
 </template>
  
 <script>
 import { mapState } from 'vuex'
-import { getGroupList, getStreamOrMeasureList } from '@/api/index'
+import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup } from '@/api/index'
+import { Message } from "element-ui"
 import RightMenuComponent from './RightMenuComponent.vue'
 export default {
     name: 'AsideComponent',
+    computed: {
+        ...mapState({
+            isCollapse: (state) => state.aside.isCollapse,
+            // showRightMenu: (state) => state.menuState.showRightMenu,
+            // closeMenu: (state) => state.menuState.closeMenu,
+            tags: (state) => state.tags.tagsList,
+            currentMenu: (state) => state.tags.currentMenu
+        })
+    },
+    components: {
+        RightMenuComponent
+    },
     data() {
         return {
             groupLists: [],
@@ -77,8 +93,7 @@ export default {
                 name: "delete",
                 id: "delete Folder"
             }],
-            rightMenuList: this.rightMenuListOne,
-            rightMenuListTwo: [{
+            rightMenuListTwo: [/*{
                 icon: "el-icon-folder",
                 name: "new Group",
                 id: "create Group"
@@ -86,44 +101,39 @@ export default {
                 icon: "el-icon-document",
                 name: "new File",
                 id: "create File"
-            }, {
-                icon: "el-icon-refresh-right",
-                name: "refresh",
-                id: "refresh Group"
-            }, {
-                icon: "el-icon-delete",
-                name: "delete",
-                id: "delete Group"
-            }],
+            },*/ {
+                    icon: "el-icon-refresh-right",
+                    name: "refresh",
+                    id: "refresh Group"
+                }, {
+                    icon: "el-icon-delete",
+                    name: "delete",
+                    id: "delete Group"
+                }],
             rightMenuListThree: [{
-                icon: "el-icon-refresh-right",
-                name: "refresh",
-                id: "refresh File"
-            }, {
                 icon: "el-icon-delete",
                 name: "delete",
                 id: "delete File"
-            }]
+            }],
+            rightGroupIndex: 0,
+            rightChildIndex: 0,
+            rightClickType: 'group',
+            dialogVisible: false
         }
     },
-
-    components: {
-        RightMenuComponent
-    },
-
     created() {
         this.getGroupLists()
-    },
-
-    computed: {
-        ...mapState({
-            isCollapse: (state) => state.aside.isCollapse,
-            showRightMenu: (state) => state.menuState.showRightMenu,
-            currentMenu: (state) => state.tags.currentMenu
+        this.$bus.$on('handleRightItem', (index) => {
+            this.handleRightItem(index)
         })
     },
 
     methods: {
+
+        /**
+         * get group data
+         * @author wuchusheng
+         */
         getGroupLists() {
             this.$loading.create()
             getGroupList()
@@ -143,7 +153,7 @@ export default {
                                     }
                                 })
                                 .finally(() => {
-                                    if(length - 1 == index) {
+                                    if (length - 1 == index) {
                                         this.$loading.close()
                                     }
                                     this.$forceUpdate()
@@ -162,27 +172,23 @@ export default {
         },
         openRightMenu(e) {
             this.$store.commit("changeShowRightMenu", true)
-            this.topNumber = e.pageY
-            this.leftNumber = e.pageX
+            this.$store.commit('changeLeft', e.pageX)
+            this.$store.commit('changeTop', e.pageY)
             this.stopPropagation()
         },
         // open file right menu
-        rightClick(e, index, indexMeasure) {
-            this.rightMenuList = this.rightMenuListThree
+        rightClick(e, index, indexChild) {
+            this.$store.commit('changeRightMenuList', this.rightMenuListThree)
+            this.rightClickType = 'file'
+            this.rightGroupIndex = index
+            this.rightChildIndex = indexChild
             this.openRightMenu(e)
-            console.log('rightClick')
         },
-        // open folder right menu
-        /*rightClickFolder(e, index, type) {
-            this.rightMenuList = this.rightMenuListOne
-            this.openRightMenu(e)
-            console.log('rightClickFolder')
-        },*/
-        // open group right menu
         rightClickGroup(e, index) {
-            this.rightMenuList = this.rightMenuListTwo
+            this.$store.commit('changeRightMenuList', this.rightMenuListTwo)
+            this.rightClickType = 'group'
+            this.rightGroupIndex = index
             this.openRightMenu(e)
-            console.log('rightClickGroup')
         },
         openFile(index, indexChildren) {
             let item = this.groupLists[index].children[indexChildren]
@@ -196,6 +202,113 @@ export default {
                 item.metadata.type = "stream"
             }
             this.$store.commit('selectMenu', item)
+        },
+
+        /**
+         * click right menu item
+         * @author wuchusheng
+         */
+        handleRightItem(index) {
+            console.log('groupLists', this.groupLists)
+            if (this.rightClickType == 'group') {
+                // right click group
+                let rightName = this.rightMenuListTwo[index].name
+                switch (rightName) {
+                    case 'refresh':
+                        this.getGroupLists()
+                        break
+                    case 'delete':
+                        this.openDeleteDialog()
+                        break
+                }
+            } else {
+                // right click measure or stream
+                let rightName = this.rightMenuListThree[index].name
+                switch (rightName) {
+                    case 'delete':
+                        this.openDeleteDialog()
+                }
+            }
+            // close right menu
+            this.$store.commit("changeShowRightMenu", false)
+        },
+
+        /**
+         * click right menu delete file
+         * @author wuchusheng
+         */
+        openDeleteDialog() {
+            this.dialogVisible = true
+        },
+        deleteGroupOrFile() {
+            let group = this.groupLists[this.rightGroupIndex].metadata.name
+            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+            if (this.rightClickType == 'group') {
+                // delete group
+                let children = this.groupLists[this.rightGroupIndex].children
+                for (let i = 0; i < children.length; i++) {
+                    let file = children[i]
+                    let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === file.metadata.name)
+                    if (index != -1) {
+                        Message({
+                            message: 'There are files open in this group. Please close these files before proceeding',
+                            type: "warning",
+                            duration: 5000
+                        })
+                        this.dialogVisible = false
+                        return
+                    }
+                }
+                this.$loading.create()
+                deleteGroup(group)
+                    .then((res) => {
+                        if (res.status == 200) {
+                            if (res.data.deleted) {
+                                Message({
+                                    message: 'Delete succeeded',
+                                    type: "success",
+                                    duration: 5000
+                                })
+                                this.getGroupLists()
+                            }
+                        }
+                    })
+                    .finally(() => {
+                        this.$loading.close()
+                        this.dialogVisible = false
+                    })
+            } else {
+                // delete measure or stream file
+                let name = this.groupLists[this.rightGroupIndex].children[this.rightChildIndex].metadata.name
+                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
+                if (index != -1) {
+                    Message({
+                        message: 'This file has been opened. Please close the file before proceeding!',
+                        type: "warning",
+                        duration: 5000
+                    })
+                    this.dialogVisible = false
+                    return
+                }
+                this.$loading.create()
+                deleteStreamOrMeasure(type, group, name)
+                    .then((res) => {
+                        if (res.status == 200) {
+                            if (res.data.deleted) {
+                                Message({
+                                    message: 'Delete succeeded',
+                                    type: "success",
+                                    duration: 5000
+                                })
+                                this.getGroupLists()
+                            }
+                        }
+                    })
+                    .finally(() => {
+                        this.$loading.close()
+                        this.dialogVisible = false
+                    })
+            }
         }
     },
 }

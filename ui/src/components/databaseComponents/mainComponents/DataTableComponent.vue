@@ -174,7 +174,6 @@ export default {
             param.offset = this.queryInfo.pagenum
             param.limit = this.queryInfo.pagesize
             param.metadata = this.fileData.metadata
-            console.log(param)
             getTableList(param)
                 .then((res) => {
                     if(res.status == 200) {
@@ -194,7 +193,7 @@ export default {
         },
 
         /**
-         * set table tags
+         * set table tags, set navigation select
          * @author wuchusheng
          */
         setTagFamily() {

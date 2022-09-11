@@ -50,3 +50,17 @@ export function getTableList(data) {
         method: 'post'
     })
 }
+
+export function deleteStreamOrMeasure(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'delete'
+    })
+}
+
+export function deleteGroup(group) {
+    return request({
+        url: `/api/v1/group/schema/${group}`,
+        method: 'delete'
+    })
+}

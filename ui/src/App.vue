@@ -18,24 +18,41 @@
 -->
 
 <template>
-  <div id="app" @mousedown="appMouseDown">
-    <el-container>
-      <el-header v-if="show">
-        <header-component :active="activePath" :showButton="showButton"></header-component>
-      </el-header>
-      <el-main>
-        <keep-alive>
-          <router-view v-if="$route.meta.keepAlive" />
-        </keep-alive>
-        <router-view v-if="!$route.meta.keepAlive"></router-view>
-      </el-main>
-    </el-container>
+  <div id="app">
+    <div @mousedown="appMouseDown" style="width: 100%; height:100%">
+      <el-container>
+        <el-header v-if="show">
+          <header-component :active="activePath" :showButton="showButton"></header-component>
+        </el-header>
+        <el-main>
+          <keep-alive>
+            <router-view v-if="$route.meta.keepAlive" />
+          </keep-alive>
+          <router-view v-if="!$route.meta.keepAlive"></router-view>
+        </el-main>
+      </el-container>
+    </div>
+    <div v-show="showRightMenu" class="right-menu border-radius-little box-shadow"
+      :style="{ top: top + 'px', left: left + 'px' }">
+      <right-menu-component @handleRightItem="handleRightItem" :rightMenuList="rightMenuList">
+      </right-menu-component>
+    </div>
   </div>
 </template>
 
 <script>
+import { mapState } from 'vuex'
 import HeaderComponent from "./components/HeaderComponent.vue";
+import RightMenuComponent from "./components/databaseComponents/asideComponents/RightMenuComponent.vue";
 export default {
+  computed: {
+    ...mapState({
+      showRightMenu: (state) => state.menuState.showRightMenu,
+      left: (state) => state.menuState.left,
+      top: (state) => state.menuState.top,
+      rightMenuList:  (state) => state.menuState.rightMenuList
+    })
+  },
   data() {
     return {
       activePath: "",
@@ -45,7 +62,8 @@ export default {
   },
 
   components: {
-    HeaderComponent
+    HeaderComponent,
+    RightMenuComponent
   },
 
   beforeCreate() {
@@ -74,6 +92,15 @@ export default {
   methods: {
     appMouseDown() {
       this.$store.commit("changeShowRightMenu", false)
+    },
+
+    /**
+     * click right menu item
+     * @author wuchusheng
+     */
+    handleRightItem(index) {
+      // to aside component
+      this.$bus.$emit('handleRightItem', index)
     }
   }
 }
@@ -110,7 +137,12 @@ body,
     margin: 0;
   }
 }
-
+.right-menu {
+    width: 130px;
+    position: fixed;
+    z-index: 9999999999999999999999999999 !important;
+    background-color: white;
+}
 #nav {
   padding: 30px;
 }
