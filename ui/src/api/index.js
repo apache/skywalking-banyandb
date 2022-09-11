@@ -64,3 +64,19 @@ export function deleteGroup(group) {
         method: 'delete'
     })
 }
+
+export function createGroup(data) {
+    return request({
+        url: `/api/v1/group/schema`,
+        method: 'post',
+        data: data
+    })
+}
+
+export function editGroup(group, data) {
+    return request({
+        url: `/api/v1/group/schema/${group}`,
+        method: 'put',
+        data: data
+    })
+}

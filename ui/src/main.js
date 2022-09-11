@@ -19,7 +19,7 @@
 
 import Vue from 'vue'
 import axios from 'axios'
-import { Dialog, Select, Option, Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, Message, DatePicker, Input, Table, TableColumn, Pagination } from 'element-ui'
+import { Form, FormItem, Dialog, Select, Option, Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, Message, DatePicker, Input, Table, TableColumn, Pagination } from 'element-ui'
 import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import {
@@ -62,6 +62,8 @@ Vue.use((Pagination))
 Vue.use(Select)
 Vue.use(Option)
 Vue.use(Dialog)
+Vue.use(Form)
+Vue.use(FormItem)
 Vue.prototype.$confirm = MessageBox.confirm
 Vue.prototype.$loading = Loading
 Vue.prototype.$message = Message

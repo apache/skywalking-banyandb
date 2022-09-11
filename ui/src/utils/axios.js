@@ -24,7 +24,7 @@ import { Message } from "element-ui"
 
 const axiosService = axios.create({
     //baseURL: "http://34.92.1.105:18913",// process.env.VUE_APP_BASE_API,
-    timeout: 3000
+    timeout: 30000
 })
 
 axiosService.interceptors.request.use(
@@ -65,7 +65,7 @@ axiosService.interceptors.response.use(
          * TODO
          * Data processing operation
          */
-        console.log(response)
+        console.log('response', response)
         if(response.status == 200) {
             return Promise.resolve(response)
         } else {
@@ -81,8 +81,9 @@ axiosService.interceptors.response.use(
         console.log(error.message)
         const resErr = error.data
         console.log(resErr)
+        let msg = error.data.message ? error.data.message : error.message
         Message({
-            message: error.message,
+            message: msg,
             type: "error",
             duration: 5000
         })

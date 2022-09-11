@@ -53,12 +53,30 @@
                 <el-button type="primary" @click="deleteGroupOrFile">delete</el-button>
             </span>
         </el-dialog>
+        <el-dialog width="25%" center :title="`${setGroup} group`" :visible.sync="dialogFormVisible">
+            <el-form ref="ruleForm" :rules="rules" :model="groupForm" label-position="left">
+                <el-form-item label="group name" label-width="100px" prop="name">
+                    <el-input :disabled="setGroup == 'edit'" v-model="groupForm.name" autocomplete="off" style="width: 300px;"></el-input>
+                </el-form-item>
+                <el-form-item label="group type" label-width="100px" prop="catalog">
+                    <el-select v-model="groupForm.catalog" style="width: 300px;" placeholder="please select">
+                        <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
+                        <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            <div slot="footer" class="dialog-footer">
+                <el-button @click="dialogFormVisible = false">cancel</el-button>
+                <el-button type="primary" @click="confirmForm">{{setGroup}}
+                </el-button>
+            </div>
+        </el-dialog>
     </div>
 </template>
  
 <script>
 import { mapState } from 'vuex'
-import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup } from '@/api/index'
+import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { Message } from "element-ui"
 import RightMenuComponent from './RightMenuComponent.vue'
 export default {
@@ -93,24 +111,32 @@ export default {
                 name: "delete",
                 id: "delete Folder"
             }],
-            rightMenuListTwo: [/*{
+            rightMenuListTwo: [{
                 icon: "el-icon-folder",
-                name: "new Group",
+                name: "new group",
                 id: "create Group"
             }, {
+                icon: "el-icon-folder",
+                name: "edit group",
+                id: "edit Group"
+            }, {
                 icon: "el-icon-document",
-                name: "new File",
+                name: "new file",
                 id: "create File"
-            },*/ {
-                    icon: "el-icon-refresh-right",
-                    name: "refresh",
-                    id: "refresh Group"
-                }, {
-                    icon: "el-icon-delete",
-                    name: "delete",
-                    id: "delete Group"
-                }],
+            }, {
+                icon: "el-icon-refresh-right",
+                name: "refresh",
+                id: "refresh Group"
+            }, {
+                icon: "el-icon-delete",
+                name: "delete",
+                id: "delete Group"
+            }],
             rightMenuListThree: [{
+                icon: "el-icon-document",
+                name: "edit file",
+                id: "edit File"
+            }, {
                 icon: "el-icon-delete",
                 name: "delete",
                 id: "delete File"
@@ -118,7 +144,25 @@ export default {
             rightGroupIndex: 0,
             rightChildIndex: 0,
             rightClickType: 'group',
-            dialogVisible: false
+            dialogVisible: false,
+            dialogFormVisible: false,
+            setGroup: 'create',
+            groupForm: {
+                name: null,
+                catalog: 'CATALOG_STREAM'
+            },
+            rules: {
+                name: [
+                    {
+                        required: true, message: 'Please enter the name of the group', trigger: 'blur'
+                    }
+                ],
+                catalog: [
+                    {
+                        required: true, message: 'Please select the type of the group', trigger: 'blur'
+                    }
+                ]
+            }
         }
     },
     created() {
@@ -214,6 +258,14 @@ export default {
                 // right click group
                 let rightName = this.rightMenuListTwo[index].name
                 switch (rightName) {
+                    case 'new group':
+                        this.setGroup = 'create'
+                        this.openCreateGroup()
+                        break
+                    case 'edit group':
+                        this.setGroup = 'edit'
+                        this.openEditGroup()
+                        break
                     case 'refresh':
                         this.getGroupLists()
                         break
@@ -308,6 +360,88 @@ export default {
                         this.$loading.close()
                         this.dialogVisible = false
                     })
+            }
+        },
+        openCreateGroup() {
+            this.dialogFormVisible = true
+        },
+        openEditGroup() {
+            let name = this.groupLists[this.rightGroupIndex].metadata.name
+            let catalog = this.groupLists[this.rightGroupIndex].catalog
+            this.groupForm.name = name
+            this.groupForm.catalog = catalog
+            this.dialogFormVisible = true
+        },
+        confirmForm() {
+            this.setGroup == 'create' ? this.createGroup() : this.editGroup()
+        },
+        createGroup() {
+            this.$refs.ruleForm.validate((valid) => {
+                if (valid) {
+                    let data = {
+                        group: {
+                            metadata: {
+                                group: "",
+                                name: this.groupForm.name
+                            },
+                            catalog: this.groupForm.catalog
+                        }
+                    }
+                    this.$loading.create()
+                    createGroup(data)
+                        .then((res) => {
+                            if (res.status == 200) {
+                                this.getGroupLists()
+                                Message({
+                                    message: 'Created successfully',
+                                    type: "success",
+                                    duration: 3000
+                                })
+                            }
+                        })
+                        .finally(() => {
+                            this.dialogFormVisible = false
+                            this.$loading.close()
+                        })
+                }
+            })
+        },
+        editGroup() {
+            let name = this.groupLists[this.rightGroupIndex].metadata.name
+            this.$refs.ruleForm.validate((valid) => {
+                if (valid) {
+                    let data = {
+                        group: {
+                            metadata: {
+                                group: "",
+                                name: this.groupForm.name
+                            },
+                            catalog: this.groupForm.catalog
+                        }
+                    }
+                    this.$loading.create()
+                    editGroup(name, data)
+                        .then((res) => {
+                            if (res.status == 200) {
+                                this.getGroupLists()
+                                Message({
+                                    message: 'Update succeeded',
+                                    type: "success",
+                                    duration: 3000
+                                })
+                            }
+                        })
+                        .finally(() => {
+                            this.dialogFormVisible = false
+                            this.$loading.close()
+                        })
+                }
+            })
+        },
+        clearGroupForm() {
+            this.groupForm = {
+                name: null,
+                catalog: 'CATALOG_STREAM'
             }
         }
     },
