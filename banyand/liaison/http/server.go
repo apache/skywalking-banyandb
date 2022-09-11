@@ -131,7 +131,7 @@ func (p *service) Serve() run.StopNotify {
 		if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
 			p.l.Error().Err(err)
 		}
-		p.stopCh <- struct{}{}
+		close(p.stopCh)
 	}()
 	return p.stopCh
 }
@@ -141,7 +141,6 @@ func (p *service) GracefulStop() {
 		p.l.Error().Err(err)
 	}
 	p.clientCloser()
-	close(p.stopCh)
 }
 
 func intercept404(handler, on404 stdhttp.Handler) stdhttp.HandlerFunc {
