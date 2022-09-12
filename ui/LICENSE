@@ -10,8 +10,7 @@ The text of each license is also included at licenses/ui-licenses/LICENSE-[proje
 0BSD licenses
 ========================================================================
 
-    echarts/node_modules/tslib 2.3.0 0BSD
-    zrender/node_modules/tslib 2.3.0 0BSD
+    tslib 2.3.0 0BSD
 
 ========================================================================
 Apache-2.0 licenses
@@ -38,8 +37,7 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    @babel/parser 7.18.13 MIT
-    @vue/compiler-sfc 2.7.10 MIT
+    @babel/parser 7.19.0 MIT
     async-validator  MIT
     asynckit 0.4.0 MIT
     axios 0.27.2 MIT
@@ -48,7 +46,7 @@ MIT licenses
     babel-runtime/node_modules/core-js 2.6.12 MIT
     babel-runtime/node_modules/regenerator-runtime 0.11.1 MIT
     combined-stream 1.0.8 MIT
-    core-js 3.25.0 MIT
+    core-js 3.24.1 MIT
     csstype 3.1.0 MIT
     deepmerge 1.5.2 MIT
     delayed-stream 1.0.0 MIT
@@ -61,7 +59,8 @@ MIT licenses
     postcss 8.4.16 MIT
     resize-observer-polyfill 1.5.1 MIT
     throttle-debounce 1.1.0 MIT
-    vue 2.7.10 MIT
+    vue 2.7.8 MIT
     vue-cli-plugin-axios 0.0.4 MIT
-    vue-router 3.6.4 MIT
+    vue-router 3.5.4 MIT
+    vue/node_modules/@vue/compiler-sfc 2.7.8 MIT
     vuex 3.6.2 MIT
