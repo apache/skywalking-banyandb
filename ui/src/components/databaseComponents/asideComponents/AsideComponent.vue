@@ -104,11 +104,11 @@ const list1 = [{
     name: "delete",
     id: "delete Group"
 }]
-const list2 = [{
+const list2 = [/*{
     icon: "el-icon-document",
     name: "edit file",
     id: "edit File"
-}, {
+},*/ {
     icon: "el-icon-delete",
     name: "delete",
     id: "delete File"
