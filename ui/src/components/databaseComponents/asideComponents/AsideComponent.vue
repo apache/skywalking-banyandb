@@ -53,10 +53,11 @@
                 <el-button type="primary" @click="deleteGroupOrFile">delete</el-button>
             </span>
         </el-dialog>
-        <el-dialog width="25%" center :title="`${setGroup} group`" :visible.sync="dialogFormVisible">
+        <el-dialog width="25%" center :title="`${setGroup} group`" :visible.sync="dialogGroupVisible">
             <el-form ref="ruleForm" :rules="rules" :model="groupForm" label-position="left">
                 <el-form-item label="group name" label-width="100px" prop="name">
-                    <el-input :disabled="setGroup == 'edit'" v-model="groupForm.name" autocomplete="off" style="width: 300px;"></el-input>
+                    <el-input :disabled="setGroup == 'edit'" v-model="groupForm.name" autocomplete="off"
+                        style="width: 300px;"></el-input>
                 </el-form-item>
                 <el-form-item label="group type" label-width="100px" prop="catalog">
                     <el-select v-model="groupForm.catalog" style="width: 300px;" placeholder="please select">
@@ -66,11 +67,13 @@
                 </el-form-item>
             </el-form>
             <div slot="footer" class="dialog-footer">
-                <el-button @click="dialogFormVisible = false">cancel</el-button>
+                <el-button @click="dialogGroupVisible = false">cancel</el-button>
                 <el-button type="primary" @click="confirmForm">{{setGroup}}
                 </el-button>
             </div>
         </el-dialog>
+        <dialog-file-component :visible.sync="dialogFileVisible" :operation="operation" :type="type"
+            @cancel="cancelFileDialog" @confirm="confirmFileDialog"></dialog-file-component>
     </div>
 </template>
  
@@ -79,8 +82,52 @@ import { mapState } from 'vuex'
 import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { Message } from "element-ui"
 import RightMenuComponent from './RightMenuComponent.vue'
+import DialogFileComponent from './DialogFileComponent.vue'
+const list1 = [{
+    icon: "el-icon-folder",
+    name: "new group",
+    id: "create Group"
+}, {
+    icon: "el-icon-folder",
+    name: "edit group",
+    id: "edit Group"
+}, {
+    icon: "el-icon-document",
+    name: "new file",
+    id: "create File"
+}, {
+    icon: "el-icon-refresh-right",
+    name: "refresh",
+    id: "refresh Group"
+}, {
+    icon: "el-icon-delete",
+    name: "delete",
+    id: "delete Group"
+}]
+const list2 = [{
+    icon: "el-icon-document",
+    name: "edit file",
+    id: "edit File"
+}, {
+    icon: "el-icon-delete",
+    name: "delete",
+    id: "delete File"
+}]
+const rule = {
+    name: [
+        {
+            required: true, message: 'Please enter the name of the group', trigger: 'blur'
+        }
+    ],
+    catalog: [
+        {
+            required: true, message: 'Please select the type of the group', trigger: 'blur'
+        }
+    ]
+}
 export default {
     name: 'AsideComponent',
+
     computed: {
         ...mapState({
             isCollapse: (state) => state.aside.isCollapse,
@@ -91,82 +138,34 @@ export default {
         })
     },
     components: {
-        RightMenuComponent
+        RightMenuComponent,
+        DialogFileComponent
     },
     data() {
         return {
             groupLists: [],
-            topNumber: 0,
-            leftNumber: 0,
-            rightMenuListOne: [{
-                icon: "el-icon-document",
-                name: "new File",
-                id: "create File"
-            }, {
-                icon: "el-icon-refresh-right",
-                name: "refresh",
-                id: "refresh Folder"
-            }, {
-                icon: "el-icon-delete",
-                name: "delete",
-                id: "delete Folder"
-            }],
-            rightMenuListTwo: [{
-                icon: "el-icon-folder",
-                name: "new group",
-                id: "create Group"
-            }, {
-                icon: "el-icon-folder",
-                name: "edit group",
-                id: "edit Group"
-            }, {
-                icon: "el-icon-document",
-                name: "new file",
-                id: "create File"
-            }, {
-                icon: "el-icon-refresh-right",
-                name: "refresh",
-                id: "refresh Group"
-            }, {
-                icon: "el-icon-delete",
-                name: "delete",
-                id: "delete Group"
-            }],
-            rightMenuListThree: [{
-                icon: "el-icon-document",
-                name: "edit file",
-                id: "edit File"
-            }, {
-                icon: "el-icon-delete",
-                name: "delete",
-                id: "delete File"
-            }],
-            rightGroupIndex: 0,
-            rightChildIndex: 0,
-            rightClickType: 'group',
-            dialogVisible: false,
-            dialogFormVisible: false,
-            setGroup: 'create',
-            groupForm: {
+            rightMenuListTwo: list1, // right click group menu
+            rightMenuListThree: list2, // right click file menu
+            rightGroupIndex: 0, // right click group list index
+            rightChildIndex: 0, // right click file list index
+            rightClickType: 'group', // right click group or file
+            dialogVisible: false, // delete dialog
+            dialogGroupVisible: false, // group dialog
+            dialogFileVisible: false, // File dialog
+            setGroup: 'create', // group dialog is create or edit
+            operation: 'create', // file dialog is create or edit
+            type: 'stream', // file dialog is stream or measure
+            groupForm: { // group dialog form
                 name: null,
                 catalog: 'CATALOG_STREAM'
             },
-            rules: {
-                name: [
-                    {
-                        required: true, message: 'Please enter the name of the group', trigger: 'blur'
-                    }
-                ],
-                catalog: [
-                    {
-                        required: true, message: 'Please select the type of the group', trigger: 'blur'
-                    }
-                ]
-            }
+            rules: rule, // group dialog form rules
         }
     },
     created() {
+        // get group list
         this.getGroupLists()
+        // monitor click right menu item
         this.$bus.$on('handleRightItem', (index) => {
             this.handleRightItem(index)
         })
@@ -214,13 +213,10 @@ export default {
                 e.cancelBubble = true; //IE阻止冒泡方法  
             }
         },
-        openRightMenu(e) {
-            this.$store.commit("changeShowRightMenu", true)
-            this.$store.commit('changeLeft', e.pageX)
-            this.$store.commit('changeTop', e.pageY)
-            this.stopPropagation()
-        },
-        // open file right menu
+
+        /**
+         * open group or file right menu
+         */
         rightClick(e, index, indexChild) {
             this.$store.commit('changeRightMenuList', this.rightMenuListThree)
             this.rightClickType = 'file'
@@ -234,6 +230,17 @@ export default {
             this.rightGroupIndex = index
             this.openRightMenu(e)
         },
+        openRightMenu(e) {
+            this.$store.commit("changeShowRightMenu", true)
+            this.$store.commit('changeLeft', e.pageX)
+            this.$store.commit('changeTop', e.pageY)
+            this.stopPropagation()
+        },
+
+        /**
+         * open stream or measure
+         * @author wuchusheng
+         */
         openFile(index, indexChildren) {
             let item = this.groupLists[index].children[indexChildren]
             /**
@@ -266,6 +273,10 @@ export default {
                         this.setGroup = 'edit'
                         this.openEditGroup()
                         break
+                    case 'new file':
+                        this.operation = 'create'
+                        this.openFileDialog()
+                        break
                     case 'refresh':
                         this.getGroupLists()
                         break
@@ -297,81 +308,97 @@ export default {
             let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
             if (this.rightClickType == 'group') {
                 // delete group
-                let children = this.groupLists[this.rightGroupIndex].children
-                for (let i = 0; i < children.length; i++) {
-                    let file = children[i]
-                    let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === file.metadata.name)
-                    if (index != -1) {
-                        Message({
-                            message: 'There are files open in this group. Please close these files before proceeding',
-                            type: "warning",
-                            duration: 5000
-                        })
-                        this.dialogVisible = false
-                        return
-                    }
-                }
-                this.$loading.create()
-                deleteGroup(group)
-                    .then((res) => {
-                        if (res.status == 200) {
-                            if (res.data.deleted) {
-                                Message({
-                                    message: 'Delete succeeded',
-                                    type: "success",
-                                    duration: 5000
-                                })
-                                this.getGroupLists()
-                            }
-                        }
-                    })
-                    .finally(() => {
-                        this.$loading.close()
-                        this.dialogVisible = false
-                    })
+                this.deleteGroup(group, type)
             } else {
                 // delete measure or stream file
-                let name = this.groupLists[this.rightGroupIndex].children[this.rightChildIndex].metadata.name
-                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
+                this.deleteFile(group, type)
+            }
+        },
+        deleteGroup(group, type) {
+            let children = this.groupLists[this.rightGroupIndex].children
+            // Check whether the file is open
+            for (let i = 0; i < children.length; i++) {
+                let file = children[i]
+                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === file.metadata.name)
                 if (index != -1) {
                     Message({
-                        message: 'This file has been opened. Please close the file before proceeding!',
+                        message: 'There are files open in this group. Please close these files before proceeding',
                         type: "warning",
                         duration: 5000
                     })
                     this.dialogVisible = false
                     return
                 }
-                this.$loading.create()
-                deleteStreamOrMeasure(type, group, name)
-                    .then((res) => {
-                        if (res.status == 200) {
-                            if (res.data.deleted) {
-                                Message({
-                                    message: 'Delete succeeded',
-                                    type: "success",
-                                    duration: 5000
-                                })
-                                this.getGroupLists()
-                            }
-                        }
-                    })
-                    .finally(() => {
-                        this.$loading.close()
-                        this.dialogVisible = false
-                    })
             }
+            // delete group
+            this.$loading.create()
+            deleteGroup(group)
+                .then((res) => {
+                    if (res.status == 200) {
+                        if (res.data.deleted) {
+                            Message({
+                                message: 'Delete succeeded',
+                                type: "success",
+                                duration: 5000
+                            })
+                            this.getGroupLists()
+                        }
+                    }
+                })
+                .finally(() => {
+                    this.$loading.close()
+                    this.dialogVisible = false
+                })
         },
+        deleteFile(group, type) {
+            let name = this.groupLists[this.rightGroupIndex].children[this.rightChildIndex].metadata.name
+            // Check whether the file is open
+            let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
+            if (index != -1) {
+                Message({
+                    message: 'This file has been opened. Please close the file before proceeding!',
+                    type: "warning",
+                    duration: 5000
+                })
+                this.dialogVisible = false
+                return
+            }
+            // delete file
+            this.$loading.create()
+            deleteStreamOrMeasure(type, group, name)
+                .then((res) => {
+                    if (res.status == 200) {
+                        if (res.data.deleted) {
+                            Message({
+                                message: 'Delete succeeded',
+                                type: "success",
+                                duration: 5000
+                            })
+                            this.getGroupLists()
+                        }
+                    }
+                })
+                .finally(() => {
+                    this.$loading.close()
+                    this.dialogVisible = false
+                })
+        },
+
+        /**
+         * click right menu 'new group' or 'edit group'
+         * @author wuchusheng
+         */
         openCreateGroup() {
-            this.dialogFormVisible = true
+            this.dialogGroupVisible = true
         },
         openEditGroup() {
             let name = this.groupLists[this.rightGroupIndex].metadata.name
             let catalog = this.groupLists[this.rightGroupIndex].catalog
             this.groupForm.name = name
             this.groupForm.catalog = catalog
-            this.dialogFormVisible = true
+            this.dialogGroupVisible = true
         },
+        // create group or edit group
         confirmForm() {
             this.setGroup == 'create' ? this.createGroup() : this.editGroup()
         },
@@ -400,7 +427,7 @@ export default {
                             }
                         })
                         .finally(() => {
-                            this.dialogFormVisible = false
+                            this.dialogGroupVisible = false
                             this.$loading.close()
                         })
                 }
@@ -432,17 +459,35 @@ export default {
                             }
                         })
                         .finally(() => {
-                            this.dialogFormVisible = false
+                            this.dialogGroupVisible = false
                             this.$loading.close()
                         })
                 }
             })
         },
+        // init form data
         clearGroupForm() {
             this.groupForm = {
                 name: null,
                 catalog: 'CATALOG_STREAM'
             }
+        },
+
+        /**
+         * click right menu 'new file' or 'edit file'
+         * @author wuchusheng
+         */
+        openFileDialog() {
+            // the group is stream or measure
+            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+            this.type = type
+            this.dialogFileVisible = true
+        },
+        cancelFileDialog() {
+            this.dialogFileVisible = false
+        },
+        confirmFileDialog() {
+
         }
     },
 }

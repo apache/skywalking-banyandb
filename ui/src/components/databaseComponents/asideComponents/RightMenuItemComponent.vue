@@ -45,7 +45,6 @@ export default {
             this.colorStr = "var(--color-main-font)"
         },
         handleRightMenu() {
-            this.$store.commit('changeCloseMenu', true)
             this.$emit('handleRightItem')
             console.log(this.name)
         }
