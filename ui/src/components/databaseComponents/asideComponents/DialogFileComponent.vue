@@ -19,7 +19,7 @@
 <template>
     <div>
         <el-dialog width="25%" center :title="`${operation} ${type}`" @close="cancelForm" :visible.sync="dialogVisible">
-            <el-form ref="ruleForm" :model="form" label-position="left">
+            <el-form ref="ruleForm" :rules="rules" :model="form.metadata" label-position="left">
                 <el-form-item label="group" label-width="100px" prop="group">
                     <el-input disabled v-model="form.metadata.group" autocomplete="off" style="width: 300px;">
                     </el-input>
@@ -28,7 +28,7 @@
                     <el-input :disabled="operation == 'edit'" v-model="form.metadata.name" autocomplete="off"
                         style="width: 300px;"></el-input>
                 </el-form-item>
-                <el-table :data="tableData" :span-method="objectSpanMethod" border
+                <!--el-table :data="tableData" :span-method="objectSpanMethod" border
                     style="width: 100%; margin-top: 20px">
                     <el-table-column prop="tagFamilies" label="tag family" width="180">
                     </el-table-column>
@@ -36,7 +36,7 @@
                     </el-table-column>
                     <el-table-column prop="type" label="type">
                     </el-table-column>
-                </el-table>
+                </el-table-->
                 <!--el-form-item label="group type" label-width="100px" prop="catalog">
                     <el-select v-model="groupForm.catalog" style="width: 300px;" placeholder="please select">
                         <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
@@ -54,6 +54,18 @@
 </template>
 
 <script>
+const rule = {
+    name: [
+        {
+            required: true, message: 'Please enter the name', trigger: 'blur'
+        }
+    ],
+    group: [
+        {
+            required: true, message: 'Please enter the group', trigger: 'blur'
+        }
+    ]
+}
 export default {
 
     props: {
@@ -71,6 +83,10 @@ export default {
             type: String,
             default: 'stream',
             required: true
+        },
+        group: {
+            type: String,
+            required: true
         }
     },
 
@@ -80,17 +96,23 @@ export default {
                 this.dialogVisible = this.visible
             },
             immediate: true
+        },
+        group: {
+            handler() {
+                this.form.metadata.group = this.group
+            }
         }
     },
 
     data() {
         return {
             dialogVisible: false,
+            rules: rule,
             form: {
                 metadata: {
                     group: '',
                     name: ''
-                },
+                }/*,
                 tagFamilies: [
                     {
                         name: '',
@@ -100,38 +122,38 @@ export default {
                                 type: ''
                             }
                         ]
-                    }
-                ]
+                        }
+                ]*/
             },
             tableData: [{
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
-            },{
+            }, {
                 tagFamilies: 'searchable',
                 name: 'stream-ids',
                 type: 'String'
@@ -141,14 +163,18 @@ export default {
 
     methods: {
         confirmForm() {
-            this.$emit('confirm')
+            this.$refs.ruleForm.validate((valid) => {
+                if(valid) {
+                    this.$emit('confirm', this.form)
+                }
+            })
         },
         cancelForm() {
             this.$emit('cancel')
         },
         objectSpanMethod({ row, column, rowIndex, columnIndex }) {
             if (columnIndex === 0) {
-                
+
                 if (rowIndex % 2 === 0) {
                     return {
                         rowspan: 2,

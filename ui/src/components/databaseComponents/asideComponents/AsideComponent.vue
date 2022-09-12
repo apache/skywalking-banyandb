@@ -72,14 +72,14 @@
                 </el-button>
             </div>
         </el-dialog>
-        <dialog-file-component :visible.sync="dialogFileVisible" :operation="operation" :type="type"
+        <dialog-file-component :visible.sync="dialogFileVisible" :group="group" :operation="operation" :type="type"
             @cancel="cancelFileDialog" @confirm="confirmFileDialog"></dialog-file-component>
     </div>
 </template>
  
 <script>
 import { mapState } from 'vuex'
-import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
+import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createFile } from '@/api/index'
 import { Message } from "element-ui"
 import RightMenuComponent from './RightMenuComponent.vue'
 import DialogFileComponent from './DialogFileComponent.vue'
@@ -155,6 +155,7 @@ export default {
             setGroup: 'create', // group dialog is create or edit
             operation: 'create', // file dialog is create or edit
             type: 'stream', // file dialog is stream or measure
+            group: '',
             groupForm: { // group dialog form
                 name: null,
                 catalog: 'CATALOG_STREAM'
@@ -480,14 +481,34 @@ export default {
         openFileDialog() {
             // the group is stream or measure
             let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+            let group = this.groupLists[this.rightGroupIndex].metadata.name
+            this.group = group
             this.type = type
             this.dialogFileVisible = true
         },
         cancelFileDialog() {
             this.dialogFileVisible = false
         },
-        confirmFileDialog() {
-
+        confirmFileDialog(form) {
+            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+            let data = {}
+            data[type] = form
+            this.$loading.create()
+            createFile(type, data)
+                .then((res) => {
+                    if (res.status == 200) {
+                        this.getGroupLists()
+                        Message({
+                            message: 'Created successfully',
+                            type: "success",
+                            duration: 3000
+                        })
+                    }
+                })
+                .finally(() => {
+                    this.dialogFileVisible = false
+                    this.$loading.close()
+                })
         }
     },
 }
