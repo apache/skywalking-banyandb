@@ -20,13 +20,10 @@
 <template>
     <div>
         <el-table ref="multipleTable" height=395 stripe :data="tableData" highlight-current-row tooltip-effect="dark"
-            @selection-change="handleSelectionChange">
-            <el-table-column label="Date" width="120">
-                <template slot-scope="scope">{{ scope.row.date }}</template>
+            @selection-change="handleSelectionChange" border empty-text="No data yet">
+            <el-table-column type="index" label="number" width="80">
             </el-table-column>
-            <el-table-column prop="name" label="Name" width="120">
-            </el-table-column>
-            <el-table-column prop="address" label="Address" show-overflow-tooltip>
+            <el-table-column v-for="item in options" :key="item" :prop="item" :label="item" show-overflow-tooltip>
             </el-table-column>
         </el-table>
     </div>
@@ -34,42 +31,20 @@
 
 <script>
 export default {
-    name: " DetailTableComponent",
+    props: {
+        tableData: {
+            type: Array,
+            required: true
+        }
+    },
     data() {
         return {
-            tableData: [{
-                date: '2016-05-03',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-02',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-04',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-01',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-03',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-02',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-04',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-01',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }]
+            options: ['tags', 'type']
+        }
+    },
+    methods: {
+        handleSelectionChange() {
+
         }
     },
 }

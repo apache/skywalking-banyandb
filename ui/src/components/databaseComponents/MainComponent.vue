@@ -27,17 +27,17 @@
                 <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
                 <second-navigation-component @openDetail="openDetail" :showDrawer="showDrawer"
                     ></second-navigation-component>
-                <data-table-component class="margin-all-little"></data-table-component>
+                <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
             </el-card>
         </div>
         <div class="bd-top bd-left drawer-right" v-if="showDrawer">
-            <drawer-right-component @closeDetail="closeDetail"></drawer-right-component>
+            <drawer-right-component :fileData="fileData" @closeDetail="closeDetail"></drawer-right-component>
         </div>
     </div>
 </template>
 
 <script>
-import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
+// import TopNavigationComponent from './mainComponents/TopNavigationComponent.vue'
 import SecondNavigationComponent from './mainComponents/SecondNavigationComponent.vue'
 import TagNavigationComponent from './TagNavigationComponent.vue'
 import DrawerRightComponent from './mainComponents/DrawerRightComponent.vue'
@@ -47,21 +47,28 @@ export default {
     data() {
         return {
             showDrawer: false,
-            navWidth: "0px"
+            navWidth: "0px",
+            fileData: null
         }
     },
     components: {
-        TopNavigationComponent,
+        // TopNavigationComponent,
         SecondNavigationComponent,
         TagNavigationComponent,
         DrawerRightComponent,
         DataTableComponent
     },
     methods: {
-        handleNavigation(item, index) {
+        openDetail() {
+            this.showDrawer = !this.showDrawer
+        },
+        /*handleNavigation(item, index) {
             if (item.name == "Detail") {
                 this.showDrawer = !this.showDrawer
             }
+        },*/
+        drawerRight(data) {
+            this.fileData = data
         },
         closeDetail() {
             this.showDrawer = false
@@ -72,8 +79,9 @@ export default {
 
 <style lang="scss">
 .el-card {
-    margin: 20px;
+    margin: 10px;
     padding: 0;
+    height: 100%;
 }
 
 .el-card__body {

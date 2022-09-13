@@ -37,8 +37,7 @@
             <span
             v-if="showButton && currentMenu"
             :title="currentMenu.metadata.group + ' / ' + currentMenu.metadata.type + ' / ' + currentMenu.metadata.name"
-            class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{ currentMenu.metadata.group + ' / ' +
-                    currentMenu.metadata.type + ' / ' + currentMenu.metadata.name
+            class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{ currentMenu.metadata.group + ' / ' + currentMenu.metadata.name
             }}</span>
             <div v-else style="width:380px;" class="margin-left-small"></div>
         </div>

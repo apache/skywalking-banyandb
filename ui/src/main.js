@@ -19,7 +19,7 @@
 
 import Vue from 'vue'
 import axios from 'axios'
-import { Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, Message, DatePicker, Input, Table, TableColumn, Pagination } from 'element-ui'
+import { Form, FormItem, Dialog, Select, Option, Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, Message, DatePicker, Input, Table, TableColumn, Pagination } from 'element-ui'
 import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import {
@@ -59,6 +59,11 @@ Vue.use(Input)
 Vue.use(Table)
 Vue.use(TableColumn)
 Vue.use((Pagination))
+Vue.use(Select)
+Vue.use(Option)
+Vue.use(Dialog)
+Vue.use(Form)
+Vue.use(FormItem)
 Vue.prototype.$confirm = MessageBox.confirm
 Vue.prototype.$loading = Loading
 Vue.prototype.$message = Message
@@ -82,7 +87,7 @@ Vue.prototype.$message.success = () => {
 }
 Vue.prototype.$loading.create = () => {
   Vue.prototype.$loading.instance = Loading.service({
-    text: '拼命加载中',
+    text: 'loading...',
     spinner: 'el-icon-loading',
     background: 'rgba(0, 0, 0, 0.8)',
   })

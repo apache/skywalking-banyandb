@@ -19,28 +19,63 @@
 
 <template>
     <div>
-        <el-table ref="multipleTable" max-height=700 stripe :data="tableData" highlight-current-row
-            tooltip-effect="dark" @selection-change="handleSelectionChange">
+        <el-table v-loading="loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
+            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe :data="tableData"
+            highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange" border
+            empty-text="No data yet">
             <el-table-column type="selection" width="55">
             </el-table-column>
-            <el-table-column label="Date" width="120">
-                <template slot-scope="scope">{{ scope.row.date }}</template>
+            <el-table-column type="index" label="number" width="80">
             </el-table-column>
-            <el-table-column prop="name" label="Name" width="120">
-            </el-table-column>
-            <el-table-column prop="address" label="Address" show-overflow-tooltip>
+            <el-table-column v-for="item in tableTags" sortable :sort-change="sortChange" :key="item.name"
+                :label="item.name" :prop="item.name">
             </el-table-column>
         </el-table>
 
-        <el-pagination class="margin-top-bottom" @size-change="handleSizeChange" @current-change="handleCurrentChange"
-            :current-page="queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]" :page-size="queryInfo.pagesize"
-            layout="total, sizes, prev, pager, next, jumper" :total="total">
+        <el-pagination v-if="tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
+            @current-change="handleCurrentChange" :current-page="queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
+            :page-size="queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="total">
         </el-pagination>
     </div>
 </template>
 
 <script>
+import { mapState } from "vuex"
+import { getStreamOrMeasure, getTableList } from '@/api/index'
 export default {
+    computed: {
+        ...mapState({
+            currentMenu: (state) => state.tags.currentMenu
+        }),
+        type() {
+            return this.currentMenu.metadata.type
+        },
+        group() {
+            return this.currentMenu.metadata.group
+        },
+        name() {
+            return this.currentMenu.metadata.name
+        },
+    },
+    watch: {
+        currentMenu: {
+            handler() {
+                this.initData()
+            }
+        },
+        tableTags: {
+            handler() {
+                let tagFamily = this.fileData.tagFamilies[this.index]
+                let tags = []
+                tagFamily.tags.forEach((item) => {
+                    tags.push(item.name)
+                })
+                this.param.projection.tagFamilies[0].name = tagFamily.name
+                this.param.projection.tagFamilies[0].tags = tags
+                this.param.criteria[0].tagFamilyName = tagFamily.name
+            }
+        }
+    },
     data() {
         return {
             total: 25,
@@ -48,89 +83,37 @@ export default {
                 pagenum: 1,
                 pagesize: 6,
             },
-            tableData: [{
-                date: '2016-05-03',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-02',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-04',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-01',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-08',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-08',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-08',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-08',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-06',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }, {
-                date: '2016-05-07',
-                name: 'Xiaohu Wang',
-                address: 'Shaihai'
-            }],
+            tableTags: [],
+            tableData: [],
             multipleSelection: [],
-            checkAllFlag: false
+            checkAllFlag: false,
+            fileData: {}, // stream or measure
+            loading: false,
+            index: 0,
+            param: {
+                metadata: {
+                    group: '',
+                    name: '',
+                    createRevision: '',
+                    modRevision: '',
+                    id: ''
+                },
+                offset: null,
+                limit: null,
+                criteria: [
+                    {
+                        tagFamilyName: ''
+                    }
+                ],
+                projection: {
+                    tagFamilies: [
+                        {
+                            name: '',
+                            tags: []
+                        }
+                    ]
+                }
+            }
         }
     },
 
@@ -147,9 +130,76 @@ export default {
             this.$refs.multipleTable.clearSelection()
             this.checkAllFlag = false
         })
+        this.$bus.$on('changeTagFamilies', (index) => {
+            this.index = index
+            this.tableTags = this.fileData.tagFamilies[index].tags
+            this.getTable()
+        })
+        this.$bus.$on('refresh', () => {
+            this.initData()
+        })
+        this.initData()
     },
 
     methods: {
+        /**
+         * init data
+         */
+        initData() {
+            this.$loading.create()
+            getStreamOrMeasure(this.type, this.group, this.name)
+                .then((res) => {
+                    if (res.status == 200) {
+                        this.fileData = res.data[this.type]
+                        this.index = 0
+                        this.tableTags = this.fileData.tagFamilies[0].tags
+                        this.$emit('drawerRight', this.fileData)
+                        this.setTagFamily()
+                        this.getTable()
+                    }
+                })
+                .finally(() => {
+                    this.$loading.close()
+                })
+        },
+
+        /**
+         * get table data
+         */
+        getTable() {
+            this.loading = true
+            let param = this.param
+            param.offset = this.queryInfo.pagenum
+            param.limit = this.queryInfo.pagesize
+            param.metadata = this.fileData.metadata
+            getTableList(param)
+                .then((res) => {
+                    if(res.status == 200) {
+                        this.tableData = res.data.elements
+                    }
+                })
+                .finally(() => {
+                    this.loading = false
+                })
+        },
+
+        /**
+         * sort table data
+         */
+        sortChange(object) {
+            console.log(object);
+        },
+
+        /**
+         * set table tags, set navigation select
+         */
+        setTagFamily() {
+            let tagFamilies = this.fileData.tagFamilies
+            let tagOptions = tagFamilies.map((item, index) => {
+                return { label: item.name, value: index }
+            })
+            this.$bus.$emit('setOptions', tagOptions)
+        },
         handleSelectionChange(val) {
             this.multipleSelection = val;
         },
@@ -157,7 +207,7 @@ export default {
 
         },
         handleCurrentChange() {
-            
+
         }
     }
 }
