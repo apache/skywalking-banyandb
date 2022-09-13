@@ -144,7 +144,6 @@ export default {
     methods: {
         /**
          * init data
-         * @author wuchusheng
          */
         initData() {
             this.$loading.create()
@@ -166,7 +165,6 @@ export default {
 
         /**
          * get table data
-         * @author wuchusheng
          */
         getTable() {
             this.loading = true
@@ -194,7 +192,6 @@ export default {
 
         /**
          * set table tags, set navigation select
-         * @author wuchusheng
          */
         setTagFamily() {
             let tagFamilies = this.fileData.tagFamilies

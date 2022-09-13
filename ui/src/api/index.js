@@ -81,7 +81,7 @@ export function editGroup(group, data) {
     })
 }
 
-export function createFile(type, data) {
+export function createResources(type, data) {
     return request({
         url: `/api/v1/${type}/schema`,
         method: 'post',

@@ -96,7 +96,6 @@ export default {
 
     /**
      * click right menu item
-     * @author wuchusheng
      */
     handleRightItem(index) {
       // to aside component

@@ -34,7 +34,7 @@
                     <div v-for="(itemChildren, indexChildren) in item.children" :key="itemChildren.metadata.name">
                         <div @contextmenu.prevent="rightClick($event, index, indexChildren)">
                             <el-menu-item :index="itemChildren.metadata.group + itemChildren.metadata.name"
-                                @click="openFile(index, indexChildren)">
+                                @click="openResources(index, indexChildren)">
                                 <template slot="title">
                                     <i class="el-icon-document"></i>
                                     <span slot="title" :title="itemChildren.metadata.name" style="width: 90%"
@@ -50,7 +50,7 @@
             <span>Are you sure to delete this {{rightClickType}}?</span>
             <span slot="footer" class="dialog-footer">
                 <el-button @click="dialogVisible = false">cancel</el-button>
-                <el-button type="primary" @click="deleteGroupOrFile">delete</el-button>
+                <el-button type="primary" @click="deleteGroupOrResources">delete</el-button>
             </span>
         </el-dialog>
         <el-dialog width="25%" center :title="`${setGroup} group`" :visible.sync="dialogGroupVisible">
@@ -72,17 +72,17 @@
                 </el-button>
             </div>
         </el-dialog>
-        <dialog-file-component :visible.sync="dialogFileVisible" :group="group" :operation="operation" :type="type"
-            @cancel="cancelFileDialog" @confirm="confirmFileDialog"></dialog-file-component>
+        <dialog-resources-component :visible.sync="dialogResourcesVisible" :group="group" :operation="operation" :type="type"
+            @cancel="cancelResourcesDialog" @confirm="confirmResourcesDialog"></dialog-resources-component>
     </div>
 </template>
  
 <script>
 import { mapState } from 'vuex'
-import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createFile } from '@/api/index'
+import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { Message } from "element-ui"
 import RightMenuComponent from './RightMenuComponent.vue'
-import DialogFileComponent from './DialogFileComponent.vue'
+import DialogResourcesComponent from './DialogResourcesComponent.vue'
 const list1 = [{
     icon: "el-icon-folder",
     name: "new group",
@@ -93,8 +93,8 @@ const list1 = [{
     id: "edit Group"
 }, {
     icon: "el-icon-document",
-    name: "new file",
-    id: "create File"
+    name: "new resources",
+    id: "create resources"
 }, {
     icon: "el-icon-refresh-right",
     name: "refresh",
@@ -106,12 +106,12 @@ const list1 = [{
 }]
 const list2 = [/*{
     icon: "el-icon-document",
-    name: "edit file",
-    id: "edit File"
+    name: "edit resources",
+    id: "edit resources"
 },*/ {
     icon: "el-icon-delete",
     name: "delete",
-    id: "delete File"
+    id: "delete resources"
 }]
 const rule = {
     name: [
@@ -139,22 +139,22 @@ export default {
     },
     components: {
         RightMenuComponent,
-        DialogFileComponent
+        DialogResourcesComponent
     },
     data() {
         return {
             groupLists: [],
             rightMenuListTwo: list1, // right click group menu
-            rightMenuListThree: list2, // right click file menu
+            rightMenuListThree: list2, // right click Resources menu
             rightGroupIndex: 0, // right click group list index
-            rightChildIndex: 0, // right click file list index
-            rightClickType: 'group', // right click group or file
+            rightChildIndex: 0, // right click Resources list index
+            rightClickType: 'group', // right click group or Resources
             dialogVisible: false, // delete dialog
             dialogGroupVisible: false, // group dialog
-            dialogFileVisible: false, // File dialog
+            dialogResourcesVisible: false, // Resources dialog
             setGroup: 'create', // group dialog is create or edit
-            operation: 'create', // file dialog is create or edit
-            type: 'stream', // file dialog is stream or measure
+            operation: 'create', // Resources dialog is create or edit
+            type: 'stream', // Resources dialog is stream or measure
             group: '',
             groupForm: { // group dialog form
                 name: null,
@@ -176,7 +176,6 @@ export default {
 
         /**
          * get group data
-         * @author wuchusheng
          */
         getGroupLists() {
             this.$loading.create()
@@ -208,19 +207,19 @@ export default {
         },
         stopPropagation(e) {
             e = e || window.event;
-            if (e.stopPropagation) { //W3C阻止冒泡方法  
+            if (e.stopPropagation) {
                 e.stopPropagation();
             } else {
-                e.cancelBubble = true; //IE阻止冒泡方法  
+                e.cancelBubble = true;
             }
         },
 
         /**
-         * open group or file right menu
+         * open group or resources right menu
          */
         rightClick(e, index, indexChild) {
             this.$store.commit('changeRightMenuList', this.rightMenuListThree)
-            this.rightClickType = 'file'
+            this.rightClickType = 'Resources'
             this.rightGroupIndex = index
             this.rightChildIndex = indexChild
             this.openRightMenu(e)
@@ -240,9 +239,8 @@ export default {
 
         /**
          * open stream or measure
-         * @author wuchusheng
          */
-        openFile(index, indexChildren) {
+        openResources(index, indexChildren) {
             let item = this.groupLists[index].children[indexChildren]
             /**
              * Todo
@@ -258,7 +256,6 @@ export default {
 
         /**
          * click right menu item
-         * @author wuchusheng
          */
         handleRightItem(index) {
             console.log('groupLists', this.groupLists)
@@ -274,9 +271,9 @@ export default {
                         this.setGroup = 'edit'
                         this.openEditGroup()
                         break
-                    case 'new file':
+                    case 'new resources':
                         this.operation = 'create'
-                        this.openFileDialog()
+                        this.openResourcesDialog()
                         break
                     case 'refresh':
                         this.getGroupLists()
@@ -298,32 +295,31 @@ export default {
         },
 
         /**
-         * click right menu delete file
-         * @author wuchusheng
+         * click right menu delete Resources
          */
         openDeleteDialog() {
             this.dialogVisible = true
         },
-        deleteGroupOrFile() {
+        deleteGroupOrResources() {
             let group = this.groupLists[this.rightGroupIndex].metadata.name
             let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
             if (this.rightClickType == 'group') {
                 // delete group
                 this.deleteGroup(group, type)
             } else {
-                // delete measure or stream file
-                this.deleteFile(group, type)
+                // delete measure or stream Resources
+                this.deleteResources(group, type)
             }
         },
         deleteGroup(group, type) {
             let children = this.groupLists[this.rightGroupIndex].children
-            // Check whether the file is open
+            // Check whether the Resources is open
             for (let i = 0; i < children.length; i++) {
-                let file = children[i]
-                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === file.metadata.name)
+                let Resources = children[i]
+                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === Resources.metadata.name)
                 if (index != -1) {
                     Message({
-                        message: 'There are files open in this group. Please close these files before proceeding',
+                        message: 'There are Resources open in this group. Please close these Resources before proceeding',
                         type: "warning",
                         duration: 5000
                     })
@@ -351,20 +347,20 @@ export default {
                     this.dialogVisible = false
                 })
         },
-        deleteFile(group, type) {
+        deleteResources(group, type) {
             let name = this.groupLists[this.rightGroupIndex].children[this.rightChildIndex].metadata.name
-            // Check whether the file is open
+            // Check whether the Resources is open
             let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
             if (index != -1) {
                 Message({
-                    message: 'This file has been opened. Please close the file before proceeding!',
+                    message: 'This resources has been opened. Please close the resources before proceeding!',
                     type: "warning",
                     duration: 5000
                 })
                 this.dialogVisible = false
                 return
             }
-            // delete file
+            // delete Resources
             this.$loading.create()
             deleteStreamOrMeasure(type, group, name)
                 .then((res) => {
@@ -387,7 +383,6 @@ export default {
 
         /**
          * click right menu 'new group' or 'edit group'
-         * @author wuchusheng
          */
         openCreateGroup() {
             this.dialogGroupVisible = true
@@ -475,26 +470,25 @@ export default {
         },
 
         /**
-         * click right menu 'new file' or 'edit file'
-         * @author wuchusheng
+         * click right menu 'new resources' or 'edit resources'
          */
-        openFileDialog() {
+        openResourcesDialog() {
             // the group is stream or measure
             let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
             let group = this.groupLists[this.rightGroupIndex].metadata.name
             this.group = group
             this.type = type
-            this.dialogFileVisible = true
+            this.dialogResourcesVisible = true
         },
-        cancelFileDialog() {
-            this.dialogFileVisible = false
+        cancelResourcesDialog() {
+            this.dialogResourcesVisible = false
         },
-        confirmFileDialog(form) {
+        confirmResourcesDialog(form) {
             let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
             let data = {}
             data[type] = form
             this.$loading.create()
-            createFile(type, data)
+            createResources(type, data)
                 .then((res) => {
                     if (res.status == 200) {
                         this.getGroupLists()
@@ -506,7 +500,7 @@ export default {
                     }
                 })
                 .finally(() => {
-                    this.dialogFileVisible = false
+                    this.dialogResourcesVisible = false
                     this.$loading.close()
                 })
         }
