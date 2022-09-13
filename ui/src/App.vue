@@ -137,7 +137,7 @@ body,
   }
 }
 .right-menu {
-    width: 130px;
+    width: 170px;
     position: fixed;
     z-index: 9999999999999999999999999999 !important;
     background-color: white;

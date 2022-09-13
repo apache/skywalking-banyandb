@@ -219,7 +219,7 @@ export default {
          */
         rightClick(e, index, indexChild) {
             this.$store.commit('changeRightMenuList', this.rightMenuListThree)
-            this.rightClickType = 'Resources'
+            this.rightClickType = 'resources'
             this.rightGroupIndex = index
             this.rightChildIndex = indexChild
             this.openRightMenu(e)
