@@ -1,0 +1,17 @@
+dataPoints:
+  - fields:
+    - name: total
+      value:
+        int:
+          value: "100"
+    - name: value
+      value:
+        int:
+          value: "1"
+    tagFamilies:
+    - name: default
+      tags:
+      - key: id
+        value:
+          id:
+            value: "1"

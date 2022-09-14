@@ -24,6 +24,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 type MeasureAnalyzer struct {
@@ -36,7 +37,7 @@ func CreateMeasureAnalyzerFromMetaService(metaSvc metadata.Service) (*MeasureAna
 	}, nil
 }
 
-func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *commonv1.Metadata) (Schema, error) {
+func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
 		return nil, err
@@ -52,14 +53,14 @@ func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *comm
 	}
 
 	ms := &measureSchema{
-		common: &CommonSchema{
-			group:      group,
-			indexRules: indexRules,
-			tagMap:     make(map[string]*TagSpec),
-			entityList: measure.GetEntity().GetTagNames(),
+		common: &logical.CommonSchema{
+			Group:      group,
+			IndexRules: indexRules,
+			TagMap:     make(map[string]*logical.TagSpec),
+			EntityList: measure.GetEntity().GetTagNames(),
 		},
 		measure:  measure,
-		fieldMap: make(map[string]*fieldSpec),
+		fieldMap: make(map[string]*logical.FieldSpec),
 	}
 
 	for tagFamilyIdx, tagFamily := range measure.GetTagFamilies() {
@@ -75,18 +76,18 @@ func (a *MeasureAnalyzer) BuildMeasureSchema(ctx context.Context, metadata *comm
 	return ms, nil
 }
 
-func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema) (Plan, error) {
+func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	groupByEntity := false
-	var groupByTags [][]*Tag
+	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {
 		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
-		groupByTags = make([][]*Tag, len(groupByProjectionTags.GetTagFamilies()))
+		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
 		tags := make([]string, 0)
 		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
-			groupByTags[i] = NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
+			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
 			tags = append(tags, tagFamily.GetTags()...)
 		}
-		if stringSlicesEqual(s.EntityList(), tags) {
+		if logical.StringSlicesEqual(s.EntityList(), tags) {
 			groupByEntity = true
 		}
 	}
@@ -103,7 +104,7 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 
 	if criteria.GetAgg() != nil {
 		plan = Aggregation(plan,
-			NewField(criteria.GetAgg().GetFieldName()),
+			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
 		)
@@ -116,7 +117,7 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
-		limitParameter = DefaultLimit
+		limitParameter = logical.DefaultLimit
 	}
 	plan = MeasureLimit(plan, criteria.GetOffset(), limitParameter)
 
@@ -127,21 +128,21 @@ func (a *MeasureAnalyzer) Analyze(_ context.Context, criteria *measurev1.QueryRe
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition
-func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s Schema, groupByEntity bool) (UnresolvedPlan, error) {
+func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema, groupByEntity bool) (logical.UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
-	projTags := make([][]*Tag, len(criteria.GetTagProjection().GetTagFamilies()))
+	projTags := make([][]*logical.Tag, len(criteria.GetTagProjection().GetTagFamilies()))
 	for i, tagFamily := range criteria.GetTagProjection().GetTagFamilies() {
-		var projTagInFamily []*Tag
+		var projTagInFamily []*logical.Tag
 		for _, tagName := range tagFamily.GetTags() {
-			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
+			projTagInFamily = append(projTagInFamily, logical.NewTag(tagFamily.GetName(), tagName))
 		}
 		projTags[i] = projTagInFamily
 	}
 
-	projFields := make([]*Field, len(criteria.GetFieldProjection().GetNames()))
+	projFields := make([]*logical.Field, len(criteria.GetFieldProjection().GetNames()))
 	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
-		projFields[i] = NewField(fieldNameProj)
+		projFields[i] = logical.NewField(fieldNameProj)
 	}
 
 	entityList := s.EntityList()
@@ -152,18 +153,18 @@ func parseMeasureFields(criteria *measurev1.QueryRequest, metadata *commonv1.Met
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
 	}
-	predicator, entities, err := BuildLocalFilter(criteria.Criteria, s, entityMap, entity)
+	filter, entities, err := logical.BuildLocalFilter(criteria.Criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
 
 	// parse orderBy
 	queryOrder := criteria.GetOrderBy()
-	var unresolvedOrderBy *UnresolvedOrderBy
+	var unresolvedOrderBy *logical.UnresolvedOrderBy
 	if queryOrder != nil {
-		unresolvedOrderBy = NewOrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
+		unresolvedOrderBy = logical.NewOrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 	}
 
 	return MeasureIndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		predicator, entities, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
+		filter, entities, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
 }

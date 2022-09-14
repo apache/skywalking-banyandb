@@ -22,45 +22,46 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
-	_ UnresolvedPlan = (*unresolvedGroup)(nil)
-	_ Plan           = (*groupBy)(nil)
+	_ logical.UnresolvedPlan = (*unresolvedGroup)(nil)
+	_ logical.Plan           = (*groupBy)(nil)
 )
 
 type unresolvedTop struct {
-	unresolvedInput UnresolvedPlan
+	unresolvedInput logical.UnresolvedPlan
 	top             *measurev1.QueryRequest_Top
 }
 
-func Top(input UnresolvedPlan, top *measurev1.QueryRequest_Top) UnresolvedPlan {
+func Top(input logical.UnresolvedPlan, top *measurev1.QueryRequest_Top) logical.UnresolvedPlan {
 	return &unresolvedTop{
 		unresolvedInput: input,
 		top:             top,
 	}
 }
 
-func (gba *unresolvedTop) Analyze(measureSchema Schema) (Plan, error) {
+func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, error) {
 	prevPlan, err := gba.unresolvedInput.Analyze(measureSchema)
 	if err != nil {
 		return nil, err
 	}
-	fieldRefs, err := prevPlan.Schema().CreateFieldRef(NewField(gba.top.FieldName))
+	fieldRefs, err := prevPlan.Schema().CreateFieldRef(logical.NewField(gba.top.FieldName))
 	if err != nil {
 		return nil, err
 	}
 	if len(fieldRefs) == 0 {
-		return nil, errors.Wrap(ErrFieldNotDefined, "top schema")
+		return nil, errors.Wrap(logical.ErrFieldNotDefined, "top schema")
 	}
 	reverted := false
 	if gba.top.FieldValueSort == modelv1.Sort_SORT_ASC {
 		reverted = true
 	}
 	return &top{
-		parent: &parent{
-			unresolvedInput: gba.unresolvedInput,
-			input:           prevPlan,
+		Parent: &logical.Parent{
+			UnresolvedInput: gba.unresolvedInput,
+			Input:           prevPlan,
 		},
 		topNStream: NewTopQueue(int(gba.top.Number), reverted),
 		fieldRef:   fieldRefs[0],
@@ -68,37 +69,25 @@ func (gba *unresolvedTop) Analyze(measureSchema Schema) (Plan, error) {
 }
 
 type top struct {
-	*parent
+	*logical.Parent
 	topNStream *TopQueue
-	fieldRef   *FieldRef
+	fieldRef   *logical.FieldRef
 }
 
 func (g *top) String() string {
 	return g.topNStream.String()
 }
 
-func (g *top) Type() PlanType {
-	return PlanTop
+func (g *top) Children() []logical.Plan {
+	return []logical.Plan{g.Input}
 }
 
-func (g *top) Equal(plan Plan) bool {
-	if plan.Type() != PlanTop {
-		return false
-	}
-	other := plan.(*top)
-	return g.topNStream.Equal(other.topNStream)
-}
-
-func (g *top) Children() []Plan {
-	return []Plan{g.input}
-}
-
-func (g *top) Schema() Schema {
-	return g.input.Schema()
+func (g *top) Schema() logical.Schema {
+	return g.Input.Schema()
 }
 
 func (g *top) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
+	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}

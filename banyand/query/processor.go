@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
 
@@ -116,59 +117,59 @@ type measureQueryProcessor struct {
 }
 
 func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	// queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
-	// if !ok {
-	// 	p.queryService.log.Warn().Msg("invalid event data type")
-	// 	return
-	// }
+	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
+	if !ok {
+		p.queryService.log.Warn().Msg("invalid event data type")
+		return
+	}
 	p.log.Debug().Msg("received a query event")
 
-	// meta := queryCriteria.GetMetadata()
-	// ec, err := p.measureService.Measure(meta)
-	// if err != nil {
-	// 	p.log.Error().Err(err).
-	// 		Str("measure", meta.GetName()).
-	// 		Msg("fail to get execution context")
-	// 	return
-	// }
+	meta := queryCriteria.GetMetadata()
+	ec, err := p.measureService.Measure(meta)
+	if err != nil {
+		p.log.Error().Err(err).
+			Str("measure", meta.GetName()).
+			Msg("fail to get execution context")
+		return
+	}
 
-	// analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(p.metaService)
-	// if err != nil {
-	// 	p.log.Error().Err(err).Msg("fail to build analyzer")
-	// 	return
-	// }
+	analyzer, err := logical_measure.CreateMeasureAnalyzerFromMetaService(p.metaService)
+	if err != nil {
+		p.log.Error().Err(err).Msg("fail to build analyzer")
+		return
+	}
 
-	// s, err := analyzer.BuildMeasureSchema(context.TODO(), meta)
-	// if err != nil {
-	// 	p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
-	// 	return
-	// }
+	s, err := analyzer.BuildMeasureSchema(context.TODO(), meta)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
+		return
+	}
 
-	// plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
-	// if err != nil {
-	// 	p.queryService.log.Error().Err(err).Msg("fail to analyze the query request")
-	// 	return
-	// }
+	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to analyze the query request")
+		return
+	}
 
-	// p.queryService.log.Debug().Str("plan", plan.String()).Msg("query plan")
+	p.queryService.log.Debug().Str("plan", plan.String()).Msg("query plan")
 
-	// mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
-	// if err != nil {
-	// 	p.queryService.log.Error().Err(err).Msg("fail to execute the query plan")
-	// 	return
-	// }
-	// defer func() {
-	// 	if err = mIterator.Close(); err != nil {
-	// 		p.queryService.log.Error().Err(err).Msg("fail to close the query plan")
-	// 	}
-	// }()
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
+	if err != nil {
+		p.queryService.log.Error().Err(err).Msg("fail to execute the query plan")
+		return
+	}
+	defer func() {
+		if err = mIterator.Close(); err != nil {
+			p.queryService.log.Error().Err(err).Msg("fail to close the query plan")
+		}
+	}()
 	result := make([]*measurev1.DataPoint, 0)
-	// for mIterator.Next() {
-	// 	current := mIterator.Current()
-	// 	if len(current) > 0 {
-	// 		result = append(result, current[0])
-	// 	}
-	// }
+	for mIterator.Next() {
+		current := mIterator.Current()
+		if len(current) > 0 {
+			result = append(result, current[0])
+		}
+	}
 	now := time.Now().UnixNano()
 	resp = bus.NewMessage(bus.MessageID(now), result)
 	return

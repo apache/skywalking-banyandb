@@ -1,0 +1,33 @@
+dataPoints:
+  - fields:
+    - name: total
+      value:
+        int:
+          value: "100"
+    - name: value
+      value:
+        int:
+          value: "5"
+    tagFamilies:
+    - name: default
+      tags:
+      - key: entity_id
+        value:
+          str:
+            value: entity_3
+  - fields:
+    - name: total
+      value:
+        int:
+          value: "50"
+    - name: value
+      value:
+        int:
+          value: "4"
+    tagFamilies:
+    - name: default
+      tags:
+      - key: entity_id
+        value:
+          str:
+            value: entity_1

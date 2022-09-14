@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
 func TestTopNStream(t *testing.T) {
@@ -62,9 +62,9 @@ func TestTopNStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := logical.NewTopQueue(tt.fields.n, tt.fields.reverted)
+			s := measure.NewTopQueue(tt.fields.n, tt.fields.reverted)
 			for _, v := range tt.args.elements {
-				s.Insert(logical.NewTopElement(nil, v))
+				s.Insert(measure.NewTopElement(nil, v))
 			}
 			ee := s.Elements()
 			got := make([]int64, 0, len(ee))

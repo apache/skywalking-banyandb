@@ -19,6 +19,7 @@ import (
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	cases_measure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -54,7 +55,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	flags := []string{
 		"--addr=" + addr,
 		"--stream-root-path=" + path,
-		// "--measure-root-path=" + path,
+		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
 		fmt.Sprintf("--etcd-listen-client-url=http://%s:%d", host, ports[2]), fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
 	}
@@ -66,7 +67,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	)
 	Expect(err).NotTo(HaveOccurred())
 	now = timestamp.NowMilli()
-	cases_stream.Write(conn, "data.json", now, 500*time.Millisecond)
+	interval := 500 * time.Millisecond
+	cases_stream.Write(conn, "data.json", now, interval)
+	cases_measure.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
+	cases_measure.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
+	cases_measure.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
 	Expect(conn.Close()).To(Succeed())
 	return []byte(addr)
 }, func(address []byte) {
@@ -77,6 +82,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithBlock(),
 	)
 	cases_stream.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   now,
+	}
+	cases_measure.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}

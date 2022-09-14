@@ -1,0 +1,14 @@
+metadata:
+  name: "service_instance_traffic"
+  group: "sw_metric"
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["name"]
+criteria:
+  condition:
+    name: "name"
+    op: "BINARY_OP_MATCH"
+    value:
+      str:
+        value: "nodea"

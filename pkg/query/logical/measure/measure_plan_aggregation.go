@@ -19,30 +19,30 @@ package measure
 import (
 	"fmt"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
-	_ UnresolvedPlan = (*unresolvedAggregation)(nil)
-	_ Plan           = (*measureAggregation)(nil)
+	_ logical.UnresolvedPlan = (*unresolvedAggregation)(nil)
+	_ logical.Plan           = (*measureAggregation)(nil)
 )
 
 type unresolvedAggregation struct {
-	unresolvedInput UnresolvedPlan
+	unresolvedInput logical.UnresolvedPlan
 	// aggrFunc is the type of aggregation
 	aggrFunc modelv1.AggregationFunction
 	// groupBy should be a subset of tag projection
-	aggregationField *Field
+	aggregationField *logical.Field
 	isGroup          bool
 }
 
-func Aggregation(input UnresolvedPlan, aggrField *Field, aggrFunc modelv1.AggregationFunction, isGroup bool) UnresolvedPlan {
+func Aggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
 		aggrFunc:         aggrFunc,
@@ -51,7 +51,7 @@ func Aggregation(input UnresolvedPlan, aggrField *Field, aggrFunc modelv1.Aggreg
 	}
 }
 
-func (gba *unresolvedAggregation) Analyze(measureSchema Schema) (Plan, error) {
+func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical.Plan, error) {
 	prevPlan, err := gba.unresolvedInput.Analyze(measureSchema)
 	if err != nil {
 		return nil, err
@@ -62,16 +62,16 @@ func (gba *unresolvedAggregation) Analyze(measureSchema Schema) (Plan, error) {
 		return nil, err
 	}
 	if len(aggregationFieldRefs) == 0 {
-		return nil, errors.Wrap(ErrFieldNotDefined, "aggregation schema")
+		return nil, errors.Wrap(logical.ErrFieldNotDefined, "aggregation schema")
 	}
 	aggrFunc, err := aggregation.NewInt64Func(gba.aggrFunc)
 	if err != nil {
 		return nil, err
 	}
 	return &measureAggregation{
-		parent: &parent{
-			unresolvedInput: gba.unresolvedInput,
-			input:           prevPlan,
+		Parent: &logical.Parent{
+			UnresolvedInput: gba.unresolvedInput,
+			Input:           prevPlan,
 		},
 		schema:              measureSchema,
 		aggrFunc:            aggrFunc,
@@ -81,9 +81,9 @@ func (gba *unresolvedAggregation) Analyze(measureSchema Schema) (Plan, error) {
 }
 
 type measureAggregation struct {
-	*parent
-	schema              Schema
-	aggregationFieldRef *FieldRef
+	*logical.Parent
+	schema              logical.Schema
+	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Int64Func
 	aggrType            modelv1.AggregationFunction
 	isGroup             bool
@@ -92,36 +92,19 @@ type measureAggregation struct {
 func (g *measureAggregation) String() string {
 	return fmt.Sprintf("aggregation: aggregation{type=%d,field=%s}",
 		g.aggrType,
-		g.aggregationFieldRef.field.Name)
+		g.aggregationFieldRef.Field.Name)
 }
 
-func (g *measureAggregation) Type() PlanType {
-	return PlanAggregation
+func (g *measureAggregation) Children() []logical.Plan {
+	return []logical.Plan{g.Input}
 }
 
-func (g *measureAggregation) Equal(plan Plan) bool {
-	if plan.Type() != PlanAggregation {
-		return false
-	}
-	other := plan.(*measureAggregation)
-	if g.aggrType == other.aggrType &&
-		cmp.Equal(g.aggregationFieldRef, other.aggregationFieldRef) {
-		return g.parent.input.Equal(other.parent.input)
-	}
-
-	return false
-}
-
-func (g *measureAggregation) Children() []Plan {
-	return []Plan{g.input}
-}
-
-func (g *measureAggregation) Schema() Schema {
+func (g *measureAggregation) Schema() logical.Schema {
 	return g.schema.ProjFields(g.aggregationFieldRef)
 }
 
 func (g *measureAggregation) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
+	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -133,13 +116,13 @@ func (g *measureAggregation) Execute(ec executor.MeasureExecutionContext) (execu
 
 type aggGroupMIterator struct {
 	prev                executor.MIterator
-	aggregationFieldRef *FieldRef
+	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Int64Func
 }
 
 func newAggGroupMIterator(
 	prev executor.MIterator,
-	aggregationFieldRef *FieldRef,
+	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Int64Func,
 ) executor.MIterator {
 	return &aggGroupMIterator{
@@ -175,7 +158,7 @@ func (ami *aggGroupMIterator) Current() []*measurev1.DataPoint {
 	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
 		{
-			Name: ami.aggregationFieldRef.field.Name,
+			Name: ami.aggregationFieldRef.Field.Name,
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
 					Int: &modelv1.Int{
@@ -194,7 +177,7 @@ func (ami *aggGroupMIterator) Close() error {
 
 type aggAllMIterator struct {
 	prev                executor.MIterator
-	aggregationFieldRef *FieldRef
+	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Int64Func
 
 	result *measurev1.DataPoint
@@ -202,7 +185,7 @@ type aggAllMIterator struct {
 
 func newAggAllMIterator(
 	prev executor.MIterator,
-	aggregationFieldRef *FieldRef,
+	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Int64Func,
 ) executor.MIterator {
 	return &aggAllMIterator{
@@ -239,7 +222,7 @@ func (ami *aggAllMIterator) Next() bool {
 	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
 		{
-			Name: ami.aggregationFieldRef.field.Name,
+			Name: ami.aggregationFieldRef.Field.Name,
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
 					Int: &modelv1.Int{

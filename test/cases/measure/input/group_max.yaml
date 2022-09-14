@@ -1,0 +1,18 @@
+metadata:
+  name: "service_cpm_minute"
+  group: "sw_metric"
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["entity_id"]
+fieldProjection:
+  names: ["total", "value"]
+groupBy:
+  tagProjection:
+    tagFamilies:
+    - name: "default"
+      tags: ["entity_id"]
+  fieldName: "value"
+agg:
+  function: "AGGREGATION_FUNCTION_MAX"
+  fieldName: "value"

@@ -22,21 +22,22 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
-	_ Plan           = (*measureLimit)(nil)
-	_ UnresolvedPlan = (*measureLimit)(nil)
+	_ logical.Plan           = (*measureLimit)(nil)
+	_ logical.UnresolvedPlan = (*measureLimit)(nil)
 )
 
 type measureLimit struct {
-	*parent
+	*logical.Parent
 	offset uint32
 	limit  uint32
 }
 
 func (l *measureLimit) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	dps, err := l.parent.input.(executor.MeasureExecutable).Execute(ec)
+	dps, err := l.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -44,46 +45,31 @@ func (l *measureLimit) Execute(ec executor.MeasureExecutionContext) (executor.MI
 	return newLimitIterator(dps, l.offset, l.limit), nil
 }
 
-func (l *measureLimit) Equal(plan Plan) bool {
-	if plan.Type() != PlanLimit {
-		return false
-	}
-	other := plan.(*measureLimit)
-	if l.limit == other.limit && l.offset == other.offset {
-		return l.input.Equal(other.input)
-	}
-	return false
-}
-
-func (l *measureLimit) Analyze(s Schema) (Plan, error) {
+func (l *measureLimit) Analyze(s logical.Schema) (logical.Plan, error) {
 	var err error
-	l.input, err = l.unresolvedInput.Analyze(s)
+	l.Input, err = l.UnresolvedInput.Analyze(s)
 	if err != nil {
 		return nil, err
 	}
 	return l, nil
 }
 
-func (l *measureLimit) Schema() Schema {
-	return l.input.Schema()
+func (l *measureLimit) Schema() logical.Schema {
+	return l.Input.Schema()
 }
 
 func (l *measureLimit) String() string {
 	return fmt.Sprintf("Limit: %d, %d", l.offset, l.limit)
 }
 
-func (l *measureLimit) Children() []Plan {
-	return []Plan{l.input}
+func (l *measureLimit) Children() []logical.Plan {
+	return []logical.Plan{l.Input}
 }
 
-func (l *measureLimit) Type() PlanType {
-	return PlanLimit
-}
-
-func MeasureLimit(input UnresolvedPlan, offset, limit uint32) UnresolvedPlan {
+func MeasureLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
 	return &measureLimit{
-		parent: &parent{
-			unresolvedInput: input,
+		Parent: &logical.Parent{
+			UnresolvedInput: input,
 		},
 		offset: offset,
 		limit:  limit,

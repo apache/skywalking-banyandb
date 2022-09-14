@@ -120,11 +120,10 @@ func (emptyFilter) String() string { return "bypass" }
 
 type logicalNodeOP interface {
 	TagFilter
-	merge(bool)
+	merge(...bool) bool
 }
 
 type logicalNode struct {
-	result   *bool
 	SubNodes []TagFilter `json:"sub_nodes,omitempty"`
 }
 
@@ -136,33 +135,21 @@ func (n *logicalNode) append(sub TagFilter) *logicalNode {
 	return n
 }
 
-func (n *logicalNode) pop() (TagFilter, bool) {
-	if len(n.SubNodes) < 1 {
-		return nil, false
-	}
-	sn := n.SubNodes[0]
-	n.SubNodes = n.SubNodes[1:]
-	return sn, true
-}
-
 func matchTag(tagFamilies []*model_v1.TagFamily, n *logicalNode, lp logicalNodeOP) (bool, error) {
-	ex, hasNext := n.pop()
-	if !hasNext {
-		if n.result == nil {
-			return true, nil
+	var result *bool
+	for _, sn := range n.SubNodes {
+		r, err := sn.Match(tagFamilies)
+		if err != nil {
+			return false, err
 		}
-		return *n.result, nil
+		if result == nil {
+			result = &r
+			continue
+		}
+		mr := lp.merge(*result, r)
+		result = &mr
 	}
-	r, err := ex.Match(tagFamilies)
-	if err != nil {
-		return false, err
-	}
-	if n.result == nil {
-		n.result = &r
-		return lp.Match(tagFamilies)
-	}
-	lp.merge(r)
-	return lp.Match(tagFamilies)
+	return *result, nil
 }
 
 type andLogicalNode struct {
@@ -177,9 +164,13 @@ func newAndLogicalNode(size int) *andLogicalNode {
 	}
 }
 
-func (an *andLogicalNode) merge(b bool) {
-	r := *an.result && b
-	an.result = &r
+func (an *andLogicalNode) merge(bb ...bool) bool {
+	for _, b := range bb {
+		if !b {
+			return false
+		}
+	}
+	return true
 }
 
 func (an *andLogicalNode) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {
@@ -208,9 +199,13 @@ func newOrLogicalNode(size int) *orLogicalNode {
 	}
 }
 
-func (on *orLogicalNode) merge(b bool) {
-	r := *on.result || b
-	on.result = &r
+func (on *orLogicalNode) merge(bb ...bool) bool {
+	for _, b := range bb {
+		if b {
+			return true
+		}
+	}
+	return false
 }
 
 func (on *orLogicalNode) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {

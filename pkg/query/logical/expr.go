@@ -79,32 +79,32 @@ var _ ResolvableExpr = (*FieldRef)(nil)
 // FieldRef is the reference to the field
 // also it holds the definition (derived from measureSchema) of the field
 type FieldRef struct {
-	// field defines the name of the Field
-	field *Field
+	// Field defines the name of the Field
+	Field *Field
 	// spec contains the index of the key in the measureSchema, as well as the underlying FieldSpec
 	Spec *FieldSpec
 }
 
 func (f *FieldRef) String() string {
-	return fmt.Sprintf("#%s<%s>", f.Spec.spec.GetName(), f.Spec.spec.GetFieldType().String())
+	return fmt.Sprintf("#%s<%s>", f.Spec.Spec.GetName(), f.Spec.Spec.GetFieldType().String())
 }
 
 func (f *FieldRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
-	return int32(f.Spec.spec.GetFieldType())
+	return int32(f.Spec.Spec.GetFieldType())
 }
 
 func (f *FieldRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*FieldRef); ok {
-		return other.field.Name == f.field.Name && other.Spec.spec.GetFieldType() == f.Spec.spec.GetFieldType()
+		return other.Field.Name == f.Field.Name && other.Spec.Spec.GetFieldType() == f.Spec.Spec.GetFieldType()
 	}
 	return false
 }
 
 func (f *FieldRef) Resolve(s Schema) error {
-	specs, err := s.CreateFieldRef(f.field)
+	specs, err := s.CreateFieldRef(f.Field)
 	if err != nil {
 		return err
 	}
@@ -114,5 +114,5 @@ func (f *FieldRef) Resolve(s Schema) error {
 
 type FieldSpec struct {
 	FieldIdx int
-	spec     *database_v1.FieldSpec
+	Spec     *database_v1.FieldSpec
 }

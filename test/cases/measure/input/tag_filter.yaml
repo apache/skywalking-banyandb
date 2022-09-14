@@ -1,0 +1,16 @@
+metadata:
+  name: "service_cpm_minute"
+  group: "sw_metric"
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["id"]
+fieldProjection:
+  names: ["total", "value"]
+criteria:
+  condition:
+    name: "id"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "1"

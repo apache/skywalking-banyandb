@@ -202,7 +202,7 @@ type strArrLiteral struct {
 
 func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
 	if o, ok := other.(*strArrLiteral); ok {
-		return 0, stringSlicesEqual(s.arr, o.arr)
+		return 0, StringSlicesEqual(s.arr, o.arr)
 	}
 	return 0, false
 }

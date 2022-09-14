@@ -1,0 +1,121 @@
+dataPoints:
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "1"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "4"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "5"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "6"
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
+- fields:
+  - name: total
+    value:
+      int:
+        value: "50"
+  - name: value
+    value:
+      int:
+        value: "4"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "2"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+- fields:
+  - name: total
+    value:
+      int:
+        value: "300"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "3"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1

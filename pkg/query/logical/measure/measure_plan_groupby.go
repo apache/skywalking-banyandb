@@ -21,28 +21,28 @@ import (
 	"math"
 
 	"github.com/cespare/xxhash"
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
-	_ UnresolvedPlan = (*unresolvedGroup)(nil)
-	_ Plan           = (*groupBy)(nil)
+	_ logical.UnresolvedPlan = (*unresolvedGroup)(nil)
+	_ logical.Plan           = (*groupBy)(nil)
 )
 
 type unresolvedGroup struct {
-	unresolvedInput UnresolvedPlan
+	unresolvedInput logical.UnresolvedPlan
 	// groupBy should be a subset of tag projection
-	groupBy       [][]*Tag
+	groupBy       [][]*logical.Tag
 	groupByEntity bool
 }
 
-func GroupBy(input UnresolvedPlan, groupBy [][]*Tag, groupByEntity bool) UnresolvedPlan {
+func GroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool) logical.UnresolvedPlan {
 	return &unresolvedGroup{
 		unresolvedInput: input,
 		groupBy:         groupBy,
@@ -50,7 +50,7 @@ func GroupBy(input UnresolvedPlan, groupBy [][]*Tag, groupByEntity bool) Unresol
 	}
 }
 
-func (gba *unresolvedGroup) Analyze(measureSchema Schema) (Plan, error) {
+func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan, error) {
 	prevPlan, err := gba.unresolvedInput.Analyze(measureSchema)
 	if err != nil {
 		return nil, err
@@ -61,9 +61,9 @@ func (gba *unresolvedGroup) Analyze(measureSchema Schema) (Plan, error) {
 		return nil, err
 	}
 	return &groupBy{
-		parent: &parent{
-			unresolvedInput: gba.unresolvedInput,
-			input:           prevPlan,
+		Parent: &logical.Parent{
+			UnresolvedInput: gba.unresolvedInput,
+			Input:           prevPlan,
 		},
 		schema:          measureSchema,
 		groupByTagsRefs: groupByTagRefs,
@@ -72,9 +72,9 @@ func (gba *unresolvedGroup) Analyze(measureSchema Schema) (Plan, error) {
 }
 
 type groupBy struct {
-	*parent
-	schema          Schema
-	groupByTagsRefs [][]*TagRef
+	*logical.Parent
+	schema          logical.Schema
+	groupByTagsRefs [][]*logical.TagRef
 	groupByEntity   bool
 }
 
@@ -86,31 +86,14 @@ func (g *groupBy) String() string {
 		method = "hash"
 	}
 	return fmt.Sprintf("GroupBy: groupBy=%s, method=%s",
-		FormatTagRefs(", ", g.groupByTagsRefs...), method)
+		logical.FormatTagRefs(", ", g.groupByTagsRefs...), method)
 }
 
-func (g *groupBy) Type() PlanType {
-	return PlanGroupBy
+func (g *groupBy) Children() []logical.Plan {
+	return []logical.Plan{g.Input}
 }
 
-func (g *groupBy) Equal(plan Plan) bool {
-	if plan.Type() != PlanGroupBy {
-		return false
-	}
-	other := plan.(*groupBy)
-	if cmp.Equal(g.groupByTagsRefs, other.groupByTagsRefs) &&
-		g.groupByEntity == other.groupByEntity {
-		return g.parent.input.Equal(other.parent.input)
-	}
-
-	return false
-}
-
-func (g *groupBy) Children() []Plan {
-	return []Plan{g.input}
-}
-
-func (g *groupBy) Schema() Schema {
+func (g *groupBy) Schema() logical.Schema {
 	return g.schema.ProjTags(g.groupByTagsRefs...)
 }
 
@@ -122,7 +105,7 @@ func (g *groupBy) Execute(ec executor.MeasureExecutionContext) (executor.MIterat
 }
 
 func (g *groupBy) sort(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
+	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +113,7 @@ func (g *groupBy) sort(ec executor.MeasureExecutionContext) (executor.MIterator,
 }
 
 func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	iter, err := g.parent.input.(executor.MeasureExecutable).Execute(ec)
+	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +144,7 @@ func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator,
 	return newGroupMIterator(groupMap, groupLst), nil
 }
 
-func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*TagRef) (uint64, error) {
+func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
 	hash := xxhash.New()
 	for _, tagFamilyRef := range groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
@@ -218,7 +201,7 @@ func (gmi *groupMIterator) Close() error {
 }
 
 type groupSortMIterator struct {
-	groupByTagsRefs [][]*TagRef
+	groupByTagsRefs [][]*logical.TagRef
 	iter            executor.MIterator
 	index           int
 
@@ -229,7 +212,7 @@ type groupSortMIterator struct {
 	err     error
 }
 
-func newGroupSortMIterator(iter executor.MIterator, groupByTagsRefs [][]*TagRef) executor.MIterator {
+func newGroupSortMIterator(iter executor.MIterator, groupByTagsRefs [][]*logical.TagRef) executor.MIterator {
 	return &groupSortMIterator{
 		groupByTagsRefs: groupByTagsRefs,
 		iter:            iter,

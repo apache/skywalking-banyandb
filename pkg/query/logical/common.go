@@ -174,7 +174,7 @@ func NewField(name string) *Field {
 	return &Field{Name: name}
 }
 
-func stringSlicesEqual(a, b []string) bool {
+func StringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}

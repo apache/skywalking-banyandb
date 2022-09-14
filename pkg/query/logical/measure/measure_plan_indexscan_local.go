@@ -18,39 +18,37 @@
 package measure
 
 import (
-	"bytes"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ UnresolvedPlan = (*unresolvedMeasureIndexScan)(nil)
+var _ logical.UnresolvedPlan = (*unresolvedMeasureIndexScan)(nil)
 
 type unresolvedMeasureIndexScan struct {
 	startTime         time.Time
 	endTime           time.Time
 	metadata          *commonv1.Metadata
-	predicator        Predicator
-	projectionTags    [][]*Tag
-	projectionFields  []*Field
+	filter            index.Filter
+	projectionTags    [][]*logical.Tag
+	projectionFields  []*logical.Field
 	entities          []tsdb.Entity
 	groupByEntity     bool
-	unresolvedOrderBy *UnresolvedOrderBy
+	unresolvedOrderBy *logical.UnresolvedOrderBy
 }
 
-func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
-	var projTagsRefs [][]*TagRef
+func (uis *unresolvedMeasureIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
+	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		var err error
 		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
@@ -59,7 +57,7 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		}
 	}
 
-	var projFieldRefs []*FieldRef
+	var projFieldRefs []*logical.FieldRef
 	if len(uis.projectionFields) > 0 {
 		var err error
 		projFieldRefs, err = s.CreateFieldRef(uis.projectionFields...)
@@ -69,7 +67,7 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 	}
 
 	// resolve sub-plan with the projected view of streamSchema
-	orderBySubPlan, err := uis.unresolvedOrderBy.analyze(s.ProjTags(projTagsRefs...))
+	orderBySubPlan, err := uis.unresolvedOrderBy.Analyze(s.ProjTags(projTagsRefs...))
 	if err != nil {
 		return nil, err
 	}
@@ -80,42 +78,63 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s Schema) (Plan, error) {
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
-		predicator:           uis.predicator,
+		filter:               uis.filter,
 		entities:             uis.entities,
 		groupByEntity:        uis.groupByEntity,
-		orderBy:              orderBySubPlan,
+		OrderBy:              orderBySubPlan,
 	}, nil
 }
 
-var _ Plan = (*localMeasureIndexScan)(nil)
+var _ logical.Plan = (*localMeasureIndexScan)(nil)
 
 type localMeasureIndexScan struct {
-	*OrderBy
+	*logical.OrderBy
 	timeRange            timestamp.TimeRange
-	schema               Schema
+	schema               logical.Schema
 	metadata             *commonv1.Metadata
-	predicator           Predicator
-	projectionTagsRefs   [][]*TagRef
-	projectionFieldsRefs []*FieldRef
+	filter               index.Filter
+	projectionTagsRefs   [][]*logical.TagRef
+	projectionFieldsRefs []*logical.FieldRef
 	entities             []tsdb.Entity
 	groupByEntity        bool
 }
 
 func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
-	shards, err := ec.Shards(i.entities)
-	if err != nil {
-		return nil, err
+	var seriesList tsdb.SeriesList
+	for _, e := range i.entities {
+		shards, err := ec.Shards(e)
+		if err != nil {
+			return nil, err
+		}
+		for _, shard := range shards {
+			sl, err := shard.Series().List(tsdb.NewPath(e))
+			if err != nil {
+				return nil, err
+			}
+			seriesList = seriesList.Merge(sl)
+		}
 	}
-	var iters []tsdb.Iterator
-	for _, shard := range shards {
-		itersInShard, innerErr := i.executeInShard(shard)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		if itersInShard == nil {
-			continue
-		}
-		iters = append(iters, itersInShard...)
+	if len(seriesList) == 0 {
+		return nil, nil
+	}
+	var builders []logical.SeekerBuilder
+	if i.Index != nil {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByIndex(i.Index, i.Sort)
+		})
+	} else {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByTime(i.Sort)
+		})
+	}
+	if i.filter != nil {
+		builders = append(builders, func(b tsdb.SeekerBuilder) {
+			b.Filter(i.filter)
+		})
+	}
+	iters, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	if innerErr != nil {
+		return nil, innerErr
 	}
 
 	if len(iters) == 0 {
@@ -129,112 +148,36 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (ex
 	if len(iters) == 1 || i.groupByEntity {
 		return newSeriesMIterator(iters, transformContext), nil
 	}
-	c := CreateComparator(i.Sort)
-	it := NewItemIter(iters, c)
+	c := logical.CreateComparator(i.Sort)
+	it := logical.NewItemIter(iters, c)
 	return newIndexScanMIterator(it, transformContext), nil
 }
 
-func (i *localMeasureIndexScan) executeInShard(shard tsdb.Shard) ([]tsdb.Iterator, error) {
-	seriesList, err := shard.Series().List(tsdb.NewPath(i.entity))
-	if err != nil {
-		return nil, err
-	}
-
-	if len(seriesList) == 0 {
-		return nil, nil
-	}
-
-	var builders []SeekerBuilder
-
-	builders = append(builders, func(builder tsdb.SeekerBuilder) {
-		builder.OrderByTime(modelv1.Sort_SORT_DESC)
-	})
-
-	if i.Index != nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.Index, i.Sort)
-		})
-	} else {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			if i.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-				builder.OrderByTime(modelv1.Sort_SORT_DESC)
-			} else {
-				builder.OrderByTime(i.Sort)
-			}
-		})
-	}
-
-	if i.conditionMap != nil && len(i.conditionMap) > 0 {
-		builders = append(builders, func(b tsdb.SeekerBuilder) {
-			for idxRule, exprs := range i.conditionMap {
-				b.Filter(idxRule, exprToCondition(exprs))
-			}
-		})
-	}
-
-	return ExecuteForShard(seriesList, i.timeRange, builders...)
-}
-
 func (i *localMeasureIndexScan) String() string {
-	exprStr := make([]string, 0, len(i.conditionMap))
-	for _, conditions := range i.conditionMap {
-		var conditionStr []string
-		for _, cond := range conditions {
-			conditionStr = append(conditionStr, cond.String())
-		}
-		exprStr = append(exprStr, fmt.Sprintf("(%s)", strings.Join(conditionStr, " AND ")))
-	}
-	if len(i.projectionTagsRefs) == 0 {
-		return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=None",
-			i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(), strings.Join(exprStr, " AND "))
-	}
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		strings.Join(exprStr, " AND "), FormatTagRefs(", ", i.projectionTagsRefs...))
+		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...))
 }
 
-func (i *localMeasureIndexScan) Type() PlanType {
-	return PlanLocalIndexScan
+func (i *localMeasureIndexScan) Children() []logical.Plan {
+	return []logical.Plan{}
 }
 
-func (i *localMeasureIndexScan) Children() []Plan {
-	return []Plan{}
-}
-
-func (i *localMeasureIndexScan) Schema() Schema {
+func (i *localMeasureIndexScan) Schema() logical.Schema {
 	if len(i.projectionTagsRefs) == 0 {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
 }
 
-func (i *localMeasureIndexScan) Equal(plan Plan) bool {
-	if plan.Type() != PlanLocalIndexScan {
-		return false
-	}
-	other := plan.(*localMeasureIndexScan)
-	return i.metadata.GetGroup() == other.metadata.GetGroup() &&
-		i.metadata.GetName() == other.metadata.GetName() &&
-		i.timeRange.Start.UnixNano() == other.timeRange.Start.UnixNano() &&
-		i.timeRange.End.UnixNano() == other.timeRange.End.UnixNano() &&
-		len(i.entity) == len(other.entity) &&
-		bytes.Equal(i.entity.Marshal(), other.entity.Marshal()) &&
-		cmp.Equal(i.projectionTagsRefs, other.projectionTagsRefs) &&
-		cmp.Equal(i.projectionFieldsRefs, other.projectionFieldsRefs) &&
-		cmp.Equal(i.schema, other.schema) &&
-		i.groupByEntity == other.groupByEntity &&
-		cmp.Equal(i.conditionMap, other.conditionMap) &&
-		cmp.Equal(i.orderBy, other.orderBy)
-}
-
-func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, predicator Predicator, entities []tsdb.Entity,
-	projectionTags [][]*Tag, projectionFields []*Field, groupByEntity bool, unresolvedOrderBy *UnresolvedOrderBy,
-) UnresolvedPlan {
+func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter index.Filter, entities []tsdb.Entity,
+	projectionTags [][]*logical.Tag, projectionFields []*logical.Field, groupByEntity bool, unresolvedOrderBy *logical.UnresolvedOrderBy,
+) logical.UnresolvedPlan {
 	return &unresolvedMeasureIndexScan{
 		startTime:         startTime,
 		endTime:           endTime,
 		metadata:          metadata,
-		predicator:        predicator,
+		filter:            filter,
 		projectionTags:    projectionTags,
 		projectionFields:  projectionFields,
 		entities:          entities,
@@ -247,13 +190,13 @@ var _ executor.MIterator = (*indexScanMIterator)(nil)
 
 type indexScanMIterator struct {
 	context transformContext
-	inner   ItemIterator
+	inner   logical.ItemIterator
 
 	current *measurev1.DataPoint
 	err     error
 }
 
-func newIndexScanMIterator(inner ItemIterator, context transformContext) executor.MIterator {
+func newIndexScanMIterator(inner logical.ItemIterator, context transformContext) executor.MIterator {
 	return &indexScanMIterator{
 		inner:   inner,
 		context: context,
@@ -340,18 +283,18 @@ func (ism *seriesMIterator) Close() error {
 
 type transformContext struct {
 	ec                   executor.MeasureExecutionContext
-	projectionTagsRefs   [][]*TagRef
-	projectionFieldsRefs []*FieldRef
+	projectionTagsRefs   [][]*logical.TagRef
+	projectionFieldsRefs []*logical.FieldRef
 }
 
 func transform(item tsdb.Item, ism transformContext) (*measurev1.DataPoint, error) {
-	tagFamilies, err := ProjectItem(ism.ec, item, ism.projectionTagsRefs)
+	tagFamilies, err := logical.ProjectItem(ism.ec, item, ism.projectionTagsRefs)
 	if err != nil {
 		return nil, err
 	}
 	dpFields := make([]*measurev1.DataPoint_Field, 0)
 	for _, f := range ism.projectionFieldsRefs {
-		fieldVal, parserFieldErr := ism.ec.ParseField(f.field.Name, item)
+		fieldVal, parserFieldErr := ism.ec.ParseField(f.Field.Name, item)
 		if parserFieldErr != nil {
 			return nil, parserFieldErr
 		}

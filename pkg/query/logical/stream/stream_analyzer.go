@@ -87,14 +87,14 @@ func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequ
 	}
 
 	// parse offset
-	plan = Offset(plan, criteria.GetOffset())
+	plan = logical.NewOffset(plan, criteria.GetOffset())
 
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = logical.DefaultLimit
 	}
-	plan = Limit(plan, limitParameter)
+	plan = logical.NewLimit(plan, limitParameter)
 
 	return plan.Analyze(s)
 }
