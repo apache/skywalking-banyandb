@@ -48,16 +48,8 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
@@ -72,8 +64,11 @@ func newStreamCmd() *cobra.Command {
 			_, ok = metadata["group"].(string)
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+				if metadata["group"] == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 			}
-			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/schema")
+			resp, err := client.R().SetBody(data).Post("http://" + Addr + "/api/v1/stream/schema")
 			if err != nil {
 				return err
 			}
@@ -95,16 +90,8 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
@@ -119,13 +106,16 @@ func newStreamCmd() *cobra.Command {
 			group, ok := metadata["group"].(string)
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+				if metadata["group"] == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 				group = fmt.Sprintf("%v", viper.Get("group"))
 			}
 			name, ok := metadata["name"].(string)
 			if !ok {
 				return errors.New("input json format error")
 			}
-			resp, err := client.R().SetBody(data).Put("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().SetBody(data).Put("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -147,16 +137,8 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
@@ -171,8 +153,11 @@ func newStreamCmd() *cobra.Command {
 			group, ok := metadata["group"].(string)
 			if !ok {
 				group = fmt.Sprintf("%v", viper.Get("group"))
+				if metadata["group"] == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 			}
-			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().Get("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -194,16 +179,8 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
@@ -218,8 +195,11 @@ func newStreamCmd() *cobra.Command {
 			group, ok := metadata["group"].(string)
 			if !ok {
 				group = fmt.Sprintf("%v", viper.Get("group"))
+				if metadata["group"] == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 			}
-			resp, err := client.R().Delete("http://" + addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().Delete("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -241,24 +221,19 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
 			group, ok := data["group"].(string)
 			if !ok {
 				group = fmt.Sprintf("%v", viper.Get("group"))
+				if group == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 			}
-			resp, err := client.R().Get("http://" + addr + "/api/v1/stream/schema/lists/" + group)
+			resp, err := client.R().Get("http://" + Addr + "/api/v1/stream/schema/lists/" + group)
 			if err != nil {
 				return err
 			}
@@ -280,20 +255,8 @@ func newStreamCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
-			if err != nil {
-				return err
-			}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(JSON), &data)
 			if err != nil {
 				return err
 			}
@@ -304,8 +267,11 @@ func newStreamCmd() *cobra.Command {
 			_, ok = metadata["group"].(string)
 			if !ok {
 				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
+				if metadata["group"] == "" {
+					return errors.New("please specify a group through the input json or the config file")
+				}
 			}
-			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/stream/data")
+			resp, err := client.R().SetBody(data).Post("http://" + Addr + "/api/v1/stream/data")
 			if err != nil {
 				return err
 			}

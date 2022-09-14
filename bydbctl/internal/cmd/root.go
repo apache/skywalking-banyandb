@@ -27,6 +27,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+var Addr = ""
+var JSON = ""
+
 // NewRoot returns the root command
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
@@ -65,9 +68,7 @@ func NewRoot() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newBanyanDBCmd()...)
-	Addr := ""
 	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "localhost:17913", "default ip/port")
-	JSON := ""
 	cmd.PersistentFlags().StringVarP(&JSON, "json", "j", `{}`, "accept json args to call banyandb's http interface")
 	return cmd
 }
