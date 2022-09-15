@@ -26,17 +26,17 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-type StreamAnalyzer struct {
+type Analyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
-func CreateStreamAnalyzerFromMetaService(metaSvc metadata.Service) (*StreamAnalyzer, error) {
-	return &StreamAnalyzer{
+func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
+	return &Analyzer{
 		metaSvc,
 	}, nil
 }
 
-func (a *StreamAnalyzer) BuildStreamSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
+func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (a *StreamAnalyzer) BuildStreamSchema(ctx context.Context, metadata *common
 		return nil, err
 	}
 
-	s := &streamSchema{
+	s := &schema{
 		common: &logical.CommonSchema{
 			Group:      group,
 			IndexRules: indexRules,
@@ -71,9 +71,9 @@ func (a *StreamAnalyzer) BuildStreamSchema(ctx context.Context, metadata *common
 	return s, nil
 }
 
-func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	// parse fields
-	plan, err := parseStreamFields(criteria, metadata, s)
+	plan, err := parseTags(criteria, metadata, s)
 	if err != nil {
 		return nil, err
 	}
@@ -99,14 +99,14 @@ func (a *StreamAnalyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequ
 	return plan.Analyze(s)
 }
 
-// parseFields parses the query request to decide which kind of plan should be generated
+// parseTags parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition,
 //
 //	i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
 //	we use service_id + service_instance_id + state as the compound sharding keys.
-func parseStreamFields(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.UnresolvedPlan, error) {
+func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
 	projTags := make([][]*logical.Tag, len(criteria.GetProjection().GetTagFamilies()))

@@ -1,0 +1,41 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+metadata:
+  group: "default"
+  name: "sw"
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "span_id"]
+criteria:
+  le:
+    op: "LOGICAL_OP_AND"
+    right:
+      condition:
+        name: "span_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "2"
+    left:
+      condition:
+        name: "trace_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "1"

@@ -30,7 +30,7 @@ import (
 
 var (
 	_ logical.UnresolvedPlan = (*unresolvedAggregation)(nil)
-	_ logical.Plan           = (*measureAggregation)(nil)
+	_ logical.Plan           = (*aggregationPlan)(nil)
 )
 
 type unresolvedAggregation struct {
@@ -68,7 +68,7 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 	if err != nil {
 		return nil, err
 	}
-	return &measureAggregation{
+	return &aggregationPlan{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
@@ -80,7 +80,7 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 	}, nil
 }
 
-type measureAggregation struct {
+type aggregationPlan struct {
 	*logical.Parent
 	schema              logical.Schema
 	aggregationFieldRef *logical.FieldRef
@@ -89,21 +89,21 @@ type measureAggregation struct {
 	isGroup             bool
 }
 
-func (g *measureAggregation) String() string {
+func (g *aggregationPlan) String() string {
 	return fmt.Sprintf("aggregation: aggregation{type=%d,field=%s}",
 		g.aggrType,
 		g.aggregationFieldRef.Field.Name)
 }
 
-func (g *measureAggregation) Children() []logical.Plan {
+func (g *aggregationPlan) Children() []logical.Plan {
 	return []logical.Plan{g.Input}
 }
 
-func (g *measureAggregation) Schema() logical.Schema {
+func (g *aggregationPlan) Schema() logical.Schema {
 	return g.schema.ProjFields(g.aggregationFieldRef)
 }
 
-func (g *measureAggregation) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *aggregationPlan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -111,10 +111,10 @@ func (g *measureAggregation) Execute(ec executor.MeasureExecutionContext) (execu
 	if g.isGroup {
 		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
 	}
-	return newAggAllMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
 }
 
-type aggGroupMIterator struct {
+type aggGroupIterator struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Int64Func
@@ -125,18 +125,18 @@ func newAggGroupMIterator(
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Int64Func,
 ) executor.MIterator {
-	return &aggGroupMIterator{
+	return &aggGroupIterator{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
 	}
 }
 
-func (ami *aggGroupMIterator) Next() bool {
+func (ami *aggGroupIterator) Next() bool {
 	return ami.prev.Next()
 }
 
-func (ami *aggGroupMIterator) Current() []*measurev1.DataPoint {
+func (ami *aggGroupIterator) Current() []*measurev1.DataPoint {
 	ami.aggrFunc.Reset()
 	group := ami.prev.Current()
 	var resultDp *measurev1.DataPoint
@@ -171,11 +171,11 @@ func (ami *aggGroupMIterator) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{resultDp}
 }
 
-func (ami *aggGroupMIterator) Close() error {
+func (ami *aggGroupIterator) Close() error {
 	return ami.prev.Close()
 }
 
-type aggAllMIterator struct {
+type aggAllIterator struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Int64Func
@@ -183,19 +183,19 @@ type aggAllMIterator struct {
 	result *measurev1.DataPoint
 }
 
-func newAggAllMIterator(
+func newAggAllIterator(
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Int64Func,
 ) executor.MIterator {
-	return &aggAllMIterator{
+	return &aggAllIterator{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
 	}
 }
 
-func (ami *aggAllMIterator) Next() bool {
+func (ami *aggAllIterator) Next() bool {
 	if ami.result != nil {
 		return false
 	}
@@ -236,13 +236,13 @@ func (ami *aggAllMIterator) Next() bool {
 	return true
 }
 
-func (ami *aggAllMIterator) Current() []*measurev1.DataPoint {
+func (ami *aggAllIterator) Current() []*measurev1.DataPoint {
 	if ami.result == nil {
 		return nil
 	}
 	return []*measurev1.DataPoint{ami.result}
 }
 
-func (ami *aggAllMIterator) Close() error {
+func (ami *aggAllIterator) Close() error {
 	return nil
 }

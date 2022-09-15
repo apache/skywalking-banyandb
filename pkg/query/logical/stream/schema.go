@@ -25,75 +25,75 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-var _ logical.Schema = (*streamSchema)(nil)
+var _ logical.Schema = (*schema)(nil)
 
-type streamSchema struct {
+type schema struct {
 	stream *databasev1.Stream
 	common *logical.CommonSchema
 }
 
-func (s *streamSchema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+func (s *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
 	panic("no field for stream")
 }
 
-func (s *streamSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+func (s *schema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
 	return s.common.IndexRuleDefined(indexRuleName)
 }
 
-func (s *streamSchema) EntityList() []string {
+func (s *schema) EntityList() []string {
 	return s.common.EntityList
 }
 
-func (s *streamSchema) TraceIDFieldName() string {
+func (s *schema) TraceIDFieldName() string {
 	// TODO: how to extract trace_id?
 	return "trace_id"
 }
 
 // IndexDefined checks whether the field given is indexed
-func (s *streamSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	return s.common.IndexDefined(tagName)
 }
 
-func (s *streamSchema) Equal(s2 logical.Schema) bool {
-	if other, ok := s2.(*streamSchema); ok {
+func (s *schema) Equal(s2 logical.Schema) bool {
+	if other, ok := s2.(*schema); ok {
 		return cmp.Equal(other.common.TagMap, s.common.TagMap)
 	}
 	return false
 }
 
 // registerTag registers the tag spec with given tagFamilyName, tagName and indexes.
-func (s *streamSchema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+func (s *schema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
 	s.common.RegisterTag(tagFamilyIdx, tagIdx, spec)
 }
 
 // CreateTagRef create TagRef to the given tags.
 // The family name of the tag is actually not used
 // since the uniqueness of the tag names can be guaranteed across families.
-func (s *streamSchema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+func (s *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
 	return s.common.CreateRef(tags...)
 }
 
 // ProjTags creates a projection view from the present streamSchema
 // with a given list of projections
-func (s *streamSchema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+func (s *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 	if len(refs) == 0 {
 		return nil
 	}
-	newSchema := &streamSchema{
+	newSchema := &schema{
 		stream: s.stream,
 		common: s.common.ProjTags(refs...),
 	}
 	return newSchema
 }
 
-func (s *streamSchema) ProjFields(...*logical.FieldRef) logical.Schema {
+func (s *schema) ProjFields(...*logical.FieldRef) logical.Schema {
 	panic("stream does not support field")
 }
 
-func (s *streamSchema) ShardNumber() uint32 {
+func (s *schema) ShardNumber() uint32 {
 	return s.common.ShardNumber()
 }
 
-func (s *streamSchema) Scope() tsdb.Entry {
+func (s *schema) Scope() tsdb.Entry {
 	return tsdb.Entry(s.stream.Metadata.Name)
 }

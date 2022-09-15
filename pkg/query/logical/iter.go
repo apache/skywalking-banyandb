@@ -34,7 +34,7 @@ var _ heap.Interface = (*containerHeap)(nil)
 
 // container contains both iter and its current item
 type container struct {
-	c    comparator
+	c    Comparator
 	item tsdb.Item
 	iter tsdb.Iterator
 }
@@ -59,7 +59,7 @@ func (h *containerHeap) Pop() interface{} {
 
 type itemIter struct {
 	// c is the comparator to sort items
-	c comparator
+	c Comparator
 	// iters is the list of initial Iterator
 	iters []tsdb.Iterator
 	// deq is the deque of the container
@@ -70,7 +70,7 @@ type itemIter struct {
 	h *containerHeap
 }
 
-func NewItemIter(iters []tsdb.Iterator, c comparator) ItemIterator {
+func NewItemIter(iters []tsdb.Iterator, c Comparator) ItemIterator {
 	it := &itemIter{
 		c:     c,
 		iters: iters,

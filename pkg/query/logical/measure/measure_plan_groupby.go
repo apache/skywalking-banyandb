@@ -109,7 +109,7 @@ func (g *groupBy) sort(ec executor.MeasureExecutionContext) (executor.MIterator,
 	if err != nil {
 		return nil, err
 	}
-	return newGroupSortMIterator(iter, g.groupByTagsRefs), nil
+	return newGroupSortIterator(iter, g.groupByTagsRefs), nil
 }
 
 func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
@@ -141,7 +141,7 @@ func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator,
 	if err = iter.Close(); err != nil {
 		return nil, err
 	}
-	return newGroupMIterator(groupMap, groupLst), nil
+	return newGroupIterator(groupMap, groupLst), nil
 }
 
 func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
@@ -168,21 +168,21 @@ func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.T
 	return hash.Sum64(), nil
 }
 
-type groupMIterator struct {
+type groupIterator struct {
 	groupMap map[uint64][]*measurev1.DataPoint
 	groupLst []uint64
 	index    int
 }
 
-func newGroupMIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64) executor.MIterator {
-	return &groupMIterator{
+func newGroupIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64) executor.MIterator {
+	return &groupIterator{
 		groupMap: groupedMap,
 		groupLst: groupLst,
 		index:    -1,
 	}
 }
 
-func (gmi *groupMIterator) Next() bool {
+func (gmi *groupIterator) Next() bool {
 	if gmi.index >= (len(gmi.groupLst) - 1) {
 		return false
 	}
@@ -190,17 +190,17 @@ func (gmi *groupMIterator) Next() bool {
 	return true
 }
 
-func (gmi *groupMIterator) Current() []*measurev1.DataPoint {
+func (gmi *groupIterator) Current() []*measurev1.DataPoint {
 	key := gmi.groupLst[gmi.index]
 	return gmi.groupMap[key]
 }
 
-func (gmi *groupMIterator) Close() error {
+func (gmi *groupIterator) Close() error {
 	gmi.index = math.MaxInt
 	return nil
 }
 
-type groupSortMIterator struct {
+type groupSortIterator struct {
 	groupByTagsRefs [][]*logical.TagRef
 	iter            executor.MIterator
 	index           int
@@ -212,15 +212,15 @@ type groupSortMIterator struct {
 	err     error
 }
 
-func newGroupSortMIterator(iter executor.MIterator, groupByTagsRefs [][]*logical.TagRef) executor.MIterator {
-	return &groupSortMIterator{
+func newGroupSortIterator(iter executor.MIterator, groupByTagsRefs [][]*logical.TagRef) executor.MIterator {
+	return &groupSortIterator{
 		groupByTagsRefs: groupByTagsRefs,
 		iter:            iter,
 		index:           -1,
 	}
 }
 
-func (gmi *groupSortMIterator) Next() bool {
+func (gmi *groupSortIterator) Next() bool {
 	if gmi.closed {
 		return false
 	}
@@ -254,16 +254,16 @@ func (gmi *groupSortMIterator) Next() bool {
 	}
 }
 
-func (gmi *groupSortMIterator) Current() []*measurev1.DataPoint {
+func (gmi *groupSortIterator) Current() []*measurev1.DataPoint {
 	return gmi.current
 }
 
-func (gmi *groupSortMIterator) Close() error {
+func (gmi *groupSortIterator) Close() error {
 	gmi.closed = true
 	return gmi.err
 }
 
-func (gmi *groupSortMIterator) nextDP() (*measurev1.DataPoint, bool) {
+func (gmi *groupSortIterator) nextDP() (*measurev1.DataPoint, bool) {
 	if gmi.index < 0 {
 		if ok := gmi.iter.Next(); !ok {
 			return nil, false

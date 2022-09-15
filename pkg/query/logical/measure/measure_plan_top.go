@@ -102,30 +102,30 @@ func (g *top) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, 
 			g.topNStream.Insert(NewTopElement(dp, value))
 		}
 	}
-	return newTopMIterator(g.topNStream.Elements()), nil
+	return newTopIterator(g.topNStream.Elements()), nil
 }
 
-type topMIterator struct {
+type topIterator struct {
 	elements []TopElement
 	index    int
 }
 
-func newTopMIterator(elements []TopElement) executor.MIterator {
-	return &topMIterator{
+func newTopIterator(elements []TopElement) executor.MIterator {
+	return &topIterator{
 		elements: elements,
 		index:    -1,
 	}
 }
 
-func (ami *topMIterator) Next() bool {
+func (ami *topIterator) Next() bool {
 	ami.index++
 	return ami.index < len(ami.elements)
 }
 
-func (ami *topMIterator) Current() []*measurev1.DataPoint {
+func (ami *topIterator) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{ami.elements[ami.index].dp}
 }
 
-func (ami *topMIterator) Close() error {
+func (ami *topIterator) Close() error {
 	return nil
 }

@@ -26,17 +26,17 @@ import (
 )
 
 var (
-	_ logical.Plan           = (*measureLimit)(nil)
-	_ logical.UnresolvedPlan = (*measureLimit)(nil)
+	_ logical.Plan           = (*limitPlan)(nil)
+	_ logical.UnresolvedPlan = (*limitPlan)(nil)
 )
 
-type measureLimit struct {
+type limitPlan struct {
 	*logical.Parent
 	offset uint32
 	limit  uint32
 }
 
-func (l *measureLimit) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (l *limitPlan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	dps, err := l.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func (l *measureLimit) Execute(ec executor.MeasureExecutionContext) (executor.MI
 	return newLimitIterator(dps, l.offset, l.limit), nil
 }
 
-func (l *measureLimit) Analyze(s logical.Schema) (logical.Plan, error) {
+func (l *limitPlan) Analyze(s logical.Schema) (logical.Plan, error) {
 	var err error
 	l.Input, err = l.UnresolvedInput.Analyze(s)
 	if err != nil {
@@ -54,20 +54,20 @@ func (l *measureLimit) Analyze(s logical.Schema) (logical.Plan, error) {
 	return l, nil
 }
 
-func (l *measureLimit) Schema() logical.Schema {
+func (l *limitPlan) Schema() logical.Schema {
 	return l.Input.Schema()
 }
 
-func (l *measureLimit) String() string {
+func (l *limitPlan) String() string {
 	return fmt.Sprintf("Limit: %d, %d", l.offset, l.limit)
 }
 
-func (l *measureLimit) Children() []logical.Plan {
+func (l *limitPlan) Children() []logical.Plan {
 	return []logical.Plan{l.Input}
 }
 
-func MeasureLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
-	return &measureLimit{
+func Limit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
+	return &limitPlan{
 		Parent: &logical.Parent{
 			UnresolvedInput: input,
 		},

@@ -33,9 +33,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ logical.UnresolvedPlan = (*unresolvedMeasureIndexScan)(nil)
+var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
-type unresolvedMeasureIndexScan struct {
+type unresolvedIndexScan struct {
 	startTime         time.Time
 	endTime           time.Time
 	metadata          *commonv1.Metadata
@@ -47,7 +47,7 @@ type unresolvedMeasureIndexScan struct {
 	unresolvedOrderBy *logical.UnresolvedOrderBy
 }
 
-func (uis *unresolvedMeasureIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
+func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		var err error
@@ -72,7 +72,7 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s logical.Schema) (logical.Plan, 
 		return nil, err
 	}
 
-	return &localMeasureIndexScan{
+	return &localIndexScan{
 		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:               s,
 		projectionTagsRefs:   projTagsRefs,
@@ -85,9 +85,9 @@ func (uis *unresolvedMeasureIndexScan) Analyze(s logical.Schema) (logical.Plan, 
 	}, nil
 }
 
-var _ logical.Plan = (*localMeasureIndexScan)(nil)
+var _ logical.Plan = (*localIndexScan)(nil)
 
-type localMeasureIndexScan struct {
+type localIndexScan struct {
 	*logical.OrderBy
 	timeRange            timestamp.TimeRange
 	schema               logical.Schema
@@ -99,7 +99,7 @@ type localMeasureIndexScan struct {
 	groupByEntity        bool
 }
 
-func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, err := ec.Shards(e)
@@ -150,30 +150,30 @@ func (i *localMeasureIndexScan) Execute(ec executor.MeasureExecutionContext) (ex
 	}
 	c := logical.CreateComparator(i.Sort)
 	it := logical.NewItemIter(iters, c)
-	return newIndexScanMIterator(it, transformContext), nil
+	return newIndexScanIterator(it, transformContext), nil
 }
 
-func (i *localMeasureIndexScan) String() string {
+func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
 		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...))
 }
 
-func (i *localMeasureIndexScan) Children() []logical.Plan {
+func (i *localIndexScan) Children() []logical.Plan {
 	return []logical.Plan{}
 }
 
-func (i *localMeasureIndexScan) Schema() logical.Schema {
+func (i *localIndexScan) Schema() logical.Schema {
 	if len(i.projectionTagsRefs) == 0 {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
 }
 
-func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter index.Filter, entities []tsdb.Entity,
+func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter index.Filter, entities []tsdb.Entity,
 	projectionTags [][]*logical.Tag, projectionFields []*logical.Field, groupByEntity bool, unresolvedOrderBy *logical.UnresolvedOrderBy,
 ) logical.UnresolvedPlan {
-	return &unresolvedMeasureIndexScan{
+	return &unresolvedIndexScan{
 		startTime:         startTime,
 		endTime:           endTime,
 		metadata:          metadata,
@@ -186,9 +186,9 @@ func MeasureIndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata,
 	}
 }
 
-var _ executor.MIterator = (*indexScanMIterator)(nil)
+var _ executor.MIterator = (*indexScanIterator)(nil)
 
-type indexScanMIterator struct {
+type indexScanIterator struct {
 	context transformContext
 	inner   logical.ItemIterator
 
@@ -196,14 +196,14 @@ type indexScanMIterator struct {
 	err     error
 }
 
-func newIndexScanMIterator(inner logical.ItemIterator, context transformContext) executor.MIterator {
-	return &indexScanMIterator{
+func newIndexScanIterator(inner logical.ItemIterator, context transformContext) executor.MIterator {
+	return &indexScanIterator{
 		inner:   inner,
 		context: context,
 	}
 }
 
-func (ism *indexScanMIterator) Next() bool {
+func (ism *indexScanIterator) Next() bool {
 	if !ism.inner.HasNext() || ism.err != nil {
 		return false
 	}
@@ -217,20 +217,20 @@ func (ism *indexScanMIterator) Next() bool {
 	return true
 }
 
-func (ism *indexScanMIterator) Current() []*measurev1.DataPoint {
+func (ism *indexScanIterator) Current() []*measurev1.DataPoint {
 	if ism.current == nil {
 		return nil
 	}
 	return []*measurev1.DataPoint{ism.current}
 }
 
-func (ism *indexScanMIterator) Close() error {
+func (ism *indexScanIterator) Close() error {
 	return ism.err
 }
 
-var _ executor.MIterator = (*seriesMIterator)(nil)
+var _ executor.MIterator = (*seriesIterator)(nil)
 
-type seriesMIterator struct {
+type seriesIterator struct {
 	inner   []tsdb.Iterator
 	context transformContext
 
@@ -240,14 +240,14 @@ type seriesMIterator struct {
 }
 
 func newSeriesMIterator(inner []tsdb.Iterator, context transformContext) executor.MIterator {
-	return &seriesMIterator{
+	return &seriesIterator{
 		inner:   inner,
 		context: context,
 		index:   -1,
 	}
 }
 
-func (ism *seriesMIterator) Next() bool {
+func (ism *seriesIterator) Next() bool {
 	if ism.err != nil {
 		return false
 	}
@@ -270,11 +270,11 @@ func (ism *seriesMIterator) Next() bool {
 	return true
 }
 
-func (ism *seriesMIterator) Current() []*measurev1.DataPoint {
+func (ism *seriesIterator) Current() []*measurev1.DataPoint {
 	return ism.current
 }
 
-func (ism *seriesMIterator) Close() error {
+func (ism *seriesIterator) Close() error {
 	for _, i := range ism.inner {
 		ism.err = multierr.Append(ism.err, i.Close())
 	}

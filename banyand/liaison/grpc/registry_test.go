@@ -34,6 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 var _ = Describe("Registry", func() {
@@ -176,4 +178,16 @@ func setupForRegistry() func() {
 		deferFunc()
 		metaDeferFunc()
 	}
+}
+
+type preloadStreamService struct {
+	metaSvc metadata.Service
+}
+
+func (p *preloadStreamService) Name() string {
+	return "preload-stream"
+}
+
+func (p *preloadStreamService) PreRun() error {
+	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
 }

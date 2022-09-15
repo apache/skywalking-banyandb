@@ -79,13 +79,13 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical_stream.CreateStreamAnalyzerFromMetaService(p.metaService)
+	analyzer, err := logical_stream.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
-	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
+	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build")
 		return
@@ -133,13 +133,13 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical_measure.CreateMeasureAnalyzerFromMetaService(p.metaService)
+	analyzer, err := logical_measure.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
-	s, err := analyzer.BuildMeasureSchema(context.TODO(), meta)
+	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
 		p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
 		return

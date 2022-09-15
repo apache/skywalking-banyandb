@@ -41,10 +41,10 @@ var ErrInvalidData = errors.New("data is invalid")
 
 type (
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
-	comparator    func(a, b tsdb.Item) bool
+	Comparator    func(a, b tsdb.Item) bool
 )
 
-func CreateComparator(sortDirection modelv1.Sort) comparator {
+func CreateComparator(sortDirection modelv1.Sort) Comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())
 		if sortDirection == modelv1.Sort_SORT_DESC {

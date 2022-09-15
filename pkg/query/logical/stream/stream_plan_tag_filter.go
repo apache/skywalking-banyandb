@@ -44,7 +44,7 @@ type unresolvedTagFilter struct {
 }
 
 func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
-	ctx := newStreamAnalyzerContext(s)
+	ctx := newAnalyzerContext(s)
 	entityList := s.EntityList()
 	entityDict := make(map[string]int)
 	entity := make([]tsdb.Entry, len(entityList))
@@ -64,9 +64,9 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	}
 
 	if len(uis.projectionTags) > 0 {
-		var err error
-		ctx.projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
-		if err != nil {
+		var errProject error
+		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
+		if errProject != nil {
 			return nil, err
 		}
 	}
@@ -75,9 +75,9 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		return nil, err
 	}
 	if uis.criteria != nil {
-		tagFilter, err := logical.BuildTagFilter(uis.criteria, entityDict, s)
-		if err != nil {
-			return nil, err
+		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
+		if errFilter != nil {
+			return nil, errFilter
 		}
 		if tagFilter != logical.BypassFilter {
 			plan = NewTagFilter(s, plan, tagFilter)
@@ -86,7 +86,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	return plan, err
 }
 
-func (uis *unresolvedTagFilter) selectIndexScanner(ctx *streamAnalyzeContext) (logical.Plan, error) {
+func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical.Plan, error) {
 	if len(ctx.globalConditions) > 0 {
 		if len(ctx.globalConditions) > 2 {
 			return nil, logical.ErrMultipleGlobalIndexes
@@ -130,7 +130,7 @@ func TagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 	}
 }
 
-type streamAnalyzeContext struct {
+type analyzeContext struct {
 	s                logical.Schema
 	filter           index.Filter
 	entities         []tsdb.Entity
@@ -138,8 +138,8 @@ type streamAnalyzeContext struct {
 	projTagsRefs     [][]*logical.TagRef
 }
 
-func newStreamAnalyzerContext(s logical.Schema) *streamAnalyzeContext {
-	return &streamAnalyzeContext{
+func newAnalyzerContext(s logical.Schema) *analyzeContext {
+	return &analyzeContext{
 		globalConditions: make([]interface{}, 0),
 		s:                s,
 	}
