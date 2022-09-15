@@ -81,6 +81,15 @@
         }
       }
     },
+    "LogicalExpressionLogicalOp": {
+      "type": "string",
+      "enum": [
+        "LOGICAL_OP_UNSPECIFIED",
+        "LOGICAL_OP_AND",
+        "LOGICAL_OP_OR"
+      ],
+      "default": "LOGICAL_OP_UNSPECIFIED"
+    },
     "QueryRequestAggregation": {
       "type": "object",
       "properties": {
@@ -237,14 +246,11 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "tagFamilyName": {
-          "type": "string"
+        "le": {
+          "$ref": "#/definitions/v1LogicalExpression"
         },
-        "conditions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1Condition"
-          }
+        "condition": {
+          "$ref": "#/definitions/v1Condition"
         }
       },
       "description": "tag_families are indexed."
@@ -346,6 +352,22 @@
         }
       }
     },
+    "v1LogicalExpression": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "$ref": "#/definitions/LogicalExpressionLogicalOp",
+          "title": "op is a logial operation"
+        },
+        "left": {
+          "$ref": "#/definitions/v1Criteria"
+        },
+        "right": {
+          "$ref": "#/definitions/v1Criteria"
+        }
+      },
+      "title": "LogicalExpression supports logical operation"
+    },
     "v1Metadata": {
       "type": "object",
       "properties": {
@@ -398,10 +420,7 @@
           "description": "time_range is a range query with begin/end time of entities in the timeunit of milliseconds."
         },
         "criteria": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1Criteria"
-          },
+          "$ref": "#/definitions/v1Criteria",
           "description": "tag_families are indexed."
         },
         "tagProjection": {

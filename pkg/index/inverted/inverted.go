@@ -144,13 +144,12 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 		return nil, err
 	}
 	iter := newBlugeMatchIterator(documentMatchIterator, fk)
-	if !iter.Next() {
-		return roaring.EmptyPostingList, nil
+	list = roaring.NewPostingList()
+	for iter.Next() {
+		err = multierr.Append(err, list.Union(iter.Val().Value))
 	}
-	if err = iter.Close(); err != nil {
-		return nil, err
-	}
-	return iter.Val().Value, nil
+	err = multierr.Append(err, iter.Close())
+	return list, err
 }
 
 func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
@@ -262,11 +261,12 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		if field == docID {
 			id := convert.BytesToUint64(value)
 			itemID = common.ItemID(id)
+			i++
 		}
 		if field == bmi.fieldKey {
 			term = y.Copy(value)
+			i++
 		}
-		i++
 		return i < 2
 	})
 	if i != 2 {

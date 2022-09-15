@@ -453,17 +453,16 @@ func (m *Criteria) validate(all bool) error {
 
 	var errors []error
 
-	// no validation rules for TagFamilyName
+	switch m.Exp.(type) {
 
-	for idx, item := range m.GetConditions() {
-		_, _ = idx, item
+	case *Criteria_Le:
 
 		if all {
-			switch v := interface{}(item).(type) {
+			switch v := interface{}(m.GetLe()).(type) {
 			case interface{ ValidateAll() error }:
 				if err := v.ValidateAll(); err != nil {
 					errors = append(errors, CriteriaValidationError{
-						field:  fmt.Sprintf("Conditions[%v]", idx),
+						field:  "Le",
 						reason: "embedded message failed validation",
 						cause:  err,
 					})
@@ -471,16 +470,47 @@ func (m *Criteria) validate(all bool) error {
 			case interface{ Validate() error }:
 				if err := v.Validate(); err != nil {
 					errors = append(errors, CriteriaValidationError{
-						field:  fmt.Sprintf("Conditions[%v]", idx),
+						field:  "Le",
 						reason: "embedded message failed validation",
 						cause:  err,
 					})
 				}
 			}
-		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+		} else if v, ok := interface{}(m.GetLe()).(interface{ Validate() error }); ok {
 			if err := v.Validate(); err != nil {
 				return CriteriaValidationError{
-					field:  fmt.Sprintf("Conditions[%v]", idx),
+					field:  "Le",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *Criteria_Condition:
+
+		if all {
+			switch v := interface{}(m.GetCondition()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, CriteriaValidationError{
+						field:  "Condition",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, CriteriaValidationError{
+						field:  "Condition",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetCondition()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return CriteriaValidationError{
+					field:  "Condition",
 					reason: "embedded message failed validation",
 					cause:  err,
 				}
@@ -565,6 +595,168 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = CriteriaValidationError{}
+
+// Validate checks the field values on LogicalExpression with the rules defined
+// in the proto definition for this message. If any rules are violated, the
+// first error encountered is returned, or nil if there are no violations.
+func (m *LogicalExpression) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on LogicalExpression with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the result is a list of violation errors wrapped in
+// LogicalExpressionMultiError, or nil if none found.
+func (m *LogicalExpression) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *LogicalExpression) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for Op
+
+	if all {
+		switch v := interface{}(m.GetLeft()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, LogicalExpressionValidationError{
+					field:  "Left",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, LogicalExpressionValidationError{
+					field:  "Left",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetLeft()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return LogicalExpressionValidationError{
+				field:  "Left",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if all {
+		switch v := interface{}(m.GetRight()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, LogicalExpressionValidationError{
+					field:  "Right",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, LogicalExpressionValidationError{
+					field:  "Right",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetRight()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return LogicalExpressionValidationError{
+				field:  "Right",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return LogicalExpressionMultiError(errors)
+	}
+
+	return nil
+}
+
+// LogicalExpressionMultiError is an error wrapping multiple validation errors
+// returned by LogicalExpression.ValidateAll() if the designated constraints
+// aren't met.
+type LogicalExpressionMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m LogicalExpressionMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m LogicalExpressionMultiError) AllErrors() []error { return m }
+
+// LogicalExpressionValidationError is the validation error returned by
+// LogicalExpression.Validate if the designated constraints aren't met.
+type LogicalExpressionValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e LogicalExpressionValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e LogicalExpressionValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e LogicalExpressionValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e LogicalExpressionValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e LogicalExpressionValidationError) ErrorName() string {
+	return "LogicalExpressionValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e LogicalExpressionValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sLogicalExpression.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = LogicalExpressionValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = LogicalExpressionValidationError{}
 
 // Validate checks the field values on QueryOrder with the rules defined in the
 // proto definition for this message. If any rules are violated, the first

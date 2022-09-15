@@ -19,6 +19,7 @@ package index
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	"github.com/pkg/errors"
@@ -36,7 +37,6 @@ var ErrMalformed = errors.New("the data is malformed")
 type FieldKey struct {
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
-	EncodeTerm  bool
 	Analyzer    databasev1.IndexRule_Analyzer
 }
 
@@ -168,4 +168,11 @@ type Store interface {
 	Searcher
 	// Flush flushed memory data to disk
 	Flush() error
+}
+
+type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
+
+type Filter interface {
+	fmt.Stringer
+	Execute(getSearcher GetSearcher, seriesID common.SeriesID) (posting.List, error)
 }

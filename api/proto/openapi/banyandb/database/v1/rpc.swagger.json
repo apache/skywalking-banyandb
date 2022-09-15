@@ -1377,6 +1377,15 @@
       "default": "ANALYZER_UNSPECIFIED",
       "description": " - ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase."
     },
+    "LogicalExpressionLogicalOp": {
+      "type": "string",
+      "enum": [
+        "LOGICAL_OP_UNSPECIFIED",
+        "LOGICAL_OP_AND",
+        "LOGICAL_OP_OR"
+      ],
+      "default": "LOGICAL_OP_UNSPECIFIED"
+    },
     "protobufAny": {
       "type": "object",
       "properties": {
@@ -1447,14 +1456,11 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "tagFamilyName": {
-          "type": "string"
+        "le": {
+          "$ref": "#/definitions/v1LogicalExpression"
         },
-        "conditions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1Condition"
-          }
+        "condition": {
+          "$ref": "#/definitions/v1Condition"
         }
       },
       "description": "tag_families are indexed."
@@ -1773,6 +1779,22 @@
           }
         }
       }
+    },
+    "v1LogicalExpression": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "$ref": "#/definitions/LogicalExpressionLogicalOp",
+          "title": "op is a logial operation"
+        },
+        "left": {
+          "$ref": "#/definitions/v1Criteria"
+        },
+        "right": {
+          "$ref": "#/definitions/v1Criteria"
+        }
+      },
+      "title": "LogicalExpression supports logical operation"
     },
     "v1Measure": {
       "type": "object",

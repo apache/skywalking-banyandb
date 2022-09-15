@@ -50,26 +50,26 @@ release: default  ## Build the release artifacts for all projects, usually the s
 ##@ Test targets
 
 test: TARGET=test
-test: PROJECTS:=$(PROJECTS) pkg
+test: PROJECTS:=$(PROJECTS) pkg test
 test: default          ## Run the unit tests in all projects
 
 test-race: TARGET=test-race
-test-race: PROJECTS:=$(PROJECTS) pkg
+test-race: PROJECTS:=$(PROJECTS) pkg test
 test-race: default     ## Run the unit tests in all projects with race detector on
 
 test-coverage: TARGET=test-coverage
-test-coverage: PROJECTS:=$(PROJECTS) pkg
+test-coverage: PROJECTS:=$(PROJECTS) pkg test
 test-coverage: default ## Run the unit tests in all projects with coverage analysis on
 
 include scripts/build/ginkgo.mk
 
 test-ci: $(GINKGO) ## Run the unit tests in CI
-	$(GINKGO) -v --skip-package=test/stress --race --cover --covermode atomic --coverprofile=coverage.out ./... 
+	$(GINKGO) -v --race --cover --covermode atomic --coverprofile=coverage.out ./... 
 
 ##@ Code quality targets
 
 lint: TARGET=lint
-lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 lint: default ## Run the linters on all projects
 
 ##@ Code style targets
@@ -77,7 +77,7 @@ tidy:
 	go mod tidy
 
 format: TARGET=format
-format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check
+format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 format: tidy
 format: default ## Run the linters on all projects
 
