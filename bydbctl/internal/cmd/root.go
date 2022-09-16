@@ -81,22 +81,16 @@ func initConfig() {
 		if err := viper.ReadInConfig(); err != nil {
 			return err
 		}
+		// Dump this to stderr in case of mixing up response yaml
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		return nil
 	}
 
 	if err := readCfg(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			fmt.Fprintf(os.Stderr, "failed to read config file:%v", err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
-		if err := viper.SafeWriteConfig(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to initialize config file:%v", err)
-			os.Exit(1)
-		}
-		if err := readCfg(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read config file:%v", err)
-			os.Exit(1)
-		}
+		cobra.CheckErr(viper.SafeWriteConfig())
+		cobra.CheckErr(readCfg())
 	}
 }
