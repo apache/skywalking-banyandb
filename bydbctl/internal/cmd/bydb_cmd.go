@@ -18,7 +18,14 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/ghodss/yaml"
+	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func newBanyanDBCmd() []*cobra.Command {
@@ -32,4 +39,40 @@ func newBanyanDBCmd() []*cobra.Command {
 	// IndexRuleBindingCmd := newIndexRuleBindingCmd()
 
 	return []*cobra.Command{UseGroupCmd, GroupCmd, StreamCmd}
+}
+
+type reqFn func(request *resty.Request) (*resty.Response, error)
+
+func rest(root string, fn reqFn) error {
+	client := resty.New()
+	var data map[string]interface{}
+	err := json.Unmarshal([]byte(raw), &data)
+	if err != nil {
+		return err
+	}
+	stream, ok := data[root].(map[string]interface{})
+	if !ok {
+		return errors.New("input json format error")
+	}
+	metadata, ok := stream["metadata"].(map[string]interface{})
+	if !ok {
+		return errors.New("input json format error")
+	}
+	_, ok = metadata["group"].(string)
+	if !ok {
+		metadata["group"] = viper.GetString("group")
+		if metadata["group"] == "" {
+			return errors.New("please specify a group through the input json or the config file")
+		}
+	}
+	resp, err := fn(client.R().SetBody(data))
+	if err != nil {
+		return err
+	}
+	yamlResult, err := yaml.JSONToYAML(resp.Body())
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(yamlResult))
+	return nil
 }

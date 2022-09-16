@@ -34,50 +34,16 @@ func newStreamCmd() *cobra.Command {
 		Use:     "stream",
 		Version: version.Build(),
 		Short:   "banyandb stream schema related Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 	}
 
 	StreamCreateCmd := &cobra.Command{
 		Use:     "create",
 		Version: version.Build(),
 		Short:   "banyandb stream schema create Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
-			if err != nil {
-				return err
-			}
-			stream, ok := data["stream"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			metadata, ok := stream["metadata"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			_, ok = metadata["group"].(string)
-			if !ok {
-				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
-				if metadata["group"] == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-			}
-			resp, err := client.R().SetBody(data).Post("http://" + Addr + "/api/v1/stream/schema")
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return rest("stream", func(request *resty.Request) (*resty.Response, error) {
+				return request.Post(viper.GetString("addr") + "/api/v1/stream/schema")
+			})
 		},
 	}
 
@@ -85,13 +51,10 @@ func newStreamCmd() *cobra.Command {
 		Use:     "update",
 		Version: version.Build(),
 		Short:   "banyandb stream schema Update Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
@@ -115,7 +78,7 @@ func newStreamCmd() *cobra.Command {
 			if !ok {
 				return errors.New("input json format error")
 			}
-			resp, err := client.R().SetBody(data).Put("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().SetBody(data).Put(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -132,13 +95,10 @@ func newStreamCmd() *cobra.Command {
 		Use:     "get",
 		Version: version.Build(),
 		Short:   "banyandb stream schema Get Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
@@ -157,7 +117,7 @@ func newStreamCmd() *cobra.Command {
 					return errors.New("please specify a group through the input json or the config file")
 				}
 			}
-			resp, err := client.R().Get("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().Get(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -174,13 +134,10 @@ func newStreamCmd() *cobra.Command {
 		Use:     "delete",
 		Version: version.Build(),
 		Short:   "banyandb stream schema Delete Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
@@ -199,7 +156,7 @@ func newStreamCmd() *cobra.Command {
 					return errors.New("please specify a group through the input json or the config file")
 				}
 			}
-			resp, err := client.R().Delete("http://" + Addr + "/api/v1/stream/schema/" + group + "/" + name)
+			resp, err := client.R().Delete(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
 			if err != nil {
 				return err
 			}
@@ -216,13 +173,10 @@ func newStreamCmd() *cobra.Command {
 		Use:     "list",
 		Version: version.Build(),
 		Short:   "banyandb stream schema List Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
@@ -233,7 +187,7 @@ func newStreamCmd() *cobra.Command {
 					return errors.New("please specify a group through the input json or the config file")
 				}
 			}
-			resp, err := client.R().Get("http://" + Addr + "/api/v1/stream/schema/lists/" + group)
+			resp, err := client.R().Get(viper.GetString("addr") + "/api/v1/stream/schema/lists/" + group)
 			if err != nil {
 				return err
 			}
@@ -256,7 +210,7 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(JSON), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
@@ -271,7 +225,7 @@ func newStreamCmd() *cobra.Command {
 					return errors.New("please specify a group through the input json or the config file")
 				}
 			}
-			resp, err := client.R().SetBody(data).Post("http://" + Addr + "/api/v1/stream/data")
+			resp, err := client.R().SetBody(data).Post(viper.GetString("addr") + "/api/v1/stream/data")
 			if err != nil {
 				return err
 			}

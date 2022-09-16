@@ -19,56 +19,84 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-var Addr = ""
-var JSON = ""
-
-// NewRoot returns the root command
-func NewRoot() *cobra.Command {
-	cmd := &cobra.Command{
+var (
+	raw     string
+	cfgFile string
+	rootCmd = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			viper.SetConfigType("yaml")
-			viper.SetConfigName("config")
-			configPath := os.Getenv("HOME") + "/.bydbctl"
-			viper.AddConfigPath(configPath)
-			_, err = os.Stat(configPath)
-			if !os.IsExist(err) {
-				err = os.MkdirAll(configPath, 0o777)
-				if err != nil {
-					return err
-				}
-			}
-			if err = viper.SafeWriteConfig(); err != nil {
-				if os.IsNotExist(err) {
-					err = viper.WriteConfig()
-					if err != nil {
-						return err
-					}
-				}
-			}
-			if err = viper.ReadInConfig(); err != nil {
-				if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-					logger.GetLogger().Fatal().Err(err).Msg("Config file not found")
-				} else {
-					logger.GetLogger().Fatal().Err(err).Msg("Config file was found but another error was produced")
-				}
-				return err
-			}
-			return nil
-		},
 	}
-	cmd.AddCommand(newBanyanDBCmd()...)
-	cmd.PersistentFlags().StringVarP(&Addr, "addr", "a", "localhost:17913", "default ip/port")
-	cmd.PersistentFlags().StringVarP(&JSON, "json", "j", `{}`, "accept json args to call banyandb's http interface")
-	return cmd
+)
+
+// Execute executes the root command.
+func Execute() error {
+	return rootCmd.Execute()
+}
+
+// RootCmdFlags bind flags to a command.
+func RootCmdFlags(command *cobra.Command) {
+	command.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bydbctl.yaml)")
+	command.PersistentFlags().StringP("group", "g", "", "If present, list objects in this group.")
+	command.PersistentFlags().StringP("addr", "a", "", "Server's address, the format is Schema://Domain:Port")
+	command.PersistentFlags().StringVarP(&raw, "raw", "r", "{}", "Raw JSON to request the server")
+	_ = viper.BindPFlag("group", command.PersistentFlags().Lookup("group"))
+	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
+	viper.SetDefault("addr", "http://localhost:17913")
+
+	command.AddCommand(newBanyanDBCmd()...)
+}
+
+func init() {
+	cobra.OnInitialize(initConfig)
+	RootCmdFlags(rootCmd)
+}
+
+func initConfig() {
+	if cfgFile != "" {
+		// Use config file from the flag.
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Find home directory.
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err)
+
+		// Search config in home directory with name ".bydbctl" (without extension).
+		viper.AddConfigPath(home)
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".bydbctl")
+	}
+
+	viper.AutomaticEnv()
+
+	readCfg := func() error {
+		if err := viper.ReadInConfig(); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		return nil
+	}
+
+	if err := readCfg(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			fmt.Fprintf(os.Stderr, "failed to read config file:%v", err)
+			os.Exit(1)
+		}
+		if err := viper.SafeWriteConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to initialize config file:%v", err)
+			os.Exit(1)
+		}
+		if err := readCfg(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to read config file:%v", err)
+			os.Exit(1)
+		}
+	}
 }

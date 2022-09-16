@@ -26,7 +26,7 @@ import (
 )
 
 func main() {
-	if err := cmd.NewRoot().Execute(); err != nil {
+	if err := cmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

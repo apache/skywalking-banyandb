@@ -25,6 +25,7 @@ import (
 	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func newGroupCmd() *cobra.Command {
@@ -32,34 +33,20 @@ func newGroupCmd() *cobra.Command {
 		Use:     "group",
 		Version: version.Build(),
 		Short:   "banyandb group related Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 	}
 
 	GroupCreateCmd := &cobra.Command{
 		Use:     "create",
 		Version: version.Build(),
 		Short:   "banyandb group schema Create Operation",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			body, err := cmd.Flags().GetString("json")
-			if err != nil {
-				return err
-			}
 			var data map[string]interface{}
-			err = json.Unmarshal([]byte(body), &data)
+			err = json.Unmarshal([]byte(raw), &data)
 			if err != nil {
 				return err
 			}
-			resp, err := client.R().SetBody(data).Post("http://" + addr + "/api/v1/group/schema")
+			resp, err := client.R().SetBody(data).Post(viper.GetString("addr") + "/api/v1/group/schema")
 			if err != nil {
 				return err
 			}

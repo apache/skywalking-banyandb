@@ -36,6 +36,7 @@ import (
 	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -45,6 +46,7 @@ var _ = Describe("Stream", func() {
 	var path string
 	var gracefulStop, deferFunc func()
 	var listenClientURL, listenPeerURL string
+	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		var err error
 		path, deferFunc, err = test.NewSpace()
@@ -59,29 +61,25 @@ var _ = Describe("Stream", func() {
 		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
 		time.Sleep(1 * time.Second)
 		// extracting the operation of creating stream schema
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"group", "create", "-j", "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"group1\"}}}"})
-		out := capturer.CaptureOutput(func() {
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+		rootCmd.SetArgs([]string{"group", "create", "-r", "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"group1\"}}}"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(Equal("{}\n"))
-		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
-		out = capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "create", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
+		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(Equal("{}\n"))
-	})
-
-	It("create stream schema", func() {
-		// test code for creating stream schema is in BeforeEach()
 	})
 
 	It("get stream schema", func() {
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out := capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -94,16 +92,15 @@ var _ = Describe("Stream", func() {
 	})
 
 	It("update stream schema", func() {
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "update", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"entity\":{\"tag_names\":[\"tag1\"]}}}"})
-		out := capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "update", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"entity\":{\"tag_names\":[\"tag1\"]}}}"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(Equal("{}\n"))
 
-		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out = capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -119,9 +116,8 @@ var _ = Describe("Stream", func() {
 
 	It("delete stream schema", func() {
 		// get
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out := capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -131,15 +127,15 @@ var _ = Describe("Stream", func() {
 		Expect(s[4]).To(Equal("    group: group1"))
 		Expect(s[7]).To(Equal("    name: name1"))
 		// delete
-		rootCmd.SetArgs([]string{"stream", "delete", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out = capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "delete", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(Equal("deleted: true\n"))
 		// get again
-		rootCmd.SetArgs([]string{"stream", "get", "-j", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out = capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -149,16 +145,15 @@ var _ = Describe("Stream", func() {
 
 	It("list stream schema", func() {
 		// create another stream schema for list operation
-		rootCmd := cmd.NewRoot()
-		rootCmd.SetArgs([]string{"stream", "create", "-j", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name2\"}}}"})
-		out := capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "create", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name2\"}}}"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(Equal("{}\n"))
 		// list
-		rootCmd.SetArgs([]string{"stream", "list", "-j", "{\"group\":\"group1\"}"})
-		out = capturer.CaptureOutput(func() {
+		rootCmd.SetArgs([]string{"stream", "list", "-r", "{\"group\":\"group1\"}"})
+		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})

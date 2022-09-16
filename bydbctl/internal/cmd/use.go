@@ -15,11 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package cmd_test
+package cmd
 
 import (
-	. "github.com/onsi/ginkgo/v2"
+	"fmt"
+
+	"github.com/apache/skywalking-banyandb/pkg/version"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-var _ = Describe("UseGroup", func() {
-})
+func newUserGroupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "use",
+		Version: version.Build(),
+		Short:   "select a group",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			viper.Set("group", args[0])
+			err = viper.WriteConfig()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Switched to [%s]", viper.GetString("group"))
+			return nil
+		},
+	}
+}
