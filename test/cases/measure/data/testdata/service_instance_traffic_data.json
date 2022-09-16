@@ -1,0 +1,102 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          },
+          {
+            "str": {
+              "value": "nodea@west-us"
+            }
+          },
+          {
+            "int": {
+              "value": 100
+            }
+          },
+          {
+            "int": {
+              "value": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "2"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          },
+          {
+            "str": {
+              "value": "nodeb@west-us"
+            }
+          },
+          {
+            "int": {
+              "value": 100
+            }
+          },
+          {
+            "int": {
+              "value": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "3"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          },
+          {
+            "str": {
+              "value": "nodea@east-cn"
+            }
+          },
+          {
+            "int": {
+              "value": 100
+            }
+          },
+          {
+            "int": {
+              "value": 0
+            }
+          }
+        ]
+      }
+    ]
+  }
+  
+]

@@ -19,15 +19,12 @@ package grpc_test
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
-
-var defaultEventuallyTimeout = 30 * time.Second
 
 func TestGrpc(t *testing.T) {
 	RegisterFailHandler(Fail)

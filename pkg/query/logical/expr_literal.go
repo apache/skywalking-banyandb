@@ -18,13 +18,15 @@
 package logical
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
@@ -37,24 +39,21 @@ type int64Literal struct {
 	int64
 }
 
-func (i *int64Literal) Compare(tagValue *modelv1.TagValue) (int, bool) {
-	intValue := tagValue.GetInt()
-	if intValue == nil {
-		return 0, false
+func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*int64Literal); ok {
+		return int(i.int64 - o.int64), true
 	}
-	return int(i.int64 - intValue.Value), true
+	return 0, false
 }
 
-func (i *int64Literal) BelongTo(tagValue *modelv1.TagValue) bool {
-	intValue := tagValue.GetInt()
-	if intValue != nil {
-		return i.int64 == intValue.Value
+func (i *int64Literal) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*int64Literal); ok {
+		return i == o
 	}
-	intArray := tagValue.GetIntArray()
-	if intArray == nil {
-		return false
+	if o, ok := other.(*int64ArrLiteral); ok {
+		return slices.Contains(o.arr, i.int64)
 	}
-	return slices.Contains(intArray.Value, i.int64)
+	return false
 }
 
 func (i *int64Literal) Bytes() [][]byte {
@@ -90,32 +89,26 @@ type int64ArrLiteral struct {
 	arr []int64
 }
 
-func (i *int64ArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
-	intArray := tagValue.GetIntArray()
-	if intArray == nil {
-		return 0, false
-	}
-	if slices.Equal(i.arr, intArray.Value) {
-		return 0, true
+func (i *int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*int64ArrLiteral); ok {
+		return 0, slices.Equal(i.arr, o.arr)
 	}
 	return 0, false
 }
 
-func (i *int64ArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
-	intValue := tagValue.GetInt()
-	if intValue != nil {
-		return slices.Contains(i.arr, intValue.Value)
+func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*int64Literal); ok {
+		return slices.Contains(i.arr, o.int64)
 	}
-	intArray := tagValue.GetIntArray()
-	if intArray == nil {
-		return false
-	}
-	for _, v := range intArray.Value {
-		if !slices.Contains(i.arr, v) {
-			return false
+	if o, ok := other.(*int64ArrLiteral); ok {
+		for _, v := range o.arr {
+			if !slices.Contains(i.arr, v) {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	return false
 }
 
 func (i *int64ArrLiteral) Bytes() [][]byte {
@@ -157,27 +150,21 @@ type strLiteral struct {
 	string
 }
 
-func (s *strLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
-	strValue := tagValue.GetStr()
-	if strValue == nil {
-		return 0, false
-	}
-	if strValue.Value == s.string {
-		return 0, true
+func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*strLiteral); ok {
+		return strings.Compare(s.string, o.string), true
 	}
 	return 0, false
 }
 
-func (s *strLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
-	strValue := tagValue.GetStr()
-	if strValue != nil {
-		return s.string == strValue.Value
+func (s *strLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*strLiteral); ok {
+		return s == o
 	}
-	strArray := tagValue.GetStrArray()
-	if strArray == nil {
-		return false
+	if o, ok := other.(*strArrLiteral); ok {
+		return slices.Contains(o.arr, s.string)
 	}
-	return slices.Contains(strArray.Value, s.string)
+	return false
 }
 
 func (s *strLiteral) Bytes() [][]byte {
@@ -192,7 +179,7 @@ func (s *strLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func Str(str string) Expr {
+func Str(str string) LiteralExpr {
 	return &strLiteral{str}
 }
 
@@ -213,32 +200,26 @@ type strArrLiteral struct {
 	arr []string
 }
 
-func (s *strArrLiteral) Compare(tagValue *modelv1.TagValue) (int, bool) {
-	strArray := tagValue.GetStrArray()
-	if strArray == nil {
-		return 0, false
-	}
-	if stringSlicesEqual(s.arr, strArray.Value) {
-		return 0, true
+func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*strArrLiteral); ok {
+		return 0, StringSlicesEqual(s.arr, o.arr)
 	}
 	return 0, false
 }
 
-func (s *strArrLiteral) BelongTo(tagValue *modelv1.TagValue) bool {
-	strValue := tagValue.GetStr()
-	if strValue != nil {
-		return slices.Contains(s.arr, strValue.Value)
+func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*strLiteral); ok {
+		return slices.Contains(s.arr, o.string)
 	}
-	strArray := tagValue.GetStrArray()
-	if strArray == nil {
-		return false
-	}
-	for _, v := range strArray.Value {
-		if !slices.Contains(s.arr, v) {
-			return false
+	if o, ok := other.(*strArrLiteral); ok {
+		for _, v := range o.arr {
+			if !slices.Contains(s.arr, v) {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	return false
 }
 
 func (s *strArrLiteral) Bytes() [][]byte {
@@ -281,6 +262,26 @@ func (s *idLiteral) Bytes() [][]byte {
 	return [][]byte{[]byte(s.string)}
 }
 
+func (s *idLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*idLiteral); ok {
+		return strings.Compare(s.string, o.string), true
+	}
+	return 0, false
+}
+
+func (s *idLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*idLiteral); ok {
+		return s == o
+	}
+	if o, ok := other.(*strLiteral); ok {
+		return s.string == o.string
+	}
+	if o, ok := other.(*strArrLiteral); ok {
+		return slices.Contains(o.arr, s.string)
+	}
+	return false
+}
+
 func (s *idLiteral) Equal(expr Expr) bool {
 	if other, ok := expr.(*idLiteral); ok {
 		return other.string == s.string
@@ -289,7 +290,7 @@ func (s *idLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func ID(id string) Expr {
+func ID(id string) LiteralExpr {
 	return &idLiteral{id}
 }
 
@@ -299,4 +300,34 @@ func (s *idLiteral) DataType() int32 {
 
 func (s *idLiteral) String() string {
 	return s.string
+}
+
+var _ LiteralExpr = (*idLiteral)(nil)
+
+type bytesLiteral struct {
+	bb []byte
+}
+
+func newBytesLiteral(bb []byte) *bytesLiteral {
+	return &bytesLiteral{bb: bb}
+}
+
+func (b *bytesLiteral) Bytes() [][]byte {
+	return [][]byte{b.bb}
+}
+
+func (b *bytesLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*bytesLiteral); ok {
+		return bytes.Equal(other.bb, b.bb)
+	}
+
+	return false
+}
+
+func (b *bytesLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_DATA_BINARY)
+}
+
+func (b *bytesLiteral) String() string {
+	return hex.EncodeToString(b.bb)
 }

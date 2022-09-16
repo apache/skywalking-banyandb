@@ -19,21 +19,37 @@
 <template>
     <div class="drawer-container flex column">
         <div class="text-secondary-color text-tips text-start text-family detail-title">Details</div>
-        <div class="detail-content border-radius">
+        <div class="detail-content border-radius-little">
             <div class="detail-content-container margin-all">
                 <div class="detail-content-title flex justify-between">
-                    <div class="text-main-color text-title text-family">Name DB</div>
+                    <div class="text-main-color text-title text-family">
+                        <span :title="fileData.metadata.name">
+                            {{fileData.metadata.name}}
+                        </span>
+                    </div>
                     <i class="el-icon-close pointer detail-close icon" @click="closeDetail" @mouseover="handleOver"
                         @mouseleave="handleLeave"
                         :style="{ color: closeColor, backgroundColor: closeBackgroundColor }"></i>
                 </div>
-                <div class="text-secondary-color text-tips text-start text-family margin-top-bottom-little">Group:
-                    Stream</div>
+                <div class="text-secondary-color text-tips text-start text-family margin-top-bottom-little">
+                    {{fileData.metadata.group}}</div>
                 <div v-for="item in detailList" :key="item.key">
                     <detail-list-component :keyName="item.key" :value="item.value"></detail-list-component>
                 </div>
-                <div  class="text-main-color text-tips text-start text-family margin-top-bottom-little">Tags Configuration Information</div>
-                <detail-table-component></detail-table-component>
+                <div class="text-main-color text-tips text-start text-family margin-top-bottom-little"
+                    style="margin-top: 20px;">Tags
+                    families</div>
+                <div class="flex align-start" style="margin-bottom: 10px;">
+                    <el-select v-model="tagFamily" style="width: 100%;" filterable
+                        placeholder="Please select">
+                        <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value">
+                        </el-option>
+                    </el-select>
+                </div>
+                <!--div class="text-main-color text-tips text-start text-family margin-top-bottom-little">Tags
+                    Configuration Information</div-->
+
+                <detail-table-component :tableData="tableData"></detail-table-component>
             </div>
         </div>
     </div>
@@ -44,37 +60,69 @@ import DetailListComponent from './drawerRightComponents/DetailListComponent.vue
 import DetailTableComponent from './drawerRightComponents/DetailTableComponent.vue'
 export default {
     name: 'DrawerRightComponent',
+    props: {
+        fileData: {
+            type: Object,
+        }
+    },
+    computed: {
+        tableData() {
+            let tags = this.fileData.tagFamilies[this.tagFamily].tags
+            return tags.map((item) => {
+                return { tags: item.name, type: item.type }
+            })
+        }
+    },
+    watch: {
+        fileData: {
+            handler() {
+                this.options = this.fileData.tagFamilies.map((item, index) => {
+                    return { label: item.name, value: index }
+                })
+            },
+            immediate: true
+        }
+    },
     data() {
         return {
+            tagFamily: 0,
+            options: [],
             closeColor: "var(--color-main-font)",
             closeBackgroundColor: "var(--color-white)",
-            detailList: [{
-                key: "Url",
-                value: "Database/node/Stream"
-            }, {
-                key: "Start Time",
-                value: "2022/04/15 17:30:15"
-            }, {
-                key: "End Time",
-                value: "2022/04/15 17:50:17"
-            }, {
-                key: "Updated at",
-                value: "2022/04/15 17:44:59"
-            }, {
-                key: "Duration",
-                value: "5000ms"
-            }, {
-                key: "Size",
-                value: "30B"
-            }, {
-                key: "Tags Number",
-                value: "15"
-            }]
+            detailList: []
         }
     },
     components: {
         DetailListComponent,
         DetailTableComponent
+    },
+    created() {
+        let metadata = this.fileData.metadata
+        let tagsNumber = 0
+        this.fileData.tagFamilies.forEach((item) => {
+            tagsNumber += item.tags.length
+        })
+        let detailList = [
+            {
+                key: "Url",
+                value: `${metadata.group}/${metadata.name}`
+            }, {
+                key: "CreateRevision",
+                value: metadata.createRevision
+            }, {
+                key: "ModRevision",
+                value: metadata.modRevision
+            }, {
+                key: "Tags families number",
+                value: this.fileData.tagFamilies.length
+            }, {
+                key: "Tags number",
+                value: tagsNumber
+            }, {
+                key: "UpdatedAt",
+                value: this.fileData.updatedAt == null ? 'null' : this.fileData.updatedAt
+            }]
+        this.detailList = detailList
     },
     methods: {
         handleOver() {
@@ -94,9 +142,9 @@ export default {
 
 <style lang="scss" scoped>
 .drawer-container {
-    width: calc(100% - 30px);
-    height: calc(100% - 30px);
-    margin: 15px;
+    width: calc(100% - 20px);
+    height: calc(100% - 20px);
+    margin: 10px;
 
     .detail-title {
         width: 100%;

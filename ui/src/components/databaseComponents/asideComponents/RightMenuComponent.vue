@@ -21,6 +21,7 @@
     <div style="width: 100%;" class="border-radius-little">
         <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
             <right-menu-item
+            @handleRightItem="handleRightItem(index)"
                 :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
                 :icon="item.icon" :name="item.name"></right-menu-item>
         </div>
@@ -35,12 +36,21 @@ export default {
         return {
         }
     },
-    props:['rightMenuList'],
+    props: ['rightMenuList'],
     components: {
         RightMenuItem
-    }
+    },
+    methods: {
+        handle() {
+            console.log(11111)
+        },
+        handleRightItem(index) {
+            this.$emit('handleRightItem', index)
+        }
+    },
 }
 </script>
 
 <style lang="scss" scoped>
+
 </style>

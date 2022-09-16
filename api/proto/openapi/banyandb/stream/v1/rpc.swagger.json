@@ -70,6 +70,15 @@
       "default": "BINARY_OP_UNSPECIFIED",
       "description": "BinaryOp specifies the operation imposed to the given query condition\nFor EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.\nHAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.\nFor example, \"keyA\" contains \"valueA\" **and** \"valueB\"\nMATCH performances a full-text search if the tag is analyzed.\nThe string value applies to the same analyzer as the tag, but string array value does not.\nEach item in a string array is seen as a token instead of a query expression."
     },
+    "LogicalExpressionLogicalOp": {
+      "type": "string",
+      "enum": [
+        "LOGICAL_OP_UNSPECIFIED",
+        "LOGICAL_OP_AND",
+        "LOGICAL_OP_OR"
+      ],
+      "default": "LOGICAL_OP_UNSPECIFIED"
+    },
     "modelv1Tag": {
       "type": "object",
       "properties": {
@@ -149,14 +158,11 @@
     "v1Criteria": {
       "type": "object",
       "properties": {
-        "tagFamilyName": {
-          "type": "string"
+        "le": {
+          "$ref": "#/definitions/v1LogicalExpression"
         },
-        "conditions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1Condition"
-          }
+        "condition": {
+          "$ref": "#/definitions/v1Condition"
         }
       },
       "description": "tag_families are indexed."
@@ -233,6 +239,22 @@
         }
       }
     },
+    "v1LogicalExpression": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "$ref": "#/definitions/LogicalExpressionLogicalOp",
+          "title": "op is a logial operation"
+        },
+        "left": {
+          "$ref": "#/definitions/v1Criteria"
+        },
+        "right": {
+          "$ref": "#/definitions/v1Criteria"
+        }
+      },
+      "title": "LogicalExpression supports logical operation"
+    },
     "v1Metadata": {
       "type": "object",
       "properties": {
@@ -299,10 +321,7 @@
           "title": "order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported"
         },
         "criteria": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1Criteria"
-          },
+          "$ref": "#/definitions/v1Criteria",
           "description": "tag_families are indexed."
         },
         "projection": {

@@ -34,7 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
 
 const (
@@ -78,13 +79,13 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical.CreateStreamAnalyzerFromMetaService(p.metaService)
+	analyzer, err := logical_stream.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
-	s, err := analyzer.BuildStreamSchema(context.TODO(), meta)
+	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build")
 		return
@@ -132,13 +133,13 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical.CreateMeasureAnalyzerFromMetaService(p.metaService)
+	analyzer, err := logical_measure.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build analyzer")
 		return
 	}
 
-	s, err := analyzer.BuildMeasureSchema(context.TODO(), meta)
+	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
 		p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
 		return

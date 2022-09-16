@@ -40,11 +40,11 @@ var (
 var ErrInvalidData = errors.New("data is invalid")
 
 type (
-	seekerBuilder func(builder tsdb.SeekerBuilder)
-	comparator    func(a, b tsdb.Item) bool
+	SeekerBuilder func(builder tsdb.SeekerBuilder)
+	Comparator    func(a, b tsdb.Item) bool
 )
 
-func createComparator(sortDirection modelv1.Sort) comparator {
+func CreateComparator(sortDirection modelv1.Sort) Comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())
 		if sortDirection == modelv1.Sort_SORT_DESC {
@@ -54,18 +54,18 @@ func createComparator(sortDirection modelv1.Sort) comparator {
 	}
 }
 
-// projectItem parses the item within the StreamExecutionContext.
+// ProjectItem parses the item within the StreamExecutionContext.
 // projectionFieldRefs must be prepared before calling this method, projectionFieldRefs should be a list of
 // tag list where the inner list must exist in the same tag family.
 // Strict order can be guaranteed in the result.
-func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*TagRef) ([]*modelv1.TagFamily, error) {
+func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*TagRef) ([]*modelv1.TagFamily, error) {
 	tagFamily := make([]*modelv1.TagFamily, len(projectionFieldRefs))
 	for i, refs := range projectionFieldRefs {
 		if len(refs) == 0 {
 			continue
 		}
 		tags := make([]*modelv1.Tag, len(refs))
-		familyName := refs[0].tag.GetFamilyName()
+		familyName := refs[0].Tag.GetFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, err
@@ -88,12 +88,12 @@ func projectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 	return tagFamily, nil
 }
 
-// executeForShard fetches elements from series within a single shard. A list of series must be prepared in advanced
+// ExecuteForShard fetches elements from series within a single shard. A list of series must be prepared in advanced
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
 // This method is used by the underlying tableScan and localIndexScan plans.
-func executeForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
-	builders ...seekerBuilder,
+func ExecuteForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
+	builders ...SeekerBuilder,
 ) ([]tsdb.Iterator, error) {
 	var itersInShard []tsdb.Iterator
 	for _, seriesFound := range series {
@@ -129,4 +129,59 @@ func executeForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 		}
 	}
 	return itersInShard, nil
+}
+
+var DefaultLimit uint32 = 100
+
+type Tag struct {
+	familyName, name string
+}
+
+func NewTag(family, name string) *Tag {
+	return &Tag{
+		familyName: family,
+		name:       name,
+	}
+}
+
+// NewTags create an array of Tag within a TagFamily
+func NewTags(family string, tagNames ...string) []*Tag {
+	tags := make([]*Tag, len(tagNames))
+	for i, name := range tagNames {
+		tags[i] = NewTag(family, name)
+	}
+	return tags
+}
+
+// GetCompoundName is only used for error message
+func (t *Tag) GetCompoundName() string {
+	return t.familyName + ":" + t.name
+}
+
+func (t *Tag) GetTagName() string {
+	return t.name
+}
+
+func (t *Tag) GetFamilyName() string {
+	return t.familyName
+}
+
+type Field struct {
+	Name string
+}
+
+func NewField(name string) *Field {
+	return &Field{Name: name}
+}
+
+func StringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }

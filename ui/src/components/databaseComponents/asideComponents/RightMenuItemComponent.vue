@@ -19,7 +19,7 @@
 
 <template>
     <div class="flex right-menu-item align-item-center pointer" @mouseover="handleOver" @mouseleave="handleLeave"
-        :style="{ backgroundColor: bdColor, color: colorStr}">
+        :style="{ backgroundColor: bdColor, color: colorStr}" @click ="handleRightMenu">
         <i :class="icon"></i>
         <div style="width: 70%;" class="text-overflow-hidden margin-left-small">{{ name }}</div>
     </div>
@@ -43,6 +43,10 @@ export default {
         handleLeave() {
             this.bdColor = "white"
             this.colorStr = "var(--color-main-font)"
+        },
+        handleRightMenu() {
+            this.$emit('handleRightItem')
+            console.log(this.name)
         }
     }
 }

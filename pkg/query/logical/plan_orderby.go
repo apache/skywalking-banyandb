@@ -35,17 +35,17 @@ type UnresolvedOrderBy struct {
 	targetIndexRuleName string
 }
 
-func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
+func (u *UnresolvedOrderBy) Analyze(s Schema) (*OrderBy, error) {
 	if u == nil {
 		// return a default orderBy sub-plan
-		return &orderBy{
-			sort: modelv1.Sort_SORT_UNSPECIFIED,
+		return &OrderBy{
+			Sort: modelv1.Sort_SORT_UNSPECIFIED,
 		}, nil
 	}
 
 	if u.targetIndexRuleName == "" {
-		return &orderBy{
-			sort: u.sort,
+		return &OrderBy{
+			Sort: u.sort,
 		}, nil
 	}
 
@@ -59,43 +59,43 @@ func (u *UnresolvedOrderBy) analyze(s Schema) (*orderBy, error) {
 		return nil, ErrTagNotDefined
 	}
 
-	return &orderBy{
-		sort:      u.sort,
-		index:     indexRule,
+	return &OrderBy{
+		Sort:      u.sort,
+		Index:     indexRule,
 		fieldRefs: projFieldSpecs[0],
 	}, nil
 }
 
-type orderBy struct {
+type OrderBy struct {
 	// orderByIndex describes the indexRule used to sort the elements/
 	// It can be null since by default we may sort by created-time.
-	index *databasev1.IndexRule
-	// while orderBySort describes the sort direction
-	sort modelv1.Sort
+	Index *databasev1.IndexRule
+	// while orderBySort describes the Sort direction
+	Sort modelv1.Sort
 	// TODO: support multiple tags. Currently only the first member will be used for sorting.
 	fieldRefs []*TagRef
 }
 
-func (o *orderBy) Equal(other interface{}) bool {
-	if otherOrderBy, ok := other.(*orderBy); ok {
+func (o *OrderBy) Equal(other interface{}) bool {
+	if otherOrderBy, ok := other.(*OrderBy); ok {
 		if o == nil && otherOrderBy == nil {
 			return true
 		}
 		if o != nil && otherOrderBy == nil || o == nil && otherOrderBy != nil {
 			return false
 		}
-		return o.sort == otherOrderBy.sort &&
-			o.index.GetMetadata().GetName() == otherOrderBy.index.GetMetadata().GetName()
+		return o.Sort == otherOrderBy.Sort &&
+			o.Index.GetMetadata().GetName() == otherOrderBy.Index.GetMetadata().GetName()
 	}
 
 	return false
 }
 
-func (o *orderBy) String() string {
-	return fmt.Sprintf("OrderBy: %v, sort=%s", o.index.GetTags(), o.sort.String())
+func (o *OrderBy) String() string {
+	return fmt.Sprintf("OrderBy: %v, sort=%s", o.Index.GetTags(), o.Sort.String())
 }
 
-func OrderBy(indexRuleName string, sort modelv1.Sort) *UnresolvedOrderBy {
+func NewOrderBy(indexRuleName string, sort modelv1.Sort) *UnresolvedOrderBy {
 	return &UnresolvedOrderBy{
 		sort:                sort,
 		targetIndexRuleName: indexRuleName,

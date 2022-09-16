@@ -37,7 +37,6 @@ import (
 var serviceName = index.FieldKey{
 	// http_method
 	IndexRuleID: 6,
-	EncodeTerm:  false,
 	Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
 }
 

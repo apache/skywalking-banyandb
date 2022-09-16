@@ -20,7 +20,9 @@
 <template>
     <div style="width: 100%; height: 45px;" class="flex justify-between bd-bottom align-item-center">
         <div class="text-main-color text-tips text-family">{{keyName}}</div>
-        <div class="text-secondary-color text-tips text-family">{{value}}</div>
+        <div style="width: 50%; text-align: right;" class="text-secondary-color text-tips text-family text-overflow-hidden">
+            <span :title="value">{{value}}</span>
+        </div>
     </div>
 </template>
 
@@ -32,7 +34,7 @@ export default {
             type: String,
         },
         value: {
-            type: String
+            type: [String, Number]
         }
     }
 }
