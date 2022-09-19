@@ -1,0 +1,55 @@
+/*
+ * Licensed to Apache Software Foundation (ASF) under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Apache Software Foundation (ASF) licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+html {
+    /* ==================
+            color
+    ==================== */
+    --color-main: #6E38F7; /* main color */
+    --color-background: #e7ebfc;
+
+    --color-top-background: #1d1f2a;
+    --color-nav-background: #4b4c59;
+
+    --color-main-font: #303133;
+    --color-general-font: #606266;
+    --color-secondary-font: #909399;
+    --color-placeholder-font: #C0C4CC;
+
+    --color-first-border: #DCDFE6;
+    --color-secondary-border: #E4E7ED;
+    --color-Tertiary-border: #EBEEF5;
+    --color-Quad-border: #F2F6FC;
+    
+    --color-black: #000000;
+    --color-white: #FFFFFF;
+
+    --color-select: #ecf5ff;
+    
+    /* ==================
+            font
+    ==================== */
+    --weight-mini: 500;   /* font-weight */
+    --weight-lt: 600;
+    --size-mini: 0.8em;   /* font-size */
+    --size-lt: 1.1em;
+    --size-title: 1.2em;
+    --size-big: 1.4em;
+    --font-family-main:'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+}
