@@ -19,224 +19,145 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/version"
-	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
+const streamSchemaPath = "/api/v1/stream/schema"
+
+var streamSchemaPathWithParams = streamSchemaPath + "/{group}/{name}"
+
+func getPath(path string) string {
+	return viper.GetString("addr") + path
+}
+
 func newStreamCmd() *cobra.Command {
-	StreamCmd := &cobra.Command{
+	streamCmd := &cobra.Command{
 		Use:     "stream",
 		Version: version.Build(),
-		Short:   "banyandb stream schema related Operation",
+		Short:   "Stream operation",
 	}
 
-	StreamCreateCmd := &cobra.Command{
-		Use:     "create",
+	createCmd := &cobra.Command{
+		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "banyandb stream schema create Operation",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return rest("stream", func(request *resty.Request) (*resty.Response, error) {
-				return request.Post(viper.GetString("addr") + "/api/v1/stream/schema")
+		Short:   "Create streams from files",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					s := new(database_v1.Stream)
+					err := protojson.Unmarshal(request.data, s)
+					if err != nil {
+						return nil, err
+					}
+					cr := &database_v1.StreamRegistryServiceCreateRequest{
+						Stream: s,
+					}
+					b, err := json.Marshal(cr)
+					if err != nil {
+						return nil, err
+					}
+					return request.req.SetBody(b).Post(getPath(streamSchemaPath))
+				},
+				func(_ int, reqBody reqBody, _ []byte) error {
+					fmt.Printf("stream %s.%s is created", reqBody.group, reqBody.name)
+					fmt.Println()
+					return nil
+				})
+		},
+	}
+
+	updateCmd := &cobra.Command{
+		Use:     "update -f [file|dir|-]",
+		Version: version.Build(),
+		Short:   "Update streams from files",
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					s := new(database_v1.Stream)
+					err := protojson.Unmarshal(request.data, s)
+					if err != nil {
+						return nil, err
+					}
+					cr := &database_v1.StreamRegistryServiceUpdateRequest{
+						Stream: s,
+					}
+					b, err := json.Marshal(cr)
+					if err != nil {
+						return nil, err
+					}
+					return request.req.SetBody(b).
+						SetPathParam("name", request.name).SetPathParam("group", request.group).
+						Put(getPath(streamSchemaPathWithParams))
+				},
+				func(_ int, reqBody reqBody, _ []byte) error {
+					fmt.Printf("stream %s.%s is updated", reqBody.group, reqBody.name)
+					fmt.Println()
+					return nil
+				})
+		},
+	}
+	bindFileFlag(createCmd, updateCmd)
+
+	getCmd := &cobra.Command{
+		Use:     "get [-g group] -n name",
+		Version: version.Build(),
+		Short:   "Get a stream",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(streamSchemaPathWithParams))
+			}, yamlPrinter)
+		},
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:     "delete [-g group] -n name",
+		Version: version.Build(),
+		Short:   "Delete a stream",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(streamSchemaPathWithParams))
+			}, func(_ int, reqBody reqBody, _ []byte) error {
+				fmt.Printf("stream %s.%s is deleted", reqBody.group, reqBody.name)
+				fmt.Println()
+				return nil
 			})
 		},
 	}
+	bindNameFlag(getCmd, deleteCmd)
 
-	StreamUpdateCmd := &cobra.Command{
-		Use:     "update",
+	listCmd := &cobra.Command{
+		Use:     "list [-g group]",
 		Version: version.Build(),
-		Short:   "banyandb stream schema Update Operation",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			stream, ok := data["stream"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			metadata, ok := stream["metadata"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			group, ok := metadata["group"].(string)
-			if !ok {
-				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
-				if metadata["group"] == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-				group = fmt.Sprintf("%v", viper.Get("group"))
-			}
-			name, ok := metadata["name"].(string)
-			if !ok {
-				return errors.New("input json format error")
-			}
-			resp, err := client.R().SetBody(data).Put(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
+		Short:   "List streams",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/stream/schema/lists/{group}"))
+			}, yamlPrinter)
 		},
 	}
 
-	StreamGetCmd := &cobra.Command{
-		Use:     "get",
-		Version: version.Build(),
-		Short:   "banyandb stream schema Get Operation",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			metadata, ok := data["metadata"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			name, ok := metadata["name"].(string)
-			if !ok {
-				return errors.New("input json format error")
-			}
-			group, ok := metadata["group"].(string)
-			if !ok {
-				group = fmt.Sprintf("%v", viper.Get("group"))
-				if metadata["group"] == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-			}
-			resp, err := client.R().Get(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
-		},
-	}
-
-	StreamDeleteCmd := &cobra.Command{
-		Use:     "delete",
-		Version: version.Build(),
-		Short:   "banyandb stream schema Delete Operation",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			metadata, ok := data["metadata"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			name, ok := metadata["name"].(string)
-			if !ok {
-				return errors.New("input json format error")
-			}
-			group, ok := metadata["group"].(string)
-			if !ok {
-				group = fmt.Sprintf("%v", viper.Get("group"))
-				if metadata["group"] == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-			}
-			resp, err := client.R().Delete(viper.GetString("addr") + "/api/v1/stream/schema/" + group + "/" + name)
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
-		},
-	}
-
-	StreamListCmd := &cobra.Command{
-		Use:     "list",
-		Version: version.Build(),
-		Short:   "banyandb stream schema List Operation",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			group, ok := data["group"].(string)
-			if !ok {
-				group = fmt.Sprintf("%v", viper.Get("group"))
-				if group == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-			}
-			resp, err := client.R().Get(viper.GetString("addr") + "/api/v1/stream/schema/lists/" + group)
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
-		},
-	}
-
-	StreamQueryCmd := &cobra.Command{
+	queryCmd := &cobra.Command{
 		Use:     "query",
 		Version: version.Build(),
-		Short:   "banyandb stream schema Query Operation",
+		Short:   "Query data in a stream",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			metadata, ok := data["metadata"].(map[string]interface{})
-			if !ok {
-				return errors.New("input json format error")
-			}
-			_, ok = metadata["group"].(string)
-			if !ok {
-				metadata["group"] = fmt.Sprintf("%v", viper.Get("group"))
-				if metadata["group"] == "" {
-					return errors.New("please specify a group through the input json or the config file")
-				}
-			}
-			resp, err := client.R().SetBody(data).Post(viper.GetString("addr") + "/api/v1/stream/data")
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					return request.req.SetBody(request.data).Post(getPath("/api/v1/stream/data"))
+				}, yamlPrinter)
 		},
 	}
-	StreamCmd.AddCommand(StreamGetCmd, StreamCreateCmd, StreamDeleteCmd, StreamUpdateCmd, StreamListCmd, StreamQueryCmd)
-	return StreamCmd
+	streamCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
+	return streamCmd
 }

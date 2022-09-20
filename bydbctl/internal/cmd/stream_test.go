@@ -63,107 +63,102 @@ var _ = Describe("Stream", func() {
 		// extracting the operation of creating stream schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		rootCmd.SetArgs([]string{"group", "create", "-r", "{\"group\":{\"metadata\":{\"group\":\"\",\"name\":\"group1\"}}}"})
+		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: group1`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		Expect(out).To(Equal("{}\n"))
-		rootCmd.SetArgs([]string{"stream", "create", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}}"})
+		Expect(out).To(ContainSubstring("group group1 is created"))
+		rootCmd.SetArgs([]string{"stream", "create", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: name1
+  group: group1`))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		Expect(out).To(Equal("{}\n"))
+		Expect(out).To(ContainSubstring("stream group1.name1 is created"))
 	})
 
 	It("get stream schema", func() {
-		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		GinkgoWriter.Write([]byte(out))
 		resp := new(database_v1.StreamRegistryServiceGetResponse)
 		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
-		GinkgoWriter.Write([]byte(resp.String()))
 		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Stream.Metadata.Name).To(Equal("name1"))
 	})
 
 	It("update stream schema", func() {
-		rootCmd.SetArgs([]string{"stream", "update", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"},\"entity\":{\"tag_names\":[\"tag1\"]}}}"})
+		rootCmd.SetArgs([]string{"stream", "update", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: name1
+  group: group1
+entity:
+  tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		GinkgoWriter.Write([]byte(out))
-		Expect(out).To(Equal("{}\n"))
-		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		Expect(out).To(ContainSubstring("stream group1.name1 is updated"))
+		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		resp := new(database_v1.StreamRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		GinkgoWriter.Write([]byte(resp.String()))
 		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Stream.Metadata.Name).To(Equal("name1"))
 		Expect(resp.Stream.Entity.TagNames[0]).To(Equal("tag1"))
 	})
 
 	It("delete stream schema", func() {
-		// get
-		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		// delete
+		rootCmd.SetArgs([]string{"stream", "delete", "-g", "group1", "-n", "name1"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		GinkgoWriter.Write([]byte(out))
-		resp := new(database_v1.StreamRegistryServiceGetResponse)
-		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
-		GinkgoWriter.Write([]byte(resp.String()))
-		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
-		Expect(resp.Stream.Metadata.Name).To(Equal("name1"))
-		// delete
-		rootCmd.SetArgs([]string{"stream", "delete", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(Equal("deleted: true\n"))
+		Expect(out).To(ContainSubstring("stream group1.name1 is deleted"))
 		// get again
-		rootCmd.SetArgs([]string{"stream", "get", "-r", "{\"metadata\":{\"group\":\"group1\",\"name\":\"name1\"}}"})
+		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		s := strings.Split(out, "\n")
-		Expect(s[2]).To(Equal("message: 'banyandb: resource not found'"))
+		Expect(out).To(ContainSubstring("resource not found"))
 	})
 
 	It("list stream schema", func() {
 		// create another stream schema for list operation
-		rootCmd.SetArgs([]string{"stream", "create", "-r", "{\"stream\":{\"metadata\":{\"group\":\"group1\",\"name\":\"name2\"}}}"})
+		rootCmd.SetArgs([]string{"stream", "create", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: name2
+  group: group1`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		Expect(out).To(Equal("{}\n"))
+		Expect(out).To(ContainSubstring("stream group1.name2 is created"))
 		// list
-		rootCmd.SetArgs([]string{"stream", "list", "-r", "{\"group\":\"group1\"}"})
+		rootCmd.SetArgs([]string{"stream", "list", "-g", "group1"})
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		GinkgoWriter.Write([]byte(out))
 		resp := new(database_v1.StreamRegistryServiceListResponse)
 		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
-		GinkgoWriter.Write([]byte(resp.String()))
-		Expect(resp.Stream[0].Metadata.Group).To(Equal("group1"))
-		Expect(resp.Stream[0].Metadata.Name).To(Equal("name1"))
-		Expect(resp.Stream[1].Metadata.Group).To(Equal("group1"))
-		Expect(resp.Stream[1].Metadata.Name).To(Equal("name2"))
+		Expect(resp.Stream).To(HaveLen(2))
 	})
 
 	AfterEach(func() {

@@ -22,70 +22,65 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/version"
-	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+
+	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 func newGroupCmd() *cobra.Command {
-	GroupCmd := &cobra.Command{
+	groupCmd := &cobra.Command{
 		Use:     "group",
 		Version: version.Build(),
-		Short:   "banyandb group related Operation",
+		Short:   "Group operation",
 	}
 
-	GroupCreateCmd := &cobra.Command{
-		Use:     "create",
+	createCmd := &cobra.Command{
+		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "banyandb group schema Create Operation",
+		Short:   "Create groups from files",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			var data map[string]interface{}
-			err = json.Unmarshal([]byte(raw), &data)
-			if err != nil {
-				return err
-			}
-			resp, err := client.R().SetBody(data).Post(viper.GetString("addr") + "/api/v1/group/schema")
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Print(string(yamlResult))
-			return nil
+			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					g := new(common_v1.Group)
+					err := json.Unmarshal(request.data, g)
+					if err != nil {
+						return nil, err
+					}
+					cr := &database_v1.GroupRegistryServiceCreateRequest{
+						Group: g,
+					}
+					b, err := json.Marshal(cr)
+					if err != nil {
+						return nil, err
+					}
+					return request.req.SetBody(b).Post(getPath("/api/v1/group/schema"))
+				},
+				func(_ int, reqBody reqBody, _ []byte) error {
+					fmt.Printf("group %s is created", reqBody.name)
+					fmt.Println()
+					return nil
+				})
 		},
 	}
+	bindFileFlag(createCmd)
 
-	GroupListCmd := &cobra.Command{
+	listCmd := &cobra.Command{
 		Use:     "list",
 		Version: version.Build(),
-		Short:   "banyandb group schema List Operation",
+		Short:   "list all groups",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			client := resty.New()
-			addr, err := cmd.Flags().GetString("addr")
-			if err != nil {
-				return err
-			}
-			resp, err := client.R().Get("http://" + addr + "/api/v1/group/schema/lists")
-			if err != nil {
-				return err
-			}
-			yamlResult, err := yaml.JSONToYAML(resp.Body())
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(yamlResult))
-			return nil
+			return rest(nil, func(request request) (*resty.Response, error) {
+				return request.req.Get(getPath("/api/v1/group/schema/lists"))
+			}, yamlPrinter)
 		},
 	}
 
 	// todo:GroupGetCmd, GroupUpdateCmd, GroupDeleteCmd
-	GroupCmd.AddCommand(GroupCreateCmd, GroupListCmd)
-	return GroupCmd
+	groupCmd.AddCommand(createCmd, listCmd)
+	return groupCmd
 }

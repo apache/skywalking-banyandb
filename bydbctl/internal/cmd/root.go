@@ -28,9 +28,10 @@ import (
 )
 
 var (
-	raw     string
-	cfgFile string
-	rootCmd = &cobra.Command{
+	filePath string
+	name     string
+	cfgFile  string
+	rootCmd  = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
@@ -47,12 +48,11 @@ func RootCmdFlags(command *cobra.Command) {
 	command.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bydbctl.yaml)")
 	command.PersistentFlags().StringP("group", "g", "", "If present, list objects in this group.")
 	command.PersistentFlags().StringP("addr", "a", "", "Server's address, the format is Schema://Domain:Port")
-	command.PersistentFlags().StringVarP(&raw, "raw", "r", "{}", "Raw JSON to request the server")
 	_ = viper.BindPFlag("group", command.PersistentFlags().Lookup("group"))
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
-	command.AddCommand(newBanyanDBCmd()...)
+	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd())
 }
 
 func init() {
@@ -92,5 +92,18 @@ func initConfig() {
 		}
 		cobra.CheckErr(viper.SafeWriteConfig())
 		cobra.CheckErr(readCfg())
+	}
+}
+
+func bindFileFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().StringVarP(&filePath, "file", "f", "", "That contains the request to send")
+	}
+}
+
+func bindNameFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
+		_ = c.MarkFlagRequired("name")
 	}
 }

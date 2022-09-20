@@ -15,30 +15,43 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package cmd
+// Package file provides utils to handle files
+package file
 
 import (
-	"fmt"
-
-	"github.com/apache/skywalking-banyandb/pkg/version"
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+	"bufio"
+	"io"
+	"os"
+	"path/filepath"
 )
 
-func newUserCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "use group",
-		Version: version.Build(),
-		Short:   "Select a group",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			viper.Set("group", args[0])
-			err = viper.WriteConfig()
+// Read bytes from given file or stdin (in case that path is `-`).
+func Read(path string, reader io.Reader) (contents [][]byte, err error) {
+	var b []byte
+	if path == "-" {
+		b, err = io.ReadAll(bufio.NewReader(reader))
+		return append(contents, b), err
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fileInfo.IsDir() {
+		b, err = os.ReadFile(path)
+		return append(contents, b), err
+	}
+	err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err // prevent panic from failed accessing path
+		}
+		if filepath.Ext(path) == ".yml" || filepath.Ext(path) == ".yaml" {
+			content, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Switched to [%s]", viper.GetString("group"))
-			return nil
-		},
-	}
+			contents = append(contents, content)
+		}
+		return nil
+	})
+	return contents, err
 }
