@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -141,45 +142,50 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 }
 
 func (sr *schemaRepo) Watcher() {
-	defer func() {
-		if err := recover(); err != nil {
-			sr.l.Warn().Interface("err", err).Msg("watching the events")
-		}
-	}()
-	for {
-		select {
-		case evt, more := <-sr.eventCh:
-			if !more {
-				return
-			}
-			sr.l.Info().Interface("event", evt).Msg("received an event")
-			for i := 0; i < 10; i++ {
-				var err error
-				switch evt.Typ {
-				case EventAddOrUpdate:
-					switch evt.Kind {
-					case EventKindGroup:
-						_, err = sr.StoreGroup(evt.Metadata)
-					case EventKindResource:
-						_, err = sr.storeResource(evt.Metadata)
-					}
-				case EventDelete:
-					switch evt.Kind {
-					case EventKindGroup:
-						err = sr.deleteGroup(evt.Metadata)
-					case EventKindResource:
-						err = sr.deleteResource(evt.Metadata)
-					}
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					sr.l.Warn().Interface("err", err).Msg("watching the events")
 				}
-				if err == nil {
-					break
+			}()
+			for {
+				select {
+				case evt, more := <-sr.eventCh:
+					if !more {
+						return
+					}
+					sr.l.Info().Interface("event", evt).Msg("received an event")
+					for i := 0; i < 10; i++ {
+						var err error
+						switch evt.Typ {
+						case EventAddOrUpdate:
+							switch evt.Kind {
+							case EventKindGroup:
+								_, err = sr.StoreGroup(evt.Metadata)
+							case EventKindResource:
+								_, err = sr.storeResource(evt.Metadata)
+							}
+						case EventDelete:
+							switch evt.Kind {
+							case EventKindGroup:
+								err = sr.deleteGroup(evt.Metadata)
+							case EventKindResource:
+								err = sr.deleteResource(evt.Metadata)
+							}
+						}
+						if err == nil {
+							break
+						}
+						runtime.Gosched()
+						time.Sleep(time.Second)
+						sr.l.Err(err).Interface("event", evt).Int("round", i).Msg("fail to handle the metadata event. retry...")
+					}
+				case <-sr.workerStopCh:
+					return
 				}
-				time.Sleep(time.Second)
-				sr.l.Err(err).Interface("event", evt).Int("round", i).Msg("fail to handle the metadata event. retry...")
 			}
-		case <-sr.workerStopCh:
-			return
-		}
+		}()
 	}
 }
 
@@ -344,9 +350,6 @@ func (sr *schemaRepo) Close() {
 			sr.l.Warn().Interface("err", err).Msg("closing resource")
 		}
 	}()
-	if sr.eventCh != nil {
-		close(sr.eventCh)
-	}
 	if sr.workerStopCh != nil {
 		close(sr.workerStopCh)
 	}

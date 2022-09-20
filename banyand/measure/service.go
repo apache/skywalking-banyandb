@@ -142,7 +142,6 @@ func (s *service) Serve() run.StopNotify {
 	s.metadata.MeasureRegistry().RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule,
 		&s.schemaRepo)
 
-	s.stopCh = make(chan struct{})
 	return s.stopCh
 }
 
@@ -159,5 +158,6 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		metadata: metadata,
 		repo:     repo,
 		pipeline: pipeline,
+		stopCh:   make(chan struct{}),
 	}, nil
 }

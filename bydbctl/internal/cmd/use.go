@@ -15,19 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main provides main entry for the command-line toolkit, i.e. bydbctl
-package main
+package cmd
 
 import (
 	"fmt"
-	"os"
 
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/version"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-func main() {
-	if err := cmd.Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+func newUserCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "use group",
+		Version: version.Build(),
+		Short:   "Select a group",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			viper.Set("group", args[0])
+			err = viper.WriteConfig()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Switched to [%s]", viper.GetString("group"))
+			return nil
+		},
 	}
 }

@@ -60,6 +60,8 @@ type service struct {
 	stopCh       chan struct{}
 	clientCloser context.CancelFunc
 	l            *logger.Logger
+
+	srv *stdhttp.Server
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -90,7 +92,7 @@ func (p *service) PreRun() error {
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 
-	gwMux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(&healthCheckClient{}))
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 
@@ -116,22 +118,29 @@ func (p *service) PreRun() error {
 		return err
 	}
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	p.srv = &stdhttp.Server{
+		Addr:    p.listenAddr,
+		Handler: p.mux,
+	}
 	return nil
 }
 
 func (p *service) Serve() run.StopNotify {
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
-		_ = stdhttp.ListenAndServe(p.listenAddr, p.mux)
-		p.stopCh <- struct{}{}
+		if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
+			p.l.Error().Err(err)
+		}
+		close(p.stopCh)
 	}()
-
 	return p.stopCh
 }
 
 func (p *service) GracefulStop() {
+	if err := p.srv.Close(); err != nil {
+		p.l.Error().Err(err)
+	}
 	p.clientCloser()
-	close(p.stopCh)
 }
 
 func intercept404(handler, on404 stdhttp.Handler) stdhttp.HandlerFunc {

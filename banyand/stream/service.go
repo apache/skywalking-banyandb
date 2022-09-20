@@ -133,12 +133,10 @@ func (s *service) PreRun() error {
 func (s *service) Serve() run.StopNotify {
 	_ = s.schemaRepo.NotifyAll()
 	// run a serial watcher
-	go s.schemaRepo.Watcher()
+	s.schemaRepo.Watcher()
 
 	s.metadata.StreamRegistry().RegisterHandler(schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
 		&s.schemaRepo)
-
-	s.stopCh = make(chan struct{})
 	return s.stopCh
 }
 
@@ -158,5 +156,6 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		dbOpts: tsdb.DatabaseOpts{
 			EnableGlobalIndex: true,
 		},
+		stopCh: make(chan struct{}),
 	}, nil
 }
