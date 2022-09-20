@@ -19,7 +19,6 @@ import {
 import { LabelLayout, UniversalTransition } from 'echarts/features'
 import { CanvasRenderer } from 'echarts/renderers'
 
-import './assets/main.css'
 import './styles/custom.scss'
 import './styles/main.scss'
 
