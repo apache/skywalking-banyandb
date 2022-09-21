@@ -32,6 +32,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+
+	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -208,6 +210,13 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts.EncodingMethod = tsdb.EncodingMethod{
 		EncoderPool: encoding.NewPlainEncoderPool(name, chunkSize),
 		DecoderPool: encoding.NewPlainDecoderPool(name, chunkSize),
+	}
+	var err error
+	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {
+		return nil, err
+	}
+	if opts.SegmentInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.SegmentInterval); err != nil {
+		return nil, err
 	}
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{

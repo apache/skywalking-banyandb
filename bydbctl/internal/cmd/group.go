@@ -24,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -44,7 +45,7 @@ func newGroupCmd() *cobra.Command {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(common_v1.Group)
-					err := json.Unmarshal(request.data, g)
+					err := protojson.Unmarshal(request.data, g)
 					if err != nil {
 						return nil, err
 					}

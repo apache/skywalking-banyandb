@@ -79,6 +79,8 @@ func openDatabase(t *require.Assertions, path string) (db Database) {
 				EncoderPool: encoding.NewPlainEncoderPool("tsdb", 0),
 				DecoderPool: encoding.NewPlainDecoderPool("tsdb", 0),
 			},
+			BlockInterval:   IntervalRule{Num: 2},
+			SegmentInterval: IntervalRule{Num: 1, Unit: DAY},
 		})
 	t.NoError(err)
 	t.NotNil(db)
