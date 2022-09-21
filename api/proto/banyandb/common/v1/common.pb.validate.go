@@ -153,6 +153,127 @@ var _ interface {
 	ErrorName() string
 } = MetadataValidationError{}
 
+// Validate checks the field values on IntervalRule with the rules defined in
+// the proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *IntervalRule) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on IntervalRule with the rules defined
+// in the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in IntervalRuleMultiError, or
+// nil if none found.
+func (m *IntervalRule) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *IntervalRule) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if _, ok := IntervalRule_Unit_name[int32(m.GetUnit())]; !ok {
+		err := IntervalRuleValidationError{
+			field:  "Unit",
+			reason: "value must be one of the defined enum values",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if m.GetNum() <= 0 {
+		err := IntervalRuleValidationError{
+			field:  "Num",
+			reason: "value must be greater than 0",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		return IntervalRuleMultiError(errors)
+	}
+
+	return nil
+}
+
+// IntervalRuleMultiError is an error wrapping multiple validation errors
+// returned by IntervalRule.ValidateAll() if the designated constraints aren't met.
+type IntervalRuleMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m IntervalRuleMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m IntervalRuleMultiError) AllErrors() []error { return m }
+
+// IntervalRuleValidationError is the validation error returned by
+// IntervalRule.Validate if the designated constraints aren't met.
+type IntervalRuleValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e IntervalRuleValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e IntervalRuleValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e IntervalRuleValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e IntervalRuleValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e IntervalRuleValidationError) ErrorName() string { return "IntervalRuleValidationError" }
+
+// Error satisfies the builtin error interface
+func (e IntervalRuleValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sIntervalRule.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = IntervalRuleValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = IntervalRuleValidationError{}
+
 // Validate checks the field values on ResourceOpts with the rules defined in
 // the proto definition for this message. If any rules are violated, the first
 // error encountered is returned, or nil if there are no violations.
@@ -175,11 +296,136 @@ func (m *ResourceOpts) validate(all bool) error {
 
 	var errors []error
 
-	// no validation rules for ShardNum
+	if m.GetShardNum() <= 0 {
+		err := ResourceOptsValidationError{
+			field:  "ShardNum",
+			reason: "value must be greater than 0",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
 
-	// no validation rules for BlockNum
+	if m.GetBlockInterval() == nil {
+		err := ResourceOptsValidationError{
+			field:  "BlockInterval",
+			reason: "value is required",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
 
-	// no validation rules for Ttl
+	if all {
+		switch v := interface{}(m.GetBlockInterval()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "BlockInterval",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "BlockInterval",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetBlockInterval()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return ResourceOptsValidationError{
+				field:  "BlockInterval",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if m.GetSegmentInterval() == nil {
+		err := ResourceOptsValidationError{
+			field:  "SegmentInterval",
+			reason: "value is required",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if all {
+		switch v := interface{}(m.GetSegmentInterval()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "SegmentInterval",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "SegmentInterval",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetSegmentInterval()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return ResourceOptsValidationError{
+				field:  "SegmentInterval",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if m.GetTtl() == nil {
+		err := ResourceOptsValidationError{
+			field:  "Ttl",
+			reason: "value is required",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if all {
+		switch v := interface{}(m.GetTtl()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "Ttl",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, ResourceOptsValidationError{
+					field:  "Ttl",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetTtl()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return ResourceOptsValidationError{
+				field:  "Ttl",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
 
 	if len(errors) > 0 {
 		return ResourceOptsMultiError(errors)
@@ -279,6 +525,17 @@ func (m *Group) validate(all bool) error {
 
 	var errors []error
 
+	if m.GetMetadata() == nil {
+		err := GroupValidationError{
+			field:  "Metadata",
+			reason: "value is required",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
 	if all {
 		switch v := interface{}(m.GetMetadata()).(type) {
 		case interface{ ValidateAll() error }:
@@ -309,6 +566,17 @@ func (m *Group) validate(all bool) error {
 	}
 
 	// no validation rules for Catalog
+
+	if m.GetResourceOpts() == nil {
+		err := GroupValidationError{
+			field:  "ResourceOpts",
+			reason: "value is required",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
 
 	if all {
 		switch v := interface{}(m.GetResourceOpts()).(type) {

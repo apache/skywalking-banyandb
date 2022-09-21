@@ -44,23 +44,38 @@ message Metadata {
     int64 mod_revision = 5;
 }
 
+// IntervalRule is a structured duration
+message IntervalRule {
+    enum Unit {
+        UNIT_UNSPECIFIED = 0;
+        UNIT_HOUR = 1;
+        UNIT_DAY = 2;
+    }
+    // unit can only be UNIT_HOUR or UNIT_DAY
+    Unit unit = 1 [(validate.rules).enum.defined_only = true];
+    uint32 num = 2 [(validate.rules).uint32.gt = 0];
+}
+
 message ResourceOpts {
     // shard_num is the number of shards
-    uint32 shard_num = 1;
-    // block_num specific how many blocks in a segment
-    uint32 block_num = 2;
+    uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
+    // block_interval indicates the length of a block
+    // block_interval should be less than or equal to segment_interval
+    IntervalRule block_interval = 2 [(validate.rules).message.required = true];
+    // segment_interval indicates the length of a segment
+    IntervalRule segment_interval = 3 [(validate.rules).message.required = true];;
     // ttl indicates time to live, how long the data will be cached
-    string ttl = 3;
+    IntervalRule ttl = 4 [(validate.rules).message.required = true];
 }
 
 // Group is an internal object for Group management
 message Group {
     // metadata define the group's identity
-    common.v1.Metadata metadata = 1;
+    common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
     // catalog denotes which type of data the group contains
     common.v1.Catalog catalog = 2;
     // resourceOpts indicates the structure of the underlying kv storage
-    ResourceOpts resource_opts = 3;
+    ResourceOpts resource_opts = 3 [(validate.rules).message.required = true];
     // updated_at indicates when resources of the group are updated
     google.protobuf.Timestamp updated_at = 4;
 }

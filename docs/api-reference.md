@@ -5,10 +5,12 @@
 
 - [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
     - [Group](#banyandb-common-v1-Group)
+    - [IntervalRule](#banyandb-common-v1-IntervalRule)
     - [Metadata](#banyandb-common-v1-Metadata)
     - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
   
     - [Catalog](#banyandb-common-v1-Catalog)
+    - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
 - [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
     - [Node](#banyandb-database-v1-Node)
@@ -223,6 +225,22 @@ Group is an internal object for Group management
 
 
 
+<a name="banyandb-common-v1-IntervalRule"></a>
+
+### IntervalRule
+IntervalRule is a structured duration
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| unit | [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit) |  | unit can only be UNIT_HOUR or UNIT_DAY |
+| num | [uint32](#uint32) |  |  |
+
+
+
+
+
+
 <a name="banyandb-common-v1-Metadata"></a>
 
 ### Metadata
@@ -251,8 +269,9 @@ Metadata is for multi-tenant, multi-model use
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
-| block_num | [uint32](#uint32) |  | block_num specific how many blocks in a segment |
-| ttl | [string](#string) |  | ttl indicates time to live, how long the data will be cached |
+| block_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | block_interval indicates the length of a block block_interval should be less than or equal to segment_interval |
+| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
+| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
 
 
 
@@ -271,6 +290,19 @@ Metadata is for multi-tenant, multi-model use
 | CATALOG_UNSPECIFIED | 0 |  |
 | CATALOG_STREAM | 1 |  |
 | CATALOG_MEASURE | 2 |  |
+
+
+
+<a name="banyandb-common-v1-IntervalRule-Unit"></a>
+
+### IntervalRule.Unit
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UNIT_UNSPECIFIED | 0 |  |
+| UNIT_HOUR | 1 |  |
+| UNIT_DAY | 2 |  |
 
 
  

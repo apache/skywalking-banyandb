@@ -87,8 +87,8 @@ type DatabaseOpts struct {
 	Location           string
 	ShardNum           uint32
 	EncodingMethod     EncodingMethod
-	SegmentSize        IntervalRule
-	BlockSize          IntervalRule
+	SegmentInterval    IntervalRule
+	BlockInterval      IntervalRule
 	BlockMemSize       int64
 	SeriesMemSize      int64
 	EnableGlobalIndex  bool
@@ -160,19 +160,13 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}
-	segmentSize := opts.SegmentSize
+	segmentSize := opts.SegmentInterval
 	if segmentSize.Num == 0 {
-		segmentSize = IntervalRule{
-			Unit: DAY,
-			Num:  1,
-		}
+		return nil, errors.Wrap(ErrOpenDatabase, "segment interval is absent")
 	}
-	blockSize := opts.BlockSize
+	blockSize := opts.BlockInterval
 	if blockSize.Num == 0 {
-		blockSize = IntervalRule{
-			Unit: HOUR,
-			Num:  2,
-		}
+		return nil, errors.Wrap(ErrOpenDatabase, "block interval is absent")
 	}
 	if blockSize.EstimatedDuration() > segmentSize.EstimatedDuration() {
 		return nil, errors.Wrapf(ErrOpenDatabase, "the block size is bigger than the segment size")
