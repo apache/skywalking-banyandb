@@ -19,6 +19,8 @@ import {
 import { LabelLayout, UniversalTransition } from 'echarts/features'
 import { CanvasRenderer } from 'echarts/renderers'
 
+import { ElLoading } from 'element-plus'
+
 import './styles/custom.scss'
 import './styles/main.scss'
 
