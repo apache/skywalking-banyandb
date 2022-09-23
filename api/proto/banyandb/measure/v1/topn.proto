@@ -59,7 +59,7 @@ message TopNRequest {
     // TODO validate enum defined_only
     model.v1.AggregationFunction agg = 4;
     // criteria select counters.
-    repeated model.v1.Condition conditions = 5;
+    model.v1.Criteria criteria = 5;
     // field_value_sort indicates how to sort fields
     model.v1.Sort field_value_sort = 6;
 }

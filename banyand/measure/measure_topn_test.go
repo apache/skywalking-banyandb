@@ -61,11 +61,11 @@ var _ = Describe("Write and Count TopN for service_cpm_minute", func() {
 				iters, err := seeker.Seek()
 				Expect(err).ShouldNot(HaveOccurred())
 				for _, iter := range iters {
-					defer func(iterator tsdb.ItemIterator) {
+					defer func(iterator tsdb.Iterator) {
 						Expect(iterator.Close()).ShouldNot(HaveOccurred())
 					}(iter)
 					for {
-						if _, hasNext := iter.Next(); hasNext {
+						if hasNext := iter.Next(); hasNext {
 							num++
 						} else {
 							break

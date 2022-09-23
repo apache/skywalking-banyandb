@@ -100,7 +100,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 				return
 			}
 			for _, iter := range iters {
-				defer func(iter tsdb.ItemIterator) {
+				defer func(iter tsdb.Iterator) {
 					_ = iter.Close()
 				}(iter)
 				for {
@@ -198,7 +198,7 @@ func familyIdentity(name string, flag []byte) []byte {
 	return bytes.Join([][]byte{tsdb.Hash([]byte(name)), flag}, nil)
 }
 
-func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.TopNRequest) ([]tsdb.ItemIterator, error) {
+func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.TopNRequest) ([]tsdb.Iterator, error) {
 	seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRange(
 		request.GetTimeRange().GetBegin().AsTime(),
 		request.GetTimeRange().GetEnd().AsTime()),

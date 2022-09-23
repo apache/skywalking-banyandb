@@ -129,7 +129,7 @@ message TopNAggregation {
     // group_by_tag_names groups data points into statistical counters
     repeated string group_by_tag_names = 5;
     // criteria select partial data points from measure
-    repeated model.v1.Criteria criteria = 6;
+    model.v1.Criteria criteria = 6;
     // counters_number sets the number of counters to be tracked. The default value is 1000
     int32 counters_number = 7;
     // updated_at indicates when the measure is updated

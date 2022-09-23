@@ -59,6 +59,8 @@ var (
 	_ io.Closer           = (*topNProcessorManager)(nil)
 	_ flow.Sink           = (*topNStreamingProcessor)(nil)
 
+	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
+
 	TopNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
 		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
@@ -336,13 +338,11 @@ func (manager *topNProcessorManager) start() error {
 		src, _ := sources.NewChannel(srcCh)
 		streamingFlow := streaming.New(src)
 
-		if conditions := topNSchema.GetCriteria(); len(conditions) > 0 {
-			filters, buildErr := manager.buildFilters(conditions)
-			if buildErr != nil {
-				return buildErr
-			}
-			streamingFlow = streamingFlow.Filter(filters)
+		filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
+		if buildErr != nil {
+			return buildErr
 		}
+		streamingFlow = streamingFlow.Filter(filters)
 
 		mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
 		if innerErr != nil {
@@ -369,36 +369,60 @@ func (manager *topNProcessorManager) start() error {
 	return nil
 }
 
-func (manager *topNProcessorManager) buildFilters(criteria []*modelv1.Criteria) (flow.UnaryFunc[bool], error) {
-	var filters []conditionFilter
-	for _, group := range criteria {
-		for _, cond := range group.GetConditions() {
-			fIdx, tIdx, spec := pbv1.FindTagByName(manager.m.GetSchema().GetTagFamilies(), cond.GetName())
-			if spec == nil {
-				return nil, errors.New("fail to parse tag by name")
-			}
-			filters = append(filters, manager.buildFilterForTag(fIdx, tIdx, cond))
-		}
-	}
-
-	if len(filters) == 0 {
-		return func(_ context.Context, value interface{}) bool {
-			return true
-		}, nil
+func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (flow.UnaryFunc[bool], error) {
+	f, err := manager.buildFilterForCriteria(criteria)
+	if err != nil {
+		return nil, err
 	}
 
 	return func(_ context.Context, dataPoint any) bool {
 		tfs := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
-		for _, f := range filters {
-			if !f.predicate(tfs) {
-				return false
-			}
+		if !f.predicate(tfs) {
+			return false
 		}
 		return true
 	}, nil
 }
 
-func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset int, cond *modelv1.Condition) conditionFilter {
+func (manager *topNProcessorManager) buildFilterForCriteria(criteria *modelv1.Criteria) (conditionFilter, error) {
+	switch v := criteria.GetExp().(type) {
+	case *modelv1.Criteria_Condition:
+		return manager.buildFilterForCondition(v.Condition)
+	case *modelv1.Criteria_Le:
+		return manager.buildFilterForLogicalExpr(v.Le)
+	default:
+		return nil, errors.New("should not reach here")
+	}
+}
+
+// buildFilterForCondition builds a logical and composable filter for a logical expression which have underlying conditions,
+// or nested logical expressions as its children
+func (manager *topNProcessorManager) buildFilterForLogicalExpr(logicalExpr *modelv1.LogicalExpression) (conditionFilter, error) {
+	left, lErr := manager.buildFilterForCriteria(logicalExpr.Left)
+	if lErr != nil {
+		return nil, lErr
+	}
+	right, rErr := manager.buildFilterForCriteria(logicalExpr.Right)
+	if rErr != nil {
+		return nil, rErr
+	}
+	return composeWithOp(left, right, logicalExpr.Op), nil
+}
+
+func composeWithOp(left, right conditionFilter, op modelv1.LogicalExpression_LogicalOp) conditionFilter {
+	if op == modelv1.LogicalExpression_LOGICAL_OP_AND {
+		return &andFilter{left, right}
+	} else {
+		return &orFilter{left, right}
+	}
+}
+
+// buildFilterForCondition builds a single, composable filter for a single condition
+func (manager *topNProcessorManager) buildFilterForCondition(cond *modelv1.Condition) (conditionFilter, error) {
+	familyOffset, tagOffset, spec := pbv1.FindTagByName(manager.m.GetSchema().GetTagFamilies(), cond.GetName())
+	if spec == nil {
+		return nil, errors.New("fail to parse tag by name")
+	}
 	switch v := cond.GetValue().GetValue().(type) {
 	case *modelv1.TagValue_Int:
 		return &int64TagFilter{
@@ -408,7 +432,7 @@ func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset i
 			},
 			op:  cond.GetOp(),
 			val: v.Int.GetValue(),
-		}
+		}, nil
 	case *modelv1.TagValue_Str:
 		return &strTagFilter{
 			TagLocator: partition.TagLocator{
@@ -417,7 +441,7 @@ func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset i
 			},
 			op:  cond.GetOp(),
 			val: v.Str.GetValue(),
-		}
+		}, nil
 	case *modelv1.TagValue_Id:
 		return &idTagFilter{
 			TagLocator: partition.TagLocator{
@@ -426,9 +450,9 @@ func (manager *topNProcessorManager) buildFilterForTag(familyOffset, tagOffset i
 			},
 			op:  cond.GetOp(),
 			val: v.Id.GetValue(),
-		}
+		}, nil
 	default:
-		return nil
+		return nil, errUnsupportedConditionValueType
 	}
 }
 
@@ -576,6 +600,22 @@ func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) boo
 		return val < f.val
 	}
 	return false
+}
+
+type andFilter struct {
+	l, r conditionFilter
+}
+
+func (f *andFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
+	return f.l.predicate(tagFamilies) && f.r.predicate(tagFamilies)
+}
+
+type orFilter struct {
+	l, r conditionFilter
+}
+
+func (f *orFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
+	return f.l.predicate(tagFamilies) || f.r.predicate(tagFamilies)
 }
 
 // groupTagsLocator can be used to locate tags within families
