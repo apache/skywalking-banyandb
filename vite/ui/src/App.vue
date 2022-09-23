@@ -18,8 +18,8 @@
 -->
 
 <script setup>
-import { ElContainer, ElHeader, ElMain } from 'element-plus'
 import HeaderComponent from './components/Header/index.vue'
+import AsideComponent from './components/Database/Aside/index.vue'
 import { computed } from '@vue/runtime-core'
 import stores from './stores/index'
 import { useRouter, useRoute } from 'vue-router'
@@ -73,7 +73,7 @@ const handleRightItem = (index) => {
   <div id="app">
     <div @mousedown="appMouseDown" style="width: 100%; height:100%">
       <el-container>
-        <el-header v-if="show" style="height: 40px;">
+        <el-header v-if="show">
           <header-component :active="activePath" :showButton="showButton"></header-component>
         </el-header>
         <el-main>

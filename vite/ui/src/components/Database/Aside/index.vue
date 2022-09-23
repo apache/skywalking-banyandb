@@ -18,16 +18,19 @@
 -->
 
 <script setup>
-import stores from './stores/index'
+import stores from '../../../stores/index'
 import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
-import { Message, ElMenu, ElSubMenu, ElMenuItem, ElButton } from "element-plus"
-import RightMenuComponent from './components/RightMenu'
-import DialogResourcesComponent from './components/DialogResources'
+import { ElMessage } from 'element-plus'
+import RightMenuComponent from './components/RightMenu/index.vue'
+import DialogResourcesComponent from './components/DialogResources/index.vue'
 import { getCurrentInstance } from "@vue/runtime-core"
+import { ref } from 'vue'
 
 // eventBus
 const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
-const { aside, tags } = stores()
+const { ctx: that } = getCurrentInstance()
+const { aside, tags, menuState } = stores()
+const ruleForm = ref()
 // init data
 const list1 = [{
     icon: "el-icon-folder",
@@ -99,14 +102,14 @@ let groupForm = { // group dialog form
 let rules = rule // group dialog form rules
 
 // methods
-const getGroupLists = () => {
+function getGroupLists() {
     this.$loading.create()
     getGroupList()
         .then(res => {
             if (res.status == 200) {
                 let group = res.data.group
                 let length = group.length
-                this.groupLists = group
+                groupLists = group
                 group.forEach((item, index) => {
                     let catalog = item.catalog
                     let type = catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
@@ -121,435 +124,223 @@ const getGroupLists = () => {
                             if (length - 1 == index) {
                                 this.$loading.close()
                             }
-                            this.$forceUpdate()
+                            that.$forceUpdate()
                         })
                 })
             }
         })
 }
 
-
-$bus.$on('handleRightItem', (index) => {
-
-})
-</script>
-
-<script>
-import { mapState } from 'vuex'
-import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
-import { Message, ElMenu, ElSubMenu, ElMenuItem, ElButton } from "element-plus"
-import RightMenuComponent from './components/RightMenu'
-import DialogResourcesComponent from './components/DialogResources'
-const list1 = [{
-    icon: "el-icon-folder",
-    name: "new group",
-    id: "create Group"
-}, {
-    icon: "el-icon-folder",
-    name: "edit group",
-    id: "edit Group"
-}, {
-    icon: "el-icon-document",
-    name: "new resources",
-    id: "create resources"
-}, {
-    icon: "el-icon-refresh-right",
-    name: "refresh",
-    id: "refresh Group"
-}, {
-    icon: "el-icon-delete",
-    name: "delete",
-    id: "delete Group"
-}]
-const list2 = [{
-    icon: "el-icon-delete",
-    name: "delete",
-    id: "delete resources"
-}]
-const rule = {
-    name: [
-        {
-            required: true, message: 'Please enter the name of the group', trigger: 'blur'
-        }
-    ],
-    catalog: [
-        {
-            required: true, message: 'Please select the type of the group', trigger: 'blur'
-        }
-    ]
+function stopPropagation(e) {
+    e = e || window.event;
+    if (e.stopPropagation) {
+        e.stopPropagation();
+    } else {
+        e.cancelBubble = true;
+    }
 }
-export default {
-    name: 'AsideComponent',
 
-    computed: {
-        ...mapState({
-            isCollapse: (state) => state.aside.isCollapse,
-            // showRightMenu: (state) => state.menuState.showRightMenu,
-            // closeMenu: (state) => state.menuState.closeMenu,
-            tags: (state) => state.tags.tagsList,
-            currentMenu: (state) => state.tags.currentMenu
-        })
-    },
-    components: {
-        RightMenuComponent,
-        DialogResourcesComponent,
-        ElMenu,
-        ElSubMenu,
-        ElMenuItem,
-        ElButton
-    },
-    data() {
-        return {
-            groupLists: [],
-            rightMenuListTwo: list1, // right click group menu
-            rightMenuListThree: list2, // right click Resources menu
-            rightGroupIndex: 0, // right click group list index
-            rightChildIndex: 0, // right click Resources list index
-            rightClickType: 'group', // right click group or Resources
-            dialogVisible: false, // delete dialog
-            dialogGroupVisible: false, // group dialog
-            dialogResourcesVisible: false, // Resources dialog
-            setGroup: 'create', // group dialog is create or edit
-            operation: 'create', // Resources dialog is create or edit
-            type: 'stream', // Resources dialog is stream or measure
-            group: '',
-            groupForm: { // group dialog form
-                name: null,
-                catalog: 'CATALOG_STREAM'
-            },
-            rules: rule, // group dialog form rules
+/**
+ * open group or resources right menu
+ */
+function rightClick(e, index, indexChild) {
+    menuState.changeRightMenuList(rightMenuListThree)
+    rightClickType = 'resources'
+    rightGroupIndex = index
+    rightChildIndex = indexChild
+    openRightMenu(e)
+}
+function rightClickGroup(e, index) {
+    menuState.changeRightMenuList(rightMenuListTwo)
+    rightClickType = 'group'
+    rightGroupIndex = index
+    openRightMenu(e)
+}
+function openRightMenu(e) {
+    menuState.changeShowRightMenu(true)
+    menuState.changeLeft(e.pageX)
+    menuState.changeTop(e.pageY)
+    stopPropagation()
+}
+
+/**
+ * open stream or measure 
+ */
+function openResources(index, indexChildren) {
+    let item = groupLists[index].children[indexChildren]
+    /**
+     * Todo
+     * Measure or Stream?
+     */
+    if (groupLists[index].catalog == "CATALOG_MEASURE") {
+        item.metadata.type = "measure"
+    } else {
+        item.metadata.type = "stream"
+    }
+    tags.selectMenu(item)
+}
+
+/**
+ * click right menu item
+ */
+function handleRightItem(index) {
+    if (rightClickType == 'group') {
+        // right click group
+        let rightName = rightMenuListTwo[index].name
+        switch (rightName) {
+            case 'new group':
+                setGroup = 'create'
+                openCreateGroup()
+                break
+            case 'edit group':
+                setGroup = 'edit'
+                openEditGroup()
+                break
+            case 'new resources':
+                operation = 'create'
+                openResourcesDialog()
+                break
+            case 'refresh':
+                getGroupLists()
+                break
+            case 'delete':
+                openDeleteDialog()
+                break
         }
-    },
-    created() {
-        // get group list
-        this.getGroupLists()
-        // monitor click right menu item
-        this.$bus.$on('handleRightItem', (index) => {
-            this.handleRightItem(index)
-        })
-    },
+    } else {
+        // right click measure or stream
+        let rightName = rightMenuListThree[index].name
+        switch (rightName) {
+            case 'delete':
+                openDeleteDialog()
+        }
+    }
+    // close right menu
+    menuState.changeShowRightMenu(false)
+}
 
-    methods: {
-
-        /**
-         * get group data
-         */
-        getGroupLists() {
-            this.$loading.create()
-            getGroupList()
-                .then(res => {
-                    if (res.status == 200) {
-                        let group = res.data.group
-                        let length = group.length
-                        this.groupLists = group
-                        group.forEach((item, index) => {
-                            let catalog = item.catalog
-                            let type = catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-                            let name = item.metadata.name
-                            getStreamOrMeasureList(type, name)
-                                .then(res => {
-                                    if (res.status == 200) {
-                                        item.children = res.data[type]
-                                    }
-                                })
-                                .finally(() => {
-                                    if (length - 1 == index) {
-                                        this.$loading.close()
-                                    }
-                                    this.$forceUpdate()
-                                })
-                        })
-                    }
-                })
-        },
-        stopPropagation(e) {
-            e = e || window.event;
-            if (e.stopPropagation) {
-                e.stopPropagation();
-            } else {
-                e.cancelBubble = true;
-            }
-        },
-
-        /**
-         * open group or resources right menu
-         */
-        rightClick(e, index, indexChild) {
-            this.$store.commit('changeRightMenuList', this.rightMenuListThree)
-            this.rightClickType = 'resources'
-            this.rightGroupIndex = index
-            this.rightChildIndex = indexChild
-            this.openRightMenu(e)
-        },
-        rightClickGroup(e, index) {
-            this.$store.commit('changeRightMenuList', this.rightMenuListTwo)
-            this.rightClickType = 'group'
-            this.rightGroupIndex = index
-            this.openRightMenu(e)
-        },
-        openRightMenu(e) {
-            this.$store.commit("changeShowRightMenu", true)
-            this.$store.commit('changeLeft', e.pageX)
-            this.$store.commit('changeTop', e.pageY)
-            this.stopPropagation()
-        },
-
-        /**
-         * open stream or measure
-         */
-        openResources(index, indexChildren) {
-            let item = this.groupLists[index].children[indexChildren]
-            /**
-             * Todo
-             * Measure or Stream?
-             */
-            if (this.groupLists[index].catalog == "CATALOG_MEASURE") {
-                item.metadata.type = "measure"
-            } else {
-                item.metadata.type = "stream"
-            }
-            this.$store.commit('selectMenu', item)
-        },
-
-        /**
-         * click right menu item
-         */
-        handleRightItem(index) {
-            console.log('groupLists', this.groupLists)
-            if (this.rightClickType == 'group') {
-                // right click group
-                let rightName = this.rightMenuListTwo[index].name
-                switch (rightName) {
-                    case 'new group':
-                        this.setGroup = 'create'
-                        this.openCreateGroup()
-                        break
-                    case 'edit group':
-                        this.setGroup = 'edit'
-                        this.openEditGroup()
-                        break
-                    case 'new resources':
-                        this.operation = 'create'
-                        this.openResourcesDialog()
-                        break
-                    case 'refresh':
-                        this.getGroupLists()
-                        break
-                    case 'delete':
-                        this.openDeleteDialog()
-                        break
-                }
-            } else {
-                // right click measure or stream
-                let rightName = this.rightMenuListThree[index].name
-                switch (rightName) {
-                    case 'delete':
-                        this.openDeleteDialog()
-                }
-            }
-            // close right menu
-            this.$store.commit("changeShowRightMenu", false)
-        },
-
-        /**
-         * click right menu delete Resources
-         */
-        openDeleteDialog() {
-            this.dialogVisible = true
-        },
-        deleteGroupOrResources() {
-            let group = this.groupLists[this.rightGroupIndex].metadata.name
-            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-            if (this.rightClickType == 'group') {
-                // delete group
-                this.deleteGroup(group, type)
-            } else {
-                // delete measure or stream Resources
-                this.deleteResources(group, type)
-            }
-        },
-        deleteGroup(group, type) {
-            let children = this.groupLists[this.rightGroupIndex].children
-            // Check whether the Resources is open
-            for (let i = 0; i < children.length; i++) {
-                let Resources = children[i]
-                let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === Resources.metadata.name)
-                if (index != -1) {
-                    Message({
-                        message: 'There are Resources open in this group. Please close these Resources before proceeding',
-                        type: "warning",
+/**
+ * click right menu delete Resources
+ */
+function openDeleteDialog() {
+    dialogVisible = true
+}
+function deleteGroupOrResources() {
+    let group = groupLists[rightGroupIndex].metadata.name
+    let type = groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+    if (rightClickType == 'group') {
+        // delete group
+        deleteGroupFunc(group, type)
+    } else {
+        // delete measure or stream Resources
+        deleteResources(group, type)
+    }
+}
+function deleteGroupFunc(group, type) {
+    let children = groupLists[rightGroupIndex].children
+    // Check whether the Resources is open
+    for (let i = 0; i < children.length; i++) {
+        let Resources = children[i]
+        let index = tagsList.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === Resources.metadata.name)
+        if (index != -1) {
+            ElMessage({
+                message: 'There are Resources open in this group. Please close these Resources before proceeding',
+                type: "warning",
+                duration: 5000
+            })
+            dialogVisible = false
+            return
+        }
+    }
+    // delete group
+    this.$loading.create()
+    deleteGroup(group)
+        .then((res) => {
+            if (res.status == 200) {
+                if (res.data.deleted) {
+                    ElMessage({
+                        message: 'Delete succeeded',
+                        type: "success",
                         duration: 5000
                     })
-                    this.dialogVisible = false
-                    return
+                    getGroupLists()
                 }
             }
-            // delete group
-            this.$loading.create()
-            deleteGroup(group)
-                .then((res) => {
-                    if (res.status == 200) {
-                        if (res.data.deleted) {
-                            Message({
-                                message: 'Delete succeeded',
-                                type: "success",
-                                duration: 5000
-                            })
-                            this.getGroupLists()
-                        }
-                    }
-                })
-                .finally(() => {
-                    this.$loading.close()
-                    this.dialogVisible = false
-                })
-        },
-        deleteResources(group, type) {
-            let name = this.groupLists[this.rightGroupIndex].children[this.rightChildIndex].metadata.name
-            // Check whether the Resources is open
-            let index = this.tags.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
-            if (index != -1) {
-                Message({
-                    message: 'This resources has been opened. Please close the resources before proceeding!',
-                    type: "warning",
-                    duration: 5000
-                })
-                this.dialogVisible = false
-                return
+        })
+        .finally(() => {
+            this.$loading.close()
+            dialogVisible = false
+        })
+}
+function deleteResources(group, type) {
+    let name = groupLists[rightGroupIndex].children[rightChildIndex].metadata.name
+    // Check whether the Resources is open
+    let index = tagsList.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
+    if (index != -1) {
+        ElMessage({
+            message: 'This resources has been opened. Please close the resources before proceeding!',
+            type: "warning",
+            duration: 5000
+        })
+        dialogVisible = false
+        return
+    }
+    // delete Resources
+    this.$loading.create()
+    deleteStreamOrMeasure(type, group, name)
+        .then((res) => {
+            if (res.status == 200) {
+                if (res.data.deleted) {
+                    ElMessage({
+                        message: 'Delete succeeded',
+                        type: "success",
+                        duration: 5000
+                    })
+                    getGroupLists()
+                }
             }
-            // delete Resources
-            this.$loading.create()
-            deleteStreamOrMeasure(type, group, name)
-                .then((res) => {
-                    if (res.status == 200) {
-                        if (res.data.deleted) {
-                            Message({
-                                message: 'Delete succeeded',
-                                type: "success",
-                                duration: 5000
-                            })
-                            this.getGroupLists()
-                        }
-                    }
-                })
-                .finally(() => {
-                    this.$loading.close()
-                    this.dialogVisible = false
-                })
-        },
+        })
+        .finally(() => {
+            this.$loading.close()
+            dialogVisible = false
+        })
+}
 
-        /**
-         * click right menu 'new group' or 'edit group'
-         */
-        openCreateGroup() {
-            this.dialogGroupVisible = true
-        },
-        openEditGroup() {
-            let name = this.groupLists[this.rightGroupIndex].metadata.name
-            let catalog = this.groupLists[this.rightGroupIndex].catalog
-            this.groupForm.name = name
-            this.groupForm.catalog = catalog
-            this.dialogGroupVisible = true
-        },
-        // create group or edit group
-        confirmForm() {
-            this.setGroup == 'create' ? this.createGroup() : this.editGroup()
-        },
-        createGroup() {
-            this.$refs.ruleForm.validate((valid) => {
-                if (valid) {
-                    let data = {
-                        group: {
-                            metadata: {
-                                group: "",
-                                name: this.groupForm.name
-                            },
-                            catalog: this.groupForm.catalog
-                        }
-                    }
-                    this.$loading.create()
-                    createGroup(data)
-                        .then((res) => {
-                            if (res.status == 200) {
-                                this.getGroupLists()
-                                Message({
-                                    message: 'Created successfully',
-                                    type: "success",
-                                    duration: 3000
-                                })
-                            }
-                        })
-                        .finally(() => {
-                            this.dialogGroupVisible = false
-                            this.$loading.close()
-                        })
+/**
+ * click right menu 'new group' or 'edit group'
+ */
+function openCreateGroup() {
+    dialogGroupVisible = true
+}
+function openEditGroup() {
+    let name = groupLists[rightGroupIndex].metadata.name
+    let catalog = groupLists[rightGroupIndex].catalog
+    groupForm.name = name
+    groupForm.catalog = catalog
+    dialogGroupVisible = true
+}
+// create group or edit group
+function confirmForm() {
+    setGroup == 'create' ? createGroupFunc() : editGroupFunc()
+}
+function createGroupFunc() {
+    ruleForm.validate((valid) => {
+        if (valid) {
+            let data = {
+                group: {
+                    metadata: {
+                        group: "",
+                        name: groupForm.name
+                    },
+                    catalog: groupForm.catalog
                 }
-            })
-        },
-        editGroup() {
-            let name = this.groupLists[this.rightGroupIndex].metadata.name
-            this.$refs.ruleForm.validate((valid) => {
-                if (valid) {
-                    let data = {
-                        group: {
-                            metadata: {
-                                group: "",
-                                name: this.groupForm.name
-                            },
-                            catalog: this.groupForm.catalog
-                        }
-                    }
-                    this.$loading.create()
-                    editGroup(name, data)
-                        .then((res) => {
-                            if (res.status == 200) {
-                                this.getGroupLists()
-                                Message({
-                                    message: 'Update succeeded',
-                                    type: "success",
-                                    duration: 3000
-                                })
-                            }
-                        })
-                        .finally(() => {
-                            this.dialogGroupVisible = false
-                            this.$loading.close()
-                        })
-                }
-            })
-        },
-        // init form data
-        clearGroupForm() {
-            this.groupForm = {
-                name: null,
-                catalog: 'CATALOG_STREAM'
             }
-        },
-
-        /**
-         * click right menu 'new resources' or 'edit resources'
-         */
-        openResourcesDialog() {
-            // the group is stream or measure
-            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-            let group = this.groupLists[this.rightGroupIndex].metadata.name
-            this.group = group
-            this.type = type
-            this.dialogResourcesVisible = true
-        },
-        cancelResourcesDialog() {
-            this.dialogResourcesVisible = false
-        },
-        confirmResourcesDialog(form) {
-            let type = this.groupLists[this.rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-            let data = {}
-            data[type] = form
             this.$loading.create()
-            createResources(type, data)
+            createGroup(data)
                 .then((res) => {
                     if (res.status == 200) {
-                        this.getGroupLists()
-                        Message({
+                        getGroupLists()
+                        ElMessage({
                             message: 'Created successfully',
                             type: "success",
                             duration: 3000
@@ -557,12 +348,93 @@ export default {
                     }
                 })
                 .finally(() => {
-                    this.dialogResourcesVisible = false
+                    dialogGroupVisible = false
                     this.$loading.close()
                 })
         }
-    },
+    })
 }
+function editGroupFunc() {
+    let name = groupLists[rightGroupIndex].metadata.name
+    ruleForm.validate((valid) => {
+        if (valid) {
+            let data = {
+                group: {
+                    metadata: {
+                        group: "",
+                        name: groupForm.name
+                    },
+                    catalog: groupForm.catalog
+                }
+            }
+            this.$loading.create()
+            editGroup(name, data)
+                .then((res) => {
+                    if (res.status == 200) {
+                        getGroupLists()
+                        ElMessage({
+                            message: 'Update succeeded',
+                            type: "success",
+                            duration: 3000
+                        })
+                    }
+                })
+                .finally(() => {
+                    dialogGroupVisible = false
+                    this.$loading.close()
+                })
+        }
+    })
+}
+// init form data
+function clearGroupForm() {
+    groupForm = {
+        name: null,
+        catalog: 'CATALOG_STREAM'
+    }
+}
+
+/**
+ * click right menu 'new resources' or 'edit resources'
+ */
+function openResourcesDialog() {
+    // the group is stream or measure
+    let type = groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+    let group = groupLists[rightGroupIndex].metadata.name
+    group = group
+    type = type
+    dialogResourcesVisible = true
+}
+function cancelResourcesDialog() {
+    dialogResourcesVisible = false
+}
+function confirmResourcesDialog(form) {
+    let type = groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+    let data = {}
+    data[type] = form
+    this.$loading.create()
+    createResources(type, data)
+        .then((res) => {
+            if (res.status == 200) {
+                getGroupLists()
+                ElMessage({
+                    message: 'Created successfully',
+                    type: "success",
+                    duration: 3000
+                })
+            }
+        })
+        .finally(() => {
+            dialogResourcesVisible = false
+            this.$loading.close()
+        })
+}
+// get group list
+this.getGroupLists()
+// monitor click right menu item
+$bus.$on('handleRightItem', (index) => {
+    handleRightItem(index)
+})
 </script>
 
 <template>
@@ -571,7 +443,7 @@ export default {
             active-text-color="#6E38F7" style="height: 100%;" :collapse="isCollapse" :collapse-transition="false">
             <div v-for="(item, index) in groupLists" :key="item.metadata.name"
                 @contextmenu.prevent="rightClickGroup($event, index)">
-                <el-submenu :index="item.metadata.name + '-' + index" :disabled="item.catalog == 'CATALOG_MEASURE'">
+                <el-sub-menu :index="item.metadata.name + '-' + index" :disabled="item.catalog == 'CATALOG_MEASURE'">
                     <template slot="title">
                         <i class="el-icon-folder"></i>
                         <span slot="title" :title="item.metadata.name" style="width: 70%"
@@ -591,7 +463,7 @@ export default {
                             </el-menu-item>
                         </div>
                     </div>
-                </el-submenu>
+                </el-sub-menu>
             </div>
         </el-menu>
         <el-dialog title="Tips" :visible.sync="dialogVisible" width="25%" center>
