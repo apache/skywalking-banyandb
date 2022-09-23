@@ -19,7 +19,6 @@
 
 <script setup>
 import HeaderComponent from './components/Header/index.vue'
-import AsideComponent from './components/Database/Aside/index.vue'
 import { computed } from '@vue/runtime-core'
 import stores from './stores/index'
 import { useRouter, useRoute } from 'vue-router'
