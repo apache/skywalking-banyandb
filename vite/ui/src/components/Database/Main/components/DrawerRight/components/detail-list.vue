@@ -18,26 +18,22 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-    console.log(11111)
-}
 defineProps({
-    rightMenuList: Array
+    keyName: {
+        type: String,
+    },
+    value: {
+        type: [String, Number]
+    }
 })
 </script>
-
+ 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
+    <div style="width: 100%; height: 45px;" class="flex justify-between bd-bottom align-item-center">
+        <div class="text-main-color text-tips text-family">{{keyName}}</div>
+        <div style="width: 50%; text-align: right;"
+            class="text-secondary-color text-tips text-family text-overflow-hidden">
+            <span :title="value">{{value}}</span>
         </div>
     </div>
 </template>
-
-<style lang="scss" scoped>
-
-</style>

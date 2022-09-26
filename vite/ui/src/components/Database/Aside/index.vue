@@ -25,6 +25,7 @@ import RightMenuComponent from './components/RightMenu/index.vue'
 import DialogResourcesComponent from './components/DialogResources/index.vue'
 import { getCurrentInstance } from "@vue/runtime-core"
 import { ref } from 'vue'
+import { computed } from '@vue/runtime-core'
 
 // eventBus
 const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
@@ -430,7 +431,7 @@ function confirmResourcesDialog(form) {
         })
 }
 // get group list
-this.getGroupLists()
+getGroupLists()
 // monitor click right menu item
 $bus.$on('handleRightItem', (index) => {
     handleRightItem(index)

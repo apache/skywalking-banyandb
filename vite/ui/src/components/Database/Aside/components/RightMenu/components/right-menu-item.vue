@@ -18,26 +18,40 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-    console.log(11111)
-}
 defineProps({
-    rightMenuList: Array
+    icon: String,
+    name: String
 })
+let bdColor = 'white'
+let colorStr = 'var(--color-main-font)'
+function handleOver() {
+    bdColor = '#ecf5ff'
+    colorStr = 'var(--color-main)'
+}
+function handleLeave() {
+    bdColor = "white"
+    colorStr = "var(--color-main-font)"
+}
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
-        </div>
+    <div class="flex right-menu-item align-item-center pointer" @mouseover="handleOver" @mouseleave="handleLeave"
+        :style="{ backgroundColor: bdColor, color: colorStr}" @click="$emit('handleRightItem')">
+        <i :class="icon"></i>
+        <div style="width: 70%;" class="text-overflow-hidden margin-left-small">{{ name }}</div>
     </div>
 </template>
 
 <style lang="scss" scoped>
+.right-menu-item {
+    padding: 3px 6px 3px 6px;
+    width: calc(100% - 12px);
+    height: 40px;
+    text-align: start;
+}
 
+i {
+    font-size: 25px;
+    color: var(--color-main);
+}
 </style>

@@ -16,3 +16,17 @@
   ~ specific language governing permissions and limitations
   ~ under the License.
 -->
+
+<template>
+  <div class="startContainer flex center column">
+      <div class="text-big text-placeholder-color text-family margin-top-bottom">Welcome to BanyanDB Manager!</div>
+      <div class="text-title text-placeholder-color text-famil">Please open the file to start working!</div>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+.startContainer {
+  width: 100%;
+  height: 100%;
+}
+</style>

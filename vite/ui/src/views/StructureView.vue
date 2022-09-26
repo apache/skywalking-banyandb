@@ -17,27 +17,14 @@
   ~ under the License.
 -->
 
-<script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-    console.log(11111)
-}
-defineProps({
-    rightMenuList: Array
-})
-</script>
-
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
-        </div>
-    </div>
+    <h1>
+        this is structure
+    </h1>
 </template>
 
-<style lang="scss" scoped>
-
-</style>
+<script>
+export default{
+    name: 'StructureView',
+}
+</script>

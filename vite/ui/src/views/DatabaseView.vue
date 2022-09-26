@@ -21,6 +21,7 @@ import AsideComponent from '../components/Database/Aside/index.vue'
 import MainComponent from '../components/Database/Main/index.vue'
 import MainStartComponent from '../components/Database/Main/components/MainStart/index.vue'
 import stores from '../stores/index'
+import { computed } from '@vue/runtime-core'
 
 const { aside, tags } = stores()
 

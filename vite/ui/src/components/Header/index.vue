@@ -47,7 +47,7 @@ const changeAsideWidth = () => {
         aside.changeFatherWidth('65px')
     }
 }
-const props = defineProps({
+defineProps({
     active: {
         type: String,
         default: '/home'

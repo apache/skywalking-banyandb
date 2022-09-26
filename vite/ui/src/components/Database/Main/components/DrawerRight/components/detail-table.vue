@@ -18,26 +18,24 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-    console.log(11111)
-}
 defineProps({
-    rightMenuList: Array
+    tableData: {
+        type: Array,
+        required: true
+    }
 })
+let options = ['tags', 'type']
+function handleSelectionChange() { }
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
-        </div>
+    <div>
+        <el-table ref="multipleTable" height=395 stripe :data="tableData" highlight-current-row tooltip-effect="dark"
+            @selection-change="handleSelectionChange" border empty-text="No data yet">
+            <el-table-column type="index" label="number" width="80">
+            </el-table-column>
+            <el-table-column v-for="item in options" :key="item" :prop="item" :label="item" show-overflow-tooltip>
+            </el-table-column>
+        </el-table>
     </div>
 </template>
-
-<style lang="scss" scoped>
-
-</style>

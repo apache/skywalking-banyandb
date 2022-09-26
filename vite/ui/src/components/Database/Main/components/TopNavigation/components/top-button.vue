@@ -18,26 +18,42 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-    console.log(11111)
-}
 defineProps({
-    rightMenuList: Array
+    icon: {
+        type: String,
+    },
+    name: {
+        type: String
+    }
 })
-</script>
 
+// data
+let active = 'background-color: #F2F6FC'
+
+// methods
+function handleOver() {
+    active = "background-color: #ecf5ff; color: var(--color-main); font-color: var(--color-main)"
+}
+function handleLeave() {
+    active = "background-color: #F2F6FC; color: var(--color-main-font); font-color: var(--color-main-font)"
+}
+</script>
+    
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
-        </div>
+    <div class="button-item flex center text-main-color text-family" :style="active" @mouseover="handleOver"
+        @mouseleave="handleLeave">
+        <i :class="icon" class="text-big"></i>
+        <div class="text-main-color text-family text-title" :style="active">{{name}}</div>
     </div>
 </template>
-
+    
 <style lang="scss" scoped>
+.button-item {
+    height: 100%;
+    cursor: pointer;
+}
 
+i {
+    margin-right: 10px;
+}
 </style>
