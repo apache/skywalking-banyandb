@@ -17,104 +17,83 @@
  * under the License.
  */
 
-import Vue from 'vue'
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+
+import App from './App.vue'
+import router from './router'
+
 import axios from 'axios'
-import { Form, FormItem, Dialog, Select, Option, Button, Container, Header, Main, Aside, Menu, MenuItem, MenuItemGroup, Submenu, Image, Loading, Tooltip, Tag, Card, Drawer, MessageBox, Message, DatePicker, Input, Table, TableColumn, Pagination } from 'element-ui'
+import mitt from 'mitt'
+
 import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import {
-  TitleComponent,
-  TooltipComponent,
-  GridComponent,
-  DatasetComponent,
-  TransformComponent
+    TitleComponent,
+    TooltipComponent,
+    GridComponent,
+    DatasetComponent,
+    TransformComponent
 } from 'echarts/components'
 import { LabelLayout, UniversalTransition } from 'echarts/features'
 import { CanvasRenderer } from 'echarts/renderers'
-import App from './App.vue'
-import router from './router'
-import store from './store'
-import './assets/custom.scss'
-import './assets/main.scss'
 
+import { ElLoading, ElMessage } from 'element-plus'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+import './styles/custom.scss'
+import './styles/main.scss'
 
-Vue.config.productionTip = false
-
-Vue.use(Button)
-Vue.use(Container)
-Vue.use(Header)
-Vue.use(Main)
-Vue.use(Aside)
-Vue.use(Menu)
-Vue.use(MenuItem)
-Vue.use(MenuItemGroup)
-Vue.use(Submenu)
-Vue.use(Image)
-Vue.use(Tooltip)
-Vue.use(Tag)
-Vue.use(Card)
-Vue.use(Drawer)
-Vue.use(DatePicker)
-Vue.use(Input)
-Vue.use(Table)
-Vue.use(TableColumn)
-Vue.use((Pagination))
-Vue.use(Select)
-Vue.use(Option)
-Vue.use(Dialog)
-Vue.use(Form)
-Vue.use(FormItem)
-Vue.prototype.$confirm = MessageBox.confirm
-Vue.prototype.$loading = Loading
-Vue.prototype.$message = Message
-Vue.prototype.$message.error = (status, statusText) => {
-  Message({
-    message: status + statusText,
-    type: 'error',
-  })
-}
-Vue.prototype.$message.errorNet = () => {
-  Message({
-    message: 'Error: Please check the network connection!',
-    type: 'error'
-  })
-}
-Vue.prototype.$message.success = () => {
-  Message({
-    message: "OK",
-    type: 'success'
-  })
-}
-Vue.prototype.$loading.create = () => {
-  Vue.prototype.$loading.instance = Loading.service({
-    text: 'loading...',
-    spinner: 'el-icon-loading',
-    background: 'rgba(0, 0, 0, 0.8)',
-  })
-}
-Vue.prototype.$loading.close = () => {
-  Vue.nextTick(() => {
-    Vue.prototype.$loading.instance.close()
-  })
-}
-Vue.prototype.$bus = new Vue()
-
-Vue.prototype.$http = axios
+const app = createApp(App)
 
 echarts.use([
-  TitleComponent,
-  TooltipComponent,
-  GridComponent,
-  DatasetComponent,
-  TransformComponent,
-  BarChart,
-  LabelLayout,
-  UniversalTransition,
-  CanvasRenderer
+    TitleComponent,
+    TooltipComponent,
+    GridComponent,
+    DatasetComponent,
+    TransformComponent,
+    BarChart,
+    LabelLayout,
+    UniversalTransition,
+    CanvasRenderer
 ])
+app.$http = axios
+app.$loading = ElLoading
+app.$loading.create = () => {
+    app.$loading.instance = ElLoading.service({
+        text: 'loading...',
+        spinner: 'el-icon-loading',
+        background: 'rgba(0, 0, 0, 0.8)',
+    })
+}
+app.$loading.close = () => {
+    nextTick(() => {
+        app.$loading.instance.close()
+    })
+}
+app.$message = ElMessage
+app.$message.error = (status, text) => {
+    ElMessage({
+        message: status + statusText,
+        type: 'error',
+    })
+}
+app.$message.errorNet = () => {
+    ElMessage({
+        message: 'Error: Please check the network connection!',
+        type: 'error'
+    })
+}
+app.$message.success = () => {
+    ElMessage({
+        message: "OK",
+        type: 'success'
+    })
+}
 
-new Vue({
-  router,
-  store,
-  render: h => h(App)
-}).$mount('#app')
+app.use(createPinia())
+app.use(router)
+app.use(ElementPlus)
+
+app.mount('#app')
+app.config.globalProperties.mittBus = new mitt()

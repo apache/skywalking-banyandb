@@ -17,68 +17,62 @@
  * under the License.
  */
 
-import Vue from 'vue'
-import VueRouter from 'vue-router'
-import Home from '../views/Home.vue'
-import About from '../views/About.vue'
-import NotFound from '../views/NotFound.vue'
-import Database from '../views/Database.vue'
-import Structure from '../views/Structure.vue'
+import { createRouter, createWebHistory } from 'vue-router'
+import HomeView from '../views/HomeView.vue'
+import NotFoundView from '../views/NotFoundView.vue'
+import DatabaseView from '../views/DatabaseView.vue'
+import AboutView from '../views/AboutView.vue'
+import StructureView from '../views/StructureView.vue'
 
-Vue.use(VueRouter)
-
-const routes = [
-  {
-    path: '/',
-    redirect: '/home'
-  },
-  {
-    path: '/home',
-    name: 'Home',
-    component: Home,
-    meta: {
-      keepAlive: false,
-    }
-  },
-  {
-    path: '/database',
-    name: 'Database',
-    component: Database,
-    meta: {
-      keepAlive: true,
-    }
-  },
-  {
-    path: '/structure',
-    name: 'Structure',
-    component: Structure,
-    meta: {
-      keepAlive: false,
-    }
-  },
-  {
-    path: '/about',
-    name: 'About',
-    component: About,
-    meta: {
-      keepAlive: false,
-    }
-  },
-  {
-    // will match everything
-    path: '*',
-    name: 'NotFound',
-    component: NotFound,
-    meta: {
-      keepAlive: false,
-    }
-  },
-]
-
-const router = new VueRouter({
-  mode: 'history',
-  base: process.env.BASE_URL,
-  routes
+const router = createRouter({
+  history: createWebHistory(import.meta.env.BASE_URL),
+  routes: [
+    {
+      path: '/',
+      redirect: '/home'
+    },
+    {
+      path: '/home',
+      name: 'Home',
+      component: HomeView,
+      meta: {
+        keepAlive: false,
+      }
+    },
+    {
+      path: '/database',
+      name: 'Database',
+      component: DatabaseView,
+      meta: {
+        keepAlive: true,
+      }
+    },
+    {
+      path: '/structure',
+      name: 'StructureView',
+      component: StructureView,
+      meta: {
+        keepAlive: false,
+      }
+    },
+    {
+      path: '/about',
+      name: 'AboutView',
+      component: AboutView,
+      meta: {
+        keepAlive: false,
+      }
+    },
+    {
+      // will match everything
+      path: '/:pathMatch(.*)',
+      name: 'NotFound',
+      component: NotFoundView,
+      meta: {
+        keepAlive: false,
+      }
+    },
+  ]
 })
 
 export default router

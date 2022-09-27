@@ -20,7 +20,7 @@
 // axios response interceptors file
 
 import axios from "axios"
-import { Message } from "element-ui"
+import { ElMessage } from "element-plus"
 
 const axiosService = axios.create({
     //baseURL: "http://34.92.1.105:18913",// process.env.VUE_APP_BASE_API,
@@ -82,7 +82,7 @@ axiosService.interceptors.response.use(
         const resErr = error.data
         console.log(resErr)
         let msg = error.data.message ? error.data.message : error.message
-        Message({
+        ElMessage({
             message: msg,
             type: "error",
             duration: 5000
