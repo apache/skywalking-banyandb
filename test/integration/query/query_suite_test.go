@@ -34,6 +34,7 @@ import (
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	cases_topn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
 func TestIntegrationQuery(t *testing.T) {
@@ -61,7 +62,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 	now = timestamp.NowMilli()
 	interval := 500 * time.Millisecond
+	// stream
 	cases_stream_data.Write(conn, "data.json", now, interval)
+	// measure
 	cases_measure_data.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
@@ -83,6 +86,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   now,
 	}
 	Expect(err).NotTo(HaveOccurred())
+	cases_topn.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   now,
+	}
 })
 
 var _ = SynchronizedAfterSuite(func() {

@@ -370,6 +370,13 @@ func (manager *topNProcessorManager) start() error {
 }
 
 func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (flow.UnaryFunc[bool], error) {
+	// if criteria is nil, we handle all incoming elements
+	if criteria == nil {
+		return func(_ context.Context, dataPoint any) bool {
+			return true
+		}, nil
+	}
+
 	f, err := manager.buildFilterForCriteria(criteria)
 	if err != nil {
 		return nil, err

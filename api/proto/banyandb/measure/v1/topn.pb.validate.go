@@ -445,33 +445,38 @@ func (m *TopNRequest) validate(all bool) error {
 
 	// no validation rules for Agg
 
-	if all {
-		switch v := interface{}(m.GetCriteria()).(type) {
-		case interface{ ValidateAll() error }:
-			if err := v.ValidateAll(); err != nil {
-				errors = append(errors, TopNRequestValidationError{
-					field:  "Criteria",
-					reason: "embedded message failed validation",
-					cause:  err,
-				})
+	for idx, item := range m.GetConditions() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, TopNRequestValidationError{
+						field:  fmt.Sprintf("Conditions[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, TopNRequestValidationError{
+						field:  fmt.Sprintf("Conditions[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
 			}
-		case interface{ Validate() error }:
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
 			if err := v.Validate(); err != nil {
-				errors = append(errors, TopNRequestValidationError{
-					field:  "Criteria",
+				return TopNRequestValidationError{
+					field:  fmt.Sprintf("Conditions[%v]", idx),
 					reason: "embedded message failed validation",
 					cause:  err,
-				})
+				}
 			}
 		}
-	} else if v, ok := interface{}(m.GetCriteria()).(interface{ Validate() error }); ok {
-		if err := v.Validate(); err != nil {
-			return TopNRequestValidationError{
-				field:  "Criteria",
-				reason: "embedded message failed validation",
-				cause:  err,
-			}
-		}
+
 	}
 
 	// no validation rules for FieldValueSort

@@ -104,8 +104,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 					_ = iter.Close()
 				}(iter)
 				for {
-					if item, hasNext := iter.Next(); hasNext {
-						tuple, parseErr := parseTopNFamily(item, sourceMeasure.GetInterval())
+					if hasNext := iter.Next(); hasNext {
+						tuple, parseErr := parseTopNFamily(iter.Val(), sourceMeasure.GetInterval())
 						if parseErr != nil {
 							t.log.Error().Err(parseErr).
 								Str("topN", topNMetadata.GetName()).
