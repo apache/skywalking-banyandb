@@ -66,7 +66,19 @@ var _ = Describe("Stream", func() {
 		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: group1`))
+  name: group1
+catalog: CATALOG_STREAM
+resource_opts:
+  shard_num: 2
+  block_interval:
+    unit: UNIT_HOUR
+    num: 2
+  segment_interval:
+    unit: UNIT_DAY
+    num: 1
+  ttl:
+    unit: UNIT_DAY
+    num: 7`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

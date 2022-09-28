@@ -1377,6 +1377,15 @@
       "default": "ANALYZER_UNSPECIFIED",
       "description": " - ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase."
     },
+    "IntervalRuleUnit": {
+      "type": "string",
+      "enum": [
+        "UNIT_UNSPECIFIED",
+        "UNIT_HOUR",
+        "UNIT_DAY"
+      ],
+      "default": "UNIT_UNSPECIFIED"
+    },
     "LogicalExpressionLogicalOp": {
       "type": "string",
       "enum": [
@@ -1780,6 +1789,20 @@
         }
       }
     },
+    "v1IntervalRule": {
+      "type": "object",
+      "properties": {
+        "unit": {
+          "$ref": "#/definitions/IntervalRuleUnit",
+          "title": "unit can only be UNIT_HOUR or UNIT_DAY"
+        },
+        "num": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "title": "IntervalRule is a structured duration"
+    },
     "v1LogicalExpression": {
       "type": "object",
       "properties": {
@@ -1910,13 +1933,16 @@
           "format": "int64",
           "title": "shard_num is the number of shards"
         },
-        "blockNum": {
-          "type": "integer",
-          "format": "int64",
-          "title": "block_num specific how many blocks in a segment"
+        "blockInterval": {
+          "$ref": "#/definitions/v1IntervalRule",
+          "title": "block_interval indicates the length of a block\nblock_interval should be less than or equal to segment_interval"
+        },
+        "segmentInterval": {
+          "$ref": "#/definitions/v1IntervalRule",
+          "title": "segment_interval indicates the length of a segment"
         },
         "ttl": {
-          "type": "string",
+          "$ref": "#/definitions/v1IntervalRule",
           "title": "ttl indicates time to live, how long the data will be cached"
         }
       }
