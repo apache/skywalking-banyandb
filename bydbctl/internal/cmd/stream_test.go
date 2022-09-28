@@ -19,6 +19,7 @@ package cmd_test
 
 import (
 	"context"
+	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"strings"
 	"time"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
@@ -76,7 +76,12 @@ metadata:
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
-  group: group1`))
+  group: group1
+tagFamilies:
+  - name: searchable
+    tags: 
+      - name: trace_id
+        type: TAG_TYPE_STRING`))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -91,7 +96,7 @@ metadata:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		resp := new(database_v1.StreamRegistryServiceGetResponse)
-		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
+		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Stream.Metadata.Name).To(Equal("name1"))
 	})
@@ -157,8 +162,33 @@ metadata:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		resp := new(database_v1.StreamRegistryServiceListResponse)
-		Expect(yaml.Unmarshal([]byte(out), resp)).To(Succeed())
+		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Stream).To(HaveLen(2))
+	})
+
+	It("query stream data", func() {
+		rootCmd.SetArgs([]string{"stream", "query", "-g", "group1", "-n", "name1"})
+		rootCmd.SetIn(strings.NewReader(`
+	metadata:
+	 name: name1
+	 group: group1
+	timeRange:
+	 begin: 2022-09-27T00:00:00Z
+	 end: 2022-09-27T00:00:30Z
+	projection:
+	 tagFamilies:
+	   - name: searchable
+	     tags:
+	       - trace_id`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out) // todo
+		resp := new(stream_v1.QueryResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		GinkgoWriter.Println(resp)
+		Expect(resp.Elements).To(HaveLen(1))
 	})
 
 	AfterEach(func() {

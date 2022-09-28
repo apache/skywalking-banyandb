@@ -104,7 +104,6 @@ func newStreamCmd() *cobra.Command {
 				})
 		},
 	}
-	bindFileFlag(createCmd, updateCmd)
 
 	getCmd := &cobra.Command{
 		Use:     "get [-g group] -n name",
@@ -145,12 +144,9 @@ func newStreamCmd() *cobra.Command {
 	}
 
 	queryCmd := &cobra.Command{
-		Use:     "query",
+		Use:     "query -f [file|dir|-]",
 		Version: version.Build(),
 		Short:   "Query data in a stream",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
@@ -158,6 +154,8 @@ func newStreamCmd() *cobra.Command {
 				}, yamlPrinter)
 		},
 	}
+	bindFileFlag(createCmd, updateCmd, queryCmd)
+
 	streamCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return streamCmd
 }
