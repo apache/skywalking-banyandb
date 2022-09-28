@@ -218,6 +218,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	if opts.SegmentInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.SegmentInterval); err != nil {
 		return nil, err
 	}
+	if opts.TTL, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.Ttl); err != nil {
+		return nil, err
+	}
 	return tsdb.OpenDatabase(
 		context.WithValue(context.Background(), common.PositionKey, common.Position{
 			Module:   "stream",
