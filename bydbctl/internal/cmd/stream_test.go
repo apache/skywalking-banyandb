@@ -19,7 +19,6 @@ package cmd_test
 
 import (
 	"context"
-	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"strings"
 	"time"
 
@@ -40,6 +39,7 @@ import (
 	"github.com/zenizh/go-capturer"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 )
 
 var _ = Describe("Stream", func() {
@@ -167,19 +167,19 @@ metadata:
 	})
 
 	It("query stream data", func() {
-		rootCmd.SetArgs([]string{"stream", "query", "-g", "group1", "-n", "name1"})
+		rootCmd.SetArgs([]string{"stream", "query", "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
-	metadata:
-	 name: name1
-	 group: group1
-	timeRange:
-	 begin: 2022-09-27T00:00:00Z
-	 end: 2022-09-27T00:00:30Z
-	projection:
-	 tagFamilies:
-	   - name: searchable
-	     tags:
-	       - trace_id`))
+metadata:
+  name: name1
+  group: group1
+timeRange:
+  begin: 2022-09-27T00:00:00Z
+  end: 2022-09-27T00:00:30Z
+projection:
+  tagFamilies:
+    - name: searchable
+      tags:
+        - trace_id`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
