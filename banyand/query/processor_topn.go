@@ -21,9 +21,11 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"math"
 	"time"
 
+	"github.com/emirpasic/gods/queues/priorityqueue"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
@@ -112,7 +114,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 								Msg("fail to parse topN family")
 							return
 						}
-						_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64))
+						_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64), iter.Val().Time())
 					} else {
 						break
 					}
@@ -121,22 +123,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}
 
-	itemLen := int(math.Min(float64(request.GetTopN()), float64(aggregator.Len())))
-	topNItems := make([]*measurev1.TopNList_Item, 0, itemLen)
-
-	for _, item := range aggregator.items[0:itemLen] {
-		topNItems = append(topNItems, &measurev1.TopNList_Item{
-			Name: item.key,
-			Value: &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{Value: item.int64Func.Val()},
-				},
-			},
-		})
-	}
-
 	now := time.Now().UnixNano()
-	resp = bus.NewMessage(bus.MessageID(now), topNItems)
+	resp = bus.NewMessage(bus.MessageID(now), aggregator.val())
 
 	return
 }
@@ -216,47 +204,69 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 	return seeker.Seek()
 }
 
-var _ heap.Interface = (*topNPostAggregator)(nil)
+var _ heap.Interface = (*postAggregationProcessor)(nil)
 
-type topNAggregatorItem struct {
+type aggregatorItem struct {
 	key       string
 	int64Func aggregation.Int64Func
 	index     int
 }
 
-type topNPostAggregator struct {
-	topN     int32
-	sort     modelv1.Sort
-	aggrFunc modelv1.AggregationFunction
-	items    []*topNAggregatorItem
-	cache    map[string]*topNAggregatorItem
+// postProcessor defines necessary methods for Top-N post processor with or without aggregation
+type postProcessor interface {
+	put(key string, val int64, timestampMillis uint64) error
+	val() []*measurev1.TopNList
 }
 
-func (aggr topNPostAggregator) Len() int {
+func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) postProcessor {
+	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		// if aggregation is not specified, we have to keep all timelines
+	}
+	aggregator := &postAggregationProcessor{
+		topN:     topN,
+		sort:     sort,
+		aggrFunc: aggrFunc,
+		cache:    make(map[string]*aggregatorItem),
+	}
+	heap.Init(aggregator)
+	return aggregator
+}
+
+// postAggregationProcessor is an implementation of postProcessor with aggregation
+type postAggregationProcessor struct {
+	topN            int32
+	sort            modelv1.Sort
+	aggrFunc        modelv1.AggregationFunction
+	items           []*aggregatorItem
+	cache           map[string]*aggregatorItem
+	latestTimestamp uint64
+}
+
+func (aggr postAggregationProcessor) Len() int {
 	return len(aggr.items)
 }
 
-func (aggr topNPostAggregator) Less(i, j int) bool {
+func (aggr postAggregationProcessor) Less(i, j int) bool {
 	if aggr.sort == modelv1.Sort_SORT_DESC {
 		return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
 	}
 	return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
 }
 
-func (aggr *topNPostAggregator) Swap(i, j int) {
+func (aggr *postAggregationProcessor) Swap(i, j int) {
 	aggr.items[i], aggr.items[j] = aggr.items[j], aggr.items[i]
 	aggr.items[i].index = i
 	aggr.items[j].index = j
 }
 
-func (aggr *topNPostAggregator) Push(x any) {
+func (aggr *postAggregationProcessor) Push(x any) {
 	n := len(aggr.items)
-	item := x.(*topNAggregatorItem)
+	item := x.(*aggregatorItem)
 	item.index = n
 	aggr.items = append(aggr.items, item)
 }
 
-func (aggr *topNPostAggregator) Pop() any {
+func (aggr *postAggregationProcessor) Pop() any {
 	old := aggr.items
 	n := len(old)
 	item := old[n-1]
@@ -266,18 +276,11 @@ func (aggr *topNPostAggregator) Pop() any {
 	return item
 }
 
-func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) *topNPostAggregator {
-	aggregator := &topNPostAggregator{
-		topN:     topN,
-		sort:     sort,
-		aggrFunc: aggrFunc,
-		cache:    make(map[string]*topNAggregatorItem),
+func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
+	// update latest ts
+	if aggr.latestTimestamp < timestampMillis {
+		aggr.latestTimestamp = timestampMillis
 	}
-	heap.Init(aggregator)
-	return aggregator
-}
-
-func (aggr *topNPostAggregator) put(key string, val int64) error {
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
 		heap.Fix(aggr, item.index)
@@ -287,12 +290,74 @@ func (aggr *topNPostAggregator) put(key string, val int64) error {
 	if err != nil {
 		return err
 	}
-	item := &topNAggregatorItem{
+	item := &aggregatorItem{
 		key:       key,
 		int64Func: aggrFunc,
 	}
 	item.int64Func.In(val)
 	aggr.cache[key] = item
 	heap.Push(aggr, item)
+	return nil
+}
+
+func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
+	itemLen := int(math.Min(float64(aggr.topN), float64(aggr.Len())))
+	topNItems := make([]*measurev1.TopNList_Item, 0, itemLen)
+
+	for _, item := range aggr.items[0:itemLen] {
+		topNItems = append(topNItems, &measurev1.TopNList_Item{
+			Name: item.key,
+			Value: &modelv1.FieldValue{
+				Value: &modelv1.FieldValue_Int{
+					Int: &modelv1.Int{Value: item.int64Func.Val()},
+				},
+			},
+		})
+	}
+	return []*measurev1.TopNList{
+		{
+			Timestamp: timestamppb.New(time.UnixMilli(int64(aggr.latestTimestamp))),
+			Items:     topNItems,
+		},
+	}
+}
+
+type nonAggregatorItem struct {
+	key string
+	val int64
+}
+
+type postNonAggregationProcessor struct {
+	topN      int32
+	sort      modelv1.Sort
+	timelines map[uint64]*priorityqueue.Queue
+}
+
+func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
+	if timeline, ok := naggr.timelines[timestampMillis]; ok {
+		timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+		return nil
+	}
+
+	timeline := priorityqueue.NewWith(func(a, b interface{}) int {
+		if naggr.sort == modelv1.Sort_SORT_DESC {
+			if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
+				return 1
+			} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
+				return 0
+			} else {
+				return -1
+			}
+		}
+		if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
+			return -1
+		} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
+			return 0
+		} else {
+			return 1
+		}
+	})
+	naggr.timelines[timestampMillis] = timeline
+
 	return nil
 }
