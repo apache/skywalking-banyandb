@@ -61,7 +61,7 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 }
 
 func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue, cb index.CallbackFn) error {
-	t := value.GetTimestamp().AsTime()
+	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
 	}
