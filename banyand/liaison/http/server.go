@@ -67,7 +67,7 @@ type service struct {
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
-	flagSet.StringVar(&p.grpcAddr, "grcp-addr", "localhost:17912", "the grpc addr")
+	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
 	return flagSet
 }
 

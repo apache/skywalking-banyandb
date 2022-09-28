@@ -45,7 +45,7 @@ var _ = Describe("Query service_cpm_minute", func() {
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
 		keyFile := filepath.Join(basePath, "testdata/server_key.pem")
 		var addr string
-		addr, deferFn = setup.SetUp("--tls=true", "--cert-file="+certFile, "--key-file="+keyFile)
+		addr, _, deferFn = setup.SetUp("--tls=true", "--cert-file="+certFile, "--key-file="+keyFile)
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		Expect(err).NotTo(HaveOccurred())

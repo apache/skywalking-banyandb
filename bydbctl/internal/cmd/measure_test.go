@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
@@ -33,22 +33,12 @@ import (
 )
 
 var _ = Describe("Measure", func() {
-	var path string
-	var gracefulStop, deferFunc func()
-	var listenClientURL, listenPeerURL string
+	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		var err error
-		path, deferFunc, err = test.NewSpace()
-		Expect(err).NotTo(HaveOccurred())
-		listenClientURL, listenPeerURL, err = test.NewEtcdListenUrls()
-		Expect(err).NotTo(HaveOccurred())
-		flags := []string{
-			"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
-			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
-		}
-		gracefulStop = setup(false, flags)
-		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
+		var addr string
+		_, addr, deferFunc = setup.SetUp()
+		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		time.Sleep(1 * time.Second)
 		// extracting the operation of creating measure schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -156,7 +146,6 @@ metadata:
 	})
 
 	AfterEach(func() {
-		gracefulStop()
 		deferFunc()
 	})
 })

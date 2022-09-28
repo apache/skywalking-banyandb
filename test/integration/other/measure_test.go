@@ -39,7 +39,7 @@ var _ = Describe("Query service_cpm_minute", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, deferFn = setup.SetUp()
+		addr, _, deferFn = setup.SetUp()
 		var err error
 		conn, err = grpclib.Dial(
 			addr,

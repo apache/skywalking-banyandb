@@ -18,52 +18,43 @@
 package cmd_test
 
 import (
-	"context"
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/query"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+)
+
+const (
+	RFC3339 = "2006-01-02T15:04:05Z07:00"
 )
 
 var _ = Describe("Stream", func() {
-	var path string
-	var gracefulStop, deferFunc func()
-	var listenClientURL, listenPeerURL string
+	var addr, grpcAddr string
+	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		var err error
-		path, deferFunc, err = test.NewSpace()
-		Expect(err).NotTo(HaveOccurred())
-		listenClientURL, listenPeerURL, err = test.NewEtcdListenUrls()
-		Expect(err).NotTo(HaveOccurred())
-		flags := []string{
-			"--stream-root-path=" + path, "--measure-root-path=" + path, "--metadata-root-path=" + path,
-			"--etcd-listen-client-url=" + listenClientURL, "--etcd-listen-peer-url=" + listenPeerURL,
-		}
-		gracefulStop = setup(false, flags)
-		Eventually(helpers.HTTPHealthCheck("localhost:17913"), 10*time.Second).Should(Succeed())
+		grpcAddr, addr, deferFunc = setup.SetUp()
+		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		addr = "http://" + addr
 		time.Sleep(1 * time.Second)
 		// extracting the operation of creating stream schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})
+		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: group1
@@ -84,7 +75,7 @@ resource_opts:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(ContainSubstring("group group1 is created"))
-		rootCmd.SetArgs([]string{"stream", "create", "-f", "-"})
+		rootCmd.SetArgs([]string{"stream", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
@@ -179,20 +170,29 @@ metadata:
 	})
 
 	FIt("query stream data", func() {
-		rootCmd.SetArgs([]string{"stream", "query", "-f", "-"})
+		conn, err := grpclib.Dial(
+			grpcAddr,
+			grpclib.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		now := timestamp.NowMilli()
+		interval := 500 * time.Millisecond
+		end := now.Add(5 * interval)
+		cases_stream_data.Write(conn, "data.json", now, interval)
+		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
-			rootCmd.SetIn(strings.NewReader(`
+			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
 metadata:
-  name: name1
-  group: group1
+  name: sw
+  group: default
 timeRange:
-  begin: 2022-09-27T00:00:00Z
-  end: 2022-09-27T00:00:30Z
+  begin: %s
+  end: %s
 projection:
   tagFamilies:
     - name: searchable
       tags:
-        - trace_id`))
+        - trace_id`, now.Format(RFC3339), end.Format(RFC3339))))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -204,77 +204,10 @@ projection:
 		resp := new(stream_v1.QueryResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		GinkgoWriter.Println(resp)
-		Expect(resp.Elements).To(HaveLen(0))
+		Expect(resp.Elements).To(HaveLen(5))
 	})
 
 	AfterEach(func() {
-		gracefulStop()
 		deferFunc()
 	})
 })
-
-func setup(loadMetadata bool, flags []string) func() {
-	// Init `Discovery` module
-	repo, err := discovery.NewServiceRepo(context.Background())
-	Expect(err).NotTo(HaveOccurred())
-	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	Expect(err).NotTo(HaveOccurred())
-	// Init `Metadata` module
-	metaSvc, err := metadata.NewService(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
-	// Init `Stream` module
-	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
-	Expect(err).NotTo(HaveOccurred())
-	// Init `Measure` module
-	measureSvc, err := measure.NewService(context.TODO(), metaSvc, repo, pipeline)
-	Expect(err).NotTo(HaveOccurred())
-	// Init `Query` module
-	q, err := query.NewExecutor(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
-	Expect(err).NotTo(HaveOccurred())
-	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
-
-	httpServer := http.NewService()
-	if loadMetadata {
-		return test.SetUpModules(
-			flags,
-			repo,
-			pipeline,
-			metaSvc,
-			&preloadStreamService{metaSvc: metaSvc},
-			&preloadMeasureService{metaSvc: metaSvc},
-			streamSvc,
-			measureSvc,
-			q,
-			tcp,
-			httpServer,
-		)
-	}
-	return test.SetUpModules(
-		flags,
-		repo,
-		pipeline,
-		metaSvc,
-		streamSvc,
-		measureSvc,
-		q,
-		tcp,
-		httpServer,
-	)
-}
-
-type preloadStreamService struct {
-	metaSvc metadata.Service
-}
-
-type preloadMeasureService struct {
-	metaSvc metadata.Service
-}
-
-func (p *preloadStreamService) Name() string {
-	return "preload-stream"
-}
-
-func (p *preloadMeasureService) Name() string {
-	return "preload-measure"
-}
