@@ -57,34 +57,34 @@ echarts.use([
     UniversalTransition,
     CanvasRenderer
 ])
-app.$http = axios
-app.$loading = ElLoading
-app.$loading.create = () => {
+app.config.globalProperties.$http = axios
+app.config.globalProperties.$loading = ElLoading
+app.config.globalProperties.$loading.create = () => {
     app.$loading.instance = ElLoading.service({
         text: 'loading...',
         spinner: 'el-icon-loading',
         background: 'rgba(0, 0, 0, 0.8)',
     })
 }
-app.$loading.close = () => {
+app.config.globalProperties.$loading.close = () => {
     nextTick(() => {
         app.$loading.instance.close()
     })
 }
-app.$message = ElMessage
-app.$message.error = (status, text) => {
+app.config.globalProperties.$message = ElMessage
+app.config.globalProperties.$message.error = (status, text) => {
     ElMessage({
         message: status + statusText,
         type: 'error',
     })
 }
-app.$message.errorNet = () => {
+app.config.globalProperties.$message.errorNet = () => {
     ElMessage({
         message: 'Error: Please check the network connection!',
         type: 'error'
     })
 }
-app.$message.success = () => {
+app.config.globalProperties.$message.success = () => {
     ElMessage({
         message: "OK",
         type: 'success'

@@ -27,6 +27,7 @@ import { getCurrentInstance } from "@vue/runtime-core"
 import { ref } from 'vue'
 import { computed } from '@vue/runtime-core'
 
+const $loading = getCurrentInstance().appContext.config.globalProperties.$loading
 // eventBus
 const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
 const { ctx: that } = getCurrentInstance()
@@ -104,7 +105,7 @@ let rules = rule // group dialog form rules
 
 // methods
 function getGroupLists() {
-    this.$loading.create()
+    $loading.create()
     getGroupList()
         .then(res => {
             if (res.status == 200) {
@@ -123,7 +124,7 @@ function getGroupLists() {
                         })
                         .finally(() => {
                             if (length - 1 == index) {
-                                this.$loading.close()
+                                $loading.close()
                             }
                             that.$forceUpdate()
                         })
@@ -254,7 +255,7 @@ function deleteGroupFunc(group, type) {
         }
     }
     // delete group
-    this.$loading.create()
+    $loading.create()
     deleteGroup(group)
         .then((res) => {
             if (res.status == 200) {
@@ -269,7 +270,7 @@ function deleteGroupFunc(group, type) {
             }
         })
         .finally(() => {
-            this.$loading.close()
+            $loading.close()
             dialogVisible = false
         })
 }
@@ -287,7 +288,7 @@ function deleteResources(group, type) {
         return
     }
     // delete Resources
-    this.$loading.create()
+    $loading.create()
     deleteStreamOrMeasure(type, group, name)
         .then((res) => {
             if (res.status == 200) {
@@ -302,7 +303,7 @@ function deleteResources(group, type) {
             }
         })
         .finally(() => {
-            this.$loading.close()
+            $loading.close()
             dialogVisible = false
         })
 }
@@ -336,7 +337,7 @@ function createGroupFunc() {
                     catalog: groupForm.catalog
                 }
             }
-            this.$loading.create()
+            $loading.create()
             createGroup(data)
                 .then((res) => {
                     if (res.status == 200) {
@@ -350,7 +351,7 @@ function createGroupFunc() {
                 })
                 .finally(() => {
                     dialogGroupVisible = false
-                    this.$loading.close()
+                    $loading.close()
                 })
         }
     })
@@ -368,7 +369,7 @@ function editGroupFunc() {
                     catalog: groupForm.catalog
                 }
             }
-            this.$loading.create()
+            $loading.create()
             editGroup(name, data)
                 .then((res) => {
                     if (res.status == 200) {
@@ -382,7 +383,7 @@ function editGroupFunc() {
                 })
                 .finally(() => {
                     dialogGroupVisible = false
-                    this.$loading.close()
+                    $loading.close()
                 })
         }
     })
@@ -413,7 +414,7 @@ function confirmResourcesDialog(form) {
     let type = groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
     let data = {}
     data[type] = form
-    this.$loading.create()
+    $loading.create()
     createResources(type, data)
         .then((res) => {
             if (res.status == 200) {
@@ -427,7 +428,7 @@ function confirmResourcesDialog(form) {
         })
         .finally(() => {
             dialogResourcesVisible = false
-            this.$loading.close()
+            $loading.close()
         })
 }
 // get group list
