@@ -25,11 +25,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/pkg/errors"
 )
 
 type measureService struct {
@@ -99,11 +101,14 @@ func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.Que
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	queryMsg, ok := msg.Data().([]*measurev1.DataPoint)
-	if !ok {
-		return nil, ErrQueryMsg
+	data := msg.Data()
+	switch d := data.(type) {
+	case []*measurev1.DataPoint:
+		return &measurev1.QueryResponse{DataPoints: d}, nil
+	case common.Error:
+		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return &measurev1.QueryResponse{DataPoints: queryMsg}, nil
+	return nil, ErrQueryMsg
 }
 
 // TODO: implement topN

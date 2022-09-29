@@ -25,11 +25,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/pkg/errors"
 )
 
 type streamService struct {
@@ -103,9 +105,12 @@ func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryR
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	queryMsg, ok := msg.Data().([]*streamv1.Element)
-	if !ok {
-		return nil, ErrQueryMsg
+	data := msg.Data()
+	switch d := data.(type) {
+	case []*streamv1.Element:
+		return &streamv1.QueryResponse{Elements: d}, nil
+	case common.Error:
+		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return &streamv1.QueryResponse{Elements: queryMsg}, nil
+	return nil, ErrQueryMsg
 }

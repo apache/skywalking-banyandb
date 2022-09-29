@@ -19,6 +19,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -68,4 +69,16 @@ func SetPosition(ctx context.Context, fn func(p Position) Position) context.Cont
 		p = val.(Position)
 	}
 	return context.WithValue(ctx, PositionKey, fn(p))
+}
+
+type Error struct {
+	msg string
+}
+
+func NewError(tpl string, args ...any) Error {
+	return Error{msg: fmt.Sprintf(tpl, args...)}
+}
+
+func (e Error) Msg() string {
+	return e.msg
 }

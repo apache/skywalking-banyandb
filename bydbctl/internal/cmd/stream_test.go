@@ -177,7 +177,7 @@ metadata:
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
 		interval := 500 * time.Millisecond
-		end := now.Add(5 * interval)
+		end := now.Add(1 * time.Hour)
 		cases_stream_data.Write(conn, "data.json", now, interval)
 		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
@@ -199,12 +199,14 @@ projection:
 			})
 		}
 		Eventually(issue).ShouldNot(ContainSubstring("code:"))
-		out := issue()
-		GinkgoWriter.Println(out) // todo
-		resp := new(stream_v1.QueryResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		GinkgoWriter.Println(resp)
-		Expect(resp.Elements).To(HaveLen(5))
+		Eventually(func() int {
+			out := issue()
+			GinkgoWriter.Println(out) // todo
+			resp := new(stream_v1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Elements)
+		}).Should(Equal(5))
 	})
 
 	AfterEach(func() {
