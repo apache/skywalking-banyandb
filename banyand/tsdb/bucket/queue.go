@@ -27,6 +27,7 @@ type EvictFn func(id interface{})
 
 type Queue interface {
 	Push(id interface{})
+	Remove(id interface{})
 	Len() int
 	All() []interface{}
 }
@@ -106,6 +107,25 @@ func (q *lruQueue) Push(id interface{}) {
 
 	q.ensureSpace(false)
 	q.recent.Add(id, nil)
+}
+
+func (q *lruQueue) Remove(id interface{}) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	if q.frequent.Contains(id) {
+		q.frequent.Remove(id)
+		return
+	}
+
+	if q.recent.Contains(id) {
+		q.recent.Remove(id)
+		return
+	}
+
+	if q.recentEvict.Contains(id) {
+		q.recentEvict.Remove(id)
+	}
 }
 
 func (q *lruQueue) Len() int {

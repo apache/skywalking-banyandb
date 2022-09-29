@@ -76,6 +76,7 @@ func (i *GlobalItemID) UnMarshal(data []byte) error {
 type Series interface {
 	ID() common.SeriesID
 	Span(timeRange timestamp.TimeRange) (SeriesSpan, error)
+	Create(t time.Time) (SeriesSpan, error)
 	Get(id GlobalItemID) (Item, io.Closer, error)
 }
 
@@ -125,6 +126,29 @@ func (s *series) Span(timeRange timestamp.TimeRange) (SeriesSpan, error) {
 		Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
 		Msg("select series span")
 	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), timeRange, blocks, s.id, s.shardID), nil
+}
+
+func (s *series) Create(t time.Time) (SeriesSpan, error) {
+	tr := timestamp.NewInclusiveTimeRange(t, t)
+	blocks, err := s.blockDB.span(tr)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocks) > 0 {
+		s.l.Debug().
+			Time("time", t).
+			Msg("load a series span")
+		return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks, s.id, s.shardID), nil
+	}
+	b, err := s.blockDB.create(tr)
+	if err != nil {
+		return nil, err
+	}
+	blocks = append(blocks, b)
+	s.l.Debug().
+		Time("time", t).
+		Msg("create a series span")
+	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks, s.id, s.shardID), nil
 }
 
 func newSeries(ctx context.Context, id common.SeriesID, blockDB blockDatabase) *series {

@@ -89,6 +89,7 @@ type DatabaseOpts struct {
 	EncodingMethod     EncodingMethod
 	SegmentInterval    IntervalRule
 	BlockInterval      IntervalRule
+	TTL                IntervalRule
 	BlockMemSize       int64
 	SeriesMemSize      int64
 	EnableGlobalIndex  bool
@@ -126,6 +127,7 @@ type database struct {
 	shardNum    uint32
 	segmentSize IntervalRule
 	blockSize   IntervalRule
+	ttl         IntervalRule
 
 	sLst []Shard
 	sync.Mutex
@@ -160,23 +162,25 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}
-	segmentSize := opts.SegmentInterval
-	if segmentSize.Num == 0 {
+	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(ErrOpenDatabase, "segment interval is absent")
 	}
-	blockSize := opts.BlockInterval
-	if blockSize.Num == 0 {
+	if opts.BlockInterval.Num == 0 {
 		return nil, errors.Wrap(ErrOpenDatabase, "block interval is absent")
 	}
-	if blockSize.EstimatedDuration() > segmentSize.EstimatedDuration() {
+	if opts.BlockInterval.EstimatedDuration() > opts.SegmentInterval.EstimatedDuration() {
 		return nil, errors.Wrapf(ErrOpenDatabase, "the block size is bigger than the segment size")
+	}
+	if opts.TTL.Num == 0 {
+		return nil, errors.Wrap(ErrOpenDatabase, "ttl is absent")
 	}
 	db := &database{
 		location:    opts.Location,
 		shardNum:    opts.ShardNum,
 		logger:      logger.Fetch(ctx, "tsdb"),
-		segmentSize: segmentSize,
-		blockSize:   blockSize,
+		segmentSize: opts.SegmentInterval,
+		blockSize:   opts.BlockInterval,
+		ttl:         opts.TTL,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	var entries []os.DirEntry
@@ -203,7 +207,7 @@ func createDatabase(ctx context.Context, db *database, startID int) (Database, e
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
 		so, errNewShard := OpenShard(ctx, common.ShardID(i),
-			db.location, db.segmentSize, db.blockSize, defaultBlockQueueSize)
+			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -233,6 +237,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 			db.location,
 			db.segmentSize,
 			db.blockSize,
+			db.ttl,
 			defaultBlockQueueSize,
 		)
 		if errOpenShard != nil {

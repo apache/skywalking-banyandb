@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"runtime"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -55,6 +57,7 @@ type block struct {
 	suffix     string
 	ref        *atomic.Int32
 	closed     *atomic.Bool
+	deleted    *atomic.Bool
 	lock       sync.RWMutex
 	position   common.Position
 	memSize    int64
@@ -100,6 +103,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		flushCh:   make(chan struct{}, 1),
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},
+		deleted:   &atomic.Bool{},
 		queue:     opts.queue,
 	}
 	b.options(ctx)
@@ -136,6 +140,9 @@ func (b *block) options(ctx context.Context) {
 }
 
 func (b *block) open() (err error) {
+	if b.deleted.Load() {
+		return nil
+	}
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
@@ -181,6 +188,9 @@ func (b *block) open() (err error) {
 }
 
 func (b *block) delegate() (blockDelegate, error) {
+	if b.deleted.Load() {
+		return nil, errors.WithMessagef(ErrBlockAbsent, "block %d is deleted", b.blockID)
+	}
 	if b.incRef() {
 		return &bDelegate{
 			delegate: b,
@@ -270,6 +280,18 @@ func (b *block) stopThenClose() {
 		b.Stop()
 	}
 	b.close()
+}
+
+func (b *block) delete() error {
+	if b.deleted.Load() {
+		return nil
+	}
+	b.deleted.Store(true)
+	if b.Reporter != nil {
+		b.Stop()
+	}
+	b.close()
+	return os.RemoveAll(b.path)
 }
 
 func (b *block) Closed() bool {

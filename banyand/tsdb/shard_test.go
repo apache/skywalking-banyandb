@@ -65,6 +65,10 @@ var _ = Describe("Shard", func() {
 					Unit: tsdb.HOUR,
 					Num:  12,
 				},
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  7,
+				},
 				2,
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -399,6 +403,140 @@ var _ = Describe("Shard", func() {
 						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
+				},
+			}))
+		})
+		It("retention", func() {
+			var err error
+			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  1,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.HOUR,
+					Num:  12,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  1,
+				},
+				10,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			By("open 4 blocks")
+			t1 := clock.Now()
+			By("01/01 00:00 1st block is opened")
+			clock.Add(2 * time.Minute)
+			By("01/01 00:05 retention")
+			clock.Add(3 * time.Minute)
+			By("01/01 10:00 2nd block is opened")
+			clock.Add(9*time.Hour + 55*time.Minute)
+			t2 := clock.Now().Add(2 * time.Hour)
+			By("01/01 13:00 moves to the 2nd block")
+			clock.Add(3 * time.Hour)
+			By("01/01 22:00 3rd block is opened")
+			clock.Add(9 * time.Hour)
+			t3 := clock.Now().Add(2 * time.Hour)
+			By("01/02 00:02 moves to 3rd block")
+			clock.Add(2*time.Hour + 2*time.Minute)
+			By("01/02 00:05 retention")
+			clock.Add(3 * time.Minute)
+			By("01/02 10:00 4th block is opened")
+			clock.Add(9*time.Hour + 55*time.Minute)
+			t4 := clock.Now().Add(2 * time.Hour)
+
+			Eventually(func() []tsdb.BlockState {
+				if clock.TriggerTimer() {
+					GinkgoWriter.Println("01/02 13:00 has been triggered")
+				}
+				return shard.State().Blocks
+			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t2, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t4, 12*time.Hour, true, false),
+				},
+			}))
+			By("01/02 13:00 moves to 4th block")
+			clock.Add(3 * time.Hour)
+			By("01/02 22:00 5th block is opened")
+			clock.Add(9 * time.Hour)
+			t5 := clock.Now().Add(2 * time.Hour)
+			By("01/03 00:02 move to 5th block")
+			clock.Add(2*time.Hour + 2*time.Minute)
+			By("01/03 00:05 retention: remove segment and blocks on 01/01")
+			clock.Add(3 * time.Minute)
+			clock.Add(9*time.Hour + 55*time.Minute)
+			t6 := clock.Now().Add(2 * time.Hour)
+			Eventually(func() []tsdb.BlockState {
+				if clock.TriggerTimer() {
+					GinkgoWriter.Println("01/03 01:00 has been triggered")
+				}
+				return shard.State().Blocks
+			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t4, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t6, 12*time.Hour, true, false),
+				},
+			}))
+			Eventually(func() []tsdb.BlockID {
+				return shard.State().OpenBlocks
+			}).Should(Equal([]tsdb.BlockID{
+				{
+					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
+				},
+				{
+					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
 				},
 			}))
 		})
