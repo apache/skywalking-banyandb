@@ -61,7 +61,7 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 }
 
 func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue, cb index.CallbackFn) error {
-	t := value.GetTimestamp().AsTime()
+	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
 	}
@@ -81,7 +81,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if err != nil {
 		return err
 	}
-	wp, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(t, 0))
+	wp, err := series.Create(t)
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
@@ -189,7 +189,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetDataPoint(), nil)
 	if err != nil {
-		w.l.Debug().Err(err).Msg("fail to write entity")
+		w.l.Error().Err(err).Msg("fail to write entity")
 	}
 	return
 }
