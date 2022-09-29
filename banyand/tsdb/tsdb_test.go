@@ -81,6 +81,7 @@ func openDatabase(t *require.Assertions, path string) (db Database) {
 			},
 			BlockInterval:   IntervalRule{Num: 2},
 			SegmentInterval: IntervalRule{Num: 1, Unit: DAY},
+			TTL:             IntervalRule{Num: 7, Unit: DAY},
 		})
 	t.NoError(err)
 	t.NotNil(db)

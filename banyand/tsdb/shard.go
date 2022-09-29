@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
@@ -48,11 +49,12 @@ type shard struct {
 	indexDatabase         IndexDatabase
 	segmentController     *segmentController
 	segmentManageStrategy *bucket.Strategy
+	retentionController   *retentionController
 	stopCh                chan struct{}
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
-	root string, segmentSize, blockSize IntervalRule, openedBlockSize int,
+	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize int,
 ) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
@@ -106,6 +108,10 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		s.position = position.(common.Position)
 	}
 	s.runStat()
+	if s.retentionController, err = newRetentionController(s.segmentController, ttl); err != nil {
+		return nil, err
+	}
+	s.retentionController.start()
 	return s, nil
 }
 
@@ -124,7 +130,9 @@ func (s *shard) Index() IndexDatabase {
 func (s *shard) State() (shardState ShardState) {
 	shardState.StrategyManagers = append(shardState.StrategyManagers, s.segmentManageStrategy.String())
 	for _, seg := range s.segmentController.segments() {
-		shardState.StrategyManagers = append(shardState.StrategyManagers, seg.blockManageStrategy.String())
+		if seg.blockManageStrategy != nil {
+			shardState.StrategyManagers = append(shardState.StrategyManagers, seg.blockManageStrategy.String())
+		}
 		for _, b := range seg.blockController.blocks() {
 			shardState.Blocks = append(shardState.Blocks, BlockState{
 				ID: BlockID{
@@ -149,11 +157,12 @@ func (s *shard) State() (shardState ShardState) {
 		}
 		return x.SegID < y.SegID
 	})
-	s.l.Info().Interface("", shardState).Msg("state")
+	s.l.Debug().Interface("", shardState).Msg("state")
 	return shardState
 }
 
 func (s *shard) Close() error {
+	s.retentionController.stop()
 	s.segmentManageStrategy.Close()
 	s.segmentController.close()
 	err := s.seriesDatabase.Close()
@@ -189,6 +198,16 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 		return current.Add(time.Hour * time.Duration(ir.Num))
 	case DAY:
 		return current.AddDate(0, 0, ir.Num)
+	}
+	panic("invalid interval unit")
+}
+
+func (ir IntervalRule) PreviousTime(current time.Time) time.Time {
+	switch ir.Unit {
+	case HOUR:
+		return current.Add(-time.Hour * time.Duration(ir.Num))
+	case DAY:
+		return current.AddDate(0, 0, -ir.Num)
 	}
 	panic("invalid interval unit")
 }
@@ -243,7 +262,7 @@ func newSegmentController(shardCtx context.Context, location string, segmentSize
 }
 
 func (sc *segmentController) get(segID uint16) *segment {
-	lst := sc.snapshotLst()
+	lst := sc.segments()
 	last := len(lst) - 1
 	for i := range lst {
 		s := lst[last-i]
@@ -255,7 +274,7 @@ func (sc *segmentController) get(segID uint16) *segment {
 }
 
 func (sc *segmentController) span(timeRange timestamp.TimeRange) (ss []*segment) {
-	lst := sc.snapshotLst()
+	lst := sc.segments()
 	last := len(lst) - 1
 	for i := range lst {
 		s := lst[last-i]
@@ -264,12 +283,6 @@ func (sc *segmentController) span(timeRange timestamp.TimeRange) (ss []*segment)
 		}
 	}
 	return ss
-}
-
-func (sc *segmentController) snapshotLst() []*segment {
-	sc.RLock()
-	defer sc.RUnlock()
-	return sc.lst
 }
 
 func (sc *segmentController) segments() (ss []*segment) {
@@ -299,7 +312,7 @@ func (sc *segmentController) Current() bucket.Reporter {
 func (sc *segmentController) Next() (bucket.Reporter, error) {
 	seg := sc.Current().(*segment)
 	reporter, err := sc.create(sc.Format(
-		sc.segmentSize.NextTime(seg.Start)))
+		sc.segmentSize.NextTime(seg.Start)), true)
 	if errors.Is(err, ErrEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
 	}
@@ -342,7 +355,9 @@ func (sc *segmentController) open() error {
 		sc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
-			_, err := sc.load(suffix, absolutePath)
+			sc.Lock()
+			defer sc.Unlock()
+			_, err := sc.load(suffix, absolutePath, false)
 			if errors.Is(err, ErrEndOfSegment) {
 				return nil
 			}
@@ -352,7 +367,7 @@ func (sc *segmentController) open() error {
 		return err
 	}
 	if sc.Current() == nil {
-		_, err = sc.create(sc.Format(sc.clock.Now()))
+		_, err = sc.create(sc.Format(sc.clock.Now()), true)
 		if err != nil {
 			return err
 		}
@@ -360,15 +375,23 @@ func (sc *segmentController) open() error {
 	return nil
 }
 
-func (sc *segmentController) create(suffix string) (*segment, error) {
+func (sc *segmentController) create(suffix string, createBlockIfEmpty bool) (*segment, error) {
+	sc.Lock()
+	defer sc.Unlock()
 	segPath, err := mkdir(segTemplate, sc.location, suffix)
 	if err != nil {
 		return nil, err
 	}
-	return sc.load(suffix, segPath)
+	return sc.load(suffix, segPath, createBlockIfEmpty)
 }
 
-func (sc *segmentController) load(suffix, path string) (seg *segment, err error) {
+func (sc *segmentController) sortLst() {
+	sort.Slice(sc.lst, func(i, j int) bool {
+		return sc.lst[i].id < sc.lst[j].id
+	})
+}
+
+func (sc *segmentController) load(suffix, path string, createBlockIfEmpty bool) (seg *segment, err error) {
 	startTime, err := sc.Parse(suffix)
 	if err != nil {
 		return nil, err
@@ -380,10 +403,37 @@ func (sc *segmentController) load(suffix, path string) (seg *segment, err error)
 	if err != nil {
 		return nil, err
 	}
-	sc.Lock()
-	defer sc.Unlock()
 	sc.lst = append(sc.lst, seg)
+	sc.sortLst()
 	return seg, nil
+}
+
+func (sc *segmentController) remove(deadline time.Time) (err error) {
+	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
+	for _, s := range sc.segments() {
+		if s.End.Before(deadline) || s.Contains(uint64(deadline.UnixNano())) {
+			err = multierr.Append(err, s.blockController.remove(deadline))
+			if s.End.Before(deadline) {
+				sc.Lock()
+				if errDel := s.delete(); errDel != nil {
+					err = multierr.Append(err, errDel)
+				} else {
+					sc.removeSeg(s.id)
+				}
+				sc.Unlock()
+			}
+		}
+	}
+	return err
+}
+
+func (sc *segmentController) removeSeg(segID uint16) {
+	for i, b := range sc.lst {
+		if b.id == segID {
+			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
+			break
+		}
+	}
 }
 
 func (sc *segmentController) close() {

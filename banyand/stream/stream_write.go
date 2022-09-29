@@ -88,7 +88,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		return err
 	}
 	t := timestamp.MToN(tp)
-	wp, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(t, 0))
+	wp, err := series.Create(t)
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
@@ -183,7 +183,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
 	if err != nil {
-		w.l.Debug().Err(err).Msg("fail to write entity")
+		w.l.Error().Err(err).Msg("fail to write entity")
 	}
 	return
 }

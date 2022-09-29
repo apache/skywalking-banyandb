@@ -21,6 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -31,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"go.uber.org/multierr"
 )
 
 var ErrEndOfSegment = errors.New("reached the end of the segment")
@@ -69,7 +72,8 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange, clock),
 	}
-	err = s.blockController.open()
+	isHead := s.End.After(clock.Now())
+	err = s.blockController.open(isHead)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +100,9 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 			}
 		}
 	}
-
+	if !isHead {
+		return
+	}
 	s.blockManageStrategy, err = bucket.NewStrategy(s.blockController, bucket.WithLogger(s.l))
 	if err != nil {
 		return nil, err
@@ -110,7 +116,9 @@ func (s *segment) close() {
 	if s.globalIndex != nil {
 		s.globalIndex.Close()
 	}
-	s.blockManageStrategy.Close()
+	if s.blockManageStrategy != nil {
+		s.blockManageStrategy.Close()
+	}
 	if s.Reporter != nil {
 		s.Stop()
 	}
@@ -118,6 +126,11 @@ func (s *segment) close() {
 
 func (s *segment) closeBlock(id uint16) {
 	s.blockController.closeBlock(id)
+}
+
+func (s *segment) delete() error {
+	s.close()
+	return os.RemoveAll(s.path)
 }
 
 func (s segment) String() string {
@@ -313,16 +326,21 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) open() error {
+func (bc *blockController) open(createIfEmpty bool) error {
 	err := WalkDir(
 		bc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
+			bc.Lock()
+			defer bc.Unlock()
 			_, err := bc.load(suffix, absolutePath)
 			return err
 		})
 	if err != nil {
 		return err
+	}
+	if !createIfEmpty {
+		return nil
 	}
 	if bc.Current() == nil {
 		_, err := bc.create(bc.clock.Now())
@@ -340,6 +358,8 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 	if !startTime.Before(bc.segTimeRange.End) {
 		return nil, ErrEndOfSegment
 	}
+	bc.Lock()
+	defer bc.Unlock()
 	suffix := bc.Format(startTime)
 	segPath, err := mkdir(blockTemplate, bc.location, suffix)
 	if err != nil {
@@ -368,14 +388,47 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 		}); err != nil {
 		return nil, err
 	}
-	bc.Lock()
-	defer bc.Unlock()
 	bc.lst = append(bc.lst, b)
+	bc.sortLst()
 	return b, nil
+}
+
+func (bc *blockController) sortLst() {
+	sort.Slice(bc.lst, func(i, j int) bool {
+		return bc.lst[i].blockID < bc.lst[j].blockID
+	})
 }
 
 func (bc *blockController) close() {
 	for _, s := range bc.lst {
 		s.stopThenClose()
+	}
+}
+
+func (bc *blockController) remove(deadline time.Time) (err error) {
+	for _, b := range bc.blocks() {
+		if b.End.Before(deadline) {
+			bc.Lock()
+			if errDel := b.delete(); errDel != nil {
+				err = multierr.Append(err, errDel)
+			} else {
+				b.queue.Remove(BlockID{
+					BlockID: b.blockID,
+					SegID:   b.segID,
+				})
+				bc.removeBlock(b.blockID)
+			}
+			bc.Unlock()
+		}
+	}
+	return err
+}
+
+func (bc *blockController) removeBlock(blockID uint16) {
+	for i, b := range bc.lst {
+		if b.blockID == blockID {
+			bc.lst = append(bc.lst[:i], bc.lst[i+1:]...)
+			break
+		}
 	}
 }

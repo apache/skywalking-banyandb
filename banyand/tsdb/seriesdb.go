@@ -148,6 +148,7 @@ type SeriesDatabase interface {
 type blockDatabase interface {
 	shardID() common.ShardID
 	span(timeRange timestamp.TimeRange) ([]blockDelegate, error)
+	create(timeRange timestamp.TimeRange) (blockDelegate, error)
 	block(id GlobalItemID) (blockDelegate, error)
 }
 
@@ -263,6 +264,36 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) 
 		result = append(result, dd...)
 	}
 	return result, nil
+}
+
+func (s *seriesDB) create(timeRange timestamp.TimeRange) (blockDelegate, error) {
+	s.Lock()
+	defer s.Unlock()
+	ss := s.segCtrl.span(timeRange)
+	if len(ss) > 0 {
+		s := ss[0]
+		dd, err := s.blockController.span(timeRange)
+		if err != nil {
+			return nil, err
+		}
+		if len(dd) > 0 {
+			return dd[0], nil
+		}
+		block, err := s.blockController.create(timeRange.Start)
+		if err != nil {
+			return nil, err
+		}
+		return block.delegate()
+	}
+	seg, err := s.segCtrl.create(s.segCtrl.Format(timeRange.Start), false)
+	if err != nil {
+		return nil, err
+	}
+	block, err := seg.blockController.create(timeRange.Start)
+	if err != nil {
+		return nil, err
+	}
+	return block.delegate()
 }
 
 func (s *seriesDB) context() context.Context {
