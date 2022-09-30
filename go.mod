@@ -10,7 +10,6 @@ require (
 	github.com/dgraph-io/badger/v3 v3.2011.1
 	github.com/dgraph-io/ristretto v0.1.0
 	github.com/envoyproxy/protoc-gen-validate v0.1.0
-	github.com/ghodss/yaml v1.0.0
 	github.com/go-chi/chi/v5 v5.0.7
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/golang/mock v1.6.0
