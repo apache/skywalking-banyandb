@@ -33,17 +33,18 @@ import (
 )
 
 var _ = Describe("Group", func() {
+	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		var addr string
 		_, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		addr = "http://" + addr
 		time.Sleep(1 * time.Second)
 		// extracting the operation of creating group
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})
+		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: group1
@@ -129,7 +130,7 @@ resource_opts:
 		})
 		resp := new(database_v1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Group).To(HaveLen(2))
+		Expect(resp.Group).To(HaveLen(4))
 	})
 
 	AfterEach(func() {

@@ -42,12 +42,12 @@ const (
 	RFC3339 = "2006-01-02T15:04:05Z07:00"
 )
 
-var _ = Describe("Stream", func() {
-	var addr, grpcAddr string
+var _ = Describe("Stream Schema Operation", func() {
+	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		grpcAddr, addr, deferFunc = setup.SetUp()
+		_, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
 		time.Sleep(1 * time.Second)
@@ -98,6 +98,7 @@ tagFamilies:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
+		GinkgoWriter.Println(out)
 		resp := new(database_v1.StreamRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
@@ -169,7 +170,25 @@ metadata:
 		Expect(resp.Stream).To(HaveLen(2))
 	})
 
-	FIt("query stream data", func() {
+	AfterEach(func() {
+		deferFunc()
+	})
+})
+
+var _ = Describe("Stream Data Query", func() {
+	var addr, grpcAddr string
+	var deferFunc func()
+	var rootCmd *cobra.Command
+	BeforeEach(func() {
+		grpcAddr, addr, deferFunc = setup.SetUp()
+		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		addr = "http://" + addr
+		time.Sleep(1 * time.Second)
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+	})
+
+	It("query stream data", func() {
 		conn, err := grpclib.Dial(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -201,7 +220,7 @@ projection:
 		Eventually(issue).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
-			GinkgoWriter.Println(out) // todo
+			GinkgoWriter.Println(out)
 			resp := new(stream_v1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
