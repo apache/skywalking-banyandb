@@ -17,6 +17,57 @@
   ~ under the License.
 -->
 
+<script setup>
+import HeaderComponent from './components/Header/index.vue'
+import { computed } from '@vue/runtime-core'
+import stores from './stores/index'
+import { useRouter, useRoute } from 'vue-router'
+import { getCurrentInstance } from "@vue/runtime-core";
+
+const route = useRoute()
+const router = useRouter()
+const { menuState, header } = stores()
+const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const showRightMenu = computed(() => {
+  return menuState.showRightMenu
+})
+const left = computed(() => {
+  return menuState.left
+})
+const top = computed(() => {
+  return menuState.top
+})
+const rightMenuList = computed(() => {
+  return menuState.rightMenuList
+})
+let activePath = ""
+let show = true
+let showButton = true
+
+const initData = (() => {
+  let path = route.path
+  let name = route.name
+  if (name == "NotFound") {
+    show = false
+  } else {
+    activePath = path
+  }
+  if (name == "Database") {
+    header.changeShowButton(true)
+  } else {
+    header.changeShowButton(false)
+  }
+})()
+
+const appMouseDown = () => {
+  menuState.changeShowRightMenu(false)
+}
+
+const handleRightItem = (index) => {
+  $bus.$emit('handleRightItem', index)
+}
+</script>
+
 <template>
   <div id="app">
     <div @mousedown="appMouseDown" style="width: 100%; height:100%">
@@ -40,79 +91,13 @@
   </div>
 </template>
 
-<script>
-import { mapState } from 'vuex'
-import HeaderComponent from "./components/HeaderComponent.vue";
-import RightMenuComponent from "./components/databaseComponents/asideComponents/RightMenuComponent.vue";
-export default {
-  computed: {
-    ...mapState({
-      showRightMenu: (state) => state.menuState.showRightMenu,
-      left: (state) => state.menuState.left,
-      top: (state) => state.menuState.top,
-      rightMenuList:  (state) => state.menuState.rightMenuList
-    })
-  },
-  data() {
-    return {
-      activePath: "",
-      show: true,
-      showButton: true,
-    }
-  },
-
-  components: {
-    HeaderComponent,
-    RightMenuComponent
-  },
-
-  beforeCreate() {
-    this.$loading.create()
-  },
-
-  created() {
-    let path = this.$route.path
-    let name = this.$route.name
-    if (name == "NotFound") {
-      this.show = false
-    } else {
-      this.activePath = path
-    }
-    if (name == "Database") {
-      this.$store.commit('changeShowButton', true)
-    } else {
-      this.$store.commit('changeShowButton', false)
-    }
-  },
-
-  mounted() {
-    this.$loading.close()
-  },
-
-  methods: {
-    appMouseDown() {
-      this.$store.commit("changeShowRightMenu", false)
-    },
-
-    /**
-     * click right menu item
-     */
-    handleRightItem(index) {
-      // to aside component
-      this.$bus.$emit('handleRightItem', index)
-    }
-  }
-}
-</script>
-
 <style lang="scss">
-html,
-body,
+body {
+  padding: 0;
+  margin: 0;
+}
+
 #app {
-  font-family: Avenir, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
   color: #2c3e50;
   height: 100%;
   margin: 0;
@@ -136,22 +121,75 @@ body,
     margin: 0;
   }
 }
+
 .right-menu {
-    width: 170px;
-    position: fixed;
-    z-index: 9999999999999999999999999999 !important;
-    background-color: white;
+  width: 170px;
+  position: fixed;
+  z-index: 9999999999999999999999999999 !important;
+  background-color: white;
 }
-#nav {
-  padding: 30px;
+</style>
+
+<style scoped>
+header {
+  line-height: 1.5;
+  max-height: 100vh;
 }
 
-#nav a {
-  font-weight: bold;
-  color: #2c3e50;
+.logo {
+  display: block;
+  margin: 0 auto 2rem;
 }
 
-#nav a.router-link-exact-active {
-  color: #42b983;
+nav {
+  width: 100%;
+  font-size: 12px;
+  text-align: center;
+  margin-top: 2rem;
+}
+
+nav a.router-link-exact-active {
+  color: var(--color-text);
+}
+
+nav a.router-link-exact-active:hover {
+  background-color: transparent;
+}
+
+nav a {
+  display: inline-block;
+  padding: 0 1rem;
+  border-left: 1px solid var(--color-border);
+}
+
+nav a:first-of-type {
+  border: 0;
+}
+
+@media (min-width: 1024px) {
+  header {
+    display: flex;
+    place-items: center;
+    padding-right: calc(var(--section-gap) / 2);
+  }
+
+  .logo {
+    margin: 0 2rem 0 0;
+  }
+
+  header .wrapper {
+    display: flex;
+    place-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  nav {
+    text-align: left;
+    margin-left: -1rem;
+    font-size: 1rem;
+
+    padding: 1rem 0;
+    margin-top: 1rem;
+  }
 }
 </style>
