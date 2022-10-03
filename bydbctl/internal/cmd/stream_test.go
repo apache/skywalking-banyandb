@@ -50,7 +50,6 @@ var _ = Describe("Stream Schema Operation", func() {
 		_, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
-		time.Sleep(1 * time.Second)
 		// extracting the operation of creating stream schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
@@ -140,11 +139,8 @@ entity:
 		Expect(out).To(ContainSubstring("stream group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("resource not found"))
+		err := rootCmd.Execute()
+		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
 	It("list stream schema", func() {
@@ -183,7 +179,6 @@ var _ = Describe("Stream Data Query", func() {
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
-		time.Sleep(1 * time.Second)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})

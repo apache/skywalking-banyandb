@@ -19,17 +19,55 @@ package http
 
 import (
 	"context"
+	"time"
 
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
-type healthCheckClient struct{}
+func NewHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *healthCheckClient, err error) {
+	conn, err := grpc.Dial(addr, opts...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			if cerr := conn.Close(); cerr != nil {
+				l.Info().Str("addr", addr).Err(cerr).Msg("Failed to close conn")
+			}
+			return
+		}
+		go func() {
+			<-ctx.Done()
+			if cerr := conn.Close(); cerr != nil {
+				l.Info().Str("addr", addr).Err(cerr).Msg("Failed to close conn")
+			}
+		}()
+	}()
+	return &healthCheckClient{conn: conn}, nil
+}
+
+type healthCheckClient struct {
+	conn *grpc.ClientConn
+}
 
 func (g *healthCheckClient) Check(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
-	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+	var resp *grpc_health_v1.HealthCheckResponse
+	if err := grpchelper.Request(context.Background(), 10*time.Second, func(rpcCtx context.Context) (err error) {
+		resp, err = grpc_health_v1.NewHealthClient(g.conn).Check(rpcCtx,
+			&grpc_health_v1.HealthCheckRequest{
+				Service: "",
+			})
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (g *healthCheckClient) Watch(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {

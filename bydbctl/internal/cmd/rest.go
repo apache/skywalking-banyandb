@@ -25,6 +25,9 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
+	stpb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"sigs.k8s.io/yaml"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/pkg/file"
@@ -146,7 +149,14 @@ func rest(pfn paramsFn, fn reqFn, printer printer) (err error) {
 		if err != nil {
 			return err
 		}
-		err = printer(i, r, resp.Body())
+		bd := resp.Body()
+		var st *stpb.Status
+		err = json.Unmarshal(bd, &st)
+		if err == nil && st.Code != int32(codes.OK) {
+			s := status.FromProto(st)
+			return s.Err()
+		}
+		err = printer(i, r, bd)
 		if err != nil {
 			return err
 		}

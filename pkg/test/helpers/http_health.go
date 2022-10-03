@@ -18,6 +18,7 @@ package helpers
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -30,11 +31,13 @@ func HTTPHealthCheck(addr string) func() error {
 			SetHeader("Accept", "application/json").
 			Get(fmt.Sprintf("http://%s/api/healthz", addr))
 		if err != nil {
+			time.Sleep(1 * time.Second)
 			return err
 		}
 
 		if resp.StatusCode() != 200 {
 			l.Warn().Str("responded_status", resp.Status()).Msg("service unhealthy")
+			time.Sleep(1 * time.Second)
 			return ErrServiceUnhealthy
 		}
 		l.Info().Stringer("response", resp).Msg("connected")
