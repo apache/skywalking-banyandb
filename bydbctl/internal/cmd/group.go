@@ -74,7 +74,7 @@ func newGroupCmd() *cobra.Command {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(common_v1.Group)
-					err := json.Unmarshal(request.data, g)
+					err := protojson.Unmarshal(request.data, g)
 					if err != nil {
 						return nil, err
 					}
@@ -85,7 +85,7 @@ func newGroupCmd() *cobra.Command {
 					if err != nil {
 						return nil, err
 					}
-					return request.req.SetBody(b).Put(getPath("/api/v1/group/schema"))
+					return request.req.SetBody(b).SetPathParam("group", request.name).Put(getPath("/api/v1/group/schema/{group}"))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
 					fmt.Printf("group %s is updated", reqBody.name)

@@ -95,7 +95,7 @@ func (p *service) PreRun() error {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	client, err := NewHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
+	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		return err
 	}

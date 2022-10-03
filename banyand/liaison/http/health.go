@@ -30,7 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
-func NewHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *healthCheckClient, err error) {
+func newHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *healthCheckClient, err error) {
 	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
 		return nil, err

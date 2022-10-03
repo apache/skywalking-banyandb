@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package data contains integration test cases of the stream
 package data
 
 import (

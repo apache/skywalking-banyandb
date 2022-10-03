@@ -46,14 +46,25 @@ var _ = Describe("Measure Schema Operation", func() {
 		_, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
-		time.Sleep(1 * time.Second)
 		// extracting the operation of creating measure schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: group1`))
+  name: group1
+catalog: CATALOG_MEASURE
+resource_opts:
+  shard_num: 2
+  block_interval:
+    unit: UNIT_HOUR
+    num: 2
+  segment_interval:
+    unit: UNIT_DAY
+    num: 1
+  ttl:
+    unit: UNIT_DAY
+    num: 7`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -118,11 +129,8 @@ entity:
 		Expect(out).To(ContainSubstring("measure group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"measure", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("resource not found"))
+		err := rootCmd.Execute()
+		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
 	It("list measure schema", func() {
