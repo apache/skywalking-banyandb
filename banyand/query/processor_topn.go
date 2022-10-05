@@ -21,13 +21,13 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"math"
 	"time"
 
 	"github.com/emirpasic/gods/queues/priorityqueue"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -221,6 +221,11 @@ type postProcessor interface {
 func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) postProcessor {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
+		return &postNonAggregationProcessor{
+			topN:      topN,
+			sort:      sort,
+			timelines: make(map[uint64]*priorityqueue.Queue),
+		}
 	}
 	aggregator := &postAggregationProcessor{
 		topN:     topN,
@@ -316,7 +321,7 @@ func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
 	}
 	return []*measurev1.TopNList{
 		{
-			Timestamp: timestamppb.New(time.UnixMilli(int64(aggr.latestTimestamp))),
+			Timestamp: timestamppb.New(time.Unix(0, int64(aggr.latestTimestamp))),
 			Items:     topNItems,
 		},
 	}
@@ -333,9 +338,46 @@ type postNonAggregationProcessor struct {
 	timelines map[uint64]*priorityqueue.Queue
 }
 
+func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
+	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
+	for ts, timeline := range naggr.timelines {
+		items := make([]*measurev1.TopNList_Item, int(math.Min(float64(naggr.topN), float64(timeline.Size()))))
+		for it := timeline.Iterator(); it.Next() && it.Index() < int(naggr.topN); {
+			items[it.Index()] = &measurev1.TopNList_Item{
+				Name: it.Value().(*nonAggregatorItem).key,
+				Value: &modelv1.FieldValue{
+					Value: &modelv1.FieldValue_Int{
+						Int: &modelv1.Int{Value: it.Value().(*nonAggregatorItem).val},
+					},
+				},
+			}
+		}
+		topNLists = append(topNLists, &measurev1.TopNList{
+			Timestamp: timestamppb.New(time.Unix(0, int64(ts))),
+			Items:     items,
+		})
+	}
+
+	return topNLists
+}
+
 func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
-		timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+		if timeline.Size() < int(naggr.topN) {
+			timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+		} else {
+			iter := timeline.Iterator()
+			iter.End()
+			if iter.Prev() {
+				if naggr.sort == modelv1.Sort_SORT_DESC && iter.Value().(*nonAggregatorItem).val < val {
+					timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+					// TODO: pop extra elements
+				} else if naggr.sort != modelv1.Sort_SORT_DESC && iter.Value().(*nonAggregatorItem).val > val {
+					// TODO: pop extra elements
+					timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+				}
+			}
+		}
 		return nil
 	}
 

@@ -71,11 +71,11 @@ var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
 	Expect(err).NotTo(HaveOccurred())
-	want := &measure_v1.QueryResponse{}
+	want := &measure_v1.TopNResponse{}
 	helpers.UnmarshalYAML(ww, want)
 	Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&measure_v1.DataPoint{}, "timestamp"),
+		protocmp.IgnoreFields(&measure_v1.TopNList{}, "timestamp"),
 		protocmp.Transform())).
 		To(BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)
