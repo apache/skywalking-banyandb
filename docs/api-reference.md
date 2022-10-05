@@ -169,16 +169,16 @@
     - [Property](#banyandb-property-v1-Property)
   
 - [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
-    - [CreateRequest](#banyandb-property-v1-CreateRequest)
-    - [CreateResponse](#banyandb-property-v1-CreateResponse)
+    - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
+    - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
     - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
     - [GetRequest](#banyandb-property-v1-GetRequest)
     - [GetResponse](#banyandb-property-v1-GetResponse)
     - [ListRequest](#banyandb-property-v1-ListRequest)
     - [ListResponse](#banyandb-property-v1-ListResponse)
-    - [UpdateRequest](#banyandb-property-v1-UpdateRequest)
-    - [UpdateResponse](#banyandb-property-v1-UpdateResponse)
+  
+    - [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy)
   
     - [PropertyService](#banyandb-property-v1-PropertyService)
   
@@ -2457,25 +2457,32 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-CreateRequest"></a>
+<a name="banyandb-property-v1-ApplyRequest"></a>
 
-### CreateRequest
+### ApplyRequest
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | property | [Property](#banyandb-property-v1-Property) |  |  |
+| strategy | [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy) |  | strategy indicates how to update a property. It defaults to STRATEGY_MERGE |
 
 
 
 
 
 
-<a name="banyandb-property-v1-CreateResponse"></a>
+<a name="banyandb-property-v1-ApplyResponse"></a>
 
-### CreateResponse
+### ApplyResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
+| tags_num | [uint32](#uint32) |  |  |
 
 
 
@@ -2491,6 +2498,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2506,6 +2514,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| tags_num | [uint32](#uint32) |  |  |
 
 
 
@@ -2521,6 +2530,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2551,6 +2561,8 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| ids | [string](#string) | repeated |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2571,32 +2583,20 @@ Property stores the user defined data
 
 
 
-
-<a name="banyandb-property-v1-UpdateRequest"></a>
-
-### UpdateRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-UpdateResponse"></a>
-
-### UpdateResponse
-
-
-
-
-
-
  
+
+
+<a name="banyandb-property-v1-ApplyRequest-Strategy"></a>
+
+### ApplyRequest.Strategy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STRATEGY_UNSPECIFIED | 0 |  |
+| STRATEGY_MERGE | 1 |  |
+| STRATEGY_REPLACE | 2 |  |
+
 
  
 
@@ -2610,8 +2610,7 @@ Property stores the user defined data
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| Create | [CreateRequest](#banyandb-property-v1-CreateRequest) | [CreateResponse](#banyandb-property-v1-CreateResponse) |  |
-| Update | [UpdateRequest](#banyandb-property-v1-UpdateRequest) | [UpdateResponse](#banyandb-property-v1-UpdateResponse) |  |
+| Apply | [ApplyRequest](#banyandb-property-v1-ApplyRequest) | [ApplyResponse](#banyandb-property-v1-ApplyResponse) | Apply creates a property if it&#39;s absent, or update a existed one based on a strategy. |
 | Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
 | Get | [GetRequest](#banyandb-property-v1-GetRequest) | [GetResponse](#banyandb-property-v1-GetResponse) |  |
 | List | [ListRequest](#banyandb-property-v1-ListRequest) | [ListResponse](#banyandb-property-v1-ListResponse) |  |
