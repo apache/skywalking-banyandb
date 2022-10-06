@@ -21,33 +21,36 @@ package measure_test
 import (
 	"time"
 
-	g "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	measure_test_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
 var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		measure_test_data.VerifyFn(SharedContext, args)
+		Eventually(func(g Gomega) {
+			measureTestData.VerifyFn(g, SharedContext, args)
+		})
 	}
 )
 
-var _ = g.DescribeTable("Scanning Measures", verify,
-	g.Entry("all", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
-	g.Entry("filter by tag", helpers.Args{Input: "tag_filter", Duration: 1 * time.Hour}),
-	g.Entry("filter by an unknown tag", helpers.Args{Input: "tag_filter_unknown", Duration: 1 * time.Hour, WantEmpty: true}),
-	g.Entry("group and max", helpers.Args{Input: "group_max", Duration: 1 * time.Hour}),
-	g.Entry("group without field", helpers.Args{Input: "group_no_field", Duration: 1 * time.Hour}),
-	g.Entry("top 2", helpers.Args{Input: "top", Duration: 1 * time.Hour}),
-	g.Entry("bottom 2", helpers.Args{Input: "bottom", Duration: 1 * time.Hour}),
-	g.Entry("order by time asc", helpers.Args{Input: "order_asc", Duration: 1 * time.Hour}),
-	g.Entry("order by time desc", helpers.Args{Input: "order_desc", Duration: 1 * time.Hour}),
-	g.Entry("limit 3,2", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
-	g.Entry("match a node", helpers.Args{Input: "match_node", Duration: 1 * time.Hour}),
-	g.Entry("match nodes", helpers.Args{Input: "match_nodes", Duration: 1 * time.Hour}),
-	g.Entry("filter by entity id", helpers.Args{Input: "entity", Duration: 1 * time.Hour}),
-	g.Entry("without field", helpers.Args{Input: "no_field", Duration: 1 * time.Hour}),
+var _ = DescribeTable("Scanning Measures", verify,
+	Entry("all", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	Entry("filter by tag", helpers.Args{Input: "tag_filter", Duration: 1 * time.Hour}),
+	Entry("filter by an unknown tag", helpers.Args{Input: "tag_filter_unknown", Duration: 1 * time.Hour, WantEmpty: true}),
+	Entry("group and max", helpers.Args{Input: "group_max", Duration: 1 * time.Hour}),
+	Entry("group without field", helpers.Args{Input: "group_no_field", Duration: 1 * time.Hour}),
+	Entry("top 2", helpers.Args{Input: "top", Duration: 1 * time.Hour}),
+	Entry("bottom 2", helpers.Args{Input: "bottom", Duration: 1 * time.Hour}),
+	Entry("order by time asc", helpers.Args{Input: "order_asc", Duration: 1 * time.Hour}),
+	Entry("order by time desc", helpers.Args{Input: "order_desc", Duration: 1 * time.Hour}),
+	Entry("limit 3,2", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
+	Entry("match a node", helpers.Args{Input: "match_node", Duration: 1 * time.Hour}),
+	Entry("match nodes", helpers.Args{Input: "match_nodes", Duration: 1 * time.Hour}),
+	Entry("filter by entity id", helpers.Args{Input: "entity", Duration: 1 * time.Hour}),
+	Entry("without field", helpers.Args{Input: "no_field", Duration: 1 * time.Hour}),
 )

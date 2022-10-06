@@ -22,15 +22,15 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	cases_measure "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
 var _ = Describe("Query service_cpm_minute", func() {
@@ -53,16 +53,18 @@ var _ = Describe("Query service_cpm_minute", func() {
 		Expect(err).NotTo(HaveOccurred())
 		baseTime = timestamp.NowMilli()
 		interval = 500 * time.Millisecond
-		cases_measure.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, interval)
+		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, interval)
 	})
 	AfterEach(func() {
 		Expect(conn.Close()).To(Succeed())
 		deferFn()
 	})
 	It("queries a tls server", func() {
-		cases_measure.VerifyFn(helpers.SharedContext{
-			Connection: conn,
-			BaseTime:   baseTime,
-		}, helpers.Args{Input: "all", Duration: 1 * time.Hour})
+		Eventually(func(g Gomega) {
+			casesMeasureData.VerifyFn(g, helpers.SharedContext{
+				Connection: conn,
+				BaseTime:   baseTime,
+			}, helpers.Args{Input: "all", Duration: 1 * time.Hour})
+		})
 	})
 })
