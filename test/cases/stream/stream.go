@@ -119,6 +119,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
 	g.Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
+	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 )
 
 //go:embed testdata/*.json
