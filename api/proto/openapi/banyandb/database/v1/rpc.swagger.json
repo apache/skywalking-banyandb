@@ -2079,6 +2079,10 @@
         },
         "type": {
           "$ref": "#/definitions/v1TagType"
+        },
+        "indexedOnly": {
+          "type": "boolean",
+          "title": "indexed_only indicates whether the tag is stored\nTrue: It's indexed only, but not stored \nFalse: it's stored and indexed"
         }
       }
     },

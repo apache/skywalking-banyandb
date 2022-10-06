@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
-var ErrInvalidUnit = errors.New("Invalid interval rule's unit")
+var ErrInvalidUnit = errors.New("invalid interval rule's unit")
 
 func FindTagByName(families []*database_v1.TagFamilySpec, tagName string) (int, int, *database_v1.TagSpec) {
 	for fi, family := range families {
