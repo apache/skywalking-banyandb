@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -46,9 +46,9 @@ var inputFS embed.FS
 var wantFS embed.FS
 
 // VerifyFn verify whether the query response matches the wanted result
-var VerifyFn = func(g Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
+var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
-	g.Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &measurev1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
@@ -57,27 +57,27 @@ var VerifyFn = func(g Gomega, sharedContext helpers.SharedContext, args helpers.
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
 		if err == nil {
-			Fail("expect error")
+			g.Fail("expect error")
 		}
 		return
 	}
-	Expect(err).NotTo(HaveOccurred(), query.String())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		Expect(resp.DataPoints).To(BeEmpty())
+		innerGm.Expect(resp.DataPoints).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
 		args.Want = args.Input
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
-	Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	Expect(cmp.Equal(resp, want,
+	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.DataPoint{}, "timestamp"),
 		protocmp.Transform())).
-		To(BeTrue(), func() string {
+		To(gm.BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)
 			if err != nil {
 				return err.Error()
@@ -96,16 +96,16 @@ var dataFS embed.FS
 func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClient, dataFile string, baseTime time.Time, interval time.Duration) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
-	Expect(err).ShouldNot(HaveOccurred())
-	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
 	for i, template := range templates {
 		rawDataPointValue, errMarshal := json.Marshal(template)
-		Expect(errMarshal).ShouldNot(HaveOccurred())
+		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
-		Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(HaveOccurred())
+		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
 		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
-		Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
-			Should(Succeed())
+		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
+			Should(gm.Succeed())
 	}
 }
 
@@ -116,14 +116,14 @@ func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	c := measurev1.NewMeasureServiceClient(conn)
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	loadData(&commonv1.Metadata{
 		Name:  name,
 		Group: group,
 	}, writeClient, dataFile, baseTime, interval)
-	Expect(writeClient.CloseSend()).To(Succeed())
-	Eventually(func() error {
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
 		_, err := writeClient.Recv()
 		return err
-	}).Should(Equal(io.EOF))
+	}).Should(gm.Equal(io.EOF))
 }

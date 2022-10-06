@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -36,8 +36,8 @@ import (
 )
 
 func TestIntegrationColdQuery(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Cold Data Suite")
+	gm.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Integration Query Cold Data Suite")
 }
 
 var (
@@ -46,25 +46,25 @@ var (
 	deferFunc  func()
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+var _ = g.SynchronizedBeforeSuite(func() []byte {
+	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	})).To(Succeed())
+	})).To(gm.Succeed())
 	var addr string
 	addr, deferFunc = setup.SetUp()
 	conn, err := grpclib.Dial(
 		addr,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	now = timestamp.NowMilli().Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	casesStream.Write(conn, "data.json", now, interval)
 	casesMeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	Expect(conn.Close()).To(Succeed())
+	gm.Expect(conn.Close()).To(gm.Succeed())
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
@@ -81,12 +81,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Connection: connection,
 		BaseTime:   now,
 	}
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = g.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gm.Expect(connection.Close()).To(gm.Succeed())
 	}
 }, func() {
 	deferFunc()

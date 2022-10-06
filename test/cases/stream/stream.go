@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -52,9 +52,9 @@ var inputFS embed.FS
 //go:embed want/*.yaml
 var wantFS embed.FS
 
-var verifyFn = func(g Gomega, args helpers.Args) {
+var verifyFn = func(innerGm gm.Gomega, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
-	Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &streamv1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, SharedContext)
@@ -63,27 +63,27 @@ var verifyFn = func(g Gomega, args helpers.Args) {
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
 		if err == nil {
-			Fail("expect error")
+			g.Fail("expect error")
 		}
 		return
 	}
-	Expect(err).NotTo(HaveOccurred(), query.String())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		Expect(resp.Elements).To(BeEmpty())
+		innerGm.Expect(resp.Elements).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
 		args.Want = args.Input
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
-	Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &streamv1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	Expect(cmp.Equal(resp, want,
+	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&streamv1.Element{}, "timestamp"),
 		protocmp.Transform())).
-		To(BeTrue(), func() string {
+		To(gm.BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)
 			if err != nil {
 				return err.Error()
@@ -96,29 +96,29 @@ var verifyFn = func(g Gomega, args helpers.Args) {
 		})
 }
 
-var _ = DescribeTable("Scanning Streams", func(args helpers.Args) {
-	Eventually(func(g Gomega) {
-		verifyFn(g, args)
+var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
+	gm.Eventually(func(innerGm gm.Gomega) {
+		verifyFn(innerGm, args)
 	})
 },
-	Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
-	Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
-	Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
-	Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
-	Entry("invalid time range", helpers.Args{
+	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
+	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
+	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
+	g.Entry("invalid time range", helpers.Args{
 		Input: "all",
 		Begin: timestamppb.New(time.Unix(0, int64(math.MinInt64+time.Millisecond)).Truncate(time.Millisecond)),
 		End:   timestamppb.New(time.Unix(0, math.MaxInt64).Truncate(time.Millisecond)),
 	}),
-	Entry("sort desc", helpers.Args{Input: "sort_desc", Duration: 1 * time.Hour}),
-	Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
-	Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
-	Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
-	Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),
-	Entry("numeric local index: less and eq", helpers.Args{Input: "less_eq", Duration: 1 * time.Hour}),
-	Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
-	Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
-	Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
+	g.Entry("sort desc", helpers.Args{Input: "sort_desc", Duration: 1 * time.Hour}),
+	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
+	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
+	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
+	g.Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),
+	g.Entry("numeric local index: less and eq", helpers.Args{Input: "less_eq", Duration: 1 * time.Hour}),
+	g.Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
+	g.Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
+	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
 )
 
 //go:embed testdata/*.json
@@ -127,14 +127,14 @@ var dataFS embed.FS
 func loadData(stream streamv1.StreamService_WriteClient, dataFile string, baseTime time.Time, interval time.Duration) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
-	Expect(err).ShouldNot(HaveOccurred())
-	Expect(json.Unmarshal(content, &templates)).ShouldNot(HaveOccurred())
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
-		Expect(errMarshal).ShouldNot(HaveOccurred())
+		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
 		searchTagFamily := &modelv1.TagFamilyForWrite{}
-		Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(HaveOccurred())
+		gm.Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(gm.HaveOccurred())
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
 			Timestamp: timestamppb.New(baseTime.Add(interval * time.Duration(i))),
@@ -158,7 +158,7 @@ func loadData(stream streamv1.StreamService_WriteClient, dataFile string, baseTi
 			},
 			Element: e,
 		})
-		Expect(errInner).ShouldNot(HaveOccurred())
+		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}
 }
 
@@ -167,11 +167,11 @@ func Write(conn *grpclib.ClientConn, dataFile string, baseTime time.Time, interv
 	c := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	loadData(writeClient, dataFile, baseTime, interval)
-	Expect(writeClient.CloseSend()).To(Succeed())
-	Eventually(func() error {
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
 		_, err := writeClient.Recv()
 		return err
-	}).Should(Equal(io.EOF))
+	}).Should(gm.Equal(io.EOF))
 }

@@ -22,8 +22,8 @@ import (
 	"runtime"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -33,13 +33,13 @@ import (
 	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
-var _ = Describe("Query service_cpm_minute", func() {
+var _ = g.Describe("Query service_cpm_minute", func() {
 	var deferFn func()
 	var baseTime time.Time
 	var interval time.Duration
 	var conn *grpclib.ClientConn
 
-	BeforeEach(func() {
+	g.BeforeEach(func() {
 		_, currentFile, _, _ := runtime.Caller(0)
 		basePath := filepath.Dir(currentFile)
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
@@ -48,20 +48,20 @@ var _ = Describe("Query service_cpm_minute", func() {
 		addr, deferFn = setup.SetUp("--tls=true", "--cert-file="+certFile, "--key-file="+keyFile)
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
-		Expect(err).NotTo(HaveOccurred())
+		gm.Expect(err).NotTo(gm.HaveOccurred())
 		conn, err = grpclib.Dial(addr, grpclib.WithTransportCredentials(creds))
-		Expect(err).NotTo(HaveOccurred())
+		gm.Expect(err).NotTo(gm.HaveOccurred())
 		baseTime = timestamp.NowMilli()
 		interval = 500 * time.Millisecond
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, interval)
 	})
-	AfterEach(func() {
-		Expect(conn.Close()).To(Succeed())
+	g.AfterEach(func() {
+		gm.Expect(conn.Close()).To(gm.Succeed())
 		deferFn()
 	})
-	It("queries a tls server", func() {
-		Eventually(func(g Gomega) {
-			casesMeasureData.VerifyFn(g, helpers.SharedContext{
+	g.It("queries a tls server", func() {
+		gm.Eventually(func(innerGm gm.Gomega) {
+			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: conn,
 				BaseTime:   baseTime,
 			}, helpers.Args{Input: "all", Duration: 1 * time.Hour})
