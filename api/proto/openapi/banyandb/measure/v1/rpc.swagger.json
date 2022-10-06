@@ -357,7 +357,7 @@
       "properties": {
         "op": {
           "$ref": "#/definitions/LogicalExpressionLogicalOp",
-          "title": "op is a logial operation"
+          "title": "op is a logical operation"
         },
         "left": {
           "$ref": "#/definitions/v1Criteria"

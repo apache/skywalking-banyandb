@@ -671,7 +671,7 @@ LogicalExpression supports logical operation
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logial operation |
+| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logical operation |
 | left | [Criteria](#banyandb-model-v1-Criteria) |  |  |
 | right | [Criteria](#banyandb-model-v1-Criteria) |  |  |
 
