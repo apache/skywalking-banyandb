@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -33,11 +35,13 @@ import (
 
 type ID string
 
-var strDelimiter = []byte("\n")
-
 var (
+	strDelimiter = []byte("\n")
+	NullTag      = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 	ErrNullValue                   = errors.New("the tag value is null")
+	ErrMalformedElement            = errors.New("element is malformed")
 )
 
 func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
@@ -334,4 +338,24 @@ func getField(field interface{}) *modelv1.FieldValue {
 		}
 	}
 	return nil
+}
+
+func EncodeFamily(familySpec *databasev1.TagFamilySpec, family *modelv1.TagFamilyForWrite) ([]byte, error) {
+	if len(family.GetTags()) > len(familySpec.GetTags()) {
+		return nil, errors.Wrap(ErrMalformedElement, "tag number is more than expected")
+	}
+	data := &modelv1.TagFamilyForWrite{}
+	for ti, tag := range family.GetTags() {
+		tagSpec := familySpec.GetTags()[ti]
+		tType, isNull := TagValueTypeConv(tag)
+		if !isNull && tType != tagSpec.GetType() {
+			return nil, errors.Wrapf(ErrMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
+		}
+		if tagSpec.IndexedOnly {
+			data.Tags = append(data.Tags, NullTag)
+		} else {
+			data.Tags = append(data.Tags, tag)
+		}
+	}
+	return proto.Marshal(data)
 }
