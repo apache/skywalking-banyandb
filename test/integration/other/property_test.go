@@ -20,7 +20,6 @@ package integration_other_test
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
@@ -29,6 +28,7 @@ import (
 	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
 var _ = Describe("Property application", func() {

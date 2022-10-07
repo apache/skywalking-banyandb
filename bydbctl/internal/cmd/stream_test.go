@@ -22,6 +22,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghodss/yaml"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
+	"github.com/zenizh/go-capturer"
+
+	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -33,13 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/ghodss/yaml"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
-
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 var _ = Describe("Stream", func() {

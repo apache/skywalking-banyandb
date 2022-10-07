@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -30,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/pkg/errors"
 )
 
 var (
