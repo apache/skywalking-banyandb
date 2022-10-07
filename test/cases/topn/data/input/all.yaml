@@ -18,4 +18,5 @@
 metadata:
   name: "service_cpm_minute_top100"
   group: "sw_metric"
-top_n: 1
+topN: 1
+fieldValueSort: 1

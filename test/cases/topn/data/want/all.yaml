@@ -26,3 +26,8 @@ lists:
     value:
       int:
         value: "1"
+- items:
+  - name: "entity_3"
+    value:
+      int:
+        value: "5"

@@ -20,6 +20,7 @@ package flow
 import (
 	"container/heap"
 
+	"github.com/emirpasic/gods/utils"
 	"github.com/pkg/errors"
 )
 
@@ -29,22 +30,20 @@ var _ heap.Interface = (*DedupPriorityQueue)(nil)
 type Element interface {
 	GetIndex() int
 	SetIndex(int)
-	// Compare returns positive number to indicate this object is greater than
-	// the other logic, 0 to indicate equality, and negative to indicate
-	// less than the other.
-	Compare(other Element) int
 }
 
 // DedupPriorityQueue implements heap.Interface.
 // DedupPriorityQueue is not thread-safe
 type DedupPriorityQueue struct {
+	comparator      utils.Comparator
 	Items           []Element
 	cache           map[Element]struct{}
 	allowDuplicates bool
 }
 
-func NewPriorityQueue(allowDuplicates bool) *DedupPriorityQueue {
+func NewPriorityQueue(comparator utils.Comparator, allowDuplicates bool) *DedupPriorityQueue {
 	return &DedupPriorityQueue{
+		comparator:      comparator,
 		Items:           make([]Element, 0),
 		cache:           make(map[Element]struct{}),
 		allowDuplicates: allowDuplicates,
@@ -70,7 +69,7 @@ func (pq *DedupPriorityQueue) Len() int { return len(pq.Items) }
 
 // Less is the items less comparator.
 func (pq *DedupPriorityQueue) Less(i, j int) bool {
-	return pq.Items[i].Compare(pq.Items[j]) < 0
+	return pq.comparator(pq.Items[i], pq.Items[j]) < 0
 }
 
 // Swap exchanges indexes of the items.
@@ -122,11 +121,34 @@ func (pq *DedupPriorityQueue) Slice(start, end int) []Element {
 	return pq.Items[start:end]
 }
 
+func (pq *DedupPriorityQueue) Values() []Element {
+	values := make([]Element, pq.Len(), pq.Len())
+	for _, elem := range pq.Items {
+		values[elem.GetIndex()] = elem
+	}
+	return values
+}
+
+func (pq *DedupPriorityQueue) Left() Element {
+	if pq.Len() == 0 {
+		return nil
+	}
+	return pq.Items[0]
+}
+
+func (pq *DedupPriorityQueue) Right() Element {
+	if pq.Len() == 0 {
+		return nil
+	}
+	return pq.Items[pq.Len()-1]
+}
+
 func (pq *DedupPriorityQueue) WithNewItems(items []Element) (*DedupPriorityQueue, error) {
 	newPq := &DedupPriorityQueue{
 		Items:           items,
 		cache:           make(map[Element]struct{}),
 		allowDuplicates: pq.allowDuplicates,
+		comparator:      pq.comparator,
 	}
 	err := newPq.initCache()
 	if err != nil {

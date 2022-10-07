@@ -216,10 +216,12 @@ func (s *TumblingTimeWindows) Exec(downstream flow.Inlet) {
 
 func NewTumblingTimeWindows(size time.Duration) *TumblingTimeWindows {
 	return &TumblingTimeWindows{
-		size:             size.Milliseconds(),
-		lateness:         0,
-		snapshots:        make(map[int64]flow.AggregationOp),
-		timerHeap:        flow.NewPriorityQueue(false),
+		size:      size.Milliseconds(),
+		lateness:  0,
+		snapshots: make(map[int64]flow.AggregationOp),
+		timerHeap: flow.NewPriorityQueue(func(a, b interface{}) int {
+			return int(a.(*internalTimer).triggerTimeMillis - b.(*internalTimer).triggerTimeMillis)
+		}, false),
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
 		currentWatermark: 0,
@@ -301,8 +303,4 @@ func (t *internalTimer) GetIndex() int {
 
 func (t *internalTimer) SetIndex(idx int) {
 	t.index = idx
-}
-
-func (t *internalTimer) Compare(elem flow.Element) int {
-	return int(t.triggerTimeMillis - elem.(*internalTimer).triggerTimeMillis)
 }

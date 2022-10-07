@@ -21,7 +21,8 @@ package topn_test
 import (
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	topNTestData "github.com/apache/skywalking-banyandb/test/cases/topn/data"
@@ -31,10 +32,12 @@ var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		topNTestData.VerifyFn(SharedContext, args)
+		gm.Eventually(func(innerGm gm.Gomega) {
+			topNTestData.VerifyFn(innerGm, SharedContext, args)
+		}).WithTimeout(10 * time.Second).WithPolling(1 * time.Second).Should(gm.Succeed())
 	}
 )
 
-var _ = DescribeTable("TopN Tests", verify,
-	Entry("all", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+var _ = g.DescribeTable("TopN Tests", verify,
+	g.Entry("all", helpers.Args{Input: "all", Duration: 1 * time.Hour, Offset: -5 * time.Minute}),
 )

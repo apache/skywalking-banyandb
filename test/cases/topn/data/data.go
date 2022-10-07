@@ -23,8 +23,8 @@ import (
 	"embed"
 
 	"github.com/google/go-cmp/cmp"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
 	"sigs.k8s.io/yaml"
@@ -40,9 +40,9 @@ var inputFS embed.FS
 var wantFS embed.FS
 
 // VerifyFn verify whether the query response matches the wanted result
-var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
+var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
-	Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &measurev1.TopNRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
@@ -51,27 +51,27 @@ var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
 	resp, err := c.TopN(ctx, query)
 	if args.WantErr {
 		if err == nil {
-			Fail("expect error")
+			g.Fail("expect error")
 		}
 		return
 	}
-	Expect(err).NotTo(HaveOccurred(), query.String())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		Expect(resp.Lists).To(BeEmpty())
+		innerGm.Expect(resp.Lists).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
 		args.Want = args.Input
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
-	Expect(err).NotTo(HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.TopNResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	Expect(cmp.Equal(resp, want,
+	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.TopNList{}, "timestamp"),
 		protocmp.Transform())).
-		To(BeTrue(), func() string {
+		To(gm.BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)
 			if err != nil {
 				return err.Error()

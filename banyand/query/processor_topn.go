@@ -24,7 +24,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/emirpasic/gods/queues/priorityqueue"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -224,7 +224,7 @@ func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 		return &postNonAggregationProcessor{
 			topN:      topN,
 			sort:      sort,
-			timelines: make(map[uint64]*priorityqueue.Queue),
+			timelines: make(map[uint64]*flow.DedupPriorityQueue),
 		}
 	}
 	aggregator := &postAggregationProcessor{
@@ -327,27 +327,40 @@ func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
 	}
 }
 
+var (
+	_ flow.Element = (*nonAggregatorItem)(nil)
+)
+
 type nonAggregatorItem struct {
-	key string
-	val int64
+	key   string
+	val   int64
+	index int
+}
+
+func (n *nonAggregatorItem) GetIndex() int {
+	return n.index
+}
+
+func (n *nonAggregatorItem) SetIndex(i int) {
+	n.index = i
 }
 
 type postNonAggregationProcessor struct {
 	topN      int32
 	sort      modelv1.Sort
-	timelines map[uint64]*priorityqueue.Queue
+	timelines map[uint64]*flow.DedupPriorityQueue
 }
 
 func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
-		items := make([]*measurev1.TopNList_Item, int(math.Min(float64(naggr.topN), float64(timeline.Size()))))
-		for it := timeline.Iterator(); it.Next() && it.Index() < int(naggr.topN); {
-			items[it.Index()] = &measurev1.TopNList_Item{
-				Name: it.Value().(*nonAggregatorItem).key,
+		items := make([]*measurev1.TopNList_Item, timeline.Len(), timeline.Len())
+		for _, elem := range timeline.Values() {
+			items[elem.GetIndex()] = &measurev1.TopNList_Item{
+				Name: elem.(*nonAggregatorItem).key,
 				Value: &modelv1.FieldValue{
 					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{Value: it.Value().(*nonAggregatorItem).val},
+						Int: &modelv1.Int{Value: elem.(*nonAggregatorItem).val},
 					},
 				},
 			}
@@ -363,25 +376,31 @@ func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 
 func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
-		if timeline.Size() < int(naggr.topN) {
-			timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+		if timeline.Len() < int(naggr.topN) {
+			heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
 		} else {
-			iter := timeline.Iterator()
-			iter.End()
-			if iter.Prev() {
-				if naggr.sort == modelv1.Sort_SORT_DESC && iter.Value().(*nonAggregatorItem).val < val {
-					timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
-					// TODO: pop extra elements
-				} else if naggr.sort != modelv1.Sort_SORT_DESC && iter.Value().(*nonAggregatorItem).val > val {
-					// TODO: pop extra elements
-					timeline.Enqueue(&nonAggregatorItem{val: val, key: key})
+			if right := timeline.Right(); right != nil {
+				if naggr.sort == modelv1.Sort_SORT_DESC && right.(*nonAggregatorItem).val < val {
+					heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
+					newTimeline, err := timeline.WithNewItems(timeline.Slice(0, int(naggr.topN)))
+					if err != nil {
+						return err
+					}
+					naggr.timelines[timestampMillis] = newTimeline
+				} else if naggr.sort != modelv1.Sort_SORT_DESC && right.(*nonAggregatorItem).val > val {
+					heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
+					newTimeline, err := timeline.WithNewItems(timeline.Slice(0, int(naggr.topN)))
+					if err != nil {
+						return err
+					}
+					naggr.timelines[timestampMillis] = newTimeline
 				}
 			}
 		}
 		return nil
 	}
 
-	timeline := priorityqueue.NewWith(func(a, b interface{}) int {
+	timeline := flow.NewPriorityQueue(func(a, b interface{}) int {
 		if naggr.sort == modelv1.Sort_SORT_DESC {
 			if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
 				return 1
@@ -398,7 +417,7 @@ func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMi
 		} else {
 			return 1
 		}
-	})
+	}, false)
 	naggr.timelines[timestampMillis] = timeline
 
 	return nil
