@@ -138,6 +138,10 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	// down-sampling to a time bucket as measure ID
 	timeBucket := t.downSampleTimeBucket(eventTime)
 	var err error
+	t.l.Warn().
+		Str("TopN", t.topNSchema.GetMetadata().GetName()).
+		Int("rankNums", len(tuples)).
+		Msg("Write a tuple")
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)

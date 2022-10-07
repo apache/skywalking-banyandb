@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -102,23 +103,17 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 				return
 			}
 			for _, iter := range iters {
-				defer func(iter tsdb.Iterator) {
-					_ = iter.Close()
-				}(iter)
-				for {
-					if hasNext := iter.Next(); hasNext {
-						tuple, parseErr := parseTopNFamily(iter.Val(), sourceMeasure.GetInterval())
-						if parseErr != nil {
-							t.log.Error().Err(parseErr).
-								Str("topN", topNMetadata.GetName()).
-								Msg("fail to parse topN family")
-							return
-						}
-						_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64), iter.Val().Time())
-					} else {
-						break
+				for iter.Next() {
+					tuple, parseErr := parseTopNFamily(iter.Val(), sourceMeasure.GetInterval())
+					if parseErr != nil {
+						t.log.Error().Err(parseErr).
+							Str("topN", topNMetadata.GetName()).
+							Msg("fail to parse topN family")
+						return
 					}
+					_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64), iter.Val().Time())
 				}
+				_ = iter.Close()
 			}
 		}
 	}
@@ -371,6 +366,15 @@ func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 		})
 	}
 
+	slices.SortStableFunc(topNLists, func(a, b *measurev1.TopNList) bool {
+		if a.GetTimestamp().GetSeconds() < b.GetTimestamp().GetSeconds() {
+			return true
+		} else if a.GetTimestamp().GetSeconds() == b.GetTimestamp().GetSeconds() {
+			return a.GetTimestamp().GetNanos() < b.GetTimestamp().GetNanos()
+		}
+		return false
+	})
+
 	return topNLists
 }
 
@@ -419,6 +423,7 @@ func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMi
 		}
 	}, false)
 	naggr.timelines[timestampMillis] = timeline
+	heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
 
 	return nil
 }
