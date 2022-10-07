@@ -21,6 +21,11 @@ import (
 	"testing"
 	"time"
 
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -28,15 +33,11 @@ import (
 	cases_measure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestIntegrationQuery(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite")
+	gm.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Integration Query Suite")
 }
 
 var (
@@ -45,25 +46,25 @@ var (
 	deferFunc  func()
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+var _ = g.SynchronizedBeforeSuite(func() []byte {
+	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	})).To(Succeed())
+	})).To(gm.Succeed())
 	var addr string
 	addr, deferFunc = setup.SetUp()
 	conn, err := grpclib.Dial(
 		addr,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	now = timestamp.NowMilli()
 	interval := 500 * time.Millisecond
 	cases_stream.Write(conn, "data.json", now, interval)
 	cases_measure_data.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	Expect(conn.Close()).To(Succeed())
+	gm.Expect(conn.Close()).To(gm.Succeed())
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
@@ -80,12 +81,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Connection: connection,
 		BaseTime:   now,
 	}
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = g.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gm.Expect(connection.Close()).To(gm.Succeed())
 	}
 }, func() {
 	deferFunc()
