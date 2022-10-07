@@ -34,7 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 

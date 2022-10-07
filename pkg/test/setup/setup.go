@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/onsi/gomega"
+
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -31,8 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-
-	"github.com/onsi/gomega"
 )
 
 const host = "127.0.0.1"

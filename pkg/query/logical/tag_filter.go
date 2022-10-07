@@ -22,8 +22,9 @@ import (
 	"fmt"
 	"strings"
 
-	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/pkg/errors"
+
+	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 var ErrUnsupportedLogicalOperation = errors.New("unsupported logical operation")

@@ -21,13 +21,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 func newGroupCmd() *cobra.Command {

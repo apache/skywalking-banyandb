@@ -19,7 +19,6 @@ package timestamp
 import (
 	"math"
 	"time"
-
 	// link runtime pkg fastrand
 	_ "unsafe"
 
