@@ -133,10 +133,9 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	if !ok {
 		return errors.New("invalid data type")
 	}
-	// eventTime is the start time of a timeWindow
-	eventTime := time.UnixMilli(record.TimestampMillis())
-	// down-sampling to a time bucket as measure ID
-	timeBucket := t.downSampleTimeBucket(eventTime)
+	// down-sample the start of the timeWindow to a time-bucket
+	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
+	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
 	t.l.Warn().
 		Str("TopN", t.topNSchema.GetMetadata().GetName()).
@@ -240,9 +239,8 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	return span.Close()
 }
 
-func (t *topNStreamingProcessor) downSampleTimeBucket(eventTime time.Time) string {
-	return time.UnixMilli(eventTime.UnixMilli() - eventTime.UnixMilli()%t.interval.Milliseconds()).
-		Format(timeBucketFormat)
+func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
+	return time.UnixMilli(eventTimeMillis - eventTimeMillis%t.interval.Milliseconds())
 }
 
 func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, common.ShardID, error) {
