@@ -22,10 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
@@ -35,6 +31,10 @@ import (
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measure_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 

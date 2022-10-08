@@ -21,7 +21,7 @@ linters:
     - gocritic
     - goconst
     - gofumpt
-    - goimports
+    - gci
     - gosimple
     - govet
     - ineffassign
@@ -49,6 +49,11 @@ linters-settings:
     check-exported: false
   unparam:
     check-exported: false
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/apache/skywalking-banyandb/) 
   gocritic:
     enabled-checks:
       - appendCombine

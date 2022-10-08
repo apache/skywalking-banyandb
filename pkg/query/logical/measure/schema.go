@@ -18,12 +18,12 @@
 package measure
 
 import (
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
+
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 type schema struct {

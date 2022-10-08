@@ -203,9 +203,8 @@ type TopNAggregation interface {
 }
 
 type Property interface {
-	GetProperty(ctx context.Context, metadata *propertyv1.Metadata) (*propertyv1.Property, error)
-	ListProperty(ctx context.Context, container *commonv1.Metadata) ([]*propertyv1.Property, error)
-	CreateProperty(ctx context.Context, property *propertyv1.Property) error
-	UpdateProperty(ctx context.Context, property *propertyv1.Property) error
-	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata) (bool, error)
+	GetProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (*propertyv1.Property, error)
+	ListProperty(ctx context.Context, container *commonv1.Metadata, ids []string, tags []string) ([]*propertyv1.Property, error)
+	ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, error)
+	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
 }

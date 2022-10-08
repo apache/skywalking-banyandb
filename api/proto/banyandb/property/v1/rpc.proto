@@ -32,30 +32,37 @@ option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
     base_path:"/api"
 };
 
-message CreateRequest {
+message ApplyRequest {
     banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
+    enum Strategy {
+        STRATEGY_UNSPECIFIED=0;
+        STRATEGY_MERGE=1;
+        STRATEGY_REPLACE=2;
+    }
+    // strategy indicates how to update a property. It defaults to STRATEGY_MERGE
+    Strategy strategy = 2;
 }
 
-message CreateResponse {
-}
-
-message UpdateRequest {
-    banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
-}
-
-message UpdateResponse {
+message ApplyResponse {
+    // created indicates whether the property existed.
+    // True: the property is absent. False: the property existed.
+    bool created = 1;
+    uint32 tags_num = 2;
 }
 
 message DeleteRequest {
     banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+    repeated string tags = 2;
 }
 
 message DeleteResponse {
     bool deleted = 1;
+    uint32 tags_num = 2;
 }
 
 message GetRequest {
     banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+    repeated string tags = 2;
 }
 
 message GetResponse {
@@ -64,6 +71,8 @@ message GetResponse {
 
 message ListRequest {
     banyandb.common.v1.Metadata container = 1 [(validate.rules).message.required = true];
+    repeated string ids = 2;
+    repeated string tags = 3;
 }
 
 message ListResponse {
@@ -71,13 +80,8 @@ message ListResponse {
 }
 
 service PropertyService {
-    rpc Create(CreateRequest) returns (CreateResponse){
-        option(google.api.http) = {
-            post:"/v1/property"
-            body:"*"
-        };
-    };
-    rpc Update(UpdateRequest) returns (UpdateResponse){
+    // Apply creates a property if it's absent, or update a existed one based on a strategy.
+    rpc Apply(ApplyRequest) returns (ApplyResponse){
         option(google.api.http) = {
             put:"/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"
             body:"*"
@@ -85,17 +89,17 @@ service PropertyService {
     };
     rpc Delete(DeleteRequest) returns (DeleteResponse){
         option(google.api.http) = {
-            delete:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"
+            delete:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
         };
     };
     rpc Get(GetRequest) returns (GetResponse){
         option(google.api.http) = {
-            get:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"
+            get:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
         };
     };
     rpc List(ListRequest) returns (ListResponse){
         option(google.api.http) = {
-            get:"/v1/property/lists/{container.group}/{container.name}"
+            get:"/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
         };
     };
 }

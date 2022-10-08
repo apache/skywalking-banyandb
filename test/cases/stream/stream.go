@@ -23,11 +23,9 @@ import (
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
-
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	stream_test_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
@@ -58,4 +56,5 @@ var _ = g.DescribeTable("Scanning Streams", verify,
 	g.Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
 	g.Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
+	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 )

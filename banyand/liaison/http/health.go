@@ -21,13 +21,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func newHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *healthCheckClient, err error) {

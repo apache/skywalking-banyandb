@@ -21,6 +21,13 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	g "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	gm "github.com/onsi/gomega"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -29,15 +36,11 @@ import (
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestIntegrationColdQuery(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Cold Data Suite")
+	gm.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Integration Query Cold Data Suite")
 }
 
 var (
@@ -46,18 +49,18 @@ var (
 	deferFunc  func()
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+var _ = g.SynchronizedBeforeSuite(func() []byte {
+	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	})).To(Succeed())
+	})).To(gm.Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()
 	conn, err := grpclib.Dial(
 		addr,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	now = timestamp.NowMilli().Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	cases_stream_data.Write(conn, "data.json", now, interval)
@@ -81,12 +84,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Connection: connection,
 		BaseTime:   now,
 	}
-	Expect(err).NotTo(HaveOccurred())
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = g.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gm.Expect(connection.Close()).To(gm.Succeed())
 	}
 }, func() {
 	deferFunc()

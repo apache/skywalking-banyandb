@@ -115,7 +115,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 		}
 	}
 	if len(seriesList) == 0 {
-		return nil, nil
+		return executor.EmptyMIterator, nil
 	}
 	var builders []logical.SeekerBuilder
 	if i.Index != nil {

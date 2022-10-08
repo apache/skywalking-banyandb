@@ -21,15 +21,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
 var _ = Describe("Group", func() {

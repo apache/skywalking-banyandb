@@ -22,6 +22,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/pkg/errors"
 )
 
 type streamService struct {

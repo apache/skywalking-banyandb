@@ -21,7 +21,6 @@ import (
 	"bytes"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -91,25 +90,12 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	writeFn := func() (tsdb.Writer, error) {
 		builder := wp.WriterBuilder().Time(t)
 		for fi, family := range value.GetTagFamilies() {
-			familySpec := sm.GetTagFamilies()[fi]
-			if len(family.GetTags()) > len(familySpec.GetTags()) {
-				return nil, errors.Wrap(ErrMalformedElement, "tag number is more than expected")
-			}
-			for ti, tag := range family.GetTags() {
-				tagSpec := familySpec.GetTags()[ti]
-				tType, isNull := pbv1.TagValueTypeConv(tag)
-				if isNull {
-					continue
-				}
-				if tType != tagSpec.GetType() {
-					return nil, errors.Wrapf(ErrMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
-				}
-			}
-			bb, errMarshal := proto.Marshal(family)
+			spec := sm.GetTagFamilies()[fi]
+			bb, errMarshal := pbv1.EncodeFamily(spec, family)
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
-			builder.Family(familyIdentity(sm.GetTagFamilies()[fi].GetName(), TagFlag), bb)
+			builder.Family(familyIdentity(spec.GetName(), TagFlag), bb)
 		}
 		if len(value.GetFields()) > len(sm.GetFields()) {
 			return nil, errors.Wrap(ErrMalformedElement, "fields number is more than expected")
