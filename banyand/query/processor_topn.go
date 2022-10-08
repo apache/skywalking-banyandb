@@ -349,7 +349,7 @@ type postNonAggregationProcessor struct {
 func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
-		items := make([]*measurev1.TopNList_Item, timeline.Len(), timeline.Len())
+		items := make([]*measurev1.TopNList_Item, timeline.Len())
 		for _, elem := range timeline.Values() {
 			items[elem.GetIndex()] = &measurev1.TopNList_Item{
 				Name: elem.(*nonAggregatorItem).key,

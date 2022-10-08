@@ -387,10 +387,7 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 
 	return func(_ context.Context, dataPoint any) bool {
 		tfs := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
-		if !f.predicate(tfs) {
-			return false
-		}
-		return true
+		return f.predicate(tfs)
 	}, nil
 }
 
@@ -422,9 +419,8 @@ func (manager *topNProcessorManager) buildFilterForLogicalExpr(logicalExpr *mode
 func composeWithOp(left, right conditionFilter, op modelv1.LogicalExpression_LogicalOp) conditionFilter {
 	if op == modelv1.LogicalExpression_LOGICAL_OP_AND {
 		return &andFilter{left, right}
-	} else {
-		return &orFilter{left, right}
 	}
+	return &orFilter{left, right}
 }
 
 // buildFilterForCondition builds a single, composable filter for a single condition
