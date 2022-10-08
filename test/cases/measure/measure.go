@@ -22,16 +22,19 @@ import (
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	measure_test_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
 var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		measure_test_data.VerifyFn(SharedContext, args)
+		gm.Eventually(func(innerGm gm.Gomega) {
+			measureTestData.VerifyFn(innerGm, SharedContext, args)
+		})
 	}
 )
 

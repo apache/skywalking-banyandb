@@ -27,9 +27,15 @@ run:
 linters:
   disable-all: true
   enable:
-  - goimports
+  - gci
   - gofumpt
   fast: false
+linters-settings:
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/apache/skywalking-banyandb/) 
 
 issues:
   max-per-linter: 0

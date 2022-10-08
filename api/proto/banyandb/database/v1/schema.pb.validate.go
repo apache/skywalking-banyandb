@@ -196,6 +196,8 @@ func (m *TagSpec) validate(all bool) error {
 
 	// no validation rules for Type
 
+	// no validation rules for IndexedOnly
+
 	if len(errors) > 0 {
 		return TagSpecMultiError(errors)
 	}

@@ -28,8 +28,10 @@ import (
 )
 
 // ErrSignal is returned when a termination signal is received.
-var ErrSignal = errors.New("signal received")
-var _ run.Service = (*Handler)(nil)
+var (
+	ErrSignal             = errors.New("signal received")
+	_         run.Service = (*Handler)(nil)
+)
 
 // Handler implements a unix signal handler as run.GroupService.
 type Handler struct {

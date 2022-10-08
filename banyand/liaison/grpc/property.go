@@ -29,32 +29,27 @@ type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
 }
 
-func (ps *propertyServer) Create(ctx context.Context, req *propertyv1.CreateRequest) (*propertyv1.CreateResponse, error) {
-	if err := ps.schemaRegistry.PropertyRegistry().CreateProperty(ctx, req.GetProperty()); err != nil {
+func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (*propertyv1.ApplyResponse, error) {
+	created, tagsNum, err := ps.schemaRegistry.PropertyRegistry().ApplyProperty(ctx, req.Property, req.Strategy)
+	if err != nil {
 		return nil, err
 	}
-	return &propertyv1.CreateResponse{}, nil
-}
-
-func (ps *propertyServer) Update(ctx context.Context, req *propertyv1.UpdateRequest) (*propertyv1.UpdateResponse, error) {
-	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
-		return nil, err
-	}
-	return &propertyv1.UpdateResponse{}, nil
+	return &propertyv1.ApplyResponse{Created: created, TagsNum: tagsNum}, nil
 }
 
 func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequest) (*propertyv1.DeleteResponse, error) {
-	ok, err := ps.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, req.GetMetadata())
+	ok, tagsNum, err := ps.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, req.GetMetadata(), req.Tags)
 	if err != nil {
 		return nil, err
 	}
 	return &propertyv1.DeleteResponse{
 		Deleted: ok,
+		TagsNum: tagsNum,
 	}, nil
 }
 
 func (ps *propertyServer) Get(ctx context.Context, req *propertyv1.GetRequest) (*propertyv1.GetResponse, error) {
-	entity, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, req.GetMetadata())
+	entity, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, req.GetMetadata(), req.GetTags())
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +59,7 @@ func (ps *propertyServer) Get(ctx context.Context, req *propertyv1.GetRequest) (
 }
 
 func (ps *propertyServer) List(ctx context.Context, req *propertyv1.ListRequest) (*propertyv1.ListResponse, error) {
-	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, req.GetContainer())
+	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, req.GetContainer(), req.Ids, req.Tags)
 	if err != nil {
 		return nil, err
 	}

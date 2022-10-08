@@ -21,13 +21,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 const streamSchemaPath = "/api/v1/stream/schema"

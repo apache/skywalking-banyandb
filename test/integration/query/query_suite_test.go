@@ -21,6 +21,11 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -29,10 +34,6 @@ import (
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestIntegrationQuery(t *testing.T) {
