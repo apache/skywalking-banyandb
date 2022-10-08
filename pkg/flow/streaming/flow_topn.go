@@ -43,6 +43,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 		topNAggrFunc := &topNAggregator{
 			cacheSize: topNum,
 			sort:      DESC,
+			dirty:     false,
 		}
 		// apply user customized options
 		for _, opt := range opts {
@@ -79,6 +80,7 @@ type topNAggregator struct {
 	// sort indicates the order of results
 	sort       TopNSort
 	comparator utils.Comparator
+	dirty      bool
 }
 
 type TopNOption func(aggregator *topNAggregator)
@@ -132,6 +134,7 @@ func (t *topNAggregator) Merge(other flow.AggregationOp) error {
 
 func (t *topNAggregator) put(sortKey int64, data flow.StreamRecord) {
 	t.currentTopNum++
+	t.dirty = true
 	if existingList, ok := t.treeMap.Get(sortKey); ok {
 		existingList = append(existingList.([]interface{}), data)
 		t.treeMap.Put(sortKey, existingList)
@@ -165,6 +168,7 @@ func (t *Tuple2) Equal(other *Tuple2) bool {
 }
 
 func (t *topNAggregator) Snapshot() interface{} {
+	t.dirty = false
 	iter := t.treeMap.Iterator()
 	items := make([]*Tuple2, 0, t.currentTopNum)
 	for iter.Next() {
@@ -174,4 +178,8 @@ func (t *topNAggregator) Snapshot() interface{} {
 		}
 	}
 	return items
+}
+
+func (t *topNAggregator) Dirty() bool {
+	return t.dirty
 }

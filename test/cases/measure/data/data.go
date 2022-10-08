@@ -106,7 +106,6 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
 		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
 			Should(gm.Succeed())
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 

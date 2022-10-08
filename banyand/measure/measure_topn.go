@@ -269,6 +269,7 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.slideSize)).
+		AllowedLateness(time.Duration(t.topNSchema.GetAllowedLateness())*time.Millisecond).
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[1].(int64)

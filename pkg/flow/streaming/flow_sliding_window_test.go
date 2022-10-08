@@ -31,22 +31,32 @@ import (
 var _ flow.AggregationOp = (*intSumAggregator)(nil)
 
 type intSumAggregator struct {
-	sum int
+	sum   int
+	dirty bool
 }
 
 func (i *intSumAggregator) Add(input []flow.StreamRecord) {
 	for _, item := range input {
 		i.sum += item.Data().(int)
 	}
+	if len(input) > 0 {
+		i.dirty = true
+	}
 }
 
 func (i *intSumAggregator) Merge(op flow.AggregationOp) error {
 	i.sum += op.Snapshot().(int)
+	i.dirty = true
 	return nil
 }
 
 func (i *intSumAggregator) Snapshot() interface{} {
+	i.dirty = false
 	return i.sum
+}
+
+func (i *intSumAggregator) Dirty() bool {
+	return i.dirty
 }
 
 var _ = Describe("Sliding Window", func() {

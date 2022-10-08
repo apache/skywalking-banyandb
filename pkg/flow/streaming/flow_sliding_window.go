@@ -57,14 +57,14 @@ func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	}
 }
 
-func (s *windowedFlow) AllowedLateness(lateness time.Duration) flow.Flow {
+func (s *windowedFlow) AllowedLateness(lateness time.Duration) flow.WindowedFlow {
 	switch v := s.wa.(type) {
 	case *TumblingTimeWindows:
 		v.lateness = lateness.Milliseconds()
 	default:
 		s.f.drainErr(errors.New("lateness is not supported"))
 	}
-	return s.f
+	return s
 }
 
 type TumblingTimeWindows struct {
@@ -128,6 +128,14 @@ func (s *TumblingTimeWindows) purgeWindow(w timeWindow) {
 		}
 
 		s.out <- flow.NewStreamRecord(s.acc.Snapshot(), w.start)
+		s.snapshotsMu.Lock()
+		defer s.snapshotsMu.Unlock()
+		// flush all other dirty windows
+		for endTime, resSnapshot := range s.snapshots {
+			if resSnapshot.Dirty() {
+				s.out <- flow.NewStreamRecord(resSnapshot.Snapshot(), endTime+1-s.size)
+			}
+		}
 		return
 	}
 	s.snapshotsMu.Unlock()

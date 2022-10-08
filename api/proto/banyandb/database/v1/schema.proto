@@ -46,7 +46,7 @@ message TagSpec {
     string name = 1;
     TagType type = 2;
     // indexed_only indicates whether the tag is stored
-    // True: It's indexed only, but not stored 
+    // True: It's indexed only, but not stored
     // False: it's stored and indexed
     bool indexed_only = 3;
 }
@@ -132,8 +132,10 @@ message TopNAggregation {
     model.v1.Criteria criteria = 6;
     // counters_number sets the number of counters to be tracked. The default value is 1000
     int32 counters_number = 7;
+    // allowed_lateness defines how much duration is allowed for late coming elements. Unit is milliseconds
+    int64 allowed_lateness = 8;
     // updated_at indicates when the measure is updated
-    google.protobuf.Timestamp updated_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type
@@ -168,8 +170,8 @@ message IndexRule {
         ANALYZER_KEYWORD = 1;
         // Standard analyzer provides grammar based tokenization
         ANALYZER_STANDARD = 2;
-        // Simple analyzer breaks text into tokens at any non-letter character, 
-        // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, 
+        // Simple analyzer breaks text into tokens at any non-letter character,
+        // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
         // and changes uppercase to lowercase.
         ANALYZER_SIMPLE = 3;
     }

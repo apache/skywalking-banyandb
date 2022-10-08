@@ -1375,7 +1375,7 @@
         "ANALYZER_SIMPLE"
       ],
       "default": "ANALYZER_UNSPECIFIED",
-      "description": " - ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character, \nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters, \nand changes uppercase to lowercase."
+      "description": " - ANALYZER_KEYWORD: Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.\n - ANALYZER_STANDARD: Standard analyzer provides grammar based tokenization\n - ANALYZER_SIMPLE: Simple analyzer breaks text into tokens at any non-letter character,\nsuch as numbers, spaces, hyphens and apostrophes, discards non-letter characters,\nand changes uppercase to lowercase."
     },
     "IntervalRuleUnit": {
       "type": "string",
@@ -2134,7 +2134,7 @@
         },
         "indexedOnly": {
           "type": "boolean",
-          "title": "indexed_only indicates whether the tag is stored\nTrue: It's indexed only, but not stored \nFalse: it's stored and indexed"
+          "title": "indexed_only indicates whether the tag is stored\nTrue: It's indexed only, but not stored\nFalse: it's stored and indexed"
         }
       }
     },
@@ -2212,6 +2212,11 @@
           "type": "integer",
           "format": "int32",
           "title": "counters_number sets the number of counters to be tracked. The default value is 1000"
+        },
+        "allowedLateness": {
+          "type": "string",
+          "format": "int64",
+          "title": "allowed_lateness defines how much duration is allowed for late coming elements. Unit is milliseconds"
         },
         "updatedAt": {
           "type": "string",

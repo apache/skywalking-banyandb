@@ -52,7 +52,7 @@ type Flow interface {
 // WindowedFlow is a flow which processes incoming elements based on window.
 // The WindowedFlow can be created with a WindowAssigner.
 type WindowedFlow interface {
-	AllowedLateness(lateness time.Duration) Flow
+	AllowedLateness(lateness time.Duration) WindowedFlow
 	// TopN applies a TopNAggregation to each Window.
 	TopN(topNum int, opts ...any) Flow
 }
@@ -79,7 +79,10 @@ type AggregationOp interface {
 	// Merge merges the argument with the current Op
 	Merge(AggregationOp) error
 	// Snapshot takes a snapshot of the current state of the AggregationOp
+	// Taking a snapshot will restore the dirty flag
 	Snapshot() interface{}
+	// Dirty flag means if any new item is added after the last snapshot
+	Dirty() bool
 }
 
 type AggregationOpFactory func() AggregationOp
