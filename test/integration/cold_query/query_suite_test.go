@@ -22,9 +22,7 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
-	g "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -39,8 +37,8 @@ import (
 )
 
 func TestIntegrationColdQuery(t *testing.T) {
-	gm.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Integration Query Cold Data Suite")
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Integration Query Cold Data Suite")
 }
 
 var (
@@ -49,18 +47,18 @@ var (
 	deferFunc  func()
 )
 
-var _ = g.SynchronizedBeforeSuite(func() []byte {
-	gm.Expect(logger.Init(logger.Logging{
+var _ = SynchronizedBeforeSuite(func() []byte {
+	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	})).To(gm.Succeed())
+	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()
 	conn, err := grpclib.Dial(
 		addr,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	now = timestamp.NowMilli().Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	cases_stream_data.Write(conn, "data.json", now, interval)
@@ -84,12 +82,12 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		Connection: connection,
 		BaseTime:   now,
 	}
-	gm.Expect(err).NotTo(gm.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 })
 
-var _ = g.SynchronizedAfterSuite(func() {
+var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
-		gm.Expect(connection.Close()).To(gm.Succeed())
+		Expect(connection.Close()).To(Succeed())
 	}
 }, func() {
 	deferFunc()
