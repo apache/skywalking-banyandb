@@ -143,7 +143,7 @@ func newMeasureCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Query data in a measure",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/data"))
 				}, yamlPrinter)

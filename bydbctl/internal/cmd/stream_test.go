@@ -215,7 +215,6 @@ projection:
 		Eventually(issue).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
-			GinkgoWriter.Println(out)
 			resp := new(stream_v1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
