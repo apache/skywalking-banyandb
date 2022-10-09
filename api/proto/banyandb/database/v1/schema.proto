@@ -27,181 +27,181 @@ import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/query.proto";
 
 enum TagType {
-    TAG_TYPE_UNSPECIFIED=0;
-    TAG_TYPE_STRING = 1;
-    TAG_TYPE_INT = 2;
-    TAG_TYPE_STRING_ARRAY = 3;
-    TAG_TYPE_INT_ARRAY = 4;
-    TAG_TYPE_DATA_BINARY = 5;
-    TAG_TYPE_ID = 6;
+  TAG_TYPE_UNSPECIFIED = 0;
+  TAG_TYPE_STRING = 1;
+  TAG_TYPE_INT = 2;
+  TAG_TYPE_STRING_ARRAY = 3;
+  TAG_TYPE_INT_ARRAY = 4;
+  TAG_TYPE_DATA_BINARY = 5;
+  TAG_TYPE_ID = 6;
 }
 
 message TagFamilySpec {
-    string name = 1;
-    // tags defines accepted tags
-    repeated TagSpec tags = 2;
+  string name = 1;
+  // tags defines accepted tags
+  repeated TagSpec tags = 2;
 }
 
 message TagSpec {
-    string name = 1;
-    TagType type = 2;
-    // indexed_only indicates whether the tag is stored
-    // True: It's indexed only, but not stored
-    // False: it's stored and indexed
-    bool indexed_only = 3;
+  string name = 1;
+  TagType type = 2;
+  // indexed_only indicates whether the tag is stored
+  // True: It's indexed only, but not stored
+  // False: it's stored and indexed
+  bool indexed_only = 3;
 }
 
 // Stream intends to store streaming data, for example, traces or logs
 message Stream {
-    // metadata is the identity of a trace series
-    common.v1.Metadata metadata = 1;
-    // tag_families
-    repeated TagFamilySpec tag_families = 2;
-    // entity indicates how to generate a series and shard a stream
-    Entity entity = 3;
-    // updated_at indicates when the stream is updated
-    google.protobuf.Timestamp updated_at = 4;
+  // metadata is the identity of a trace series
+  common.v1.Metadata metadata = 1;
+  // tag_families
+  repeated TagFamilySpec tag_families = 2;
+  // entity indicates how to generate a series and shard a stream
+  Entity entity = 3;
+  // updated_at indicates when the stream is updated
+  google.protobuf.Timestamp updated_at = 4;
 }
 
 message Entity {
-    repeated string tag_names = 1;
+  repeated string tag_names = 1;
 }
 
 enum FieldType {
-    FIELD_TYPE_UNSPECIFIED = 0;
-    FIELD_TYPE_STRING = 1;
-    FIELD_TYPE_INT = 2;
-    FIELD_TYPE_DATA_BINARY = 3;
+  FIELD_TYPE_UNSPECIFIED = 0;
+  FIELD_TYPE_STRING = 1;
+  FIELD_TYPE_INT = 2;
+  FIELD_TYPE_DATA_BINARY = 3;
 }
 
 enum EncodingMethod {
-    ENCODING_METHOD_UNSPECIFIED = 0;
-    ENCODING_METHOD_GORILLA = 1;
+  ENCODING_METHOD_UNSPECIFIED = 0;
+  ENCODING_METHOD_GORILLA = 1;
 }
 
 enum CompressionMethod {
-    COMPRESSION_METHOD_UNSPECIFIED = 0;
-    COMPRESSION_METHOD_ZSTD = 1;
+  COMPRESSION_METHOD_UNSPECIFIED = 0;
+  COMPRESSION_METHOD_ZSTD = 1;
 }
 
 // FieldSpec is the specification of field
 message FieldSpec {
-    // name is the identity of a field
-    string name = 1;
-    // field_type denotes the type of field value
-    FieldType field_type = 2;
-    // encoding_method indicates how to encode data during writing
-    EncodingMethod encoding_method = 3;
-    // compression_method indicates how to compress data during writing
-    CompressionMethod compression_method = 4;
+  // name is the identity of a field
+  string name = 1;
+  // field_type denotes the type of field value
+  FieldType field_type = 2;
+  // encoding_method indicates how to encode data during writing
+  EncodingMethod encoding_method = 3;
+  // compression_method indicates how to compress data during writing
+  CompressionMethod compression_method = 4;
 }
 
 // Measure intends to store data point
 message Measure {
-    // metadata is the identity of a measure
-    common.v1.Metadata metadata = 1;
-    // tag_families are for filter measures
-    repeated TagFamilySpec tag_families = 2;
-    // fields denote measure values
-    repeated FieldSpec fields = 3;
-    // entity indicates which tags will be to generate a series and shard a measure
-    Entity entity = 4;
-    // interval indicates how frequently to send a data point
-    // valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
-    string interval = 5;
-    // updated_at indicates when the measure is updated
-    google.protobuf.Timestamp updated_at = 6;
+  // metadata is the identity of a measure
+  common.v1.Metadata metadata = 1;
+  // tag_families are for filter measures
+  repeated TagFamilySpec tag_families = 2;
+  // fields denote measure values
+  repeated FieldSpec fields = 3;
+  // entity indicates which tags will be to generate a series and shard a measure
+  Entity entity = 4;
+  // interval indicates how frequently to send a data point
+  // valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
+  string interval = 5;
+  // updated_at indicates when the measure is updated
+  google.protobuf.Timestamp updated_at = 6;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation
 message TopNAggregation {
-    // metadata is the identity of an aggregation
-    common.v1.Metadata metadata = 1;
-    // source_measure denotes the data source of this aggregation
-    common.v1.Metadata source_measure = 2;
-    // field_name is the name of field used for ranking
-    string field_name = 3;
-    // field_value_sort indicates how to sort fields
-    // ASC: bottomN
-    // DESC: topN
-    // UNSPECIFIED: topN + bottomN
-    model.v1.Sort field_value_sort = 4;
-    // group_by_tag_names groups data points into statistical counters
-    repeated string group_by_tag_names = 5;
-    // criteria select partial data points from measure
-    model.v1.Criteria criteria = 6;
-    // counters_number sets the number of counters to be tracked. The default value is 1000
-    int32 counters_number = 7;
-    // allowed_lateness defines how much duration is allowed for late coming elements. Unit is milliseconds
-    int64 allowed_lateness = 8;
-    // updated_at indicates when the measure is updated
-    google.protobuf.Timestamp updated_at = 9;
+  // metadata is the identity of an aggregation
+  common.v1.Metadata metadata = 1;
+  // source_measure denotes the data source of this aggregation
+  common.v1.Metadata source_measure = 2;
+  // field_name is the name of field used for ranking
+  string field_name = 3;
+  // field_value_sort indicates how to sort fields
+  // ASC: bottomN
+  // DESC: topN
+  // UNSPECIFIED: topN + bottomN
+  model.v1.Sort field_value_sort = 4;
+  // group_by_tag_names groups data points into statistical counters
+  repeated string group_by_tag_names = 5;
+  // criteria select partial data points from measure
+  model.v1.Criteria criteria = 6;
+  // counters_number sets the number of counters to be tracked. The default value is 1000
+  int32 counters_number = 7;
+  // lru_size defines how much entry is allowed to be maintained in the memory
+  int32 lru_size = 8;
+  // updated_at indicates when the measure is updated
+  google.protobuf.Timestamp updated_at = 9;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type
 // IndexRule should bind to a subject through an IndexRuleBinding to generate proper indices.
 message IndexRule {
-    // metadata define the rule's identity
-    common.v1.Metadata metadata = 1;
-    // tags are the combination that refers to an indexed object
-    // If the elements in tags are more than 1, the object will generate a multi-tag index
-    // Caveat: All tags in a multi-tag MUST have an identical IndexType
-    repeated string tags = 2;
-    // Type determine the index structure under the hood
-    enum Type {
-        TYPE_UNSPECIFIED = 0;
-        TYPE_TREE = 1;
-        TYPE_INVERTED = 2;
-    }
-    // type is the IndexType of this IndexObject.
-    Type type = 3;
-    enum Location {
-        LOCATION_UNSPECIFIED = 0;
-        LOCATION_SERIES = 1;
-        LOCATION_GLOBAL = 2;
-    }
-    // location indicates where to store index.
-    Location location = 4;
-    // updated_at indicates when the IndexRule is updated
-    google.protobuf.Timestamp updated_at = 5;
-    enum Analyzer {
-        ANALYZER_UNSPECIFIED = 0;
-        // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
-        ANALYZER_KEYWORD = 1;
-        // Standard analyzer provides grammar based tokenization
-        ANALYZER_STANDARD = 2;
-        // Simple analyzer breaks text into tokens at any non-letter character,
-        // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
-        // and changes uppercase to lowercase.
-        ANALYZER_SIMPLE = 3;
-    }
-    // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
-    Analyzer analyzer = 6;
+  // metadata define the rule's identity
+  common.v1.Metadata metadata = 1;
+  // tags are the combination that refers to an indexed object
+  // If the elements in tags are more than 1, the object will generate a multi-tag index
+  // Caveat: All tags in a multi-tag MUST have an identical IndexType
+  repeated string tags = 2;
+  // Type determine the index structure under the hood
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_TREE = 1;
+    TYPE_INVERTED = 2;
+  }
+  // type is the IndexType of this IndexObject.
+  Type type = 3;
+  enum Location {
+    LOCATION_UNSPECIFIED = 0;
+    LOCATION_SERIES = 1;
+    LOCATION_GLOBAL = 2;
+  }
+  // location indicates where to store index.
+  Location location = 4;
+  // updated_at indicates when the IndexRule is updated
+  google.protobuf.Timestamp updated_at = 5;
+  enum Analyzer {
+    ANALYZER_UNSPECIFIED = 0;
+    // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
+    ANALYZER_KEYWORD = 1;
+    // Standard analyzer provides grammar based tokenization
+    ANALYZER_STANDARD = 2;
+    // Simple analyzer breaks text into tokens at any non-letter character,
+    // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
+    // and changes uppercase to lowercase.
+    ANALYZER_SIMPLE = 3;
+  }
+  // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
+  Analyzer analyzer = 6;
 }
 
 // Subject defines which stream or measure would generate indices
 message Subject {
-    // catalog is where the subject belongs to
-    common.v1.Catalog catalog = 1;
-    // name refers to a stream or measure in a particular catalog
-    string name = 2;
+  // catalog is where the subject belongs to
+  common.v1.Catalog catalog = 1;
+  // name refers to a stream or measure in a particular catalog
+  string name = 2;
 }
 
 // IndexRuleBinding is a bridge to connect severalIndexRules to a subject
 // This binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies
 // to control how to generate time series indices.
 message IndexRuleBinding {
-    // metadata is the identity of this binding
-    common.v1.Metadata metadata = 1;
-    // rules refers to the IndexRule
-    repeated string rules = 2;
-    // subject indicates the subject of binding action
-    Subject subject = 3;
-    // begin_at_nanoseconds is the timestamp, after which the binding will be active
-    google.protobuf.Timestamp begin_at = 4;
-    // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
-    // expire_at_nanoseconds must be larger than begin_at_nanoseconds
-    google.protobuf.Timestamp expire_at = 5;
-    // updated_at indicates when the IndexRuleBinding is updated
-    google.protobuf.Timestamp updated_at = 6;
+  // metadata is the identity of this binding
+  common.v1.Metadata metadata = 1;
+  // rules refers to the IndexRule
+  repeated string rules = 2;
+  // subject indicates the subject of binding action
+  Subject subject = 3;
+  // begin_at_nanoseconds is the timestamp, after which the binding will be active
+  google.protobuf.Timestamp begin_at = 4;
+  // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
+  // expire_at_nanoseconds must be larger than begin_at_nanoseconds
+  google.protobuf.Timestamp expire_at = 5;
+  // updated_at indicates when the IndexRuleBinding is updated
+  google.protobuf.Timestamp updated_at = 6;
 }

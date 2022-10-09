@@ -2213,10 +2213,10 @@
           "format": "int32",
           "title": "counters_number sets the number of counters to be tracked. The default value is 1000"
         },
-        "allowedLateness": {
-          "type": "string",
-          "format": "int64",
-          "title": "allowed_lateness defines how much duration is allowed for late coming elements. Unit is milliseconds"
+        "lruSize": {
+          "type": "integer",
+          "format": "int32",
+          "title": "lru_size defines how much entry is allowed to be maintained in the memory"
         },
         "updatedAt": {
           "type": "string",

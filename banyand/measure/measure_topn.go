@@ -74,7 +74,6 @@ type topNStreamingProcessor struct {
 	l                *logger.Logger
 	shardNum         uint32
 	interval         time.Duration
-	slideSize        time.Duration
 	topNSchema       *databasev1.TopNAggregation
 	databaseSupplier tsdb.Supplier
 	src              chan interface{}
@@ -268,8 +267,8 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
-	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.slideSize)).
-		AllowedLateness(time.Duration(t.topNSchema.GetAllowedLateness())*time.Millisecond).
+	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval)).
+		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[1].(int64)
@@ -329,13 +328,6 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 
 func (manager *topNProcessorManager) start() error {
 	interval := manager.m.interval
-	// use 40% of the data point interval as the flush interval,
-	// which means roughly the record located in the same time bucket will be persistent twice.
-	// |---------------------------------|
-	// |    40%     |    40%     |  20%  |
-	// |          flush        flush     |
-	// |---------------------------------|
-	slideSize := time.Duration(float64(interval.Nanoseconds()) * 0.4)
 	for _, topNSchema := range manager.topNSchemas {
 		srcCh := make(chan interface{})
 		src, _ := sources.NewChannel(srcCh)
@@ -357,7 +349,6 @@ func (manager *topNProcessorManager) start() error {
 			l:                manager.l,
 			shardNum:         manager.m.shardNum,
 			interval:         interval,
-			slideSize:        slideSize,
 			topNSchema:       topNSchema,
 			databaseSupplier: manager.m.databaseSupplier,
 			src:              srcCh,

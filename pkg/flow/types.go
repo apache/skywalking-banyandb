@@ -19,11 +19,9 @@ package flow
 
 import (
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"io"
 	"sync"
-	"time"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Data []any
@@ -52,7 +50,7 @@ type Flow interface {
 // WindowedFlow is a flow which processes incoming elements based on window.
 // The WindowedFlow can be created with a WindowAssigner.
 type WindowedFlow interface {
-	AllowedLateness(lateness time.Duration) WindowedFlow
+	AllowedMaxWindows(windowCnt int) WindowedFlow
 	// TopN applies a TopNAggregation to each Window.
 	TopN(topNum int, opts ...any) Flow
 }

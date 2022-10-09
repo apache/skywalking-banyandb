@@ -1028,7 +1028,7 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | group_by_tag_names | [string](#string) | repeated | group_by_tag_names groups data points into statistical counters |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria select partial data points from measure |
 | counters_number | [int32](#int32) |  | counters_number sets the number of counters to be tracked. The default value is 1000 |
-| allowed_lateness | [int64](#int64) |  | allowed_lateness defines how much duration is allowed for late coming elements. Unit is milliseconds |
+| lru_size | [int32](#int32) |  | lru_size defines how much entry is allowed to be maintained in the memory |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 
 

@@ -13,5 +13,5 @@
     "entity_id"
   ],
   "counters_number": 1000,
-  "allowed_lateness": 60000
+  "lru_size": 10
 }

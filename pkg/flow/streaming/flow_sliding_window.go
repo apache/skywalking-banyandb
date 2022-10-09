@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
@@ -57,12 +58,12 @@ func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
 	}
 }
 
-func (s *windowedFlow) AllowedLateness(lateness time.Duration) flow.WindowedFlow {
+func (s *windowedFlow) AllowedMaxWindows(windowCnt int) flow.WindowedFlow {
 	switch v := s.wa.(type) {
 	case *TumblingTimeWindows:
-		v.lateness = lateness.Milliseconds()
+		v.windowCount = windowCnt
 	default:
-		s.f.drainErr(errors.New("lateness is not supported"))
+		s.f.drainErr(errors.New("windowCnt is not supported"))
 	}
 	return s
 }
@@ -73,16 +74,13 @@ type TumblingTimeWindows struct {
 	// errorHandler is the error handler and set by the streamingFlow
 	errorHandler func(error)
 	// For TumblingTimeWindows
-	// Unit: Millisecond
-	size int64
-	// lateness is the maximum allowed lateness for incoming elements
-	// Unit: Millisecond
-	lateness int64
+	// Unit: Milliseconds
+	windowSize int64
+	// windowCount is the maximum allowed windows kept in the memory
+	windowCount int
 
-	// guard snapshots
-	snapshotsMu sync.Mutex
-	snapshots   map[int64]flow.AggregationOp
-	acc         flow.AggregationOp
+	// thread-safe snapshots
+	snapshots *lru.Cache
 
 	currentWatermark int64
 	// guard timerHeap
@@ -105,54 +103,49 @@ func (s *TumblingTimeWindows) Out() <-chan flow.StreamRecord {
 	return s.out
 }
 
-func (s *TumblingTimeWindows) Setup(ctx context.Context) error {
-	if s.acc == nil {
-		s.acc = s.aggregationFactory()
+func (s *TumblingTimeWindows) Setup(ctx context.Context) (err error) {
+	if s.snapshots == nil {
+		s.snapshots, err = lru.NewWithEvict(s.windowCount, func(key interface{}, value interface{}) {
+			s.flushSnapshot(key.(timeWindow), value.(flow.AggregationOp))
+		})
 	}
 	// start processing
 	s.Add(1)
 	go s.receive()
 
-	return nil
+	return
 }
 
-func (s *TumblingTimeWindows) purgeWindow(w timeWindow) {
-	s.snapshotsMu.Lock()
-	if snapshot, ok := s.snapshots[w.MaxTimestamp()]; ok {
-		// get and remove the key/value
-		delete(s.snapshots, w.MaxTimestamp())
-		s.snapshotsMu.Unlock()
-		if err := s.acc.Merge(snapshot); err != nil {
-			s.errorHandler(err)
-			return
-		}
-
-		s.out <- flow.NewStreamRecord(s.acc.Snapshot(), w.start)
-		s.snapshotsMu.Lock()
-		defer s.snapshotsMu.Unlock()
-		// flush all other dirty windows
-		for endTime, resSnapshot := range s.snapshots {
-			if resSnapshot.Dirty() {
-				s.out <- flow.NewStreamRecord(resSnapshot.Snapshot(), endTime+1-s.size)
-			}
-		}
-		return
+func (s *TumblingTimeWindows) flushSnapshot(w timeWindow, snapshot flow.AggregationOp) {
+	if snapshot.Dirty() {
+		s.out <- flow.NewStreamRecord(snapshot.Snapshot(), w.start)
 	}
-	s.snapshotsMu.Unlock()
 }
 
-func (s *TumblingTimeWindows) purgeOutdatedWindows() {
+func (s *TumblingTimeWindows) flushWindow(w timeWindow) {
+	if snapshot, ok := s.snapshots.Get(w); ok {
+		s.flushSnapshot(w, snapshot.(flow.AggregationOp))
+	}
+}
+
+func (s *TumblingTimeWindows) flushDueWindows() {
 	s.timerMu.Lock()
 	defer s.timerMu.Unlock()
 	for {
 		if lookAhead, ok := s.timerHeap.Peek().(*internalTimer); ok {
-			if lookAhead.triggerTimeMillis+s.lateness <= s.currentWatermark {
+			if lookAhead.triggerTimeMillis <= s.currentWatermark {
 				oldestTimer := heap.Pop(s.timerHeap).(*internalTimer)
-				s.purgeWindow(oldestTimer.w)
+				s.flushWindow(oldestTimer.w)
 				continue
 			}
 		}
 		return
+	}
+}
+
+func (s *TumblingTimeWindows) flushDirtyWindows() {
+	for _, key := range s.snapshots.Keys() {
+		s.flushWindow(key.(timeWindow))
 	}
 }
 
@@ -176,40 +169,54 @@ func (s *TumblingTimeWindows) receive() {
 			tw := w.(timeWindow)
 			ctx.window = tw
 			// add elem to the bucket
-			s.snapshotsMu.Lock()
-			if oldAggr, ok := s.snapshots[tw.MaxTimestamp()]; ok {
-				oldAggr.Add([]flow.StreamRecord{elem})
+			if oldAggr, ok := s.snapshots.Get(tw); ok {
+				oldAggr.(flow.AggregationOp).Add([]flow.StreamRecord{elem})
 			} else {
 				newAggr := s.aggregationFactory()
 				newAggr.Add([]flow.StreamRecord{elem})
-				s.snapshots[tw.MaxTimestamp()] = newAggr
+				s.snapshots.Add(tw, newAggr)
 			}
-			s.snapshotsMu.Unlock()
 
 			result := ctx.OnElement(elem)
 			if result == FIRE {
-				s.purgeWindow(tw)
+				s.flushWindow(tw)
 			}
 		}
 
 		// even if the incoming elements do not follow strict order,
 		// the watermark could increase monotonically.
-		if elem.TimestampMillis() > s.currentWatermark {
+		if pastDur := elem.TimestampMillis() - s.currentWatermark; pastDur > 0 {
 			s.currentWatermark = elem.TimestampMillis()
 
 			// Currently, assume the current watermark is t,
 			// then we allow lateness items by not purging the window
 			// of which the flush trigger time is less and equal than t - lateness,
 			// i.e. triggerTime + lateness <= t
-			s.purgeOutdatedWindows()
+			s.flushDueWindows()
+
+			// flush dirty windows if the necessary
+			// use 40% of the data point interval as the flush interval,
+			// which means roughly the record located in the same time bucket will be persistent twice.
+			// |---------------------------------|
+			// |    40%     |    40%     |  20%  |
+			// |          flush        flush     |
+			// |---------------------------------|
+			// TODO: how to determine the threshold
+			if float64(pastDur) > float64(s.windowSize)*0.4 {
+				s.flushDirtyWindows()
+			}
 		}
 	}
 	close(s.out)
 }
 
-// isWindowLate checks whether this window is valid
+// isWindowLate checks whether this window is valid. The window is late if and only if
+// it meets all the following conditions,
+// 1) the max timestamp is before the current watermark
+// 2) the LRU cache is full
+// 3) the LRU cache does not contain the window entry
 func (s *TumblingTimeWindows) isWindowLate(w flow.Window) bool {
-	return w.MaxTimestamp()+s.lateness <= s.currentWatermark
+	return w.MaxTimestamp() <= s.currentWatermark && s.snapshots.Len() >= s.windowCount && !s.snapshots.Contains(w)
 }
 
 func (s *TumblingTimeWindows) Teardown(ctx context.Context) error {
@@ -224,9 +231,7 @@ func (s *TumblingTimeWindows) Exec(downstream flow.Inlet) {
 
 func NewTumblingTimeWindows(size time.Duration) *TumblingTimeWindows {
 	return &TumblingTimeWindows{
-		size:      size.Milliseconds(),
-		lateness:  0,
-		snapshots: make(map[int64]flow.AggregationOp),
+		windowSize: size.Milliseconds(),
 		timerHeap: flow.NewPriorityQueue(func(a, b interface{}) int {
 			return int(a.(*internalTimer).triggerTimeMillis - b.(*internalTimer).triggerTimeMillis)
 		}, false),
@@ -248,11 +253,11 @@ func (t timeWindow) MaxTimestamp() int64 {
 // AssignWindows assigns windows according to the given timestamp
 func (s *TumblingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
 	if timestamp > math.MinInt64 {
-		start := getWindowStart(timestamp, s.size)
+		start := getWindowStart(timestamp, s.windowSize)
 		return []flow.Window{
 			timeWindow{
 				start: start,
-				end:   start + s.size,
+				end:   start + s.windowSize,
 			},
 		}, nil
 	}
@@ -267,8 +272,8 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 
 // eventTimeTriggerOnElement processes element(s) with EventTimeTrigger
 func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) TriggerResult {
-	if window.MaxTimestamp()+ctx.delegation.lateness <= ctx.GetCurrentWatermark() {
-		// if (watermark - lateness) is already past the window fire immediately
+	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
+		// if watermark is already past the window fire immediately
 		return FIRE
 	}
 	ctx.RegisterEventTimeTimer(window.MaxTimestamp())

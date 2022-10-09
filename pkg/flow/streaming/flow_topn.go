@@ -109,7 +109,7 @@ func (t *topNAggregator) Add(input []flow.StreamRecord) {
 }
 
 func (t *topNAggregator) doCleanUp() {
-	// do cleanup: maintain the treeMap size
+	// do cleanup: maintain the treeMap windowSize
 	if t.currentTopNum > t.cacheSize {
 		lastKey, lastValues := t.treeMap.Max()
 		size := len(lastValues.([]interface{}))

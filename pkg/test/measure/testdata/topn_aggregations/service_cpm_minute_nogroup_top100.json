@@ -9,5 +9,6 @@
   },
   "field_name": "value",
   "field_value_sort": 1,
-  "counters_number": 1000
+  "counters_number": 1000,
+  "lru_size": 10
 }

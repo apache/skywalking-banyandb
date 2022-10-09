@@ -1069,7 +1069,7 @@ func (m *TopNAggregation) validate(all bool) error {
 
 	// no validation rules for CountersNumber
 
-	// no validation rules for AllowedLateness
+	// no validation rules for LruSize
 
 	if all {
 		switch v := interface{}(m.GetUpdatedAt()).(type) {
