@@ -44,12 +44,6 @@ func (i *intSumAggregator) Add(input []flow.StreamRecord) {
 	}
 }
 
-func (i *intSumAggregator) Merge(op flow.AggregationOp) error {
-	i.sum += op.Snapshot().(int)
-	i.dirty = true
-	return nil
-}
-
 func (i *intSumAggregator) Snapshot() interface{} {
 	i.dirty = false
 	return i.sum
@@ -80,7 +74,7 @@ var _ = Describe("Sliding Window", func() {
 
 		slidingWindows = NewTumblingTimeWindows(time.Second * 15)
 		slidingWindows.aggregationFactory = aggrFactory
-		slidingWindows.acc = aggrFactory()
+		slidingWindows.windowCount = 2
 
 		Expect(slidingWindows.Setup(context.TODO())).Should(Succeed())
 		Expect(snk.Setup(context.TODO())).Should(Succeed())
@@ -102,45 +96,41 @@ var _ = Describe("Sliding Window", func() {
 			}
 		})
 
-		It("Should receive nothing", func() {
+		It("Should not trigger", func() {
 			Eventually(func(g Gomega) {
-				g.Expect(slidingWindows.acc.Snapshot()).Should(Equal(0))
+				g.Expect(snk.Value()).Should(BeEmpty())
 			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})
 
-	When("input two elements", func() {
+	When("input two elements within the same bucket", func() {
 		BeforeEach(func() {
+			baseTs = time.Unix(baseTs.Unix()-baseTs.Unix()%15, 0)
 			input = []flow.StreamRecord{
 				flow.NewStreamRecord(1, baseTs.UnixMilli()),
-				flow.NewStreamRecord(2, baseTs.Add(time.Minute*1).UnixMilli()),
+				flow.NewStreamRecord(2, baseTs.Add(time.Second*5).UnixMilli()),
 			}
 		})
 
-		It("Should trigger once", func() {
+		It("Should not trigger", func() {
 			Eventually(func(g Gomega) {
-				g.Expect(snk.Value()).ShouldNot(BeNil())
+				g.Expect(snk.Value()).Should(BeEmpty())
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+		})
+	})
+
+	When("input two elements within adjacent buckets", func() {
+		BeforeEach(func() {
+			baseTs = time.Unix(baseTs.Unix()-baseTs.Unix()%15+14, 0)
+			input = []flow.StreamRecord{
+				flow.NewStreamRecord(1, baseTs.UnixMilli()),
+				flow.NewStreamRecord(2, baseTs.Add(time.Second*5).UnixMilli()),
+			}
+		})
+
+		It("Should trigger once due to the expiry", func() {
+			Eventually(func(g Gomega) {
 				g.Expect(snk.Value()).Should(HaveLen(1))
-				g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo(1))
-			}).WithTimeout(10 * time.Second).Should(Succeed())
-		})
-	})
-
-	When("input three elements", func() {
-		BeforeEach(func() {
-			input = []flow.StreamRecord{
-				flow.NewStreamRecord(1, baseTs.UnixMilli()),
-				flow.NewStreamRecord(2, baseTs.Add(time.Second*30).UnixMilli()),
-				flow.NewStreamRecord(3, baseTs.Add(time.Minute*1).UnixMilli()),
-			}
-		})
-
-		It("Should trigger twice and merge", func() {
-			Eventually(func(g Gomega) {
-				g.Expect(snk.Value()).ShouldNot(BeNil())
-				g.Expect(snk.Value()).Should(HaveLen(2))
-				g.Expect(snk.Value()[0].(flow.StreamRecord).Data()).Should(BeEquivalentTo(1))
-				g.Expect(snk.Value()[1].(flow.StreamRecord).Data()).Should(BeEquivalentTo(3))
 			}).WithTimeout(10 * time.Second).Should(Succeed())
 		})
 	})

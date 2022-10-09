@@ -124,14 +124,6 @@ func (t *topNAggregator) doCleanUp() {
 	}
 }
 
-func (t *topNAggregator) Merge(other flow.AggregationOp) error {
-	for _, tuple2 := range other.Snapshot().([]*Tuple2) {
-		t.put(tuple2.V1.(int64), tuple2.V2.(flow.StreamRecord))
-	}
-	t.doCleanUp()
-	return nil
-}
-
 func (t *topNAggregator) put(sortKey int64, data flow.StreamRecord) {
 	t.currentTopNum++
 	t.dirty = true

@@ -108,6 +108,9 @@ func (s *TumblingTimeWindows) Setup(ctx context.Context) (err error) {
 		s.snapshots, err = lru.NewWithEvict(s.windowCount, func(key interface{}, value interface{}) {
 			s.flushSnapshot(key.(timeWindow), value.(flow.AggregationOp))
 		})
+		if err != nil {
+			return err
+		}
 	}
 	// start processing
 	s.Add(1)
@@ -186,12 +189,13 @@ func (s *TumblingTimeWindows) receive() {
 		// even if the incoming elements do not follow strict order,
 		// the watermark could increase monotonically.
 		if pastDur := elem.TimestampMillis() - s.currentWatermark; pastDur > 0 {
+			previousWaterMark := s.currentWatermark
 			s.currentWatermark = elem.TimestampMillis()
 
 			// Currently, assume the current watermark is t,
 			// then we allow lateness items by not purging the window
-			// of which the flush trigger time is less and equal than t - lateness,
-			// i.e. triggerTime + lateness <= t
+			// of which the flush trigger time is less and equal than t,
+			// i.e. triggerTime <= t
 			s.flushDueWindows()
 
 			// flush dirty windows if the necessary
@@ -202,7 +206,7 @@ func (s *TumblingTimeWindows) receive() {
 			// |          flush        flush     |
 			// |---------------------------------|
 			// TODO: how to determine the threshold
-			if float64(pastDur) > float64(s.windowSize)*0.4 {
+			if previousWaterMark > 0 && float64(pastDur) > float64(s.windowSize)*0.4 {
 				s.flushDirtyWindows()
 			}
 		}
@@ -220,6 +224,7 @@ func (s *TumblingTimeWindows) isWindowLate(w flow.Window) bool {
 }
 
 func (s *TumblingTimeWindows) Teardown(ctx context.Context) error {
+	s.snapshots.Purge()
 	s.Wait()
 	return nil
 }

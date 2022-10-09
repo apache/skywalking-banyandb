@@ -122,7 +122,7 @@ func (pq *DedupPriorityQueue) Slice(start, end int) []Element {
 }
 
 func (pq *DedupPriorityQueue) Values() []Element {
-	values := make([]Element, pq.Len(), pq.Len())
+	values := make([]Element, pq.Len())
 	for _, elem := range pq.Items {
 		values[elem.GetIndex()] = elem
 	}
