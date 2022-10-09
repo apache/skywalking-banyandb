@@ -65,15 +65,68 @@ func newGroupCmd() *cobra.Command {
 				})
 		},
 	}
-	bindFileFlag(createCmd)
+
+	updateCmd := &cobra.Command{
+		Use:     "update -f [file|dir|-]",
+		Version: version.Build(),
+		Short:   "Update groups from files",
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					g := new(common_v1.Group)
+					err := protojson.Unmarshal(request.data, g)
+					if err != nil {
+						return nil, err
+					}
+					cr := &database_v1.GroupRegistryServiceUpdateRequest{
+						Group: g,
+					}
+					b, err := json.Marshal(cr)
+					if err != nil {
+						return nil, err
+					}
+					return request.req.SetBody(b).SetPathParam("group", request.name).Put(getPath("/api/v1/group/schema/{group}"))
+				},
+				func(_ int, reqBody reqBody, _ []byte) error {
+					fmt.Printf("group %s is updated", reqBody.name)
+					fmt.Println()
+					return nil
+				})
+		},
+	}
+	bindFileFlag(createCmd, updateCmd)
+
+	getCmd := &cobra.Command{
+		Use:     "get [-g group]",
+		Version: version.Build(),
+		Short:   "Get a group",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/group/schema/{group}"))
+			}, yamlPrinter)
+		},
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:     "delete [-g group]",
+		Version: version.Build(),
+		Short:   "Delete a group",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("group", request.group).Delete(getPath("/api/v1/group/schema/{group}"))
+			},
+				func(_ int, reqBody reqBody, _ []byte) error {
+					fmt.Printf("group %s is deleted", reqBody.name)
+					fmt.Println()
+					return nil
+				})
+		},
+	}
 
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Version: version.Build(),
-		Short:   "list all groups",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			return cmd.Parent().PersistentPreRunE(cmd.Parent(), args)
-		},
+		Short:   "List all groups",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			return rest(nil, func(request request) (*resty.Response, error) {
 				return request.req.Get(getPath("/api/v1/group/schema/lists"))
@@ -81,7 +134,6 @@ func newGroupCmd() *cobra.Command {
 		},
 	}
 
-	// todo:GroupGetCmd, GroupUpdateCmd, GroupDeleteCmd
-	groupCmd.AddCommand(createCmd, listCmd)
+	groupCmd.AddCommand(createCmd, updateCmd, listCmd, getCmd, deleteCmd)
 	return groupCmd
 }

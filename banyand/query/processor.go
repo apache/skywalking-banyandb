@@ -23,6 +23,7 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -63,9 +64,10 @@ type streamQueryProcessor struct {
 }
 
 func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+	now := time.Now().UnixNano()
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
 	if !ok {
-		p.log.Warn().Msg("invalid event data type")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
 	p.log.Debug().Stringer("criteria", queryCriteria).Msg("received a query request")
@@ -73,27 +75,25 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.streamService.Stream(meta)
 	if err != nil {
-		p.log.Error().Err(err).
-			Str("stream", meta.GetName()).
-			Msg("fail to get execution context for stream")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
 	analyzer, err := logical_stream.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
-		p.log.Error().Err(err).Msg("fail to build analyzer")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build analyzer for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
 	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
-		p.log.Error().Err(err).Msg("fail to build")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
 	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
-		p.log.Error().Err(err).Msg("fail to analyze the query request")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
@@ -101,11 +101,10 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	entities, err := plan.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
-		p.log.Error().Err(err).Msg("fail to execute the query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
-	now := time.Now().UnixNano()
 	resp = bus.NewMessage(bus.MessageID(now), entities)
 
 	return
@@ -118,8 +117,9 @@ type measureQueryProcessor struct {
 
 func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
+	now := time.Now().UnixNano()
 	if !ok {
-		p.queryService.log.Warn().Msg("invalid event data type")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
 	p.log.Debug().Msg("received a query event")
@@ -127,27 +127,25 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.measureService.Measure(meta)
 	if err != nil {
-		p.log.Error().Err(err).
-			Str("measure", meta.GetName()).
-			Msg("fail to get execution context")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
 		return
 	}
 
 	analyzer, err := logical_measure.CreateAnalyzerFromMetaService(p.metaService)
 	if err != nil {
-		p.log.Error().Err(err).Msg("fail to build analyzer")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build analyzer for measure %s: %v", meta.GetName(), err))
 		return
 	}
 
 	s, err := analyzer.BuildSchema(context.TODO(), meta)
 	if err != nil {
-		p.queryService.log.Error().Err(err).Msg("fail to build measure schema")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
 		return
 	}
 
 	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
-		p.queryService.log.Error().Err(err).Msg("fail to analyze the query request")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return
 	}
 
@@ -155,7 +153,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
-		p.queryService.log.Error().Err(err).Msg("fail to execute the query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
 		return
 	}
 	defer func() {
@@ -170,7 +168,6 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			result = append(result, current[0])
 		}
 	}
-	now := time.Now().UnixNano()
 	resp = bus.NewMessage(bus.MessageID(now), result)
 	return
 }

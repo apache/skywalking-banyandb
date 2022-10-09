@@ -67,7 +67,7 @@ type service struct {
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
-	flagSet.StringVar(&p.grpcAddr, "grcp-addr", "localhost:17912", "the grpc addr")
+	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
 	return flagSet
 }
 
@@ -92,27 +92,26 @@ func (p *service) PreRun() error {
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 
-	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(&healthCheckClient{}))
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
-
+	opts := []grpc.DialOption{
+		// TODO: add TLS
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
+	if err != nil {
+		return err
+	}
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
 	err = multierr.Combine(
-		database_v1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		database_v1.RegisterMeasureRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		database_v1.RegisterIndexRuleRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		database_v1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		database_v1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		stream_v1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		measure_v1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
-		property_v1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr,
-			[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}),
+		database_v1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		database_v1.RegisterMeasureRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		database_v1.RegisterIndexRuleRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		database_v1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		database_v1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		stream_v1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		measure_v1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		property_v1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
 		return err

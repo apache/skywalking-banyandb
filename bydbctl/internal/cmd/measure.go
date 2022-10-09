@@ -23,51 +23,46 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const streamSchemaPath = "/api/v1/stream/schema"
+const measureSchemaPath = "/api/v1/measure/schema"
 
-var streamSchemaPathWithParams = streamSchemaPath + "/{group}/{name}"
+var measureSchemaPathWithParams = measureSchemaPath + "/{group}/{name}"
 
-func getPath(path string) string {
-	return viper.GetString("addr") + path
-}
-
-func newStreamCmd() *cobra.Command {
-	streamCmd := &cobra.Command{
-		Use:     "stream",
+func newMeasureCmd() *cobra.Command {
+	measureCmd := &cobra.Command{
+		Use:     "measure",
 		Version: version.Build(),
-		Short:   "Stream operation",
+		Short:   "Measure operation",
 	}
 
 	createCmd := &cobra.Command{
 		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Create streams from files",
+		Short:   "Create measures from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Stream)
+					s := new(database_v1.Measure)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.StreamRegistryServiceCreateRequest{
-						Stream: s,
+					cr := &database_v1.MeasureRegistryServiceCreateRequest{
+						Measure: s,
 					}
 					b, err := json.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
-					return request.req.SetBody(b).Post(getPath(streamSchemaPath))
+					return request.req.SetBody(b).Post(getPath(measureSchemaPath))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("stream %s.%s is created", reqBody.group, reqBody.name)
+					fmt.Printf("measure %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
 				})
@@ -77,17 +72,17 @@ func newStreamCmd() *cobra.Command {
 	updateCmd := &cobra.Command{
 		Use:     "update -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Update streams from files",
+		Short:   "Update measures from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Stream)
+					s := new(database_v1.Measure)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.StreamRegistryServiceUpdateRequest{
-						Stream: s,
+					cr := &database_v1.MeasureRegistryServiceUpdateRequest{
+						Measure: s,
 					}
 					b, err := json.Marshal(cr)
 					if err != nil {
@@ -95,10 +90,10 @@ func newStreamCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
-						Put(getPath(streamSchemaPathWithParams))
+						Put(getPath(measureSchemaPathWithParams))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("stream %s.%s is updated", reqBody.group, reqBody.name)
+					fmt.Printf("measure %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
 				})
@@ -108,10 +103,10 @@ func newStreamCmd() *cobra.Command {
 	getCmd := &cobra.Command{
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
-		Short:   "Get a stream",
+		Short:   "Get a measure",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(streamSchemaPathWithParams))
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(measureSchemaPathWithParams))
 			}, yamlPrinter)
 		},
 	}
@@ -119,12 +114,12 @@ func newStreamCmd() *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
-		Short:   "Delete a stream",
+		Short:   "Delete a measure",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(streamSchemaPathWithParams))
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(measureSchemaPathWithParams))
 			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("stream %s.%s is deleted", reqBody.group, reqBody.name)
+				fmt.Printf("measure %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
 			})
@@ -135,10 +130,10 @@ func newStreamCmd() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:     "list [-g group]",
 		Version: version.Build(),
-		Short:   "List streams",
+		Short:   "List measures",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/stream/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/measure/schema/lists/{group}"))
 			}, yamlPrinter)
 		},
 	}
@@ -146,17 +141,17 @@ func newStreamCmd() *cobra.Command {
 	queryCmd := &cobra.Command{
 		Use:     "query -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Query data in a stream",
+		Short:   "Query data in a measure",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/stream/data"))
+					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/data"))
 				}, yamlPrinter)
 		},
 	}
 	bindFileFlag(createCmd, updateCmd, queryCmd)
 	bindTimeRangeFlag(queryCmd)
 
-	streamCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
-	return streamCmd
+	measureCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
+	return measureCmd
 }
