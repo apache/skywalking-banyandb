@@ -322,9 +322,7 @@ func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
 	}
 }
 
-var (
-	_ flow.Element = (*nonAggregatorItem)(nil)
-)
+var _ flow.Element = (*nonAggregatorItem)(nil)
 
 type nonAggregatorItem struct {
 	key   string
