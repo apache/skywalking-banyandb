@@ -224,7 +224,6 @@ func (s *TumblingTimeWindows) isWindowLate(w flow.Window) bool {
 }
 
 func (s *TumblingTimeWindows) Teardown(ctx context.Context) error {
-	s.snapshots.Purge()
 	s.Wait()
 	return nil
 }
