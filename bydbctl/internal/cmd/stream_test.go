@@ -175,7 +175,14 @@ var _ = Describe("Stream Data Query", func() {
 	var addr, grpcAddr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
+	var now time.Time
+	var nowStr, endStr string
+	var interval time.Duration
 	BeforeEach(func() {
+		now = timestamp.NowMilli()
+		nowStr = now.Format(RFC3339)
+		interval = 500 * time.Millisecond
+		endStr = now.Add(1 * time.Hour).Format(RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
@@ -189,9 +196,7 @@ var _ = Describe("Stream Data Query", func() {
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		now := timestamp.NowMilli()
-		interval := 500 * time.Millisecond
-		end := now.Add(1 * time.Hour)
+
 		cases_stream_data.Write(conn, "data.json", now, interval)
 		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
@@ -206,7 +211,7 @@ projection:
   tagFamilies:
     - name: searchable
       tags:
-        - trace_id`, now.Format(RFC3339), end.Format(RFC3339))))
+        - trace_id`, nowStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -221,6 +226,51 @@ projection:
 			return len(resp.Elements)
 		}).Should(Equal(5))
 	})
+	DescribeTable("query stream data with time range flags", func(timeArgs ...string) {
+		conn, err := grpclib.Dial(
+			grpcAddr,
+			grpclib.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		now := timestamp.NowMilli()
+		interval := 500 * time.Millisecond
+		cases_stream_data.Write(conn, "data.json", now, interval)
+		args := []string{"stream", "query", "-a", addr}
+		args = append(args, timeArgs...)
+		args = append(args, "-f", "-")
+		rootCmd.SetArgs(args)
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: sw
+  group: default
+projection:
+  tagFamilies:
+    - name: searchable
+      tags:
+        - trace_id`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(func() int {
+			out := issue()
+			resp := new(stream_v1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Elements)
+		}).Should(Equal(5))
+	},
+		Entry("relative start", "--start", "-30m"),
+		Entry("relative end", "--end", "0m"),
+		Entry("absolute start", "--start", nowStr),
+		Entry("absolute end", "--end", endStr),
+		Entry("default"),
+		Entry("all relative", "--start", "-30m", "--end", "0m"),
+		Entry("all absolute", "--start", nowStr, "--end", endStr),
+	)
 
 	AfterEach(func() {
 		deferFunc()

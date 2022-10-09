@@ -51,12 +51,8 @@ func RootCmdFlags(command *cobra.Command) {
 	command.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bydbctl.yaml)")
 	command.PersistentFlags().StringP("group", "g", "", "If present, list objects in this group.")
 	command.PersistentFlags().StringP("addr", "a", "", "Server's address, the format is Schema://Domain:Port")
-	command.PersistentFlags().StringP("start", "s", "", "Start time of the time range during which the query is preformed")
-	command.PersistentFlags().StringP("end", "e", "", "End time of the time range during which the query is preformed")
 	_ = viper.BindPFlag("group", command.PersistentFlags().Lookup("group"))
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
-	_ = viper.BindPFlag("start", command.PersistentFlags().Lookup("start"))
-	_ = viper.BindPFlag("end", command.PersistentFlags().Lookup("end"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
 	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd())
@@ -112,5 +108,12 @@ func bindNameFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
 		c.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
 		_ = c.MarkFlagRequired("name")
+	}
+}
+
+func bindTimeRangeFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().StringVarP(&start, "start", "s", "", "Start time of the time range during which the query is preformed")
+		c.Flags().StringVarP(&end, "end", "e", "", "End time of the time range during which the query is preformed")
 	}
 }

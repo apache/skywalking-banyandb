@@ -150,6 +150,7 @@ func newMeasureCmd() *cobra.Command {
 		},
 	}
 	bindFileFlag(createCmd, updateCmd, queryCmd)
+	bindTimeRangeFlag(queryCmd)
 
 	measureCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return measureCmd

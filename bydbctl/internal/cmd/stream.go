@@ -155,6 +155,7 @@ func newStreamCmd() *cobra.Command {
 		},
 	}
 	bindFileFlag(createCmd, updateCmd, queryCmd)
+	bindTimeRangeFlag(queryCmd)
 
 	streamCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return streamCmd
