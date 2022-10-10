@@ -85,11 +85,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Connection: connection,
 		BaseTime:   now,
 	}
-	Expect(err).NotTo(HaveOccurred())
 	cases_topn.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}
+	Expect(err).NotTo(HaveOccurred())
 })
 
 var _ = SynchronizedAfterSuite(func() {
