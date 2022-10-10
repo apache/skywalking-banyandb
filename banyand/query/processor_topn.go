@@ -53,6 +53,10 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
+	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
+		t.log.Warn().Msg("invalid requested sort direction")
+		return
+	}
 	t.log.Info().Msg("received a topN query event")
 	topNMetadata := request.GetMetadata()
 	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
@@ -60,6 +64,11 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to get execution context")
+		return
+	}
+	if topNSchema.GetFieldValueSort() != modelv1.Sort_SORT_UNSPECIFIED &&
+		topNSchema.GetFieldValueSort() != request.GetFieldValueSort() {
+		t.log.Warn().Msg("unmatched sort direction")
 		return
 	}
 	sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())

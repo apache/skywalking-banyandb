@@ -118,7 +118,7 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		l:            l,
 		m:            m,
 		topNSchemas:  spec.topNAggregations,
-		processorMap: make(map[*commonv1.Metadata]*topNStreamingProcessor),
+		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
 	}
 
 	err := m.processorManager.start()

@@ -39,5 +39,6 @@ var (
 )
 
 var _ = g.DescribeTable("TopN Tests", verify,
-	g.Entry("all", helpers.Args{Input: "all", Duration: 1 * time.Hour, Offset: -5 * time.Minute}),
+	g.Entry("desc", helpers.Args{Input: "desc", Duration: 1 * time.Hour, Offset: -5 * time.Minute}),
+	g.Entry("asc", helpers.Args{Input: "asc", Duration: 1 * time.Hour, Offset: -5 * time.Minute}),
 )

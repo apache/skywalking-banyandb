@@ -15,8 +15,40 @@
 # specific language governing permissions and limitations
 # under the License.
 
-metadata:
-  name: "service_cpm_minute_top100"
-  group: "sw_metric"
-topN: 1
-fieldValueSort: 1
+lists:
+  - items:
+      - name: entity_1
+        value:
+          int:
+            value: "1"
+    timestamp: "2022-10-09T13:20:00Z"
+  - items:
+      - name: entity_2
+        value:
+          int:
+            value: "1"
+    timestamp: "2022-10-09T13:21:00Z"
+  - items:
+      - name: entity_2
+        value:
+          int:
+            value: "1"
+    timestamp: "2022-10-09T13:22:00Z"
+  - items:
+      - name: entity_3
+        value:
+          int:
+            value: "5"
+    timestamp: "2022-10-09T13:23:00Z"
+  - items:
+      - name: entity_1
+        value:
+          int:
+            value: "4"
+    timestamp: "2022-10-09T13:24:00Z"
+  - items:
+      - name: entity_1
+        value:
+          int:
+            value: "5"
+    timestamp: "2022-10-09T13:25:00Z"

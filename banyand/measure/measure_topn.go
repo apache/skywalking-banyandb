@@ -75,6 +75,7 @@ type topNStreamingProcessor struct {
 	shardNum         uint32
 	interval         time.Duration
 	topNSchema       *databasev1.TopNAggregation
+	sortDirection    modelv1.Sort
 	databaseSupplier tsdb.Supplier
 	src              chan interface{}
 	in               chan flow.StreamRecord
@@ -303,15 +304,17 @@ type topNProcessorManager struct {
 	l            *logger.Logger
 	m            *measure
 	topNSchemas  []*databasev1.TopNAggregation
-	processorMap map[*commonv1.Metadata]*topNStreamingProcessor
+	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
 }
 
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
 	defer manager.Unlock()
 	var err error
-	for _, processor := range manager.processorMap {
-		err = multierr.Append(err, processor.Close())
+	for _, processorList := range manager.processorMap {
+		for _, processor := range processorList {
+			err = multierr.Append(err, processor.Close())
+		}
 	}
 	return err
 }
@@ -319,8 +322,10 @@ func (manager *topNProcessorManager) Close() error {
 func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) error {
 	manager.RLock()
 	defer manager.RUnlock()
-	for _, processor := range manager.processorMap {
-		processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+	for _, processorList := range manager.processorMap {
+		for _, processor := range processorList {
+			processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+		}
 	}
 
 	return nil
@@ -329,35 +334,47 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 func (manager *topNProcessorManager) start() error {
 	interval := manager.m.interval
 	for _, topNSchema := range manager.topNSchemas {
-		srcCh := make(chan interface{})
-		src, _ := sources.NewChannel(srcCh)
-		streamingFlow := streaming.New(src)
-
-		filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
-		if buildErr != nil {
-			return buildErr
-		}
-		streamingFlow = streamingFlow.Filter(filters)
-
-		mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
-		if innerErr != nil {
-			return innerErr
-		}
-		streamingFlow = streamingFlow.Map(mapper)
-
-		processor := &topNStreamingProcessor{
-			l:                manager.l,
-			shardNum:         manager.m.shardNum,
-			interval:         interval,
-			topNSchema:       topNSchema,
-			databaseSupplier: manager.m.databaseSupplier,
-			src:              srcCh,
-			in:               make(chan flow.StreamRecord),
-			stopCh:           make(chan struct{}),
-			streamingFlow:    streamingFlow,
+		sortDirections := make([]modelv1.Sort, 0, 2)
+		if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
+			sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
+		} else {
+			sortDirections = append(sortDirections, topNSchema.GetFieldValueSort())
 		}
 
-		manager.processorMap[topNSchema.GetSourceMeasure()] = processor.start()
+		processorList := make([]*topNStreamingProcessor, len(sortDirections))
+		for i, sortDirection := range sortDirections {
+			srcCh := make(chan interface{})
+			src, _ := sources.NewChannel(srcCh)
+			streamingFlow := streaming.New(src)
+
+			filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
+			if buildErr != nil {
+				return buildErr
+			}
+			streamingFlow = streamingFlow.Filter(filters)
+
+			mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
+			if innerErr != nil {
+				return innerErr
+			}
+			streamingFlow = streamingFlow.Map(mapper)
+
+			processor := &topNStreamingProcessor{
+				l:                manager.l,
+				shardNum:         manager.m.shardNum,
+				interval:         interval,
+				topNSchema:       topNSchema,
+				sortDirection:    sortDirection,
+				databaseSupplier: manager.m.databaseSupplier,
+				src:              srcCh,
+				in:               make(chan flow.StreamRecord),
+				stopCh:           make(chan struct{}),
+				streamingFlow:    streamingFlow,
+			}
+			processorList[i] = processor.start()
+		}
+
+		manager.processorMap[topNSchema.GetSourceMeasure()] = processorList
 	}
 
 	return nil
