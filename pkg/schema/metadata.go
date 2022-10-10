@@ -279,7 +279,10 @@ func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) (Resource, error) {
 	group, ok := sr.LoadGroup(metadata.Group)
 	if !ok {
-		return nil, errors.Errorf("unknown group")
+		var err error
+		if group, err = sr.StoreGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
+			return nil, errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
+		}
 	}
 	stm, err := sr.resourceSupplier.ResourceSchema(sr.metadata, metadata)
 	if err != nil {
