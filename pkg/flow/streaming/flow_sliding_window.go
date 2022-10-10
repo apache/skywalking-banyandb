@@ -41,6 +41,8 @@ var (
 	_ flow.Operator       = (*TumblingTimeWindows)(nil)
 	_ flow.WindowAssigner = (*TumblingTimeWindows)(nil)
 	_ flow.Window         = (*timeWindow)(nil)
+
+	DefaultCacheSize = 2
 )
 
 func (f *streamingFlow) Window(w flow.WindowAssigner) flow.WindowedFlow {
@@ -105,6 +107,9 @@ func (s *TumblingTimeWindows) Out() <-chan flow.StreamRecord {
 
 func (s *TumblingTimeWindows) Setup(ctx context.Context) (err error) {
 	if s.snapshots == nil {
+		if s.windowCount <= 0 {
+			s.windowCount = DefaultCacheSize
+		}
 		s.snapshots, err = lru.NewWithEvict(s.windowCount, func(key interface{}, value interface{}) {
 			s.flushSnapshot(key.(timeWindow), value.(flow.AggregationOp))
 		})
