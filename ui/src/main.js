@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { createApp } from 'vue'
+import { createApp, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
@@ -96,4 +96,4 @@ app.use(router)
 app.use(ElementPlus)
 
 app.mount('#app')
-app.config.globalProperties.mittBus = mitt()
+app.config.globalProperties.mittBus = new mitt()

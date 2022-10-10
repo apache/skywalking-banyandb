@@ -31,7 +31,7 @@ const { proxy } = getCurrentInstance()
 const $loadingCreate = proxy.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 // eventBus
-const $bus = proxy.$bus
+const $bus = proxy.mittBus
 const { ctx: that } = getCurrentInstance()
 const { aside, tags, menuState } = stores()
 const ruleForm = ref()
@@ -132,6 +132,9 @@ function getGroupLists() {
                         })
                 })
             }
+        })
+        .finally(() => {
+            $loadingClose()
         })
 }
 

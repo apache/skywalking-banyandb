@@ -27,7 +27,7 @@ import { getCurrentInstance } from "@vue/runtime-core";
 const route = useRoute()
 const router = useRouter()
 const { menuState, header } = stores()
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const showRightMenu = computed(() => {
   return menuState.showRightMenu
 })

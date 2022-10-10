@@ -20,7 +20,7 @@
 <script setup>
 import { getCurrentInstance } from "@vue/runtime-core"
 
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 defineProps({
     showDrawer: {
         type: Boolean,

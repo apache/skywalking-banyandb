@@ -27,7 +27,7 @@ import { ref } from 'vue'
 const { proxy } = getCurrentInstance()
 const $loadingClose = proxy.$loadingClose
 const $loadingCreate = proxy.$loadingCreate
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 
 const { tags } = stores()
 const currentMenu = computed(() => {

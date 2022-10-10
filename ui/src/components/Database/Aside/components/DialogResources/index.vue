@@ -31,7 +31,7 @@ const rule = {
         }
     ]
 }
-defineProps({
+const props = defineProps({
     visible: {
         type: Boolean,
         default: false,
@@ -108,11 +108,11 @@ let tableData = [{
 const ruleForm = ref()
 const emit = defineEmits(['confirm', 'cancel'])
 
-watch(() => visible, () => {
-    dialogVisible = visible
+watch(() => props.visible, () => {
+    dialogVisible = props.visible
 })
-watch(() => group, () => {
-    form.metadata.group = group
+watch(() => props.group, () => {
+    form.metadata.group = props.group
 })
 
 function confirmForm() {

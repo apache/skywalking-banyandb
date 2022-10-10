@@ -21,7 +21,7 @@
 import { computed, watch } from '@vue/runtime-core'
 import DetailListComponent from './components/detail-list.vue'
 import DetailTableComponent from './components/detail-table.vue'
-defineProps({
+const props = defineProps({
     fileData: {
         type: Object,
     }
@@ -35,13 +35,13 @@ let closeBackGroundColor = 'var(--color-white)'
 let detailList = []
 
 const tableData = computed(() => {
-    let tags = fileData.tagFamilies[tagFamily].tags
+    let tags = props.fileData.tagFamilies[tagFamily].tags
     return tags.map((item) => {
         return { tags: item.name, type: item.type }
     })
 })
-watch(() => fileData, () => {
-    options = fileData.tagFamilies.map((item, index) => {
+watch(() => props.fileData, () => {
+    options = props.fileData.tagFamilies.map((item, index) => {
         return { label: item.name, value: index }
     })
 })
@@ -49,9 +49,9 @@ watch(() => fileData, () => {
 initData()
 
 function initData() {
-    let metadata = fileData.metadata
+    let metadata = props.fileData.metadata
     let tagsNumber = 0
-    fileData.tagFamilies.forEach((item) => {
+    props.fileData.tagFamilies.forEach((item) => {
         tagsNumber += item.tags.length
     })
     let detail = [
@@ -66,13 +66,13 @@ function initData() {
             value: metadata.modRevision
         }, {
             key: "Tags families number",
-            value: fileData.tagFamilies.length
+            value: props.fileData.tagFamilies.length
         }, {
             key: "Tags number",
             value: tagsNumber
         }, {
             key: "UpdatedAt",
-            value: fileData.updatedAt == null ? 'null' : fileData.updatedAt
+            value: props.fileData.updatedAt == null ? 'null' : props.fileData.updatedAt
         }]
     detailList = detail
 }
