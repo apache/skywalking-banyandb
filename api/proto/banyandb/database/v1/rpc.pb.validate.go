@@ -1020,6 +1020,249 @@ var _ interface {
 	ErrorName() string
 } = StreamRegistryServiceGetResponseValidationError{}
 
+// Validate checks the field values on StreamRegistryServiceExistRequest with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *StreamRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on StreamRegistryServiceExistRequest
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// StreamRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *StreamRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *StreamRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetMetadata()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, StreamRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, StreamRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetMetadata()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return StreamRegistryServiceExistRequestValidationError{
+				field:  "Metadata",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return StreamRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// StreamRegistryServiceExistRequestMultiError is an error wrapping multiple
+// validation errors returned by
+// StreamRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type StreamRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m StreamRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m StreamRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// StreamRegistryServiceExistRequestValidationError is the validation error
+// returned by StreamRegistryServiceExistRequest.Validate if the designated
+// constraints aren't met.
+type StreamRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e StreamRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e StreamRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e StreamRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e StreamRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e StreamRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "StreamRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e StreamRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sStreamRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = StreamRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = StreamRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on StreamRegistryServiceExistResponse with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *StreamRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on StreamRegistryServiceExistResponse
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// StreamRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *StreamRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *StreamRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	// no validation rules for HasStream
+
+	if len(errors) > 0 {
+		return StreamRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// StreamRegistryServiceExistResponseMultiError is an error wrapping multiple
+// validation errors returned by
+// StreamRegistryServiceExistResponse.ValidateAll() if the designated
+// constraints aren't met.
+type StreamRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m StreamRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m StreamRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// StreamRegistryServiceExistResponseValidationError is the validation error
+// returned by StreamRegistryServiceExistResponse.Validate if the designated
+// constraints aren't met.
+type StreamRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e StreamRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e StreamRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e StreamRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e StreamRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e StreamRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "StreamRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e StreamRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sStreamRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = StreamRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = StreamRegistryServiceExistResponseValidationError{}
+
 // Validate checks the field values on StreamRegistryServiceListRequest with
 // the rules defined in the proto definition for this message. If any rules
 // are violated, the first error encountered is returned, or nil if there are
@@ -2521,6 +2764,252 @@ var _ interface {
 	ErrorName() string
 } = IndexRuleBindingRegistryServiceListResponseValidationError{}
 
+// Validate checks the field values on
+// IndexRuleBindingRegistryServiceExistRequest with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *IndexRuleBindingRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// IndexRuleBindingRegistryServiceExistRequest with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in
+// IndexRuleBindingRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *IndexRuleBindingRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *IndexRuleBindingRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetMetadata()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, IndexRuleBindingRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, IndexRuleBindingRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetMetadata()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return IndexRuleBindingRegistryServiceExistRequestValidationError{
+				field:  "Metadata",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return IndexRuleBindingRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// IndexRuleBindingRegistryServiceExistRequestMultiError is an error wrapping
+// multiple validation errors returned by
+// IndexRuleBindingRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type IndexRuleBindingRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m IndexRuleBindingRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m IndexRuleBindingRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// IndexRuleBindingRegistryServiceExistRequestValidationError is the validation
+// error returned by IndexRuleBindingRegistryServiceExistRequest.Validate if
+// the designated constraints aren't met.
+type IndexRuleBindingRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "IndexRuleBindingRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e IndexRuleBindingRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sIndexRuleBindingRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = IndexRuleBindingRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = IndexRuleBindingRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on
+// IndexRuleBindingRegistryServiceExistResponse with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *IndexRuleBindingRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// IndexRuleBindingRegistryServiceExistResponse with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in
+// IndexRuleBindingRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *IndexRuleBindingRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *IndexRuleBindingRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	// no validation rules for HasIndexRuleBinding
+
+	if len(errors) > 0 {
+		return IndexRuleBindingRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// IndexRuleBindingRegistryServiceExistResponseMultiError is an error wrapping
+// multiple validation errors returned by
+// IndexRuleBindingRegistryServiceExistResponse.ValidateAll() if the
+// designated constraints aren't met.
+type IndexRuleBindingRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m IndexRuleBindingRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m IndexRuleBindingRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// IndexRuleBindingRegistryServiceExistResponseValidationError is the
+// validation error returned by
+// IndexRuleBindingRegistryServiceExistResponse.Validate if the designated
+// constraints aren't met.
+type IndexRuleBindingRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "IndexRuleBindingRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e IndexRuleBindingRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sIndexRuleBindingRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = IndexRuleBindingRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = IndexRuleBindingRegistryServiceExistResponseValidationError{}
+
 // Validate checks the field values on IndexRuleRegistryServiceCreateRequest
 // with the rules defined in the proto definition for this message. If any
 // rules are violated, the first error encountered is returned, or nil if
@@ -3757,6 +4246,249 @@ var _ interface {
 	ErrorName() string
 } = IndexRuleRegistryServiceListResponseValidationError{}
 
+// Validate checks the field values on IndexRuleRegistryServiceExistRequest
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the first error encountered is returned, or nil if
+// there are no violations.
+func (m *IndexRuleRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on IndexRuleRegistryServiceExistRequest
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// IndexRuleRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *IndexRuleRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *IndexRuleRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetMetadata()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, IndexRuleRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, IndexRuleRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetMetadata()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return IndexRuleRegistryServiceExistRequestValidationError{
+				field:  "Metadata",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return IndexRuleRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// IndexRuleRegistryServiceExistRequestMultiError is an error wrapping multiple
+// validation errors returned by
+// IndexRuleRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type IndexRuleRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m IndexRuleRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m IndexRuleRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// IndexRuleRegistryServiceExistRequestValidationError is the validation error
+// returned by IndexRuleRegistryServiceExistRequest.Validate if the designated
+// constraints aren't met.
+type IndexRuleRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e IndexRuleRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e IndexRuleRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e IndexRuleRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e IndexRuleRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e IndexRuleRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "IndexRuleRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e IndexRuleRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sIndexRuleRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = IndexRuleRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = IndexRuleRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on IndexRuleRegistryServiceExistResponse
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the first error encountered is returned, or nil if
+// there are no violations.
+func (m *IndexRuleRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on IndexRuleRegistryServiceExistResponse
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// IndexRuleRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *IndexRuleRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *IndexRuleRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	// no validation rules for HasIndexRule
+
+	if len(errors) > 0 {
+		return IndexRuleRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// IndexRuleRegistryServiceExistResponseMultiError is an error wrapping
+// multiple validation errors returned by
+// IndexRuleRegistryServiceExistResponse.ValidateAll() if the designated
+// constraints aren't met.
+type IndexRuleRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m IndexRuleRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m IndexRuleRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// IndexRuleRegistryServiceExistResponseValidationError is the validation error
+// returned by IndexRuleRegistryServiceExistResponse.Validate if the
+// designated constraints aren't met.
+type IndexRuleRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e IndexRuleRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e IndexRuleRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e IndexRuleRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e IndexRuleRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e IndexRuleRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "IndexRuleRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e IndexRuleRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sIndexRuleRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = IndexRuleRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = IndexRuleRegistryServiceExistResponseValidationError{}
+
 // Validate checks the field values on MeasureRegistryServiceCreateRequest with
 // the rules defined in the proto definition for this message. If any rules
 // are violated, the first error encountered is returned, or nil if there are
@@ -4990,6 +5722,249 @@ var _ interface {
 	ErrorName() string
 } = MeasureRegistryServiceListResponseValidationError{}
 
+// Validate checks the field values on MeasureRegistryServiceExistRequest with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *MeasureRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on MeasureRegistryServiceExistRequest
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// MeasureRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *MeasureRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *MeasureRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetMetadata()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, MeasureRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, MeasureRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetMetadata()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return MeasureRegistryServiceExistRequestValidationError{
+				field:  "Metadata",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return MeasureRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// MeasureRegistryServiceExistRequestMultiError is an error wrapping multiple
+// validation errors returned by
+// MeasureRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type MeasureRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m MeasureRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m MeasureRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// MeasureRegistryServiceExistRequestValidationError is the validation error
+// returned by MeasureRegistryServiceExistRequest.Validate if the designated
+// constraints aren't met.
+type MeasureRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e MeasureRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e MeasureRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e MeasureRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e MeasureRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e MeasureRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "MeasureRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e MeasureRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sMeasureRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = MeasureRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = MeasureRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on MeasureRegistryServiceExistResponse with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *MeasureRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on MeasureRegistryServiceExistResponse
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// MeasureRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *MeasureRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *MeasureRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	// no validation rules for HasMeasure
+
+	if len(errors) > 0 {
+		return MeasureRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// MeasureRegistryServiceExistResponseMultiError is an error wrapping multiple
+// validation errors returned by
+// MeasureRegistryServiceExistResponse.ValidateAll() if the designated
+// constraints aren't met.
+type MeasureRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m MeasureRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m MeasureRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// MeasureRegistryServiceExistResponseValidationError is the validation error
+// returned by MeasureRegistryServiceExistResponse.Validate if the designated
+// constraints aren't met.
+type MeasureRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e MeasureRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e MeasureRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e MeasureRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e MeasureRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e MeasureRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "MeasureRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e MeasureRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sMeasureRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = MeasureRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = MeasureRegistryServiceExistResponseValidationError{}
+
 // Validate checks the field values on GroupRegistryServiceCreateRequest with
 // the rules defined in the proto definition for this message. If any rules
 // are violated, the first error encountered is returned, or nil if there are
@@ -6160,6 +7135,220 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = GroupRegistryServiceListResponseValidationError{}
+
+// Validate checks the field values on GroupRegistryServiceExistRequest with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *GroupRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on GroupRegistryServiceExistRequest with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the result is a list of violation errors wrapped in
+// GroupRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *GroupRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *GroupRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for Group
+
+	if len(errors) > 0 {
+		return GroupRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// GroupRegistryServiceExistRequestMultiError is an error wrapping multiple
+// validation errors returned by
+// GroupRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type GroupRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m GroupRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m GroupRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// GroupRegistryServiceExistRequestValidationError is the validation error
+// returned by GroupRegistryServiceExistRequest.Validate if the designated
+// constraints aren't met.
+type GroupRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e GroupRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e GroupRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e GroupRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e GroupRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e GroupRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "GroupRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e GroupRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sGroupRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = GroupRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = GroupRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on GroupRegistryServiceExistResponse with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the first error encountered is returned, or nil if there are
+// no violations.
+func (m *GroupRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on GroupRegistryServiceExistResponse
+// with the rules defined in the proto definition for this message. If any
+// rules are violated, the result is a list of violation errors wrapped in
+// GroupRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *GroupRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *GroupRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	if len(errors) > 0 {
+		return GroupRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// GroupRegistryServiceExistResponseMultiError is an error wrapping multiple
+// validation errors returned by
+// GroupRegistryServiceExistResponse.ValidateAll() if the designated
+// constraints aren't met.
+type GroupRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m GroupRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m GroupRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// GroupRegistryServiceExistResponseValidationError is the validation error
+// returned by GroupRegistryServiceExistResponse.Validate if the designated
+// constraints aren't met.
+type GroupRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e GroupRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e GroupRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e GroupRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e GroupRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e GroupRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "GroupRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e GroupRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sGroupRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = GroupRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = GroupRegistryServiceExistResponseValidationError{}
 
 // Validate checks the field values on
 // TopNAggregationRegistryServiceCreateRequest with the rules defined in the
@@ -7406,3 +8595,248 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = TopNAggregationRegistryServiceListResponseValidationError{}
+
+// Validate checks the field values on
+// TopNAggregationRegistryServiceExistRequest with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *TopNAggregationRegistryServiceExistRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// TopNAggregationRegistryServiceExistRequest with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in
+// TopNAggregationRegistryServiceExistRequestMultiError, or nil if none found.
+func (m *TopNAggregationRegistryServiceExistRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *TopNAggregationRegistryServiceExistRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetMetadata()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, TopNAggregationRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, TopNAggregationRegistryServiceExistRequestValidationError{
+					field:  "Metadata",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetMetadata()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return TopNAggregationRegistryServiceExistRequestValidationError{
+				field:  "Metadata",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return TopNAggregationRegistryServiceExistRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// TopNAggregationRegistryServiceExistRequestMultiError is an error wrapping
+// multiple validation errors returned by
+// TopNAggregationRegistryServiceExistRequest.ValidateAll() if the designated
+// constraints aren't met.
+type TopNAggregationRegistryServiceExistRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m TopNAggregationRegistryServiceExistRequestMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m TopNAggregationRegistryServiceExistRequestMultiError) AllErrors() []error { return m }
+
+// TopNAggregationRegistryServiceExistRequestValidationError is the validation
+// error returned by TopNAggregationRegistryServiceExistRequest.Validate if
+// the designated constraints aren't met.
+type TopNAggregationRegistryServiceExistRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e TopNAggregationRegistryServiceExistRequestValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e TopNAggregationRegistryServiceExistRequestValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e TopNAggregationRegistryServiceExistRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e TopNAggregationRegistryServiceExistRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e TopNAggregationRegistryServiceExistRequestValidationError) ErrorName() string {
+	return "TopNAggregationRegistryServiceExistRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e TopNAggregationRegistryServiceExistRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sTopNAggregationRegistryServiceExistRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = TopNAggregationRegistryServiceExistRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = TopNAggregationRegistryServiceExistRequestValidationError{}
+
+// Validate checks the field values on
+// TopNAggregationRegistryServiceExistResponse with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *TopNAggregationRegistryServiceExistResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// TopNAggregationRegistryServiceExistResponse with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in
+// TopNAggregationRegistryServiceExistResponseMultiError, or nil if none found.
+func (m *TopNAggregationRegistryServiceExistResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *TopNAggregationRegistryServiceExistResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	// no validation rules for HasGroup
+
+	// no validation rules for HasTopNAggregation
+
+	if len(errors) > 0 {
+		return TopNAggregationRegistryServiceExistResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// TopNAggregationRegistryServiceExistResponseMultiError is an error wrapping
+// multiple validation errors returned by
+// TopNAggregationRegistryServiceExistResponse.ValidateAll() if the designated
+// constraints aren't met.
+type TopNAggregationRegistryServiceExistResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m TopNAggregationRegistryServiceExistResponseMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m TopNAggregationRegistryServiceExistResponseMultiError) AllErrors() []error { return m }
+
+// TopNAggregationRegistryServiceExistResponseValidationError is the validation
+// error returned by TopNAggregationRegistryServiceExistResponse.Validate if
+// the designated constraints aren't met.
+type TopNAggregationRegistryServiceExistResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e TopNAggregationRegistryServiceExistResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e TopNAggregationRegistryServiceExistResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e TopNAggregationRegistryServiceExistResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e TopNAggregationRegistryServiceExistResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e TopNAggregationRegistryServiceExistResponseValidationError) ErrorName() string {
+	return "TopNAggregationRegistryServiceExistResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e TopNAggregationRegistryServiceExistResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sTopNAggregationRegistryServiceExistResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = TopNAggregationRegistryServiceExistResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = TopNAggregationRegistryServiceExistResponseValidationError{}

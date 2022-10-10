@@ -27,6 +27,8 @@ type StreamRegistryServiceClient interface {
 	Delete(ctx context.Context, in *StreamRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*StreamRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *StreamRegistryServiceGetRequest, opts ...grpc.CallOption) (*StreamRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *StreamRegistryServiceListRequest, opts ...grpc.CallOption) (*StreamRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(ctx context.Context, in *StreamRegistryServiceExistRequest, opts ...grpc.CallOption) (*StreamRegistryServiceExistResponse, error)
 }
 
 type streamRegistryServiceClient struct {
@@ -82,6 +84,15 @@ func (c *streamRegistryServiceClient) List(ctx context.Context, in *StreamRegist
 	return out, nil
 }
 
+func (c *streamRegistryServiceClient) Exist(ctx context.Context, in *StreamRegistryServiceExistRequest, opts ...grpc.CallOption) (*StreamRegistryServiceExistResponse, error) {
+	out := new(StreamRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.StreamRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StreamRegistryServiceServer is the server API for StreamRegistryService service.
 // All implementations must embed UnimplementedStreamRegistryServiceServer
 // for forward compatibility
@@ -91,6 +102,8 @@ type StreamRegistryServiceServer interface {
 	Delete(context.Context, *StreamRegistryServiceDeleteRequest) (*StreamRegistryServiceDeleteResponse, error)
 	Get(context.Context, *StreamRegistryServiceGetRequest) (*StreamRegistryServiceGetResponse, error)
 	List(context.Context, *StreamRegistryServiceListRequest) (*StreamRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(context.Context, *StreamRegistryServiceExistRequest) (*StreamRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedStreamRegistryServiceServer()
 }
 
@@ -112,6 +125,9 @@ func (UnimplementedStreamRegistryServiceServer) Get(context.Context, *StreamRegi
 }
 func (UnimplementedStreamRegistryServiceServer) List(context.Context, *StreamRegistryServiceListRequest) (*StreamRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedStreamRegistryServiceServer) Exist(context.Context, *StreamRegistryServiceExistRequest) (*StreamRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedStreamRegistryServiceServer) mustEmbedUnimplementedStreamRegistryServiceServer() {}
 
@@ -216,6 +232,24 @@ func _StreamRegistryService_List_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StreamRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StreamRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.StreamRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StreamRegistryServiceServer).Exist(ctx, req.(*StreamRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StreamRegistryService_ServiceDesc is the grpc.ServiceDesc for StreamRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -243,6 +277,10 @@ var StreamRegistryService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "List",
 			Handler:    _StreamRegistryService_List_Handler,
 		},
+		{
+			MethodName: "Exist",
+			Handler:    _StreamRegistryService_Exist_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
@@ -257,6 +295,8 @@ type IndexRuleBindingRegistryServiceClient interface {
 	Delete(ctx context.Context, in *IndexRuleBindingRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *IndexRuleBindingRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *IndexRuleBindingRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(ctx context.Context, in *IndexRuleBindingRegistryServiceExistRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceExistResponse, error)
 }
 
 type indexRuleBindingRegistryServiceClient struct {
@@ -312,6 +352,15 @@ func (c *indexRuleBindingRegistryServiceClient) List(ctx context.Context, in *In
 	return out, nil
 }
 
+func (c *indexRuleBindingRegistryServiceClient) Exist(ctx context.Context, in *IndexRuleBindingRegistryServiceExistRequest, opts ...grpc.CallOption) (*IndexRuleBindingRegistryServiceExistResponse, error) {
+	out := new(IndexRuleBindingRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleBindingRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IndexRuleBindingRegistryServiceServer is the server API for IndexRuleBindingRegistryService service.
 // All implementations must embed UnimplementedIndexRuleBindingRegistryServiceServer
 // for forward compatibility
@@ -321,6 +370,8 @@ type IndexRuleBindingRegistryServiceServer interface {
 	Delete(context.Context, *IndexRuleBindingRegistryServiceDeleteRequest) (*IndexRuleBindingRegistryServiceDeleteResponse, error)
 	Get(context.Context, *IndexRuleBindingRegistryServiceGetRequest) (*IndexRuleBindingRegistryServiceGetResponse, error)
 	List(context.Context, *IndexRuleBindingRegistryServiceListRequest) (*IndexRuleBindingRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(context.Context, *IndexRuleBindingRegistryServiceExistRequest) (*IndexRuleBindingRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedIndexRuleBindingRegistryServiceServer()
 }
 
@@ -342,6 +393,9 @@ func (UnimplementedIndexRuleBindingRegistryServiceServer) Get(context.Context, *
 }
 func (UnimplementedIndexRuleBindingRegistryServiceServer) List(context.Context, *IndexRuleBindingRegistryServiceListRequest) (*IndexRuleBindingRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedIndexRuleBindingRegistryServiceServer) Exist(context.Context, *IndexRuleBindingRegistryServiceExistRequest) (*IndexRuleBindingRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedIndexRuleBindingRegistryServiceServer) mustEmbedUnimplementedIndexRuleBindingRegistryServiceServer() {
 }
@@ -447,6 +501,24 @@ func _IndexRuleBindingRegistryService_List_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IndexRuleBindingRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleBindingRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IndexRuleBindingRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.IndexRuleBindingRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IndexRuleBindingRegistryServiceServer).Exist(ctx, req.(*IndexRuleBindingRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IndexRuleBindingRegistryService_ServiceDesc is the grpc.ServiceDesc for IndexRuleBindingRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -474,6 +546,10 @@ var IndexRuleBindingRegistryService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "List",
 			Handler:    _IndexRuleBindingRegistryService_List_Handler,
 		},
+		{
+			MethodName: "Exist",
+			Handler:    _IndexRuleBindingRegistryService_Exist_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
@@ -488,6 +564,8 @@ type IndexRuleRegistryServiceClient interface {
 	Delete(ctx context.Context, in *IndexRuleRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *IndexRuleRegistryServiceGetRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *IndexRuleRegistryServiceListRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(ctx context.Context, in *IndexRuleRegistryServiceExistRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceExistResponse, error)
 }
 
 type indexRuleRegistryServiceClient struct {
@@ -543,6 +621,15 @@ func (c *indexRuleRegistryServiceClient) List(ctx context.Context, in *IndexRule
 	return out, nil
 }
 
+func (c *indexRuleRegistryServiceClient) Exist(ctx context.Context, in *IndexRuleRegistryServiceExistRequest, opts ...grpc.CallOption) (*IndexRuleRegistryServiceExistResponse, error) {
+	out := new(IndexRuleRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.IndexRuleRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IndexRuleRegistryServiceServer is the server API for IndexRuleRegistryService service.
 // All implementations must embed UnimplementedIndexRuleRegistryServiceServer
 // for forward compatibility
@@ -552,6 +639,8 @@ type IndexRuleRegistryServiceServer interface {
 	Delete(context.Context, *IndexRuleRegistryServiceDeleteRequest) (*IndexRuleRegistryServiceDeleteResponse, error)
 	Get(context.Context, *IndexRuleRegistryServiceGetRequest) (*IndexRuleRegistryServiceGetResponse, error)
 	List(context.Context, *IndexRuleRegistryServiceListRequest) (*IndexRuleRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(context.Context, *IndexRuleRegistryServiceExistRequest) (*IndexRuleRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedIndexRuleRegistryServiceServer()
 }
 
@@ -573,6 +662,9 @@ func (UnimplementedIndexRuleRegistryServiceServer) Get(context.Context, *IndexRu
 }
 func (UnimplementedIndexRuleRegistryServiceServer) List(context.Context, *IndexRuleRegistryServiceListRequest) (*IndexRuleRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedIndexRuleRegistryServiceServer) Exist(context.Context, *IndexRuleRegistryServiceExistRequest) (*IndexRuleRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedIndexRuleRegistryServiceServer) mustEmbedUnimplementedIndexRuleRegistryServiceServer() {
 }
@@ -678,6 +770,24 @@ func _IndexRuleRegistryService_List_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IndexRuleRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexRuleRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IndexRuleRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.IndexRuleRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IndexRuleRegistryServiceServer).Exist(ctx, req.(*IndexRuleRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IndexRuleRegistryService_ServiceDesc is the grpc.ServiceDesc for IndexRuleRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -705,6 +815,10 @@ var IndexRuleRegistryService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "List",
 			Handler:    _IndexRuleRegistryService_List_Handler,
 		},
+		{
+			MethodName: "Exist",
+			Handler:    _IndexRuleRegistryService_Exist_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
@@ -719,6 +833,8 @@ type MeasureRegistryServiceClient interface {
 	Delete(ctx context.Context, in *MeasureRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *MeasureRegistryServiceGetRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *MeasureRegistryServiceListRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(ctx context.Context, in *MeasureRegistryServiceExistRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceExistResponse, error)
 }
 
 type measureRegistryServiceClient struct {
@@ -774,6 +890,15 @@ func (c *measureRegistryServiceClient) List(ctx context.Context, in *MeasureRegi
 	return out, nil
 }
 
+func (c *measureRegistryServiceClient) Exist(ctx context.Context, in *MeasureRegistryServiceExistRequest, opts ...grpc.CallOption) (*MeasureRegistryServiceExistResponse, error) {
+	out := new(MeasureRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.MeasureRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MeasureRegistryServiceServer is the server API for MeasureRegistryService service.
 // All implementations must embed UnimplementedMeasureRegistryServiceServer
 // for forward compatibility
@@ -783,6 +908,8 @@ type MeasureRegistryServiceServer interface {
 	Delete(context.Context, *MeasureRegistryServiceDeleteRequest) (*MeasureRegistryServiceDeleteResponse, error)
 	Get(context.Context, *MeasureRegistryServiceGetRequest) (*MeasureRegistryServiceGetResponse, error)
 	List(context.Context, *MeasureRegistryServiceListRequest) (*MeasureRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(context.Context, *MeasureRegistryServiceExistRequest) (*MeasureRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedMeasureRegistryServiceServer()
 }
 
@@ -804,6 +931,9 @@ func (UnimplementedMeasureRegistryServiceServer) Get(context.Context, *MeasureRe
 }
 func (UnimplementedMeasureRegistryServiceServer) List(context.Context, *MeasureRegistryServiceListRequest) (*MeasureRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedMeasureRegistryServiceServer) Exist(context.Context, *MeasureRegistryServiceExistRequest) (*MeasureRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedMeasureRegistryServiceServer) mustEmbedUnimplementedMeasureRegistryServiceServer() {
 }
@@ -909,6 +1039,24 @@ func _MeasureRegistryService_List_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MeasureRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MeasureRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.MeasureRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MeasureRegistryServiceServer).Exist(ctx, req.(*MeasureRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MeasureRegistryService_ServiceDesc is the grpc.ServiceDesc for MeasureRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -936,6 +1084,10 @@ var MeasureRegistryService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "List",
 			Handler:    _MeasureRegistryService_List_Handler,
 		},
+		{
+			MethodName: "Exist",
+			Handler:    _MeasureRegistryService_Exist_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
@@ -950,6 +1102,8 @@ type GroupRegistryServiceClient interface {
 	Delete(ctx context.Context, in *GroupRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*GroupRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *GroupRegistryServiceGetRequest, opts ...grpc.CallOption) (*GroupRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *GroupRegistryServiceListRequest, opts ...grpc.CallOption) (*GroupRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error)
 }
 
 type groupRegistryServiceClient struct {
@@ -1005,6 +1159,15 @@ func (c *groupRegistryServiceClient) List(ctx context.Context, in *GroupRegistry
 	return out, nil
 }
 
+func (c *groupRegistryServiceClient) Exist(ctx context.Context, in *GroupRegistryServiceExistRequest, opts ...grpc.CallOption) (*GroupRegistryServiceExistResponse, error) {
+	out := new(GroupRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.GroupRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GroupRegistryServiceServer is the server API for GroupRegistryService service.
 // All implementations must embed UnimplementedGroupRegistryServiceServer
 // for forward compatibility
@@ -1014,6 +1177,8 @@ type GroupRegistryServiceServer interface {
 	Delete(context.Context, *GroupRegistryServiceDeleteRequest) (*GroupRegistryServiceDeleteResponse, error)
 	Get(context.Context, *GroupRegistryServiceGetRequest) (*GroupRegistryServiceGetResponse, error)
 	List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error)
+	// Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+	Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedGroupRegistryServiceServer()
 }
 
@@ -1035,6 +1200,9 @@ func (UnimplementedGroupRegistryServiceServer) Get(context.Context, *GroupRegist
 }
 func (UnimplementedGroupRegistryServiceServer) List(context.Context, *GroupRegistryServiceListRequest) (*GroupRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedGroupRegistryServiceServer) Exist(context.Context, *GroupRegistryServiceExistRequest) (*GroupRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedGroupRegistryServiceServer) mustEmbedUnimplementedGroupRegistryServiceServer() {}
 
@@ -1139,6 +1307,24 @@ func _GroupRegistryService_List_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GroupRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.GroupRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupRegistryServiceServer).Exist(ctx, req.(*GroupRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GroupRegistryService_ServiceDesc is the grpc.ServiceDesc for GroupRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1166,6 +1352,10 @@ var GroupRegistryService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "List",
 			Handler:    _GroupRegistryService_List_Handler,
 		},
+		{
+			MethodName: "Exist",
+			Handler:    _GroupRegistryService_Exist_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "banyandb/database/v1/rpc.proto",
@@ -1180,6 +1370,7 @@ type TopNAggregationRegistryServiceClient interface {
 	Delete(ctx context.Context, in *TopNAggregationRegistryServiceDeleteRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceDeleteResponse, error)
 	Get(ctx context.Context, in *TopNAggregationRegistryServiceGetRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceGetResponse, error)
 	List(ctx context.Context, in *TopNAggregationRegistryServiceListRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceListResponse, error)
+	Exist(ctx context.Context, in *TopNAggregationRegistryServiceExistRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceExistResponse, error)
 }
 
 type topNAggregationRegistryServiceClient struct {
@@ -1235,6 +1426,15 @@ func (c *topNAggregationRegistryServiceClient) List(ctx context.Context, in *Top
 	return out, nil
 }
 
+func (c *topNAggregationRegistryServiceClient) Exist(ctx context.Context, in *TopNAggregationRegistryServiceExistRequest, opts ...grpc.CallOption) (*TopNAggregationRegistryServiceExistResponse, error) {
+	out := new(TopNAggregationRegistryServiceExistResponse)
+	err := c.cc.Invoke(ctx, "/banyandb.database.v1.TopNAggregationRegistryService/Exist", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TopNAggregationRegistryServiceServer is the server API for TopNAggregationRegistryService service.
 // All implementations must embed UnimplementedTopNAggregationRegistryServiceServer
 // for forward compatibility
@@ -1244,6 +1444,7 @@ type TopNAggregationRegistryServiceServer interface {
 	Delete(context.Context, *TopNAggregationRegistryServiceDeleteRequest) (*TopNAggregationRegistryServiceDeleteResponse, error)
 	Get(context.Context, *TopNAggregationRegistryServiceGetRequest) (*TopNAggregationRegistryServiceGetResponse, error)
 	List(context.Context, *TopNAggregationRegistryServiceListRequest) (*TopNAggregationRegistryServiceListResponse, error)
+	Exist(context.Context, *TopNAggregationRegistryServiceExistRequest) (*TopNAggregationRegistryServiceExistResponse, error)
 	mustEmbedUnimplementedTopNAggregationRegistryServiceServer()
 }
 
@@ -1265,6 +1466,9 @@ func (UnimplementedTopNAggregationRegistryServiceServer) Get(context.Context, *T
 }
 func (UnimplementedTopNAggregationRegistryServiceServer) List(context.Context, *TopNAggregationRegistryServiceListRequest) (*TopNAggregationRegistryServiceListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedTopNAggregationRegistryServiceServer) Exist(context.Context, *TopNAggregationRegistryServiceExistRequest) (*TopNAggregationRegistryServiceExistResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exist not implemented")
 }
 func (UnimplementedTopNAggregationRegistryServiceServer) mustEmbedUnimplementedTopNAggregationRegistryServiceServer() {
 }
@@ -1370,6 +1574,24 @@ func _TopNAggregationRegistryService_List_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TopNAggregationRegistryService_Exist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopNAggregationRegistryServiceExistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopNAggregationRegistryServiceServer).Exist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/banyandb.database.v1.TopNAggregationRegistryService/Exist",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopNAggregationRegistryServiceServer).Exist(ctx, req.(*TopNAggregationRegistryServiceExistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TopNAggregationRegistryService_ServiceDesc is the grpc.ServiceDesc for TopNAggregationRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1396,6 +1618,10 @@ var TopNAggregationRegistryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "List",
 			Handler:    _TopNAggregationRegistryService_List_Handler,
+		},
+		{
+			MethodName: "Exist",
+			Handler:    _TopNAggregationRegistryService_Exist_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
