@@ -19,7 +19,12 @@ package grpc
 
 import (
 	"context"
+	"errors"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -82,6 +87,38 @@ func (rs *streamRegistryServer) List(ctx context.Context,
 	return &databasev1.StreamRegistryServiceListResponse{
 		Stream: entities,
 	}, nil
+}
+
+func (rs *streamRegistryServer) Exist(ctx context.Context, req *databasev1.StreamRegistryServiceExistRequest) (*databasev1.StreamRegistryServiceExistResponse, error) {
+	_, err := rs.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.StreamRegistryServiceExistResponse{
+			HasGroup:  true,
+			HasStream: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, rs.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		return nil, errGroup
+	}
+	return &databasev1.StreamRegistryServiceExistResponse{HasGroup: exist, HasStream: false}, nil
+}
+
+func groupExist(ctx context.Context, errResource error, metadata *commonv1.Metadata, groupRegistry schema.Group) (bool, error) {
+	if !errors.Is(errResource, schema.ErrGRPCResourceNotFound) {
+		return false, errResource
+	}
+	if metadata == nil {
+		return false, status.Error(codes.InvalidArgument, "metadata is absent")
+	}
+	_, errGroup := groupRegistry.GetGroup(ctx, metadata.Group)
+	if errGroup == nil {
+		return true, nil
+	}
+	if errors.Is(errGroup, schema.ErrGRPCResourceNotFound) {
+		return false, nil
+	}
+	return false, errGroup
 }
 
 type indexRuleBindingRegistryServer struct {
@@ -149,6 +186,23 @@ func (rs *indexRuleBindingRegistryServer) List(ctx context.Context,
 	}, nil
 }
 
+func (rs *indexRuleBindingRegistryServer) Exist(ctx context.Context, req *databasev1.IndexRuleBindingRegistryServiceExistRequest) (
+	*databasev1.IndexRuleBindingRegistryServiceExistResponse, error,
+) {
+	_, err := rs.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.IndexRuleBindingRegistryServiceExistResponse{
+			HasGroup:            true,
+			HasIndexRuleBinding: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, rs.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		return nil, errGroup
+	}
+	return &databasev1.IndexRuleBindingRegistryServiceExistResponse{HasGroup: exist, HasIndexRuleBinding: false}, nil
+}
+
 type indexRuleRegistryServer struct {
 	schemaRegistry metadata.Service
 	databasev1.UnimplementedIndexRuleRegistryServiceServer
@@ -206,6 +260,23 @@ func (rs *indexRuleRegistryServer) List(ctx context.Context, req *databasev1.Ind
 	return &databasev1.IndexRuleRegistryServiceListResponse{
 		IndexRule: entities,
 	}, nil
+}
+
+func (rs *indexRuleRegistryServer) Exist(ctx context.Context, req *databasev1.IndexRuleRegistryServiceExistRequest) (
+	*databasev1.IndexRuleRegistryServiceExistResponse, error,
+) {
+	_, err := rs.Get(ctx, &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.IndexRuleRegistryServiceExistResponse{
+			HasGroup:     true,
+			HasIndexRule: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, rs.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		return nil, errGroup
+	}
+	return &databasev1.IndexRuleRegistryServiceExistResponse{HasGroup: exist, HasIndexRule: false}, nil
 }
 
 type measureRegistryServer struct {
@@ -267,6 +338,21 @@ func (rs *measureRegistryServer) List(ctx context.Context, req *databasev1.Measu
 	}, nil
 }
 
+func (rs *measureRegistryServer) Exist(ctx context.Context, req *databasev1.MeasureRegistryServiceExistRequest) (*databasev1.MeasureRegistryServiceExistResponse, error) {
+	_, err := rs.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.MeasureRegistryServiceExistResponse{
+			HasGroup:   true,
+			HasMeasure: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, rs.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		return nil, errGroup
+	}
+	return &databasev1.MeasureRegistryServiceExistResponse{HasGroup: exist, HasMeasure: false}, nil
+}
+
 type groupRegistryServer struct {
 	schemaRegistry metadata.Service
 	databasev1.UnimplementedGroupRegistryServiceServer
@@ -326,6 +412,21 @@ func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupRe
 	}, nil
 }
 
+func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupRegistryServiceExistRequest) (*databasev1.GroupRegistryServiceExistResponse, error) {
+	_, err := rs.Get(ctx, &databasev1.GroupRegistryServiceGetRequest{Group: req.Group})
+	if err == nil {
+		return &databasev1.GroupRegistryServiceExistResponse{
+			HasGroup: true,
+		}, nil
+	}
+	if errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return &databasev1.GroupRegistryServiceExistResponse{
+			HasGroup: false,
+		}, nil
+	}
+	return nil, err
+}
+
 type topNAggregationRegistryServer struct {
 	schemaRegistry metadata.Service
 	databasev1.UnimplementedTopNAggregationRegistryServiceServer
@@ -383,4 +484,21 @@ func (ts *topNAggregationRegistryServer) List(ctx context.Context,
 	return &databasev1.TopNAggregationRegistryServiceListResponse{
 		TopNAggregation: entities,
 	}, nil
+}
+
+func (ts *topNAggregationRegistryServer) Exist(ctx context.Context, req *databasev1.TopNAggregationRegistryServiceExistRequest) (
+	*databasev1.TopNAggregationRegistryServiceExistResponse, error,
+) {
+	_, err := ts.Get(ctx, &databasev1.TopNAggregationRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.TopNAggregationRegistryServiceExistResponse{
+			HasGroup:           true,
+			HasTopNAggregation: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, ts.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		return nil, errGroup
+	}
+	return &databasev1.TopNAggregationRegistryServiceExistResponse{HasGroup: exist, HasTopNAggregation: false}, nil
 }

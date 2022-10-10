@@ -69,6 +69,12 @@ var _ = Describe("Registry", func() {
 		})
 		errStatus, _ := status.FromError(err)
 		Expect(errStatus.Code()).To(Equal(codes.NotFound))
+		existResp, err := client.Exist(context.TODO(), &databasev1.StreamRegistryServiceExistRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(existResp.HasGroup).To(BeTrue())
+		Expect(existResp.HasStream).To(BeFalse())
 		By("Creating a new stream")
 		_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -78,6 +84,12 @@ var _ = Describe("Registry", func() {
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
+		existResp, err = client.Exist(context.TODO(), &databasev1.StreamRegistryServiceExistRequest{
+			Metadata: meta,
+		})
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(existResp.HasGroup).To(BeTrue())
+		Expect(existResp.HasStream).To(BeTrue())
 	})
 	It("manages the index-rule-binding", func() {
 		client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)

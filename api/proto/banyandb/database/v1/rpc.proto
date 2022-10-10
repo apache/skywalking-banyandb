@@ -61,6 +61,15 @@ message StreamRegistryServiceGetResponse {
   banyandb.database.v1.Stream stream = 1;
 }
 
+message StreamRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message StreamRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_stream = 2;
+}
+
 message StreamRegistryServiceListRequest {
   string group = 1;
 }
@@ -97,6 +106,8 @@ service StreamRegistryService {
       get:"/v1/stream/schema/lists/{group}"
     };
   };
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(StreamRegistryServiceExistRequest) returns (StreamRegistryServiceExistResponse);
 }
 
 message IndexRuleBindingRegistryServiceCreateRequest {
@@ -137,6 +148,15 @@ message IndexRuleBindingRegistryServiceListResponse {
   repeated banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
+message IndexRuleBindingRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleBindingRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_index_rule_binding = 2;
+}
+
 service IndexRuleBindingRegistryService {
   rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse){
     option(google.api.http) = {
@@ -165,6 +185,8 @@ service IndexRuleBindingRegistryService {
       get:"/v1/index-rule-binding/schema/lists/{group}"
     };
   };
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(IndexRuleBindingRegistryServiceExistRequest) returns (IndexRuleBindingRegistryServiceExistResponse);
 }
 
 message IndexRuleRegistryServiceCreateRequest {
@@ -205,6 +227,15 @@ message IndexRuleRegistryServiceListResponse {
   repeated banyandb.database.v1.IndexRule index_rule = 1;
 }
 
+message IndexRuleRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message IndexRuleRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_index_rule = 2;
+}
+
 service IndexRuleRegistryService {
   rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse){
     option(google.api.http) = {
@@ -233,6 +264,8 @@ service IndexRuleRegistryService {
       get:"/v1/index-rule/schema/lists/{group}"
     };
   };
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(IndexRuleRegistryServiceExistRequest) returns (IndexRuleRegistryServiceExistResponse);
 }
 
 message MeasureRegistryServiceCreateRequest {
@@ -273,6 +306,15 @@ message MeasureRegistryServiceListResponse {
   repeated banyandb.database.v1.Measure measure = 1;
 }
 
+message MeasureRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message MeasureRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_measure = 2;
+}
+
 service MeasureRegistryService {
   rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse){
     option(google.api.http) = {
@@ -301,6 +343,8 @@ service MeasureRegistryService {
       get:"/v1/measure/schema/lists/{group}"
     };
   };
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(MeasureRegistryServiceExistRequest) returns (MeasureRegistryServiceExistResponse);
 }
 
 message GroupRegistryServiceCreateRequest {
@@ -342,6 +386,14 @@ message GroupRegistryServiceListResponse {
   repeated banyandb.common.v1.Group group = 1;
 }
 
+message GroupRegistryServiceExistRequest {
+  string group = 1;
+}
+
+message GroupRegistryServiceExistResponse {
+  bool has_group = 1;
+}
+
 service GroupRegistryService {
   rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse){
     option(google.api.http) = {
@@ -370,6 +422,8 @@ service GroupRegistryService {
       get:"/v1/group/schema/lists"
     };
   };
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
 }
 
 message TopNAggregationRegistryServiceCreateRequest {
@@ -410,10 +464,20 @@ message TopNAggregationRegistryServiceListResponse {
   repeated banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
+message TopNAggregationRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TopNAggregationRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_top_n_aggregation = 2;
+}
+
 service TopNAggregationRegistryService {
   rpc Create(TopNAggregationRegistryServiceCreateRequest) returns (TopNAggregationRegistryServiceCreateResponse);
   rpc Update(TopNAggregationRegistryServiceUpdateRequest) returns (TopNAggregationRegistryServiceUpdateResponse);
   rpc Delete(TopNAggregationRegistryServiceDeleteRequest) returns (TopNAggregationRegistryServiceDeleteResponse);
   rpc Get(TopNAggregationRegistryServiceGetRequest) returns (TopNAggregationRegistryServiceGetResponse);
   rpc List(TopNAggregationRegistryServiceListRequest) returns (TopNAggregationRegistryServiceListResponse);
+  rpc Exist(TopNAggregationRegistryServiceExistRequest) returns (TopNAggregationRegistryServiceExistResponse);
 }
