@@ -130,6 +130,8 @@ func parseExpr(value *model_v1.TagValue) (ComparableExpr, error) {
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil
+	case *model_v1.TagValue_Null:
+		return nullLiteralExpr, nil
 	}
 	return nil, ErrInvalidConditionType
 }
@@ -438,7 +440,7 @@ func (h *havingTag) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return expr.BelongTo(h.Expr), nil
+	return expr.Contains(h.Expr), nil
 }
 
 func (h *havingTag) MarshalJSON() ([]byte, error) {

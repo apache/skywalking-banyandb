@@ -46,6 +46,7 @@
       {"null":0},
       {"null":0},
       {"null":0},
+      {"str_array":{"value": ["c"]}},
       {"str_array":{"value": ["c"]}} 
     ]
   },
@@ -66,7 +67,8 @@
       {"null":0},
       {"null":0},
       {"null":0},
-      {"str_array":{"value": ["b", "c"]}} 
+      {"str_array":{"value": ["b", "c"]}},
+      {"str_array":{"value": ["b", "c"]}}
     ]
   },
   {
@@ -86,7 +88,8 @@
       {"null":0},
       {"null":0},
       {"null":0},
-      {"str_array":{"value": ["a", "b", "c"]}} 
+      {"str_array":{"value": ["a", "b", "c"]}},
+      {"str_array":{"value": ["a", "b", "c"]}}
     ]
   }
 ]

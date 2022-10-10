@@ -67,7 +67,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		var errProject error
 		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
 		if errProject != nil {
-			return nil, err
+			return nil, errProject
 		}
 	}
 	plan, err := uis.selectIndexScanner(ctx)

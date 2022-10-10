@@ -180,6 +180,8 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil, nil
+	case *model_v1.TagValue_Null:
+		return nullLiteralExpr, nil, nil
 	}
 	return nil, nil, ErrInvalidConditionType
 }
@@ -580,7 +582,7 @@ func (bl bypassList) Max() (common.ItemID, error) {
 }
 
 func (bl bypassList) Len() int {
-	panic("not invoked")
+	return 0
 }
 
 func (bl bypassList) Iterator() posting.Iterator {
