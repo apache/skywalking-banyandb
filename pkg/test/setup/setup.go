@@ -21,8 +21,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/onsi/gomega"
+
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -31,21 +34,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-
-	"github.com/onsi/gomega"
 )
 
 const host = "127.0.0.1"
 
-func SetUp(flags ...string) (string, func()) {
+func SetUp(flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	ff := []string{
 		"--addr=" + addr,
+		"--http-addr=" + httpAddr,
+		"--grpc-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
@@ -55,7 +59,7 @@ func SetUp(flags ...string) (string, func()) {
 		ff = append(ff, flags...)
 	}
 	gracefulStop := modules(ff)
-	return addr, func() {
+	return addr, httpAddr, func() {
 		gracefulStop()
 		deferFn()
 	}
@@ -81,6 +85,7 @@ func modules(flags []string) func() {
 	q, err := query.NewExecutor(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
+	httpServer := http.NewService()
 
 	return test.SetUpModules(
 		flags,
@@ -93,6 +98,7 @@ func modules(flags []string) func() {
 		measureSvc,
 		q,
 		tcp,
+		httpServer,
 	)
 }
 

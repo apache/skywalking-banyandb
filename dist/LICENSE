@@ -264,6 +264,7 @@ BSD-3-Clause licenses
     github.com/grpc-ecosystem/grpc-gateway/v2 v2.10.3 BSD-3-Clause
     github.com/pmezard/go-difflib v1.0.0 BSD-3-Clause
     github.com/spf13/pflag v1.0.5 BSD-3-Clause
+    github.com/xhit/go-str2duration/v2 v2.0.0 BSD-3-Clause
     golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 BSD-3-Clause
     golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f BSD-3-Clause
     golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3 BSD-3-Clause
@@ -336,7 +337,6 @@ MIT and Apache-2.0 licenses
 MIT and BSD-3-Clause licenses
 ========================================================================
 
-    github.com/ghodss/yaml v1.0.0 MIT and BSD-3-Clause
     sigs.k8s.io/yaml v1.2.0 MIT and BSD-3-Clause
 
 ========================================================================

@@ -1567,6 +1567,14 @@
         }
       }
     },
+    "v1GroupRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        }
+      }
+    },
     "v1GroupRegistryServiceGetResponse": {
       "type": "object",
       "properties": {
@@ -1686,6 +1694,17 @@
         }
       }
     },
+    "v1IndexRuleBindingRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        },
+        "hasIndexRuleBinding": {
+          "type": "boolean"
+        }
+      }
+    },
     "v1IndexRuleBindingRegistryServiceGetResponse": {
       "type": "object",
       "properties": {
@@ -1732,6 +1751,17 @@
       "type": "object",
       "properties": {
         "deleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1IndexRuleRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        },
+        "hasIndexRule": {
           "type": "boolean"
         }
       }
@@ -1871,6 +1901,17 @@
       "type": "object",
       "properties": {
         "deleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1MeasureRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        },
+        "hasMeasure": {
           "type": "boolean"
         }
       }
@@ -2020,6 +2061,17 @@
         }
       }
     },
+    "v1StreamRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        },
+        "hasStream": {
+          "type": "boolean"
+        }
+      }
+    },
     "v1StreamRegistryServiceGetResponse": {
       "type": "object",
       "properties": {
@@ -2079,6 +2131,10 @@
         },
         "type": {
           "$ref": "#/definitions/v1TagType"
+        },
+        "indexedOnly": {
+          "type": "boolean",
+          "title": "indexed_only indicates whether the tag is stored\nTrue: It's indexed only, but not stored \nFalse: it's stored and indexed"
         }
       }
     },
@@ -2175,6 +2231,17 @@
       "type": "object",
       "properties": {
         "deleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1TopNAggregationRegistryServiceExistResponse": {
+      "type": "object",
+      "properties": {
+        "hasGroup": {
+          "type": "boolean"
+        },
+        "hasTopNAggregation": {
           "type": "boolean"
         }
       }

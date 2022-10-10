@@ -21,7 +21,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -99,25 +98,12 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		builder := wp.WriterBuilder().Time(t)
 		size := 0
 		for fi, family := range value.GetTagFamilies() {
-			familySpec := sm.GetTagFamilies()[fi]
-			if len(family.GetTags()) > len(familySpec.GetTags()) {
-				return nil, errors.Wrap(ErrMalformedElement, "tag number is more than expected")
-			}
-			for ti, tag := range family.GetTags() {
-				tagSpec := familySpec.GetTags()[ti]
-				tType, isNull := pbv1.TagValueTypeConv(tag)
-				if isNull {
-					continue
-				}
-				if tType != tagSpec.GetType() {
-					return nil, errors.Wrapf(ErrMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
-				}
-			}
-			bb, errMarshal := proto.Marshal(family)
+			spec := sm.GetTagFamilies()[fi]
+			bb, errMarshal := pbv1.EncodeFamily(spec, family)
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
-			builder.Family(tsdb.Hash([]byte(sm.GetTagFamilies()[fi].GetName())), bb)
+			builder.Family(tsdb.Hash([]byte(spec.GetName())), bb)
 			size += len(bb)
 		}
 		builder.Val([]byte(value.GetElementId()))

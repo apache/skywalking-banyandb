@@ -20,7 +20,6 @@ package traffic
 import (
 	"context"
 	"crypto/rand"
-
 	// Load some tag templates
 	_ "embed"
 	"encoding/base64"

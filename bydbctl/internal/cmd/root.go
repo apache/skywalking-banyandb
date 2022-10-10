@@ -22,14 +22,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 var (
 	filePath string
 	name     string
+	start    string
+	end      string
 	cfgFile  string
 	rootCmd  = &cobra.Command{
 		DisableAutoGenTag: true,
@@ -52,7 +55,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
-	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd())
+	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd())
 }
 
 func init() {
@@ -105,5 +108,12 @@ func bindNameFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
 		c.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
 		_ = c.MarkFlagRequired("name")
+	}
+}
+
+func bindTimeRangeFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().StringVarP(&start, "start", "s", "", "Start time of the time range during which the query is preformed")
+		c.Flags().StringVarP(&end, "end", "e", "", "End time of the time range during which the query is preformed")
 	}
 }

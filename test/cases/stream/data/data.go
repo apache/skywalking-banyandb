@@ -15,14 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package data contains integration test cases of the measure
+// Package data contains integration test cases of the stream
 package data
 
 import (
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -34,8 +36,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sigs.k8s.io/yaml"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -45,14 +48,17 @@ var inputFS embed.FS
 //go:embed want/*.yaml
 var wantFS embed.FS
 
+//go:embed testdata/*.json
+var dataFS embed.FS
+
 // VerifyFn verify whether the query response matches the wanted result
-var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
+var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
-	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-	query := &measurev1.QueryRequest{}
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	query := &stream_v1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
-	c := measurev1.NewMeasureServiceClient(sharedContext.Connection)
+	c := stream_v1.NewStreamServiceClient(sharedContext.Connection)
 	ctx := context.Background()
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
@@ -61,21 +67,21 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 		}
 		return
 	}
-	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
+	gm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		innerGm.Expect(resp.DataPoints).To(gm.BeEmpty())
+		gm.Expect(resp.Elements).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
 		args.Want = args.Input
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
-	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-	want := &measurev1.QueryResponse{}
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	want := &stream_v1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	innerGm.Expect(cmp.Equal(resp, want,
+	gm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&measurev1.DataPoint{}, "timestamp"),
+		protocmp.IgnoreFields(&stream_v1.Element{}, "timestamp"),
 		protocmp.Transform())).
 		To(gm.BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)
@@ -90,37 +96,51 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 		})
 }
 
-//go:embed testdata/*.json
-var dataFS embed.FS
-
-func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClient, dataFile string, baseTime time.Time, interval time.Duration) {
+func loadData(stream stream_v1.StreamService_WriteClient, dataFile string, baseTime time.Time, interval time.Duration) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 	for i, template := range templates {
-		rawDataPointValue, errMarshal := json.Marshal(template)
+		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
-		dataPointValue := &measurev1.DataPointValue{}
-		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
-		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * time.Minute))
-		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
-			Should(gm.Succeed())
+		searchTagFamily := &model_v1.TagFamilyForWrite{}
+		gm.Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(gm.HaveOccurred())
+		e := &stream_v1.ElementValue{
+			ElementId: strconv.Itoa(i),
+			Timestamp: timestamppb.New(baseTime.Add(interval * time.Duration(i))),
+			TagFamilies: []*model_v1.TagFamilyForWrite{
+				{
+					Tags: []*model_v1.TagValue{
+						{
+							Value: &model_v1.TagValue_BinaryData{
+								BinaryData: bb,
+							},
+						},
+					},
+				},
+			},
+		}
+		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
+		errInner := stream.Send(&stream_v1.WriteRequest{
+			Metadata: &common_v1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			},
+			Element: e,
+		})
+		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}
 }
 
 // Write data into the server
-func Write(conn *grpclib.ClientConn, name, group, dataFile string,
-	baseTime time.Time, interval time.Duration,
-) {
-	c := measurev1.NewMeasureServiceClient(conn)
+func Write(conn *grpclib.ClientConn, dataFile string, baseTime time.Time, interval time.Duration) {
+	c := stream_v1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(&commonv1.Metadata{
-		Name:  name,
-		Group: group,
-	}, writeClient, dataFile, baseTime, interval)
+	loadData(writeClient, dataFile, baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()

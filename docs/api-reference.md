@@ -75,6 +75,8 @@
     - [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse)
     - [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest)
     - [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse)
+    - [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest)
+    - [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse)
     - [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest)
     - [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse)
     - [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest)
@@ -85,6 +87,8 @@
     - [IndexRuleBindingRegistryServiceCreateResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceCreateResponse)
     - [IndexRuleBindingRegistryServiceDeleteRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceDeleteRequest)
     - [IndexRuleBindingRegistryServiceDeleteResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceDeleteResponse)
+    - [IndexRuleBindingRegistryServiceExistRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceExistRequest)
+    - [IndexRuleBindingRegistryServiceExistResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceExistResponse)
     - [IndexRuleBindingRegistryServiceGetRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceGetRequest)
     - [IndexRuleBindingRegistryServiceGetResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceGetResponse)
     - [IndexRuleBindingRegistryServiceListRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceListRequest)
@@ -95,6 +99,8 @@
     - [IndexRuleRegistryServiceCreateResponse](#banyandb-database-v1-IndexRuleRegistryServiceCreateResponse)
     - [IndexRuleRegistryServiceDeleteRequest](#banyandb-database-v1-IndexRuleRegistryServiceDeleteRequest)
     - [IndexRuleRegistryServiceDeleteResponse](#banyandb-database-v1-IndexRuleRegistryServiceDeleteResponse)
+    - [IndexRuleRegistryServiceExistRequest](#banyandb-database-v1-IndexRuleRegistryServiceExistRequest)
+    - [IndexRuleRegistryServiceExistResponse](#banyandb-database-v1-IndexRuleRegistryServiceExistResponse)
     - [IndexRuleRegistryServiceGetRequest](#banyandb-database-v1-IndexRuleRegistryServiceGetRequest)
     - [IndexRuleRegistryServiceGetResponse](#banyandb-database-v1-IndexRuleRegistryServiceGetResponse)
     - [IndexRuleRegistryServiceListRequest](#banyandb-database-v1-IndexRuleRegistryServiceListRequest)
@@ -105,6 +111,8 @@
     - [MeasureRegistryServiceCreateResponse](#banyandb-database-v1-MeasureRegistryServiceCreateResponse)
     - [MeasureRegistryServiceDeleteRequest](#banyandb-database-v1-MeasureRegistryServiceDeleteRequest)
     - [MeasureRegistryServiceDeleteResponse](#banyandb-database-v1-MeasureRegistryServiceDeleteResponse)
+    - [MeasureRegistryServiceExistRequest](#banyandb-database-v1-MeasureRegistryServiceExistRequest)
+    - [MeasureRegistryServiceExistResponse](#banyandb-database-v1-MeasureRegistryServiceExistResponse)
     - [MeasureRegistryServiceGetRequest](#banyandb-database-v1-MeasureRegistryServiceGetRequest)
     - [MeasureRegistryServiceGetResponse](#banyandb-database-v1-MeasureRegistryServiceGetResponse)
     - [MeasureRegistryServiceListRequest](#banyandb-database-v1-MeasureRegistryServiceListRequest)
@@ -115,6 +123,8 @@
     - [StreamRegistryServiceCreateResponse](#banyandb-database-v1-StreamRegistryServiceCreateResponse)
     - [StreamRegistryServiceDeleteRequest](#banyandb-database-v1-StreamRegistryServiceDeleteRequest)
     - [StreamRegistryServiceDeleteResponse](#banyandb-database-v1-StreamRegistryServiceDeleteResponse)
+    - [StreamRegistryServiceExistRequest](#banyandb-database-v1-StreamRegistryServiceExistRequest)
+    - [StreamRegistryServiceExistResponse](#banyandb-database-v1-StreamRegistryServiceExistResponse)
     - [StreamRegistryServiceGetRequest](#banyandb-database-v1-StreamRegistryServiceGetRequest)
     - [StreamRegistryServiceGetResponse](#banyandb-database-v1-StreamRegistryServiceGetResponse)
     - [StreamRegistryServiceListRequest](#banyandb-database-v1-StreamRegistryServiceListRequest)
@@ -125,6 +135,8 @@
     - [TopNAggregationRegistryServiceCreateResponse](#banyandb-database-v1-TopNAggregationRegistryServiceCreateResponse)
     - [TopNAggregationRegistryServiceDeleteRequest](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteRequest)
     - [TopNAggregationRegistryServiceDeleteResponse](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteResponse)
+    - [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest)
+    - [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse)
     - [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest)
     - [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse)
     - [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest)
@@ -169,16 +181,16 @@
     - [Property](#banyandb-property-v1-Property)
   
 - [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
-    - [CreateRequest](#banyandb-property-v1-CreateRequest)
-    - [CreateResponse](#banyandb-property-v1-CreateResponse)
+    - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
+    - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
     - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
     - [GetRequest](#banyandb-property-v1-GetRequest)
     - [GetResponse](#banyandb-property-v1-GetResponse)
     - [ListRequest](#banyandb-property-v1-ListRequest)
     - [ListResponse](#banyandb-property-v1-ListResponse)
-    - [UpdateRequest](#banyandb-property-v1-UpdateRequest)
-    - [UpdateResponse](#banyandb-property-v1-UpdateResponse)
+  
+    - [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy)
   
     - [PropertyService](#banyandb-property-v1-PropertyService)
   
@@ -994,6 +1006,7 @@ Subject defines which stream or measure would generate indices
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | type | [TagType](#banyandb-database-v1-TagType) |  |  |
+| indexed_only | [bool](#bool) |  | indexed_only indicates whether the tag is stored True: It&#39;s indexed only, but not stored False: it&#39;s stored and indexed |
 
 
 
@@ -1188,6 +1201,36 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-GroupRegistryServiceExistRequest"></a>
+
+### GroupRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupRegistryServiceExistResponse"></a>
+
+### GroupRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-GroupRegistryServiceGetRequest"></a>
 
 ### GroupRegistryServiceGetRequest
@@ -1317,6 +1360,37 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-IndexRuleBindingRegistryServiceExistRequest"></a>
+
+### IndexRuleBindingRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-IndexRuleBindingRegistryServiceExistResponse"></a>
+
+### IndexRuleBindingRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_index_rule_binding | [bool](#bool) |  |  |
 
 
 
@@ -1463,6 +1537,37 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-IndexRuleRegistryServiceExistRequest"></a>
+
+### IndexRuleRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-IndexRuleRegistryServiceExistResponse"></a>
+
+### IndexRuleRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_index_rule | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-IndexRuleRegistryServiceGetRequest"></a>
 
 ### IndexRuleRegistryServiceGetRequest
@@ -1597,6 +1702,37 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-MeasureRegistryServiceExistRequest"></a>
+
+### MeasureRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-MeasureRegistryServiceExistResponse"></a>
+
+### MeasureRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_measure | [bool](#bool) |  |  |
 
 
 
@@ -1743,6 +1879,37 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-StreamRegistryServiceExistRequest"></a>
+
+### StreamRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-StreamRegistryServiceExistResponse"></a>
+
+### StreamRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_stream | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-StreamRegistryServiceGetRequest"></a>
 
 ### StreamRegistryServiceGetRequest
@@ -1883,6 +2050,37 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-TopNAggregationRegistryServiceExistRequest"></a>
+
+### TopNAggregationRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TopNAggregationRegistryServiceExistResponse"></a>
+
+### TopNAggregationRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_top_n_aggregation | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-TopNAggregationRegistryServiceGetRequest"></a>
 
 ### TopNAggregationRegistryServiceGetRequest
@@ -1986,6 +2184,7 @@ Type determine the index structure under the hood
 | Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) |  |
 | Get | [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest) | [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse) |  |
 | List | [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest) | [GroupRegistryServiceListResponse](#banyandb-database-v1-GroupRegistryServiceListResponse) |  |
+| Exist | [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest) | [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
 <a name="banyandb-database-v1-IndexRuleBindingRegistryService"></a>
@@ -2000,6 +2199,7 @@ Type determine the index structure under the hood
 | Delete | [IndexRuleBindingRegistryServiceDeleteRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceDeleteRequest) | [IndexRuleBindingRegistryServiceDeleteResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceDeleteResponse) |  |
 | Get | [IndexRuleBindingRegistryServiceGetRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceGetRequest) | [IndexRuleBindingRegistryServiceGetResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceGetResponse) |  |
 | List | [IndexRuleBindingRegistryServiceListRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceListRequest) | [IndexRuleBindingRegistryServiceListResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceListResponse) |  |
+| Exist | [IndexRuleBindingRegistryServiceExistRequest](#banyandb-database-v1-IndexRuleBindingRegistryServiceExistRequest) | [IndexRuleBindingRegistryServiceExistResponse](#banyandb-database-v1-IndexRuleBindingRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
 <a name="banyandb-database-v1-IndexRuleRegistryService"></a>
@@ -2014,6 +2214,7 @@ Type determine the index structure under the hood
 | Delete | [IndexRuleRegistryServiceDeleteRequest](#banyandb-database-v1-IndexRuleRegistryServiceDeleteRequest) | [IndexRuleRegistryServiceDeleteResponse](#banyandb-database-v1-IndexRuleRegistryServiceDeleteResponse) |  |
 | Get | [IndexRuleRegistryServiceGetRequest](#banyandb-database-v1-IndexRuleRegistryServiceGetRequest) | [IndexRuleRegistryServiceGetResponse](#banyandb-database-v1-IndexRuleRegistryServiceGetResponse) |  |
 | List | [IndexRuleRegistryServiceListRequest](#banyandb-database-v1-IndexRuleRegistryServiceListRequest) | [IndexRuleRegistryServiceListResponse](#banyandb-database-v1-IndexRuleRegistryServiceListResponse) |  |
+| Exist | [IndexRuleRegistryServiceExistRequest](#banyandb-database-v1-IndexRuleRegistryServiceExistRequest) | [IndexRuleRegistryServiceExistResponse](#banyandb-database-v1-IndexRuleRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
 <a name="banyandb-database-v1-MeasureRegistryService"></a>
@@ -2028,6 +2229,7 @@ Type determine the index structure under the hood
 | Delete | [MeasureRegistryServiceDeleteRequest](#banyandb-database-v1-MeasureRegistryServiceDeleteRequest) | [MeasureRegistryServiceDeleteResponse](#banyandb-database-v1-MeasureRegistryServiceDeleteResponse) |  |
 | Get | [MeasureRegistryServiceGetRequest](#banyandb-database-v1-MeasureRegistryServiceGetRequest) | [MeasureRegistryServiceGetResponse](#banyandb-database-v1-MeasureRegistryServiceGetResponse) |  |
 | List | [MeasureRegistryServiceListRequest](#banyandb-database-v1-MeasureRegistryServiceListRequest) | [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse) |  |
+| Exist | [MeasureRegistryServiceExistRequest](#banyandb-database-v1-MeasureRegistryServiceExistRequest) | [MeasureRegistryServiceExistResponse](#banyandb-database-v1-MeasureRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
 <a name="banyandb-database-v1-StreamRegistryService"></a>
@@ -2042,6 +2244,7 @@ Type determine the index structure under the hood
 | Delete | [StreamRegistryServiceDeleteRequest](#banyandb-database-v1-StreamRegistryServiceDeleteRequest) | [StreamRegistryServiceDeleteResponse](#banyandb-database-v1-StreamRegistryServiceDeleteResponse) |  |
 | Get | [StreamRegistryServiceGetRequest](#banyandb-database-v1-StreamRegistryServiceGetRequest) | [StreamRegistryServiceGetResponse](#banyandb-database-v1-StreamRegistryServiceGetResponse) |  |
 | List | [StreamRegistryServiceListRequest](#banyandb-database-v1-StreamRegistryServiceListRequest) | [StreamRegistryServiceListResponse](#banyandb-database-v1-StreamRegistryServiceListResponse) |  |
+| Exist | [StreamRegistryServiceExistRequest](#banyandb-database-v1-StreamRegistryServiceExistRequest) | [StreamRegistryServiceExistResponse](#banyandb-database-v1-StreamRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
 <a name="banyandb-database-v1-TopNAggregationRegistryService"></a>
@@ -2056,6 +2259,7 @@ Type determine the index structure under the hood
 | Delete | [TopNAggregationRegistryServiceDeleteRequest](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteRequest) | [TopNAggregationRegistryServiceDeleteResponse](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteResponse) |  |
 | Get | [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest) | [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse) |  |
 | List | [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest) | [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse) |  |
+| Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) |  |
 
  
 
@@ -2457,25 +2661,32 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-CreateRequest"></a>
+<a name="banyandb-property-v1-ApplyRequest"></a>
 
-### CreateRequest
+### ApplyRequest
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | property | [Property](#banyandb-property-v1-Property) |  |  |
+| strategy | [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy) |  | strategy indicates how to update a property. It defaults to STRATEGY_MERGE |
 
 
 
 
 
 
-<a name="banyandb-property-v1-CreateResponse"></a>
+<a name="banyandb-property-v1-ApplyResponse"></a>
 
-### CreateResponse
+### ApplyResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
+| tags_num | [uint32](#uint32) |  |  |
 
 
 
@@ -2491,6 +2702,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2506,6 +2718,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| tags_num | [uint32](#uint32) |  |  |
 
 
 
@@ -2521,6 +2734,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2551,6 +2765,8 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| ids | [string](#string) | repeated |  |
+| tags | [string](#string) | repeated |  |
 
 
 
@@ -2571,32 +2787,20 @@ Property stores the user defined data
 
 
 
-
-<a name="banyandb-property-v1-UpdateRequest"></a>
-
-### UpdateRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-UpdateResponse"></a>
-
-### UpdateResponse
-
-
-
-
-
-
  
+
+
+<a name="banyandb-property-v1-ApplyRequest-Strategy"></a>
+
+### ApplyRequest.Strategy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STRATEGY_UNSPECIFIED | 0 |  |
+| STRATEGY_MERGE | 1 |  |
+| STRATEGY_REPLACE | 2 |  |
+
 
  
 
@@ -2610,8 +2814,7 @@ Property stores the user defined data
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| Create | [CreateRequest](#banyandb-property-v1-CreateRequest) | [CreateResponse](#banyandb-property-v1-CreateResponse) |  |
-| Update | [UpdateRequest](#banyandb-property-v1-UpdateRequest) | [UpdateResponse](#banyandb-property-v1-UpdateResponse) |  |
+| Apply | [ApplyRequest](#banyandb-property-v1-ApplyRequest) | [ApplyResponse](#banyandb-property-v1-ApplyResponse) | Apply creates a property if it&#39;s absent, or update a existed one based on a strategy. |
 | Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
 | Get | [GetRequest](#banyandb-property-v1-GetRequest) | [GetResponse](#banyandb-property-v1-GetResponse) |  |
 | List | [ListRequest](#banyandb-property-v1-ListRequest) | [ListResponse](#banyandb-property-v1-ListResponse) |  |

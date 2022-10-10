@@ -20,19 +20,20 @@ package integration_other_test
 import (
 	"testing"
 
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 func TestIntegrationOther(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Other Suite")
+	gm.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Integration Other Suite")
 }
 
-var _ = BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
+var _ = g.BeforeSuite(func() {
+	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
-	})).To(Succeed())
+	})).To(gm.Succeed())
 })

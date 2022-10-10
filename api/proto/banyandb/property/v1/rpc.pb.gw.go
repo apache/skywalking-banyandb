@@ -31,42 +31,8 @@ var _ = runtime.String
 var _ = utilities.NewDoubleArray
 var _ = metadata.Join
 
-func request_PropertyService_Create_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq CreateRequest
-	var metadata runtime.ServerMetadata
-
-	newReader, berr := utilities.IOReaderFactory(req.Body)
-	if berr != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
-	}
-	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := client.Create(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
-func local_request_PropertyService_Create_0(ctx context.Context, marshaler runtime.Marshaler, server PropertyServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq CreateRequest
-	var metadata runtime.ServerMetadata
-
-	newReader, berr := utilities.IOReaderFactory(req.Body)
-	if berr != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
-	}
-	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := server.Create(ctx, &protoReq)
-	return msg, metadata, err
-
-}
-
-func request_PropertyService_Update_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq UpdateRequest
+func request_PropertyService_Apply_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq ApplyRequest
 	var metadata runtime.ServerMetadata
 
 	newReader, berr := utilities.IOReaderFactory(req.Body)
@@ -114,13 +80,13 @@ func request_PropertyService_Update_0(ctx context.Context, marshaler runtime.Mar
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.id", err)
 	}
 
-	msg, err := client.Update(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.Apply(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func local_request_PropertyService_Update_0(ctx context.Context, marshaler runtime.Marshaler, server PropertyServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq UpdateRequest
+func local_request_PropertyService_Apply_0(ctx context.Context, marshaler runtime.Marshaler, server PropertyServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq ApplyRequest
 	var metadata runtime.ServerMetadata
 
 	newReader, berr := utilities.IOReaderFactory(req.Body)
@@ -168,13 +134,13 @@ func local_request_PropertyService_Update_0(ctx context.Context, marshaler runti
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "property.metadata.id", err)
 	}
 
-	msg, err := server.Update(ctx, &protoReq)
+	msg, err := server.Apply(ctx, &protoReq)
 	return msg, metadata, err
 
 }
 
 var (
-	filter_PropertyService_Delete_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "container": 1, "group": 2, "name": 3, "id": 4}, Base: []int{1, 4, 1, 1, 2, 2, 0, 0, 4, 0}, Check: []int{0, 1, 2, 3, 2, 5, 4, 6, 2, 9}}
+	filter_PropertyService_Delete_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "container": 1, "group": 2, "name": 3, "id": 4, "tags": 5}, Base: []int{1, 5, 1, 1, 2, 2, 5, 0, 0, 4, 0, 0}, Check: []int{0, 1, 2, 3, 2, 5, 1, 4, 6, 2, 10, 7}}
 )
 
 func request_PropertyService_Delete_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
@@ -216,6 +182,16 @@ func request_PropertyService_Delete_0(ctx context.Context, marshaler runtime.Mar
 	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.id", val)
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.id", err)
+	}
+
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
 	}
 
 	if err := req.ParseForm(); err != nil {
@@ -271,6 +247,16 @@ func local_request_PropertyService_Delete_0(ctx context.Context, marshaler runti
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.id", err)
 	}
 
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
+	}
+
 	if err := req.ParseForm(); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -284,7 +270,7 @@ func local_request_PropertyService_Delete_0(ctx context.Context, marshaler runti
 }
 
 var (
-	filter_PropertyService_Get_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "container": 1, "group": 2, "name": 3, "id": 4}, Base: []int{1, 4, 1, 1, 2, 2, 0, 0, 4, 0}, Check: []int{0, 1, 2, 3, 2, 5, 4, 6, 2, 9}}
+	filter_PropertyService_Get_0 = &utilities.DoubleArray{Encoding: map[string]int{"metadata": 0, "container": 1, "group": 2, "name": 3, "id": 4, "tags": 5}, Base: []int{1, 5, 1, 1, 2, 2, 5, 0, 0, 4, 0, 0}, Check: []int{0, 1, 2, 3, 2, 5, 1, 4, 6, 2, 10, 7}}
 )
 
 func request_PropertyService_Get_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
@@ -326,6 +312,16 @@ func request_PropertyService_Get_0(ctx context.Context, marshaler runtime.Marsha
 	err = runtime.PopulateFieldFromPath(&protoReq, "metadata.id", val)
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.id", err)
+	}
+
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
 	}
 
 	if err := req.ParseForm(); err != nil {
@@ -381,6 +377,16 @@ func local_request_PropertyService_Get_0(ctx context.Context, marshaler runtime.
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "metadata.id", err)
 	}
 
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
+	}
+
 	if err := req.ParseForm(); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -394,7 +400,7 @@ func local_request_PropertyService_Get_0(ctx context.Context, marshaler runtime.
 }
 
 var (
-	filter_PropertyService_List_0 = &utilities.DoubleArray{Encoding: map[string]int{"container": 0, "group": 1, "name": 2}, Base: []int{1, 1, 1, 2, 0, 0}, Check: []int{0, 1, 2, 2, 3, 4}}
+	filter_PropertyService_List_0 = &utilities.DoubleArray{Encoding: map[string]int{"container": 0, "group": 1, "name": 2, "ids": 3, "tags": 4}, Base: []int{1, 1, 1, 2, 3, 4, 0, 0, 0, 0}, Check: []int{0, 1, 2, 2, 1, 1, 3, 4, 5, 6}}
 )
 
 func request_PropertyService_List_0(ctx context.Context, marshaler runtime.Marshaler, client PropertyServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
@@ -426,6 +432,26 @@ func request_PropertyService_List_0(ctx context.Context, marshaler runtime.Marsh
 	err = runtime.PopulateFieldFromPath(&protoReq, "container.name", val)
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "container.name", err)
+	}
+
+	val, ok = pathParams["ids"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ids")
+	}
+
+	protoReq.Ids, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ids", err)
+	}
+
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
 	}
 
 	if err := req.ParseForm(); err != nil {
@@ -471,6 +497,26 @@ func local_request_PropertyService_List_0(ctx context.Context, marshaler runtime
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "container.name", err)
 	}
 
+	val, ok = pathParams["ids"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ids")
+	}
+
+	protoReq.Ids, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ids", err)
+	}
+
+	val, ok = pathParams["tags"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "tags")
+	}
+
+	protoReq.Tags, err = runtime.StringSlice(val, ",")
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "tags", err)
+	}
+
 	if err := req.ParseForm(); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -489,19 +535,19 @@ func local_request_PropertyService_List_0(ctx context.Context, marshaler runtime
 // Note that using this registration option will cause many gRPC library features to stop working. Consider using RegisterPropertyServiceHandlerFromEndpoint instead.
 func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.ServeMux, server PropertyServiceServer) error {
 
-	mux.Handle("POST", pattern_PropertyService_Create_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("PUT", pattern_PropertyService_Apply_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Apply", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_PropertyService_Create_0(ctx, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_PropertyService_Apply_0(ctx, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
@@ -509,31 +555,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 			return
 		}
 
-		forward_PropertyService_Create_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("PUT", pattern_PropertyService_Update_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		var stream runtime.ServerTransportStream
-		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := local_request_PropertyService_Update_0(ctx, inboundMarshaler, server, req, pathParams)
-		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_PropertyService_Update_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_PropertyService_Apply_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -544,7 +566,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -568,7 +590,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -592,7 +614,7 @@ func RegisterPropertyServiceHandlerServer(ctx context.Context, mux *runtime.Serv
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}"))
+		ctx, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -650,45 +672,24 @@ func RegisterPropertyServiceHandler(ctx context.Context, mux *runtime.ServeMux, 
 // "PropertyServiceClient" to call the correct interceptors.
 func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.ServeMux, client PropertyServiceClient) error {
 
-	mux.Handle("POST", pattern_PropertyService_Create_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("PUT", pattern_PropertyService_Apply_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Create", runtime.WithHTTPPathPattern("/v1/property"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Apply", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_PropertyService_Create_0(ctx, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_PropertyService_Apply_0(ctx, inboundMarshaler, client, req, pathParams)
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_PropertyService_Create_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("PUT", pattern_PropertyService_Update_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Update", runtime.WithHTTPPathPattern("/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"))
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := request_PropertyService_Update_0(ctx, inboundMarshaler, client, req, pathParams)
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_PropertyService_Update_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_PropertyService_Apply_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -697,7 +698,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Delete", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -718,7 +719,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/Get", runtime.WithHTTPPathPattern("/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -739,7 +740,7 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
-		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}"))
+		ctx, err = runtime.AnnotateContext(ctx, mux, req, "/banyandb.property.v1.PropertyService/List", runtime.WithHTTPPathPattern("/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -759,21 +760,17 @@ func RegisterPropertyServiceHandlerClient(ctx context.Context, mux *runtime.Serv
 }
 
 var (
-	pattern_PropertyService_Create_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "property"}, ""))
+	pattern_PropertyService_Apply_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "property.metadata.container.group", "property.metadata.container.name", "property.metadata.id"}, ""))
 
-	pattern_PropertyService_Update_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "property.metadata.container.group", "property.metadata.container.name", "property.metadata.id"}, ""))
+	pattern_PropertyService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id", "tags"}, ""))
 
-	pattern_PropertyService_Delete_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
+	pattern_PropertyService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id", "tags"}, ""))
 
-	pattern_PropertyService_Get_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "metadata.container.group", "metadata.container.name", "metadata.id"}, ""))
-
-	pattern_PropertyService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"v1", "property", "lists", "container.group", "container.name"}, ""))
+	pattern_PropertyService_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5, 1, 0, 4, 1, 5, 6}, []string{"v1", "property", "lists", "container.group", "container.name", "ids", "tags"}, ""))
 )
 
 var (
-	forward_PropertyService_Create_0 = runtime.ForwardResponseMessage
-
-	forward_PropertyService_Update_0 = runtime.ForwardResponseMessage
+	forward_PropertyService_Apply_0 = runtime.ForwardResponseMessage
 
 	forward_PropertyService_Delete_0 = runtime.ForwardResponseMessage
 

@@ -20,9 +20,10 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 func newUserCmd() *cobra.Command {

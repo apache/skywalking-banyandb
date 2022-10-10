@@ -21,21 +21,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
+	str2duration "github.com/xhit/go-str2duration/v2"
+	"go.uber.org/multierr"
+	stpb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"sigs.k8s.io/yaml"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/pkg/file"
 )
 
+const (
+	// RFC3339 refers to https://www.rfc-editor.org/rfc/rfc3339
+	RFC3339   = "2006-01-02T15:04:05Z07:00"
+	timeRange = 30 * time.Minute
+)
+
 var errMalformedInput = errors.New("malformed input")
 
 type reqBody struct {
-	name  string
-	group string
-	data  []byte
+	name       string
+	group      string
+	parsedData map[string]interface{}
+	data       []byte
 }
 
 type request struct {
@@ -86,10 +99,15 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
 		}
+		j, err = json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
 		requests = append(requests, reqBody{
-			name:  name,
-			group: group,
-			data:  j,
+			name:       name,
+			group:      group,
+			data:       j,
+			parsedData: data,
 		})
 	}
 	return requests, nil
@@ -109,6 +127,65 @@ func parseGroupFromFlags() ([]reqBody, error) {
 		return nil, errors.New("please specify a group through the flag or the config file")
 	}
 	return []reqBody{{group: group}}, nil
+}
+
+func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err error) {
+	var startTS, endTS time.Time
+	if start == "" && end == "" {
+		startTS = time.Now().Add((-30) * time.Minute)
+		endTS = time.Now()
+	} else if start != "" && end != "" {
+		if startTS, err = parseTime(start); err != nil {
+			return nil, err
+		}
+		if endTS, err = parseTime(start); err != nil {
+			return nil, err
+		}
+	} else if start != "" {
+		if startTS, err = parseTime(start); err != nil {
+			return nil, err
+		}
+		endTS = startTS.Add(timeRange)
+	} else {
+		if endTS, err = parseTime(end); err != nil {
+			return nil, err
+		}
+		startTS = endTS.Add(-timeRange)
+	}
+	s := startTS.Format(RFC3339)
+	e := endTS.Format(RFC3339)
+	if requests, err = parseNameAndGroupFromYAML(reader); err != nil {
+		return nil, err
+	}
+	for _, rb := range requests {
+		if rb.parsedData["timeRange"] != nil {
+			continue
+		}
+		timeRange := make(map[string]interface{})
+		timeRange["start"] = s
+		timeRange["end"] = e
+		rb.parsedData["timeRange"] = timeRange
+		rb.data, err = json.Marshal(rb.parsedData)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return requests, nil
+}
+
+func parseTime(timestamp string) (time.Time, error) { // if timeStamp is duration(relative time), return (true, the uint of timestamp, nil).
+	if len(timestamp) < 1 {
+		return time.Time{}, errors.New("time is empty")
+	}
+	t, errAbsoluteTime := time.Parse(timestamp, RFC3339)
+	if errAbsoluteTime == nil {
+		return t, nil
+	}
+	duration, err := str2duration.ParseDuration(timestamp)
+	if err != nil {
+		return time.Time{}, errors.WithMessagef(multierr.Combine(errAbsoluteTime, err), "time %s is neither absolute time nor relative time", timestamp)
+	}
+	return time.Now().Add(duration), nil
 }
 
 type printer func(index int, reqBody reqBody, body []byte) error
@@ -146,7 +223,14 @@ func rest(pfn paramsFn, fn reqFn, printer printer) (err error) {
 		if err != nil {
 			return err
 		}
-		err = printer(i, r, resp.Body())
+		bd := resp.Body()
+		var st *stpb.Status
+		err = json.Unmarshal(bd, &st)
+		if err == nil && st.Code != int32(codes.OK) {
+			s := status.FromProto(st)
+			return s.Err()
+		}
+		err = printer(i, r, bd)
 		if err != nil {
 			return err
 		}

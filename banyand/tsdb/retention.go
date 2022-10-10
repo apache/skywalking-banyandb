@@ -21,8 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/robfig/cron/v3"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type retentionController struct {

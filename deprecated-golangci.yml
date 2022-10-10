@@ -26,7 +26,7 @@ linters:
     - unconvert
     - varcheck
     - govet
-    - goimports
+    - gci
     - prealloc
     - unused
     - staticcheck
@@ -41,6 +41,11 @@ linters-settings:
     min-occurrences: 4
   govet:
     check-shadowing: true
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/apache/skywalking-banyandb/) 
 run:
   deadline: 10m
   skip-files:
