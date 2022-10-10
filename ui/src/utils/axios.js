@@ -81,11 +81,12 @@ axiosService.interceptors.response.use(
         console.log(error.message)
         const resErr = error.data
         console.log(resErr)
-        let msg = error.data.message ? error.data.message : error.message
+        
+        let msg = error.data && error.data.message ? error.data.message : error.message
         ElMessage({
             message: msg,
             type: "error",
-            duration: 5000
+            duration: 3000
         })
         return Promise.reject(error)
     }

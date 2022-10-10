@@ -27,9 +27,11 @@ import { getCurrentInstance } from "@vue/runtime-core"
 import { ref } from 'vue'
 import { computed } from '@vue/runtime-core'
 
-const $loading = getCurrentInstance().appContext.config.globalProperties.$loading
+const { proxy } = getCurrentInstance()
+const $loadingCreate = proxy.$loadingCreate
+const $loadingClose = proxy.$loadingClose
 // eventBus
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const $bus = proxy.$bus
 const { ctx: that } = getCurrentInstance()
 const { aside, tags, menuState } = stores()
 const ruleForm = ref()
@@ -105,7 +107,7 @@ let rules = rule // group dialog form rules
 
 // methods
 function getGroupLists() {
-    $loading.create()
+    $loadingCreate()
     getGroupList()
         .then(res => {
             if (res.status == 200) {
@@ -124,7 +126,7 @@ function getGroupLists() {
                         })
                         .finally(() => {
                             if (length - 1 == index) {
-                                $loading.close()
+                                $loadingClose()
                             }
                             that.$forceUpdate()
                         })
@@ -255,7 +257,7 @@ function deleteGroupFunc(group, type) {
         }
     }
     // delete group
-    $loading.create()
+    $loadingCreate()
     deleteGroup(group)
         .then((res) => {
             if (res.status == 200) {
@@ -270,7 +272,7 @@ function deleteGroupFunc(group, type) {
             }
         })
         .finally(() => {
-            $loading.close()
+            $loadingClose()
             dialogVisible = false
         })
 }
@@ -288,7 +290,7 @@ function deleteResources(group, type) {
         return
     }
     // delete Resources
-    $loading.create()
+    $loadingCreate()
     deleteStreamOrMeasure(type, group, name)
         .then((res) => {
             if (res.status == 200) {
@@ -303,7 +305,7 @@ function deleteResources(group, type) {
             }
         })
         .finally(() => {
-            $loading.close()
+            $loadingClose()
             dialogVisible = false
         })
 }
@@ -337,7 +339,7 @@ function createGroupFunc() {
                     catalog: groupForm.catalog
                 }
             }
-            $loading.create()
+            $loadingCreate()
             createGroup(data)
                 .then((res) => {
                     if (res.status == 200) {
@@ -351,7 +353,7 @@ function createGroupFunc() {
                 })
                 .finally(() => {
                     dialogGroupVisible = false
-                    $loading.close()
+                    $loadingClose()
                 })
         }
     })
@@ -369,7 +371,7 @@ function editGroupFunc() {
                     catalog: groupForm.catalog
                 }
             }
-            $loading.create()
+            $loadingCreate()
             editGroup(name, data)
                 .then((res) => {
                     if (res.status == 200) {
@@ -383,7 +385,7 @@ function editGroupFunc() {
                 })
                 .finally(() => {
                     dialogGroupVisible = false
-                    $loading.close()
+                    $loadingClose()
                 })
         }
     })
@@ -414,7 +416,7 @@ function confirmResourcesDialog(form) {
     let type = groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
     let data = {}
     data[type] = form
-    $loading.create()
+    $loadingCreate()
     createResources(type, data)
         .then((res) => {
             if (res.status == 200) {
@@ -428,13 +430,13 @@ function confirmResourcesDialog(form) {
         })
         .finally(() => {
             dialogResourcesVisible = false
-            $loading.close()
+            $loadingClose()
         })
 }
 // get group list
 getGroupLists()
 // monitor click right menu item
-$bus.$on('handleRightItem', (index) => {
+$bus.on('handleRightItem', (index) => {
     handleRightItem(index)
 })
 </script>

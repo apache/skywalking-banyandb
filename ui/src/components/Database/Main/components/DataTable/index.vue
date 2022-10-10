@@ -24,7 +24,11 @@ import { computed } from '@vue/runtime-core'
 import { getCurrentInstance } from "@vue/runtime-core"
 import { ref } from 'vue'
 
+const { proxy } = getCurrentInstance()
+const $loadingClose = proxy.$loadingClose
+const $loadingCreate = proxy.$loadingCreate
 const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+
 const { tags } = stores()
 const currentMenu = computed(() => {
     return tags.currentMenu
@@ -92,7 +96,7 @@ watch(() => tableTags, () => {
     param.criteria[0].tagFamilyName = tagFamily.name
 })
 
-$bus.$on('checkAll', () => {
+$bus.on('checkAll', () => {
     if (!checkAllFlag) {
         tableData.forEach(row => {
             multipleTable.toggleRowSelection(row)
@@ -100,15 +104,15 @@ $bus.$on('checkAll', () => {
         checkAllFlag = true
     }
 })
-$bus.$on('checkNone', () => {
+$bus.on('checkNone', () => {
     multipleTable.clearSelection()
 })
-$bus.$on('changeTagFamilies', (i) => {
+$bus.on('changeTagFamilies', (i) => {
     index = i
     tableTags = fileData.tagFamilies[i].tags
     getTable()
 })
-$bus.$on('refresh', () => {
+$bus.on('refresh', () => {
     initData()
 })
 
@@ -119,7 +123,7 @@ const emit = defineEmits(['drawerRight'])
  * init data
  */
 function initData() {
-    this.$loading.create()
+    $loadingCreate()
     getStreamOrMeasure(type, group, name)
         .then((res) => {
             if (res.status == 200) {
@@ -132,7 +136,7 @@ function initData() {
             }
         })
         .finally(() => {
-            this.$loading.close()
+            $loadingClose()
         })
 }
 /**
@@ -168,7 +172,7 @@ function setTagFamily() {
     let tagOptions = tagFamilies.map((item, index) => {
         return { label: item.name, value: index }
     })
-    $bus.$emit('setOptions', tagOptions)
+    $bus.emit('setOptions', tagOptions)
 }
 function handleSelectionChange(val) {
     multipleSelection = val;

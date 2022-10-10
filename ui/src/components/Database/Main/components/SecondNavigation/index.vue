@@ -67,7 +67,7 @@ let pickerOptions = {
     }]
 }
 
-$bus.$on('setOptions', (opt) => {
+$bus.on('setOptions', (opt) => {
     options = opt
 })
 
@@ -83,10 +83,10 @@ function handleLeave() {
     refreshStyle.backgroundColor = "var(--color-white)"
 }
 function changeTagFamilies() {
-    $bus.$emit('changeTagFamilies', tagFamily)
+    $bus.emit('changeTagFamilies', tagFamily)
 }
 function refresh() {
-    $bus.$emit('refresh')
+    $bus.emit('refresh')
 }
 function openDetail() {
     emit('openDetail')

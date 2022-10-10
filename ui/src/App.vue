@@ -64,7 +64,7 @@ const appMouseDown = () => {
 }
 
 const handleRightItem = (index) => {
-  $bus.$emit('handleRightItem', index)
+  $bus.emit('handleRightItem', index)
 }
 </script>
 
