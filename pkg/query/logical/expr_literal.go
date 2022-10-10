@@ -46,6 +46,18 @@ func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
 	return 0, false
 }
 
+func (i *int64Literal) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*int64Literal); ok {
+		return i == o
+	}
+	if o, ok := other.(*int64ArrLiteral); ok {
+		if len(o.arr) == 1 && o.arr[0] == i.int64 {
+			return true
+		}
+	}
+	return false
+}
+
 func (i *int64Literal) BelongTo(other LiteralExpr) bool {
 	if o, ok := other.(*int64Literal); ok {
 		return i == o
@@ -96,13 +108,31 @@ func (i *int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
 	return 0, false
 }
 
-func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
+func (i *int64ArrLiteral) Contains(other LiteralExpr) bool {
 	if o, ok := other.(*int64Literal); ok {
 		return slices.Contains(i.arr, o.int64)
 	}
 	if o, ok := other.(*int64ArrLiteral); ok {
 		for _, v := range o.arr {
 			if !slices.Contains(i.arr, v) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*int64Literal); ok {
+		if len(i.arr) == 1 && i.arr[0] == o.int64 {
+			return true
+		}
+		return false
+	}
+	if o, ok := other.(*int64ArrLiteral); ok {
+		for _, v := range i.arr {
+			if !slices.Contains(o.arr, v) {
 				return false
 			}
 		}
@@ -157,6 +187,18 @@ func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
 	return 0, false
 }
 
+func (s *strLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*strLiteral); ok {
+		return s == o
+	}
+	if o, ok := other.(*strArrLiteral); ok {
+		if len(o.arr) == 1 && o.arr[0] == s.string {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *strLiteral) BelongTo(other LiteralExpr) bool {
 	if o, ok := other.(*strLiteral); ok {
 		return s == o
@@ -207,13 +249,31 @@ func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
 	return 0, false
 }
 
-func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
+func (s *strArrLiteral) Contains(other LiteralExpr) bool {
 	if o, ok := other.(*strLiteral); ok {
 		return slices.Contains(s.arr, o.string)
 	}
 	if o, ok := other.(*strArrLiteral); ok {
 		for _, v := range o.arr {
 			if !slices.Contains(s.arr, v) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*strLiteral); ok {
+		if len(s.arr) == 1 && s.arr[0] == o.string {
+			return true
+		}
+		return false
+	}
+	if o, ok := other.(*strArrLiteral); ok {
+		for _, v := range s.arr {
+			if !slices.Contains(o.arr, v) {
 				return false
 			}
 		}
@@ -267,6 +327,21 @@ func (s *idLiteral) Compare(other LiteralExpr) (int, bool) {
 		return strings.Compare(s.string, o.string), true
 	}
 	return 0, false
+}
+
+func (s *idLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*idLiteral); ok {
+		return s == o
+	}
+	if o, ok := other.(*strLiteral); ok {
+		return s.string == o.string
+	}
+	if o, ok := other.(*strArrLiteral); ok {
+		if len(o.arr) == 1 && o.arr[0] == s.string {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *idLiteral) BelongTo(other LiteralExpr) bool {
@@ -330,4 +405,40 @@ func (b *bytesLiteral) DataType() int32 {
 
 func (b *bytesLiteral) String() string {
 	return hex.EncodeToString(b.bb)
+}
+
+var (
+	_               LiteralExpr    = (*nullLiteral)(nil)
+	_               ComparableExpr = (*nullLiteral)(nil)
+	nullLiteralExpr                = &nullLiteral{}
+)
+
+type nullLiteral struct{}
+
+func (s nullLiteral) Compare(other LiteralExpr) (int, bool) {
+	return 0, false
+}
+
+func (s nullLiteral) BelongTo(other LiteralExpr) bool {
+	return false
+}
+
+func (s nullLiteral) Contains(other LiteralExpr) bool {
+	return false
+}
+
+func (s nullLiteral) Bytes() [][]byte {
+	return nil
+}
+
+func (s nullLiteral) Equal(expr Expr) bool {
+	return false
+}
+
+func (s nullLiteral) DataType() int32 {
+	return int32(databasev1.TagType_TAG_TYPE_UNSPECIFIED)
+}
+
+func (s nullLiteral) String() string {
+	return "null"
 }

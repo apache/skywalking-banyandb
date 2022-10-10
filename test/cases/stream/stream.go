@@ -55,6 +55,8 @@ var _ = g.DescribeTable("Scanning Streams", verify,
 	g.Entry("numeric local index: less and eq", helpers.Args{Input: "less_eq", Duration: 1 * time.Hour}),
 	g.Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
 	g.Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
+	g.Entry("having non indexed", helpers.Args{Input: "having_non_indexed", Duration: 1 * time.Hour}),
+	g.Entry("having non indexed array", helpers.Args{Input: "having_non_indexed_arr", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
 	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 )
