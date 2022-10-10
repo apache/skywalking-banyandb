@@ -46,7 +46,7 @@ export default defineConfig({
   devServer: {
     proxy: {
       "^/api": {
-        target: "http://localhost:17913",
+        target: "http://34.92.85.178:18913",
         changeOrigin: true,
       },
     },
