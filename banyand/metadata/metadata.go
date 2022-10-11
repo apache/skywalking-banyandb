@@ -31,12 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// TopNFilter provides methods to find a specific topNAggregation which can be attached to the given resource.
-// Currently, the resource can only be Measure
-type TopNFilter interface {
-	TopNAggregations(ctx context.Context, source *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
-}
-
 // IndexFilter provides methods to find a specific index related objects and vice versa
 type IndexFilter interface {
 	// IndexRules fetches v1.IndexRule by subject defined in IndexRuleBinding
@@ -47,7 +41,6 @@ type IndexFilter interface {
 
 type Repo interface {
 	IndexFilter
-	TopNFilter
 	StreamRegistry() schema.Stream
 	IndexRuleRegistry() schema.IndexRule
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
@@ -229,23 +222,6 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 	}
 
 	return foundSubjects, subjectErr
-}
-
-func (s *service) TopNAggregations(ctx context.Context, source *commonv1.Metadata) ([]*databasev1.TopNAggregation, error) {
-	aggregations, err := s.schemaRegistry.ListTopNAggregation(ctx, schema.ListOpt{Group: source.GetGroup()})
-	if err != nil {
-		return nil, err
-	}
-
-	var result []*databasev1.TopNAggregation
-	for _, aggrDef := range aggregations {
-		// filter sourceMeasure
-		if aggrDef.GetSourceMeasure().GetName() == source.GetName() {
-			result = append(result, aggrDef)
-		}
-	}
-
-	return result, nil
 }
 
 func contains(s []string, e string) bool {

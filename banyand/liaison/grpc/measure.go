@@ -125,9 +125,12 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	if errFeat != nil {
 		return nil, errFeat
 	}
-	queryResp, ok := msg.Data().([]*measurev1.TopNList)
-	if !ok {
-		return nil, ErrQueryMsg
+	data := msg.Data()
+	switch d := data.(type) {
+	case []*measurev1.TopNList:
+		return &measurev1.TopNResponse{Lists: d}, nil
+	case common.Error:
+		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return &measurev1.TopNResponse{Lists: queryResp}, nil
+	return nil, ErrQueryMsg
 }

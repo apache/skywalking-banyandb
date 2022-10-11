@@ -451,7 +451,7 @@ func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
 	if _, ok := resourceSchema.(*databasev1.Measure); ok {
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		var innerErr error
-		topNAggrs, innerErr = g.metadata.TopNAggregations(ctx, resourceSchema.GetMetadata())
+		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
 		cancel()
 		if innerErr != nil {
 			return nil, innerErr

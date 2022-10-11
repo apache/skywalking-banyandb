@@ -190,6 +190,7 @@ type Measure interface {
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	RegisterHandler(Kind, EventHandler)
+	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }
 
 type Group interface {
