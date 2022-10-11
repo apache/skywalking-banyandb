@@ -144,7 +144,9 @@ func locateEntity(topNSchema *databasev1.TopNAggregation, conditions []*modelv1.
 		entity[idx+1] = tsdb.AnyEntry
 	}
 	for _, pairQuery := range conditions {
-		// TODO: check op?
+		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
+			return nil, errors.New("op other than EQ is not supported")
+		}
 		if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
 			switch v := pairQuery.GetValue().GetValue().(type) {
 			case *modelv1.TagValue_Str:
