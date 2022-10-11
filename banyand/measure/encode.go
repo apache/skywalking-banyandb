@@ -14,22 +14,23 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package measure
 
 import (
 	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var (
 	_          encoding.SeriesEncoderPool = (*encoderPool)(nil)
 	_          encoding.SeriesDecoderPool = (*decoderPool)(nil)
 	intervalFn                            = func(key []byte) time.Duration {
-		_, interval, err := decodeFieldFlag(key)
+		_, interval, err := pbv1.DecodeFieldFlag(key)
 		if err != nil {
 			panic(err)
 		}
@@ -52,7 +53,7 @@ func newEncoderPool(name string, plainSize, intSize int, l *logger.Logger) encod
 }
 
 func (p *encoderPool) Get(metadata []byte) encoding.SeriesEncoder {
-	fieldSpec, _, err := decodeFieldFlag(metadata)
+	fieldSpec, _, err := pbv1.DecodeFieldFlag(metadata)
 	if err != nil {
 		p.l.Err(err).Msg("failed to decode field flag")
 		return p.defaultPool.Get(metadata)
@@ -83,7 +84,7 @@ func newDecoderPool(name string, plainSize, intSize int, l *logger.Logger) encod
 }
 
 func (p *decoderPool) Get(metadata []byte) encoding.SeriesDecoder {
-	fieldSpec, _, err := decodeFieldFlag(metadata)
+	fieldSpec, _, err := pbv1.DecodeFieldFlag(metadata)
 	if err != nil {
 		p.l.Err(err).Msg("failed to decode field flag")
 		return p.defaultPool.Get(metadata)
@@ -97,26 +98,4 @@ func (p *decoderPool) Get(metadata []byte) encoding.SeriesDecoder {
 func (p *decoderPool) Put(decoder encoding.SeriesDecoder) {
 	p.intPool.Put(decoder)
 	p.defaultPool.Put(decoder)
-}
-
-const fieldFlagLength = 9
-
-func EncoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) []byte {
-	encodingMethod := byte(fieldSpec.GetEncodingMethod().Number())
-	compressionMethod := byte(fieldSpec.GetCompressionMethod().Number())
-	bb := make([]byte, fieldFlagLength)
-	bb[0] = encodingMethod<<4 | compressionMethod
-	copy(bb[1:], convert.Int64ToBytes(int64(interval)))
-	return bb
-}
-
-func decodeFieldFlag(key []byte) (*databasev1.FieldSpec, time.Duration, error) {
-	if len(key) < fieldFlagLength {
-		return nil, 0, ErrMalformedFieldFlag
-	}
-	b := key[len(key)-9:]
-	return &databasev1.FieldSpec{
-		EncodingMethod:    databasev1.EncodingMethod(int32(b[0]) >> 4),
-		CompressionMethod: databasev1.CompressionMethod((int32(b[0] & 0x0F))),
-	}, time.Duration(convert.BytesToInt64(b[1:])), nil
 }

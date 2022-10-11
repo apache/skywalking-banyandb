@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -163,7 +164,7 @@ func locateEntity(topNSchema *databasev1.TopNAggregation, conditions []*modelv1.
 }
 
 func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2, error) {
-	familyRawBytes, err := item.Family(familyIdentity(measure.TopNTagFamily, measure.TagFlag))
+	familyRawBytes, err := item.Family(familyIdentity(measure.TopNTagFamily, pbv1.TagFlag))
 	if err != nil {
 		return nil, err
 	}
@@ -173,11 +174,11 @@ func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2,
 		return nil, err
 	}
 	fieldBytes, err := item.Family(familyIdentity(measure.TopNValueFieldSpec.GetName(),
-		measure.EncoderFieldFlag(measure.TopNValueFieldSpec, interval)))
+		pbv1.EncoderFieldFlag(measure.TopNValueFieldSpec, interval)))
 	if err != nil {
 		return nil, err
 	}
-	fieldValue := measure.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
+	fieldValue := pbv1.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
 	return &streaming.Tuple2{
 		// GroupValues
 		V1: tagFamily.GetTags()[1].GetStr().GetValue(),

@@ -31,6 +31,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -113,7 +114,7 @@ func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
 }
 
 func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
-	familyRawBytes, err := item.Family(familyIdentity(family, TagFlag))
+	familyRawBytes, err := item.Family(familyIdentity(family, pbv1.TagFlag))
 	if err != nil {
 		return nil, err
 	}
@@ -154,11 +155,11 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 			break
 		}
 	}
-	bytes, err := item.Family(familyIdentity(name, EncoderFieldFlag(fieldSpec, s.interval)))
+	bytes, err := item.Family(familyIdentity(name, pbv1.EncoderFieldFlag(fieldSpec, s.interval)))
 	if err != nil {
 		return nil, err
 	}
-	fieldValue := DecodeFieldValue(bytes, fieldSpec)
+	fieldValue := pbv1.DecodeFieldValue(bytes, fieldSpec)
 	return &measurev1.DataPoint_Field{
 		Name:  name,
 		Value: fieldValue,

@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -36,10 +35,7 @@ import (
 )
 
 var (
-	ErrMalformedElement   = errors.New("element is malformed")
-	ErrMalformedFieldFlag = errors.New("field flag is malformed")
-
-	TagFlag = make([]byte, fieldFlagLength)
+	ErrMalformedElement = errors.New("element is malformed")
 )
 
 // Write is for testing
@@ -105,7 +101,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
-			builder.Family(familyIdentity(spec.GetName(), TagFlag), bb)
+			builder.Family(familyIdentity(spec.GetName(), pbv1.TagFlag), bb)
 		}
 		if len(value.GetFields()) > len(sm.GetFields()) {
 			return nil, errors.Wrap(ErrMalformedElement, "fields number is more than expected")
@@ -123,7 +119,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			if data == nil {
 				continue
 			}
-			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), EncoderFieldFlag(fieldSpec, s.interval)), data)
+			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), pbv1.EncoderFieldFlag(fieldSpec, s.interval)), data)
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
@@ -203,16 +199,4 @@ func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
 		return fieldValue.GetBinaryData()
 	}
 	return nil
-}
-
-func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
-	switch fieldSpec.GetFieldType() {
-	case databasev1.FieldType_FIELD_TYPE_STRING:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}
-	case databasev1.FieldType_FIELD_TYPE_INT:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}
-	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}
-	}
-	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
 }

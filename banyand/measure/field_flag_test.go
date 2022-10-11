@@ -23,14 +23,15 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func TestEncodeFieldFlag(t *testing.T) {
-	flag := EncoderFieldFlag(&databasev1.FieldSpec{
+	flag := pbv1.EncoderFieldFlag(&databasev1.FieldSpec{
 		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 	}, time.Minute)
-	fieldSpec, interval, err := decodeFieldFlag(flag)
+	fieldSpec, interval, err := pbv1.DecodeFieldFlag(flag)
 	assert.NoError(t, err)
 	assert.Equal(t, databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, fieldSpec.EncodingMethod)
 	assert.Equal(t, databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD, fieldSpec.CompressionMethod)

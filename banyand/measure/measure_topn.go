@@ -207,7 +207,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 		if errMarshal != nil {
 			return nil, errMarshal
 		}
-		builder.Family(familyIdentity(TopNTagFamily, TagFlag), payload)
+		builder.Family(familyIdentity(TopNTagFamily, pbv1.TagFlag), payload)
 		virtualFieldValue := &modelv1.FieldValue{
 			Value: &modelv1.FieldValue_Int{
 				Int: &modelv1.Int{
@@ -216,7 +216,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 			},
 		}
 		fieldData := encodeFieldValue(virtualFieldValue)
-		builder.Family(familyIdentity(TopNValueFieldSpec.GetName(), EncoderFieldFlag(TopNValueFieldSpec, t.interval)), fieldData)
+		builder.Family(familyIdentity(TopNValueFieldSpec.GetName(), pbv1.EncoderFieldFlag(TopNValueFieldSpec, t.interval)), fieldData)
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
