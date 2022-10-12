@@ -43,7 +43,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
-  devServer: {
+  server: {
     proxy: {
       "^/api": {
         target: "http://34.92.85.178:18913",

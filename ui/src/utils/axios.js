@@ -23,7 +23,7 @@ import axios from "axios"
 import { ElMessage } from "element-plus"
 
 const axiosService = axios.create({
-    baseURL: "http://34.92.85.178:18913",// process.env.VUE_APP_BASE_API,
+    // baseURL: "http://34.92.85.178:18913",// process.env.VUE_APP_BASE_API,
     timeout: 30000
 })
 
