@@ -286,7 +286,7 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) (Resource, erro
 	}
 	stm, err := sr.resourceSupplier.ResourceSchema(sr.metadata, metadata)
 	if err != nil {
-		return nil, errors.Errorf("fails to get the resource")
+		return nil, errors.WithMessage(err, "fails to get the resource")
 	}
 	return group.StoreResource(stm)
 }

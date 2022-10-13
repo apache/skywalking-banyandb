@@ -23,6 +23,7 @@ import (
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -33,7 +34,9 @@ var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		stream_test_data.VerifyFn(SharedContext, args)
+		gm.Eventually(func(innerGm gm.Gomega) {
+			stream_test_data.VerifyFn(innerGm, SharedContext, args)
+		})
 	}
 )
 
