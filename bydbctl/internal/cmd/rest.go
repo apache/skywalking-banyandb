@@ -230,8 +230,7 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
 		}
-		//tags, ok := data["tag"].(map[string]interface{})
-		tags, ok := data["tag"].([]string)
+		tags, _ := data["tag"].([]string)
 		j, err = json.Marshal(data)
 		if err != nil {
 			return nil, err
