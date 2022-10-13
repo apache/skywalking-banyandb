@@ -52,9 +52,9 @@ var wantFS embed.FS
 var dataFS embed.FS
 
 // VerifyFn verify whether the query response matches the wanted result
-var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
+var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
-	gm.Expect(err).NotTo(gm.HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &stream_v1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
@@ -67,19 +67,19 @@ var VerifyFn = func(sharedContext helpers.SharedContext, args helpers.Args) {
 		}
 		return
 	}
-	gm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		gm.Expect(resp.Elements).To(gm.BeEmpty())
+		innerGm.Expect(resp.Elements).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
 		args.Want = args.Input
 	}
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yaml")
-	gm.Expect(err).NotTo(gm.HaveOccurred())
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &stream_v1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	gm.Expect(cmp.Equal(resp, want,
+	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&stream_v1.Element{}, "timestamp"),
 		protocmp.Transform())).

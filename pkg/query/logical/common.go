@@ -31,7 +31,9 @@ import (
 var (
 	ErrTagNotDefined              = errors.New("tag is not defined")
 	ErrFieldNotDefined            = errors.New("field is not defined")
-	ErrInvalidConditionType       = errors.New("invalid pair type")
+	ErrUnsupportedConditionOp     = errors.New("unsupported condition operation")
+	ErrUnsupportedConditionValue  = errors.New("unsupported condition value type")
+	ErrInvalidCriteriaType        = errors.New("invalid criteria type")
 	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
 	ErrIndexNotDefined            = errors.New("index is not define for the tag")
 	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")

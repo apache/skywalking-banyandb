@@ -91,7 +91,14 @@ func (p *service) PreRun() error {
 	fileServer := stdhttp.FileServer(stdhttp.FS(fSys))
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
+	p.srv = &stdhttp.Server{
+		Addr:    p.listenAddr,
+		Handler: p.mux,
+	}
+	return nil
+}
 
+func (p *service) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := []grpc.DialOption{
@@ -100,7 +107,9 @@ func (p *service) PreRun() error {
 	}
 	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
-		return err
+		p.l.Error().Err(err).Msg("Failed to health check client")
+		close(p.stopCh)
+		return p.stopCh
 	}
 	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
 	err = multierr.Combine(
@@ -114,17 +123,11 @@ func (p *service) PreRun() error {
 		property_v1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
-		return err
+		p.l.Error().Err(err).Msg("Failed to register endpoints")
+		close(p.stopCh)
+		return p.stopCh
 	}
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
-	p.srv = &stdhttp.Server{
-		Addr:    p.listenAddr,
-		Handler: p.mux,
-	}
-	return nil
-}
-
-func (p *service) Serve() run.StopNotify {
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
