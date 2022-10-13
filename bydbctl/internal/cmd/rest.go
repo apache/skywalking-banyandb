@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -47,6 +48,8 @@ var errMalformedInput = errors.New("malformed input")
 type reqBody struct {
 	name       string
 	group      string
+	id         string
+	tag        string
 	parsedData map[string]interface{}
 	data       []byte
 }
@@ -173,7 +176,7 @@ func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err er
 	return requests, nil
 }
 
-func parseTime(timestamp string) (time.Time, error) { // if timeStamp is duration(relative time), return (true, the uint of timestamp, nil).
+func parseTime(timestamp string) (time.Time, error) {
 	if len(timestamp) < 1 {
 		return time.Time{}, errors.New("time is empty")
 	}
@@ -186,6 +189,63 @@ func parseTime(timestamp string) (time.Time, error) { // if timeStamp is duratio
 		return time.Time{}, errors.WithMessagef(multierr.Combine(errAbsoluteTime, err), "time %s is neither absolute time nor relative time", timestamp)
 	}
 	return time.Now().Add(duration), nil
+}
+
+func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) {
+	contents, err := file.Read(filePath, reader)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range contents {
+		j, err := yaml.YAMLToJSON(c)
+		if err != nil {
+			return nil, err
+		}
+		var data map[string]interface{}
+		err = json.Unmarshal(j, &data)
+		if err != nil {
+			return nil, err
+		}
+		metadata, ok := data["metadata"].(map[string]interface{})
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata")
+		}
+		container, ok := metadata["container"].(map[string]interface{})
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: container")
+		}
+		group, ok := container["group"].(string)
+		if !ok {
+			group = viper.GetString("group")
+			if group == "" {
+				return nil, errors.New("please specify a group through the input json or the config file")
+			}
+			metadata["group"] = group
+		}
+		name, ok = container["name"].(string)
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
+		}
+		id, ok := metadata["id"].(string)
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
+		}
+		//tags, ok := data["tag"].(map[string]interface{})
+		tags, ok := data["tag"].([]string)
+		j, err = json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, reqBody{
+			name:       name,
+			group:      group,
+			id:         id,
+			tag:        strings.Join(tags, ","),
+			data:       j,
+			parsedData: data,
+		})
+	}
+	return requests, nil
 }
 
 type printer func(index int, reqBody reqBody, body []byte) error

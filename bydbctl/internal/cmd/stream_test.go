@@ -226,6 +226,7 @@ projection:
 			return len(resp.Elements)
 		}).Should(Equal(5))
 	})
+
 	DescribeTable("query stream data with time range flags", func(timeArgs ...string) {
 		conn, err := grpclib.Dial(
 			grpcAddr,
