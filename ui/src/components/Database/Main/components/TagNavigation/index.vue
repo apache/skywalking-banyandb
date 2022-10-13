@@ -19,7 +19,7 @@
 
 <script setup>
 import stores from '../../../../../stores/index'
-
+import { computed } from 'vue'
 const { tags } = stores()
 const tagsList = computed(() => {
     return tags.tagsList

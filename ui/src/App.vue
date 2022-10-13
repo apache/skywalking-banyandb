@@ -19,6 +19,7 @@
 
 <script setup>
 import HeaderComponent from './components/Header/index.vue'
+import RightMenuComponent from './components/Database/Aside/components/RightMenu/index.vue'
 import { computed } from '@vue/runtime-core'
 import stores from './stores/index'
 import { useRouter, useRoute } from 'vue-router'
@@ -92,9 +93,12 @@ const handleRightItem = (index) => {
 </template>
 
 <style lang="scss">
+html,
 body {
   padding: 0;
   margin: 0;
+  width: 100%;
+  height: 100%;
 }
 
 #app {

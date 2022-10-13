@@ -22,7 +22,7 @@ import stores from '@/stores/index'
 import { getStreamOrMeasure, getTableList } from '@/api/index'
 import { computed } from '@vue/runtime-core'
 import { getCurrentInstance } from "@vue/runtime-core"
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const { proxy } = getCurrentInstance()
 const $loadingClose = proxy.$loadingClose

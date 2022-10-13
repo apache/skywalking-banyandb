@@ -68,8 +68,8 @@ defineProps({
             <div class="flex center pointer icon-size" @click="changeAsideWidth" v-if="showButton">
                 <el-tooltip class="item" effect="dark" :content="!isCollapse ? 'Collapse menu' : 'Expand menu'"
                     placement="bottom">
-                    <i class="el-icon-s-fold icon" v-if="!isCollapse"></i>
-                    <i class="el-icon-s-unfold icon" v-else></i>
+                    <el-icon v-if="!isCollapse" class="icon"><Fold /></el-icon>
+                    <el-icon class="icon" v-else><Expand /></el-icon>
                 </el-tooltip>
             </div>
             <div v-else class="icon-size"></div>
@@ -90,8 +90,8 @@ defineProps({
             </el-menu>
         </div>
         <div class="person flex justify-around align-item-center">
-            <i class="el-icon-message-solid icon pointer" style="color: #CAD1E1"></i>
-            <i class="el-icon-s-custom icon pointer"></i>
+            <el-icon class="icon pointer"><Message /></el-icon>
+            <el-icon class="icon pointer"><Avatar /></el-icon>
             <div class="text-normal text-main-color text-family text-weight-lt text-title">Admin</div>
         </div>
     </div>
