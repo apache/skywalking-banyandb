@@ -20,7 +20,7 @@ dataPoints:
     - name: value
       value:
         int:
-          value: "150"
+          value: "160"
     tagFamilies:
     - name: default
       tags:
