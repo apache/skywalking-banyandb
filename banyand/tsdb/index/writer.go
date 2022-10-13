@@ -242,7 +242,9 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 	val = make([][]byte, 0)
 	var existInt bool
 	if len(ruleIndex.TagIndices) != 1 {
-		return nil, false, errors.Wrap(ErrUnsupportedIndexType, "the index rule didn't support composited tags")
+		return nil, false, errors.WithMessagef(ErrUnsupportedIndexType,
+			"the index rule %s(%v) didn't support composited tags",
+			ruleIndex.Rule.Metadata.Name, ruleIndex.Rule.Tags)
 	}
 	tIndex := ruleIndex.TagIndices[0]
 	tag, err := partition.GetTagByOffset(value.TagFamilies, tIndex.FamilyOffset, tIndex.TagOffset)

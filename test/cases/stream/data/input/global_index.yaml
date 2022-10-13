@@ -25,9 +25,12 @@ projection:
   - name: "data"
     tags: ["data_binary"]
 criteria:
-  condition:
-    name: "trace_id"
-    op: "BINARY_OP_EQ"
-    value:
-      str:
-        value: "1"
+  le:
+    op: "LOGICAL_OP_AND"
+    left:
+      condition:
+        name: "trace_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "1"

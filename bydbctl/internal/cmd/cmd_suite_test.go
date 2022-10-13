@@ -22,9 +22,18 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func TestCmd(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Cmd Suite")
 }
+
+var _ = BeforeSuite(func() {
+	Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "warn",
+	})).To(Succeed())
+})
