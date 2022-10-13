@@ -34,9 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	ErrMalformedElement = errors.New("element is malformed")
-)
+var ErrMalformedElement = errors.New("element is malformed")
 
 // Write is for testing
 func (s *measure) Write(value *measurev1.DataPointValue) error {
