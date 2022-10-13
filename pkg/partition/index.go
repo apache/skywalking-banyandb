@@ -36,7 +36,9 @@ func ParseIndexRuleLocators(families []*databasev1.TagFamilySpec, indexRules []*
 				tagIndices = append(tagIndices, TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
 			}
 		}
-		locators = append(locators, &IndexRuleLocator{Rule: rule, TagIndices: tagIndices})
+		if len(tagIndices) > 0 {
+			locators = append(locators, &IndexRuleLocator{Rule: rule, TagIndices: tagIndices})
+		}
 	}
 	return locators
 }

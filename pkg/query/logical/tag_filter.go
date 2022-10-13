@@ -35,6 +35,9 @@ type TagFilter interface {
 }
 
 func BuildTagFilter(criteria *model_v1.Criteria, entityDict map[string]int, schema Schema, hasGlobalIndex bool) (TagFilter, error) {
+	if criteria == nil {
+		return BypassFilter, nil
+	}
 	switch criteria.GetExp().(type) {
 	case *model_v1.Criteria_Condition:
 		cond := criteria.GetCondition()
@@ -77,7 +80,7 @@ func BuildTagFilter(criteria *model_v1.Criteria, entityDict map[string]int, sche
 		}
 
 	}
-	return nil, ErrInvalidConditionType
+	return nil, ErrInvalidCriteriaType
 }
 
 func parseFilter(cond *model_v1.Condition, expr ComparableExpr) (TagFilter, error) {
@@ -109,7 +112,7 @@ func parseFilter(cond *model_v1.Condition, expr ComparableExpr) (TagFilter, erro
 	case model_v1.Condition_BINARY_OP_NOT_HAVING:
 		return newNotTag(newHavingTag(cond.Name, expr)), nil
 	}
-	return nil, ErrInvalidConditionType
+	return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag filter parses %v", cond)
 }
 
 func parseExpr(value *model_v1.TagValue) (ComparableExpr, error) {
@@ -133,7 +136,7 @@ func parseExpr(value *model_v1.TagValue) (ComparableExpr, error) {
 	case *model_v1.TagValue_Null:
 		return nullLiteralExpr, nil
 	}
-	return nil, ErrInvalidConditionType
+	return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "tag filter parses %v", value)
 }
 
 var BypassFilter = new(emptyFilter)
