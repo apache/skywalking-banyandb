@@ -139,6 +139,20 @@ func parseCondition(cond *model_v1.Condition, indexRule *database_v1.IndexRule, 
 			and.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return newNot(indexRule, and), []tsdb.Entity{entity}, nil
+	case model_v1.Condition_BINARY_OP_IN:
+    	bb := expr.Bytes()
+    	and := newOr(len(bb))
+    	for _, b := range bb {
+    		and.append(newEq(indexRule, newBytesLiteral(b)))
+    	}
+    	return and, []tsdb.Entity{entity}, nil
+    case model_v1.Condition_BINARY_OP_NOT_IN:
+        bb := expr.Bytes()
+        and := newOr(len(bb))
+        for _, b := range bb {
+        	and.append(newEq(indexRule, newBytesLiteral(b)))
+        }
+        return newNot(indexRule, and), []tsdb.Entity{entity}, nil
 	}
 	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
