@@ -36,3 +36,6 @@ The java native client is hosted at [skywalking-banyandb-java-client](https://gi
 ## Web application (TBD)
 
 ## Command Line (TBD)
+To run a Banyandb command and return a standard output at the terminal, include the command to execute as separate arguments of bydbctl like:
+
+    bydbctl group create -a addr -f - 
