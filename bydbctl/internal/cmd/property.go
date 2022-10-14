@@ -29,9 +29,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const propertySchemaPath = "/api/v1/property/schema"
+const propertySchemaPath = "/api/v1/property"
 
 var (
+	id                                 string
+	tags                               []string
 	propertySchemaPathWithoutTagParams = propertySchemaPath + "/{group}/{name}/{id}"
 	propertySchemaPathWithTagParams    = propertySchemaPath + "/{group}/{name}/{id}/{tag}"
 )
@@ -63,10 +65,10 @@ func newPropertyCmd() *cobra.Command {
 						return nil, err
 					}
 					return request.req.SetPathParam("group", request.group).SetPathParam("name", request.name).
-						SetPathParam("id", request.id).SetBody(b).Post(getPath(propertySchemaPathWithoutTagParams))
+						SetPathParam("id", request.id).SetBody(b).Put(getPath(propertySchemaPathWithoutTagParams))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("property %s.%s is created", reqBody.group, reqBody.name)
+					fmt.Printf("property %s.%s.%s is created", reqBody.group, reqBody.name, reqBody.id)
 					fmt.Println()
 					return nil
 				})
@@ -110,12 +112,8 @@ func newPropertyCmd() *cobra.Command {
 		Short:   "Get a property",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				if request.tag == "" {
-					return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-						SetPathParam("id", request.id).Get(getPath(propertySchemaPathWithoutTagParams))
-				}
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tag).
+					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).
 					Get(getPath(propertySchemaPathWithTagParams))
 			}, yamlPrinter)
 		},
@@ -128,7 +126,7 @@ func newPropertyCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tag).Delete(getPath(propertySchemaPathWithTagParams))
+					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Delete(getPath(propertySchemaPathWithTagParams))
 			}, func(_ int, reqBody reqBody, _ []byte) error {
 				fmt.Printf("property %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
@@ -136,6 +134,8 @@ func newPropertyCmd() *cobra.Command {
 			})
 		},
 	}
+	getCmd.Flags().StringVarP(&id, "id", "i", "", "the property's id")
+	getCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
 	bindNameFlag(getCmd, deleteCmd)
 
 	listCmd := &cobra.Command{
@@ -145,7 +145,7 @@ func newPropertyCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tag).Get(getPath(propertySchemaPathWithTagParams))
+					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Get(getPath(propertySchemaPathWithTagParams))
 			}, yamlPrinter)
 		},
 	}

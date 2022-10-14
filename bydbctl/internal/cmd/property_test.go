@@ -47,93 +47,93 @@ var _ = Describe("Property Operation", func() {
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
  container:
-	group: group1
-	name: name1
- id: subgroup1`))
+  group: group1
+  name: container1
+ id: property1`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		Expect(out).To(ContainSubstring("property property1 is created"))
+		Expect(out).To(ContainSubstring("property group1.container1.property1 is created"))
+	})
 
-		It("get property", func() {
-			rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "property1"})
-			out := capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			GinkgoWriter.Println(out)
-			resp := new(property_v1.ApplyRequest)
-			helpers.UnmarshalYAML([]byte(out), resp)
-			Expect(resp.Property.Metadata.Container.Group).To(Equal("group1"))
-			Expect(resp.Property.Metadata.Container.Name).To(Equal("property1"))
-			Expect(resp.Property.Metadata.Id).To(Equal("subgroup1"))
+	It("get property", func() {
+		rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "container1", "-i", "property1"})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
 		})
+		GinkgoWriter.Println(out)
+		resp := new(property_v1.ApplyRequest)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property.Metadata.Container.Group).To(Equal("group1"))
+		Expect(resp.Property.Metadata.Container.Name).To(Equal("container1"))
+		Expect(resp.Property.Metadata.Id).To(Equal("property1"))
+	})
 
-		It("update property", func() {
-			rootCmd.SetArgs([]string{"property", "update", "-f", "-"})
-			rootCmd.SetIn(strings.NewReader(`
+	It("update property", func() {
+		rootCmd.SetArgs([]string{"property", "update", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
 metadata:
 container:
-	group: group1
-	name: name1
+group: group1
+name: name1
 id: subgroup1`))
-			out := capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			Expect(out).To(ContainSubstring("property group1.property1 is updated"))
-			rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "property1"})
-			out = capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			resp := new(property_v1.ApplyRequest)
-			helpers.UnmarshalYAML([]byte(out), resp)
-			Expect(resp.Property.Metadata.Container.Group).To(Equal("group1"))
-			Expect(resp.Property.Metadata.Id).To(Equal("property1"))
-			Expect(resp.Property.Metadata.Container.Name).To(Equal("subgroup1"))
-		})
-
-		It("delete property", func() {
-			// delete
-			rootCmd.SetArgs([]string{"property", "delete", "-g", "group1", "-n", "property1"})
-			out := capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			Expect(out).To(ContainSubstring("property group1.property1 is deleted"))
-			// get again
-			rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "property1"})
+		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
-			Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
+			Expect(err).NotTo(HaveOccurred())
 		})
+		Expect(out).To(ContainSubstring("property group1.property1 is updated"))
+		rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "property1"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(property_v1.ApplyRequest)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property.Metadata.Container.Group).To(Equal("group1"))
+		Expect(resp.Property.Metadata.Id).To(Equal("property1"))
+		Expect(resp.Property.Metadata.Container.Name).To(Equal("subgroup1"))
+	})
 
-		It("list property", func() {
-			// create another property for list operation
-			rootCmd.SetArgs([]string{"property", "create", "-f", "-"})
-			rootCmd.SetIn(strings.NewReader(`
+	It("delete property", func() {
+		// delete
+		rootCmd.SetArgs([]string{"property", "delete", "-g", "group1", "-n", "property1"})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property group1.property1 is deleted"))
+		// get again
+		rootCmd.SetArgs([]string{"property", "get", "-g", "group1", "-n", "property1"})
+		err := rootCmd.Execute()
+		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
+	})
+
+	It("list property", func() {
+		// create another property for list operation
+		rootCmd.SetArgs([]string{"property", "create", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
 metadata:
- property: property2
- group: group1`))
-			out := capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			Expect(out).To(ContainSubstring("property group1.property2 is created"))
-			// list
-			rootCmd.SetArgs([]string{"property", "list", "-g", "group1"})
-			out = capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
-			resp := new(property_v1.ListResponse)
-			helpers.UnmarshalYAML([]byte(out), resp)
-			Expect(resp.Property).To(HaveLen(2))
+property: property2
+group: group1`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
 		})
+		Expect(out).To(ContainSubstring("property group1.property2 is created"))
+		// list
+		rootCmd.SetArgs([]string{"property", "list", "-g", "group1"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(property_v1.ListResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property).To(HaveLen(2))
+	})
 
-		AfterEach(func() {
-			deferFunc()
-		})
+	AfterEach(func() {
+		deferFunc()
 	})
 })

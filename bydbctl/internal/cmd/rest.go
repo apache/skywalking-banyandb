@@ -49,7 +49,7 @@ type reqBody struct {
 	name       string
 	group      string
 	id         string
-	tag        string
+	tags       []string
 	parsedData map[string]interface{}
 	data       []byte
 }
@@ -57,6 +57,13 @@ type reqBody struct {
 type request struct {
 	req *resty.Request
 	reqBody
+}
+
+func (r request) tags() string {
+	if len(r.reqBody.tags) == 0 {
+		return "*"
+	}
+	return strings.Join(r.reqBody.tags, ",")
 }
 
 type reqFn func(request request) (*resty.Response, error)
@@ -121,6 +128,8 @@ func parseFromFlags() (requests []reqBody, err error) {
 		return nil, err
 	}
 	requests[0].name = name
+	requests[0].id = id
+	requests[0].tags = tags
 	return requests, nil
 }
 
@@ -230,7 +239,6 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
 		}
-		tags, _ := data["tag"].([]string)
 		j, err = json.Marshal(data)
 		if err != nil {
 			return nil, err
@@ -239,7 +247,6 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 			name:       name,
 			group:      group,
 			id:         id,
-			tag:        strings.Join(tags, ","),
 			data:       j,
 			parsedData: data,
 		})

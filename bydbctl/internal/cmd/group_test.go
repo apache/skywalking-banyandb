@@ -66,7 +66,7 @@ resource_opts:
 		Expect(out).To(ContainSubstring("group group1 is created"))
 	})
 
-	FIt("get group", func() {
+	It("get group", func() {
 		rootCmd.SetArgs([]string{"group", "get", "-g", "group1"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
