@@ -18,7 +18,8 @@
 -->
 
 <script setup>
-import { getCurrentInstance } from "@vue/runtime-core"
+import { getCurrentInstance, reactive } from "@vue/runtime-core"
+
 const { proxy } = getCurrentInstance()
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 defineProps({
@@ -30,6 +31,9 @@ defineProps({
 const emit = defineEmits(['openDetail'])
 
 // data
+let data = reactive({
+    options: []
+})
 let options = []
 let tagFamily = 0
 let refreshStyle = {
@@ -68,7 +72,7 @@ let pickerOptions = {
 }
 
 $bus.on('setOptions', (opt) => {
-    options = opt
+    data.options = opt
 })
 
 // methods
@@ -95,14 +99,16 @@ function openDesign() { }
 </script>
 
 <template>
-    <div class="flex second-nav-contain align-item-center justify-around">
-        <el-select v-model="tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
-            <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value">
+    <div class="flex second-nav-contain align-item-center">
+        <el-select v-model="tagFamily" @change="changeTagFamilies" style="width: 150px" filterable
+            placeholder="Please select">
+            <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
             </el-option>
         </el-select>
-        <el-date-picker class="date-picker" v-model="value" type="datetimerange" :picker-options="pickerOptions"
+        <el-date-picker class="date-picker" v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
             range-separator="to" start-placeholder="begin" end-placeholder="end" align="right">
         </el-date-picker>
+
         <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query">
             <el-button slot="append" icon="el-icon-search"></el-button>
         </el-input>
@@ -119,16 +125,17 @@ function openDesign() { }
 }
 
 .second-nav-contain {
-    width: 100%;
+    width: calc(100% - 20px) !important;
     height: 50px;
+    padding: 0 10px 0 10px;
 
     .date-picker {
-        width: 28%;
-        margin: 0;
+        width: 250px;
+        margin: 0 10px 0 10px;
     }
 
     .search-input {
-        width: 28%;
+        width: 250px;
         margin: 0;
     }
 

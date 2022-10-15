@@ -37,7 +37,7 @@ function handleClose(item, index) {
 
 <template>
     <div class="justify-start flex">
-        <el-tag class="pointer flex align-item-center" size="medium" v-for="(item, index) in tagsList"
+        <el-tag class="pointer flex align-item-center" size="large" v-for="(item, index) in tagsList"
             :key="item.metadata.name" closable @click="changeMenu(item)" @close="handleClose(item, index)"
             style="width:180px;" :effect="currentMenu.metadata.group === item.metadata.group &&
             currentMenu.metadata.type === item.metadata.type &&
@@ -45,7 +45,7 @@ function handleClose(item, index) {
             ? 'dark'
             : 'plain'">
             <span :title="item.metadata.group + ' / ' + item.metadata.type + ' / ' + item.metadata.name"
-                class="text-overflow-hidden" style="width:85%">{{
+                class="text-overflow-hidden" style="width:100%">{{
                 item.metadata.name
                 }}</span>
         </el-tag>
