@@ -32,15 +32,19 @@ let data = reactive({
     closeColor: 'var(--color-main-font)',
     closeBackGroundColor: 'var(--color-white)',
     detailList: [],
-    options: []
+    options: [],
+    tagFamily: 0
 })
-let tagFamily = 0
 
 const tableData = computed(() => {
-    let tags = props.fileData.tagFamilies[tagFamily].tags
-    return tags.map((item) => {
+    console.log('tableData')
+    let tags = props.fileData.tagFamilies[data.tagFamily].tags
+    console.log(tags)
+    let arr = tags.map((item) => {
         return { tags: item.name, type: item.type }
     })
+    console.log('arr', arr)
+    return arr
 })
 watch(() => props.fileData, () => {
     data.options = props.fileData.tagFamilies.map((item, index) => {
@@ -48,7 +52,9 @@ watch(() => props.fileData, () => {
     })
     initData()
 })
-
+data.options = props.fileData.tagFamilies.map((item, index) => {
+    return { label: item.name, value: index }
+})
 initData()
 
 function initData() {
@@ -118,8 +124,9 @@ function closeDetail() {
                     style="margin-top: 20px;">Tags
                     families</div>
                 <div class="flex align-start" style="margin-bottom: 10px;">
-                    <el-select v-model="tagFamily" style="width: 100%;" filterable placeholder="Please select">
-                        <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
+                    <el-select v-model="data.tagFamily" style="width: 100%;" filterable placeholder="Please select">
+                        <el-option v-for="item in data.options" :key="item.value" :label="item.label"
+                            :value="item.value">
                         </el-option>
                     </el-select>
                 </div>

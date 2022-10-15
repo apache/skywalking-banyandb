@@ -19,7 +19,7 @@
 
 <script setup>
 import { getCurrentInstance, reactive } from "@vue/runtime-core"
-
+import { Search } from '@element-plus/icons-vue'
 const { proxy } = getCurrentInstance()
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 defineProps({
@@ -32,10 +32,10 @@ const emit = defineEmits(['openDetail'])
 
 // data
 let data = reactive({
-    options: []
+    options: [],
+    tagFamily: 0
 })
 let options = []
-let tagFamily = 0
 let refreshStyle = {
     fontColor: "var(--color-main-font)",
     color: "var(--color-main-font)",
@@ -87,7 +87,7 @@ function handleLeave() {
     refreshStyle.backgroundColor = "var(--color-white)"
 }
 function changeTagFamilies() {
-    $bus.emit('changeTagFamilies', tagFamily)
+    $bus.emit('changeTagFamilies', data.tagFamily)
 }
 function refresh() {
     $bus.emit('refresh')
@@ -100,21 +100,23 @@ function openDesign() { }
 
 <template>
     <div class="flex second-nav-contain align-item-center">
-        <el-select v-model="tagFamily" @change="changeTagFamilies" style="width: 150px" filterable
+        <el-select v-model="data.tagFamily" @change="changeTagFamilies" style="width: 150px" filterable
             placeholder="Please select">
             <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
             </el-option>
         </el-select>
         <el-date-picker class="date-picker" v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
-            range-separator="to" start-placeholder="begin" end-placeholder="end" align="right">
+            range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
         </el-date-picker>
 
-        <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query">
-            <el-button slot="append" icon="el-icon-search"></el-button>
+        <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
+            <template #append>
+                <el-button :icon="Search" />
+            </template>
         </el-input>
-        <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right">Refresh</el-button>
+        <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right" disabled>Refresh</el-button>
         <el-button class="nav-button" @click="openDetail">{{ showDrawer ? "Close Detail" : "Open Detail" }}</el-button>
-        <el-button class="nav-button" @click="openDesign">Open Design</el-button>
+        <el-button class="nav-button" @click="openDesign" disabled>Open Design</el-button>
     </div>
 </template>
 

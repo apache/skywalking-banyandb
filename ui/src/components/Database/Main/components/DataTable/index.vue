@@ -132,7 +132,7 @@ const emit = defineEmits(['drawerRight'])
  * init data
  */
 function initData() {
-    if(!currentMenu.value) {
+    if (!currentMenu.value) {
         return
     }
     $loadingCreate()
@@ -155,12 +155,12 @@ function initData() {
  * get table data
  */
 function getTable() {
-    data.loading = true
+    //data.loading = true
     let paramList = param
     paramList.offset = data.queryInfo.pagenum
     paramList.limit = data.queryInfo.pagesize
     paramList.metadata = fileData.metadata
-    getTableList(paramList)
+    /* getTableList(paramList)
         .then((res) => {
             if (res.status == 200) {
                 data.tableData = res.data.elements
@@ -168,7 +168,7 @@ function getTable() {
         })
         .finally(() => {
             data.loading = false
-        })
+        }) */
 }
 /**
  * sort table data
@@ -197,9 +197,9 @@ initData()
 <template>
     <div>
         <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe :data="data.tableData"
-            highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange" border
-            empty-text="No data yet">
+            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe
+            :data="data.tableData" highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange"
+            border empty-text="No data yet">
             <el-table-column type="selection" width="55">
             </el-table-column>
             <el-table-column type="index" label="number" width="80">
