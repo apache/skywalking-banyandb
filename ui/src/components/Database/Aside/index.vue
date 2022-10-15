@@ -106,18 +106,6 @@ let rightMenuListThree = list2 // right click Resources menu
 let rightGroupIndex = 0 // right click group list index
 let rightChildIndex = 0 // right click Resources list index
 let rules = rule // group dialog form rules
-// let rightClickType = 'group' // right click group or Resources
-// let dialogVisible = false // delete dialog
-// let dialogGroupVisible = false // group dialog
-// let dialogResourcesVisible = false // Resources dialog
-// let setGroup = 'create' // group dialog is create or edit
-// let operation = 'create' // Resources dialog is create or edit
-// let type = 'stream' // Resources dialog is stream or measure
-// let group = ''
-/* let groupForm = { // group dialog form
-    name: null,
-    catalog: 'CATALOG_STREAM'
-} */
 
 // methods
 function getGroupLists() {
