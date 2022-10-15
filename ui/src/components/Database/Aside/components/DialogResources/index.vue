@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import { watch, ref } from 'vue'
+import { watch, ref, reactive } from 'vue'
 const rule = {
     name: [
         {
@@ -53,25 +53,16 @@ const props = defineProps({
     }
 })
 
-let dialogVisible = false
+let data = reactive({
+    dialogVisible: false,
+    form: {
+        metadata: {
+            group: '',
+            name: ''
+        }
+    }
+})
 let rules = rule
-let form = {
-    metadata: {
-        group: '',
-        name: ''
-    }/*,
-                tagFamilies: [
-                    {
-                        name: '',
-                        tags: [
-                            {
-                                name: '',
-                                type: ''
-                            }
-                        ]
-                        }
-                ]*/
-}
 let tableData = [{
     tagFamilies: 'searchable',
     name: 'stream-ids',
@@ -109,16 +100,16 @@ const ruleForm = ref()
 const emit = defineEmits(['confirm', 'cancel'])
 
 watch(() => props.visible, () => {
-    dialogVisible = props.visible
+    data.dialogVisible = props.visible
 })
 watch(() => props.group, () => {
-    form.metadata.group = props.group
+    data.form.metadata.group = props.group
 })
 
 function confirmForm() {
-    ruleForm.validate((valid) => {
+    ruleForm.value.validate((valid) => {
         if (valid) {
-            emit('confirm', form)
+            emit('confirm', data.form)
         }
     })
 }
@@ -145,15 +136,15 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
 
 <template>
     <div>
-        <el-dialog width="25%" center :title="`${operation} ${type}`" @close="cancelForm" :visible.sync="dialogVisible">
-            <el-form ref="ruleForm" :rules="rules" :model="form.metadata" label-position="left">
+        <el-dialog width="25%" center :title="`${operation} ${type}`" @close="cancelForm" v-model="data.dialogVisible">
+            <el-form ref="ruleForm" :rules="rules" :model="data.form.metadata" label-position="left">
                 <el-form-item label="group" label-width="100px" prop="group">
-                    <el-input disabled v-model="form.metadata.group" autocomplete="off" style="width: 300px;">
+                    <el-input disabled v-model="data.form.metadata.group" style="width: 300px;">
                     </el-input>
                 </el-form-item>
                 <el-form-item label="name" label-width="100px" prop="name">
-                    <el-input :disabled="operation == 'edit'" v-model="form.metadata.name" autocomplete="off"
-                        style="width: 300px;"></el-input>
+                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name" style="width: 300px;">
+                    </el-input>
                 </el-form-item>
             </el-form>
             <div slot="footer" class="dialog-footer">

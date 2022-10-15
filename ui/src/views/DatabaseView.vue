@@ -21,8 +21,7 @@ import AsideComponent from '../components/Database/Aside/index.vue'
 import MainComponent from '../components/Database/Main/index.vue'
 import MainStartComponent from '../components/Database/Main/components/MainStart/index.vue'
 import stores from '../stores/index'
-import { computed } from '@vue/runtime-core'
-
+import { computed } from 'vue'
 const { aside, tags } = stores()
 
 // pinia data
@@ -32,7 +31,6 @@ const fatherWidth = computed(() => {
 const mainComponent = computed(() => {
     return tags.currentMenu == null ? 'mainStartCom' : 'mainCom'
 })
-console.log('mainComponent', mainComponent)
 
 // data
 let isShrink = false

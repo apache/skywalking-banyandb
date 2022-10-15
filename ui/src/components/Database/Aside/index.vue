@@ -26,11 +26,12 @@ import { getCurrentInstance } from "@vue/runtime-core"
 import { ref, reactive } from 'vue'
 import { computed } from '@vue/runtime-core'
 
+
 const { proxy } = getCurrentInstance()
-const $loadingCreate = proxy.$loadingCreate
+const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 // eventBus
-const $bus = proxy.mittBus
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const { ctx: that } = getCurrentInstance()
 const { aside, tags, menuState } = stores()
 const ruleForm = ref()
@@ -86,26 +87,37 @@ const currentMenu = computed(() => {
 
 // data
 let data = reactive({
-    groupLists: []
+    groupLists: [],
+    rightClickType: 'group', // right click group or Resources
+    dialogVisible: false, // delete dialog
+    dialogGroupVisible: false, // group dialog
+    dialogResourcesVisible: false, // Resources dialog
+    setGroup: 'create', // group dialog is create or edit
+    operation: 'create', // Resources dialog is create or edit
+    type: 'stream', // Resources dialog is stream or measure
+    group: '',
+    groupForm: { // group dialog form
+        name: null,
+        catalog: 'CATALOG_STREAM'
+    }
 })
-let groupLists = reactive([])
 let rightMenuListTwo = list1 // right click group menu
 let rightMenuListThree = list2 // right click Resources menu
-rightGroupIndex: 0 // right click group list index
+let rightGroupIndex = 0 // right click group list index
 let rightChildIndex = 0 // right click Resources list index
-let rightClickType = 'group' // right click group or Resources
-let dialogVisible = false // delete dialog
-let dialogGroupVisible = false // group dialog
-let dialogResourcesVisible = false // Resources dialog
-let setGroup = 'create' // group dialog is create or edit
-let operation = 'create' // Resources dialog is create or edit
-let type = 'stream' // Resources dialog is stream or measure
-let group = ''
-let groupForm = { // group dialog form
+let rules = rule // group dialog form rules
+// let rightClickType = 'group' // right click group or Resources
+// let dialogVisible = false // delete dialog
+// let dialogGroupVisible = false // group dialog
+// let dialogResourcesVisible = false // Resources dialog
+// let setGroup = 'create' // group dialog is create or edit
+// let operation = 'create' // Resources dialog is create or edit
+// let type = 'stream' // Resources dialog is stream or measure
+// let group = ''
+/* let groupForm = { // group dialog form
     name: null,
     catalog: 'CATALOG_STREAM'
-}
-let rules = rule // group dialog form rules
+} */
 
 // methods
 function getGroupLists() {
@@ -116,9 +128,7 @@ function getGroupLists() {
                 let group = res.data.group
                 let length = group.length
                 data.groupLists = group
-                console.log('groupLists', data.groupLists)
                 data.groupLists.forEach((item, index) => {
-                    console.log('item', item.metadata.name)
                     let catalog = item.catalog
                     let type = catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
                     let name = item.metadata.name
@@ -156,14 +166,14 @@ function stopPropagation(e) {
  */
 function rightClick(e, index, indexChild) {
     menuState.changeRightMenuList(rightMenuListThree)
-    rightClickType = 'resources'
+    data.rightClickType = 'resources'
     rightGroupIndex = index
     rightChildIndex = indexChild
     openRightMenu(e)
 }
 function rightClickGroup(e, index) {
     menuState.changeRightMenuList(rightMenuListTwo)
-    rightClickType = 'group'
+    data.rightClickType = 'group'
     rightGroupIndex = index
     openRightMenu(e)
 }
@@ -195,20 +205,21 @@ function openResources(index, indexChildren) {
  * click right menu item
  */
 function handleRightItem(index) {
-    if (rightClickType == 'group') {
+    if (data.rightClickType == 'group') {
         // right click group
+
         let rightName = rightMenuListTwo[index].name
         switch (rightName) {
             case 'new group':
-                setGroup = 'create'
+                data.setGroup = 'create'
                 openCreateGroup()
                 break
             case 'edit group':
-                setGroup = 'edit'
+                data.setGroup = 'edit'
                 openEditGroup()
                 break
             case 'new resources':
-                operation = 'create'
+                data.operation = 'create'
                 openResourcesDialog()
                 break
             case 'refresh':
@@ -234,12 +245,12 @@ function handleRightItem(index) {
  * click right menu delete Resources
  */
 function openDeleteDialog() {
-    dialogVisible = true
+    data.dialogVisible = true
 }
 function deleteGroupOrResources() {
     let group = data.groupLists[rightGroupIndex].metadata.name
     let type = data.groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-    if (rightClickType == 'group') {
+    if (data.rightClickType == 'group') {
         // delete group
         deleteGroupFunc(group, type)
     } else {
@@ -252,6 +263,7 @@ function deleteGroupFunc(group, type) {
     // Check whether the Resources is open
     for (let i = 0; i < children.length; i++) {
         let Resources = children[i]
+        let tagsList = JSON.parse(JSON.stringify(tags.tagsList))
         let index = tagsList.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === Resources.metadata.name)
         if (index != -1) {
             ElMessage({
@@ -259,7 +271,7 @@ function deleteGroupFunc(group, type) {
                 type: "warning",
                 duration: 5000
             })
-            dialogVisible = false
+            data.dialogVisible = false
             return
         }
     }
@@ -280,12 +292,13 @@ function deleteGroupFunc(group, type) {
         })
         .finally(() => {
             $loadingClose()
-            dialogVisible = false
+            data.dialogVisible = false
         })
 }
 function deleteResources(group, type) {
     let name = data.groupLists[rightGroupIndex].children[rightChildIndex].metadata.name
     // Check whether the Resources is open
+    let tagsList = JSON.parse(JSON.stringify(tags.tagsList))
     let index = tagsList.findIndex((item) => item.metadata.group === group && item.metadata.type === type && item.metadata.name === name)
     if (index != -1) {
         ElMessage({
@@ -293,7 +306,7 @@ function deleteResources(group, type) {
             type: "warning",
             duration: 5000
         })
-        dialogVisible = false
+        data.dialogVisible = false
         return
     }
     // delete Resources
@@ -313,7 +326,7 @@ function deleteResources(group, type) {
         })
         .finally(() => {
             $loadingClose()
-            dialogVisible = false
+            data.dialogVisible = false
         })
 }
 
@@ -321,33 +334,33 @@ function deleteResources(group, type) {
  * click right menu 'new group' or 'edit group'
  */
 function openCreateGroup() {
-    dialogGroupVisible = true
+    data.dialogGroupVisible = true
 }
 function openEditGroup() {
     let name = data.groupLists[rightGroupIndex].metadata.name
     let catalog = data.groupLists[rightGroupIndex].catalog
-    groupForm.name = name
-    groupForm.catalog = catalog
-    dialogGroupVisible = true
+    data.groupForm.name = name
+    data.groupForm.catalog = catalog
+    data.dialogGroupVisible = true
 }
 // create group or edit group
 function confirmForm() {
-    setGroup == 'create' ? createGroupFunc() : editGroupFunc()
+    data.setGroup == 'create' ? createGroupFunc() : editGroupFunc()
 }
 function createGroupFunc() {
-    ruleForm.validate((valid) => {
+    ruleForm.value.validate((valid) => {
         if (valid) {
-            let data = {
+            let dataList = {
                 group: {
                     metadata: {
                         group: "",
-                        name: groupForm.name
+                        name: data.groupForm.name
                     },
-                    catalog: groupForm.catalog
+                    catalog: data.groupForm.catalog
                 }
             }
             $loadingCreate()
-            createGroup(data)
+            createGroup(dataList)
                 .then((res) => {
                     if (res.status == 200) {
                         getGroupLists()
@@ -359,7 +372,7 @@ function createGroupFunc() {
                     }
                 })
                 .finally(() => {
-                    dialogGroupVisible = false
+                    data.dialogGroupVisible = false
                     $loadingClose()
                 })
         }
@@ -367,19 +380,19 @@ function createGroupFunc() {
 }
 function editGroupFunc() {
     let name = data.groupLists[rightGroupIndex].metadata.name
-    ruleForm.validate((valid) => {
+    ruleForm.value.validate((valid) => {
         if (valid) {
-            let data = {
+            let dataList = {
                 group: {
                     metadata: {
                         group: "",
-                        name: groupForm.name
+                        name: data.groupForm.name
                     },
-                    catalog: groupForm.catalog
+                    catalog: data.groupForm.catalog
                 }
             }
             $loadingCreate()
-            editGroup(name, data)
+            editGroup(name, dataList)
                 .then((res) => {
                     if (res.status == 200) {
                         getGroupLists()
@@ -391,7 +404,7 @@ function editGroupFunc() {
                     }
                 })
                 .finally(() => {
-                    dialogGroupVisible = false
+                    data.dialogGroupVisible = false
                     $loadingClose()
                 })
         }
@@ -399,7 +412,7 @@ function editGroupFunc() {
 }
 // init form data
 function clearGroupForm() {
-    groupForm = {
+    data.groupForm = {
         name: null,
         catalog: 'CATALOG_STREAM'
     }
@@ -412,19 +425,19 @@ function openResourcesDialog() {
     // the group is stream or measure
     let type = data.groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
     let group = data.groupLists[rightGroupIndex].metadata.name
-    group = group
-    type = type
-    dialogResourcesVisible = true
+    data.group = group
+    data.type = type
+    data.dialogResourcesVisible = true
 }
 function cancelResourcesDialog() {
-    dialogResourcesVisible = false
+    data.dialogResourcesVisible = false
 }
 function confirmResourcesDialog(form) {
     let type = data.groupLists[rightGroupIndex].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
-    let data = {}
-    data[type] = form
+    let dataList = {}
+    dataList[type] = form
     $loadingCreate()
-    createResources(type, data)
+    createResources(type, dataList)
         .then((res) => {
             if (res.status == 200) {
                 getGroupLists()
@@ -436,9 +449,13 @@ function confirmResourcesDialog(form) {
             }
         })
         .finally(() => {
-            dialogResourcesVisible = false
+            data.dialogResourcesVisible = false
             $loadingClose()
         })
+}
+function cancelCreateEditDialog() {
+    clearGroupForm()
+    data.dialogGroupVisible = false
 }
 // get group list
 getGroupLists()
@@ -456,18 +473,21 @@ $bus.on('handleRightItem', (index) => {
                 @contextmenu.prevent="rightClickGroup($event, index)">
                 <el-sub-menu :index="item.metadata.name + '-' + index" :disabled="item.catalog == 'CATALOG_MEASURE'">
                     <template #title>
-                        <el-icon><Folder /></el-icon>
-                        <div slot="title" :title="item.metadata.name" style="width: 70%"
-                            class="text-overflow-hidden">{{
-                            item.metadata.name
-                            }}</div>
+                        <el-icon>
+                            <Folder />
+                        </el-icon>
+                        <div slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">{{
+                        item.metadata.name
+                        }}</div>
                     </template>
                     <div v-for="(itemChildren, indexChildren) in item.children" :key="itemChildren.metadata.name">
                         <div @contextmenu.prevent="rightClick($event, index, indexChildren)">
                             <el-menu-item :index="itemChildren.metadata.group + itemChildren.metadata.name"
                                 @click="openResources(index, indexChildren)">
                                 <template #title>
-                                    <el-icon><Document /></el-icon>
+                                    <el-icon>
+                                        <Document />
+                                    </el-icon>
                                     <span slot="title" :title="itemChildren.metadata.name" style="width: 90%"
                                         class="text-overflow-hidden">{{ itemChildren.metadata.name }}</span>
                                 </template>
@@ -477,34 +497,35 @@ $bus.on('handleRightItem', (index) => {
                 </el-sub-menu>
             </div>
         </el-menu>
-        <el-dialog title="Tips" :visible.sync="dialogVisible" width="25%" center>
-            <span>Are you sure to delete this {{rightClickType}}?</span>
+        <el-dialog title="Tips" v-model="data.dialogVisible" width="25%" center>
+            <span>Are you sure to delete this {{data.rightClickType}}?</span>
             <span slot="footer" class="dialog-footer">
-                <el-button @click="dialogVisible = false">cancel</el-button>
+                <el-button @click="data.dialogVisible = false">cancel</el-button>
                 <el-button type="primary" @click="deleteGroupOrResources">delete</el-button>
             </span>
         </el-dialog>
-        <el-dialog width="25%" center :title="`${setGroup} group`" :visible.sync="dialogGroupVisible">
-            <el-form ref="ruleForm" :rules="rules" :model="groupForm" label-position="left">
-                <el-form-item label="group name" label-width="100px" prop="name">
-                    <el-input :disabled="setGroup == 'edit'" v-model="groupForm.name" autocomplete="off"
+        <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible">
+            <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
+                <el-form-item label="group name" label-width="120px" prop="name">
+                    <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off"
                         style="width: 300px;"></el-input>
                 </el-form-item>
-                <el-form-item label="group type" label-width="100px" prop="catalog">
-                    <el-select v-model="groupForm.catalog" style="width: 300px;" placeholder="please select">
+                <el-form-item label="group type" label-width="120px" prop="catalog">
+                    <el-select v-model="data.groupForm.catalog" style="width: 300px;" placeholder="please select">
                         <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
                         <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
                     </el-select>
                 </el-form-item>
             </el-form>
             <div slot="footer" class="dialog-footer">
-                <el-button @click="dialogGroupVisible = false">cancel</el-button>
-                <el-button type="primary" @click="confirmForm">{{setGroup}}
+                <el-button @click="cancelCreateEditDialog">cancel</el-button>
+                <el-button type="primary" @click="confirmForm">{{data.setGroup}}
                 </el-button>
             </div>
         </el-dialog>
-        <dialog-resources-component :visible.sync="dialogResourcesVisible" :group="group" :operation="operation"
-            :type="type" @cancel="cancelResourcesDialog" @confirm="confirmResourcesDialog"></dialog-resources-component>
+        <dialog-resources-component :visible.sync="data.dialogResourcesVisible" :group="data.group"
+            :operation="data.operation" :type="data.type" @cancel="cancelResourcesDialog"
+            @confirm="confirmResourcesDialog"></dialog-resources-component>
     </div>
 </template>
 

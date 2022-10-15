@@ -23,6 +23,7 @@ import { computed } from '@vue/runtime-core'
 import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
 import stores from '../../stores/index'
 const { aside, header, tags } = stores()
+
 const currentMenu = computed(() => {
     return tags.currentMenu
 })
@@ -39,7 +40,7 @@ const handleSelect = (e) => {
         : header.changeShowButton(false)
 }
 const changeAsideWidth = () => {
-    if (isCollapse) {
+    if (isCollapse.value) {
         aside.changeCollapse(false)
         aside.changeFatherWidth('200px')
     } else {
@@ -65,22 +66,26 @@ defineProps({
                 </div>
             </el-image>
             <div class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</div>
-            <div class="flex center pointer icon-size" @click="changeAsideWidth" v-if="showButton">
-                <el-tooltip class="item" effect="dark" :content="!isCollapse ? 'Collapse menu' : 'Expand menu'"
+            <div class="flex center pointer icon-size" @click="changeAsideWidth" v-if="header.showButton">
+                <el-tooltip class="item" effect="dark" :content="!aside.isCollapse ? 'Collapse menu' : 'Expand menu'"
                     placement="bottom">
-                    <el-icon v-if="!isCollapse" class="icon"><Fold /></el-icon>
-                    <el-icon class="icon" v-else><Expand /></el-icon>
+                    <el-icon v-if="!aside.isCollapse" class="icon">
+                        <Fold />
+                    </el-icon>
+                    <el-icon class="icon" v-else>
+                        <Expand />
+                    </el-icon>
                 </el-tooltip>
             </div>
             <div v-else class="icon-size"></div>
-            <span v-if="showButton && currentMenu"
-                :title="currentMenu.metadata.group + ' / ' + currentMenu.metadata.type + ' / ' + currentMenu.metadata.name"
+            <span v-if="header.showButton && tags.currentMenu"
+                :title="tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.type + ' / ' + tags.currentMenu.metadata.name"
                 class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{
-                currentMenu.metadata.group + ' / ' + currentMenu.metadata.name
+                tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.name
                 }}</span>
             <div v-else style="width:380px;" class="margin-left-small"></div>
         </div>
-        <div class="navigation" style="margin-right: 450px;">
+        <div class="navigation" style="margin-right: 400px;">
             <el-menu active-text-color="#6E38F7" router class="el-menu-demo" mode="horizontal" :default-active="active"
                 @select="handleSelect">
                 <el-menu-item index="/home">Home</el-menu-item>
@@ -90,8 +95,12 @@ defineProps({
             </el-menu>
         </div>
         <div class="person flex justify-around align-item-center">
-            <el-icon class="icon pointer"><Message /></el-icon>
-            <el-icon class="icon pointer"><Avatar /></el-icon>
+            <el-icon class="icon pointer">
+                <Message />
+            </el-icon>
+            <el-icon class="icon pointer">
+                <Avatar />
+            </el-icon>
             <div class="text-normal text-main-color text-family text-weight-lt text-title">Admin</div>
         </div>
     </div>

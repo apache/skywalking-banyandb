@@ -94,10 +94,9 @@ app.config.globalProperties.$message.success = () => {
         type: 'success'
     })
 }
-
+app.config.globalProperties.mittBus = new mitt()
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
 
 app.mount('#app')
-app.config.globalProperties.mittBus = new mitt()

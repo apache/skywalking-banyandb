@@ -19,7 +19,7 @@
 
 <script setup>
 import { getCurrentInstance } from "@vue/runtime-core"
-
+const { proxy } = getCurrentInstance()
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 defineProps({
     showDrawer: {
