@@ -18,9 +18,6 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -32,10 +29,12 @@ import (
 const propertySchemaPath = "/api/v1/property"
 
 var (
-	id                                 string
-	tags                               []string
-	propertySchemaPathWithoutTagParams = propertySchemaPath + "/{group}/{name}/{id}"
-	propertySchemaPathWithTagParams    = propertySchemaPath + "/{group}/{name}/{id}/{tag}"
+	id                                  string
+	tags                                []string
+	ids                                 []string
+	propertySchemaPathWithoutTagParams  = propertySchemaPath + "/{group}/{name}/{id}"
+	propertySchemaPathWithTagParams     = propertySchemaPath + "/{group}/{name}/{id}/{tag}"
+	propertyListSchemaPathWithTagParams = propertySchemaPath + "/lists/{group}/{name}/{ids}/{tags}"
 )
 
 func newPropertyCmd() *cobra.Command {
@@ -45,10 +44,10 @@ func newPropertyCmd() *cobra.Command {
 		Short:   "Property operation",
 	}
 
-	createCmd := &cobra.Command{
-		Use:     "create -f [file|dir|-]",
+	applyCmd := &cobra.Command{
+		Use:     "apply -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Create properties from files",
+		Short:   "Apply(Create or Update) properties from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseFromYAMLForProperty(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
@@ -60,54 +59,19 @@ func newPropertyCmd() *cobra.Command {
 					cr := &property_v1.ApplyRequest{
 						Property: s,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
 					return request.req.SetPathParam("group", request.group).SetPathParam("name", request.name).
 						SetPathParam("id", request.id).SetBody(b).Put(getPath(propertySchemaPathWithoutTagParams))
-				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("property %s.%s.%s is created", reqBody.group, reqBody.name, reqBody.id)
-					fmt.Println()
-					return nil
-				})
+				}, yamlPrinter)
 		},
 	}
-
-	updateCmd := &cobra.Command{
-		Use:     "update -f [file|dir|-]",
-		Version: version.Build(),
-		Short:   "Update properties from files",
-		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseFromYAMLForProperty(cmd.InOrStdin()) },
-				func(request request) (*resty.Response, error) {
-					s := new(property_v1.Property)
-					err := protojson.Unmarshal(request.data, s)
-					if err != nil {
-						return nil, err
-					}
-					cr := &property_v1.ApplyRequest{
-						Property: s,
-					}
-					b, err := json.Marshal(cr)
-					if err != nil {
-						return nil, err
-					}
-					return request.req.SetBody(b).
-						SetPathParam("group", request.group).SetPathParam("name", request.name).SetPathParam("id", request.id).
-						Put(getPath(propertySchemaPathWithoutTagParams))
-				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("property %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
-					return nil
-				})
-		},
-	}
+	bindFileFlag(applyCmd)
 
 	getCmd := &cobra.Command{
-		Use:     "get [-g group] -n name",
+		Use:     "get [-g group] -n name -i id [-t tags]",
 		Version: version.Build(),
 		Short:   "Get a property",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
@@ -120,38 +84,33 @@ func newPropertyCmd() *cobra.Command {
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:     "delete [-g group] -n name",
+		Use:     "delete [-g group] -n name -i id -t [tags]",
 		Version: version.Build(),
 		Short:   "Delete a property",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Delete(getPath(propertySchemaPathWithTagParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("property %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
-				return nil
-			})
+			}, yamlPrinter)
 		},
 	}
-	getCmd.Flags().StringVarP(&id, "id", "i", "", "the property's id")
-	getCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
-	bindNameFlag(getCmd, deleteCmd)
+	bindNameAndIDAndTagsFlag(getCmd, deleteCmd)
 
 	listCmd := &cobra.Command{
-		Use:     "list [-g group]",
+		Use:     "list [-g group] -n name",
 		Version: version.Build(),
 		Short:   "List properties",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Get(getPath(propertySchemaPathWithTagParams))
+					SetPathParam("ids", request.ids()).SetPathParam("tags", request.tags()).Get(getPath(propertyListSchemaPathWithTagParams))
 			}, yamlPrinter)
 		},
 	}
+	bindNameFlag(listCmd)
+	listCmd.Flags().StringArrayVarP(&ids, "ids", "", nil, "id selector")
+	listCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "tag selector")
 
-	bindFileFlag(createCmd, updateCmd)
-
-	propertyCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
+	propertyCmd.AddCommand(getCmd, applyCmd, deleteCmd, listCmd)
 	return propertyCmd
 }

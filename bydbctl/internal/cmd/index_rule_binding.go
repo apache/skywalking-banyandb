@@ -18,7 +18,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/go-resty/resty/v2"
@@ -55,7 +54,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 					cr := &database_v1.IndexRuleBindingRegistryServiceCreateRequest{
 						IndexRuleBinding: s,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
@@ -84,7 +83,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 					cr := &database_v1.IndexRuleBindingRegistryServiceUpdateRequest{
 						IndexRuleBinding: s,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}

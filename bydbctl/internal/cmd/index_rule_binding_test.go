@@ -46,19 +46,19 @@ var _ = Describe("IndexRuleBindingSchema Operation", func() {
 		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-name: group1
+  name: group1
 catalog: CATALOG_STREAM
 resource_opts:
-shard_num: 2
-block_interval:
- unit: UNIT_HOUR
- num: 2
-segment_interval:
- unit: UNIT_DAY
- num: 1
-ttl:
- unit: UNIT_DAY
- num: 7`))
+  shard_num: 2
+  block_interval:
+    unit: UNIT_HOUR
+    num: 2
+  segment_interval:
+    unit: UNIT_DAY
+    num: 1
+  ttl:
+    unit: UNIT_DAY
+    num: 7`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -67,11 +67,11 @@ ttl:
 		rootCmd.SetArgs([]string{"indexRuleBinding", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-name: name1
-group: group1
+  name: name1
+  group: group1
 subject:
-catalog: CATALOG_STREAM
-name: stream1`))
+  catalog: CATALOG_STREAM
+  name: stream1`))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -90,14 +90,18 @@ name: stream1`))
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding.Metadata.Group).To(Equal("group1"))
 		Expect(resp.IndexRuleBinding.Metadata.Name).To(Equal("name1"))
+		Expect(resp.IndexRuleBinding.Subject.Name).To(Equal("stream1"))
 	})
 
 	It("update indexRuleBinding schema", func() {
 		rootCmd.SetArgs([]string{"indexRuleBinding", "update", "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-name: name1
-group: group1`))
+  name: name1
+  group: group1
+subject:
+  catalog: CATALOG_STREAM
+  name: stream2`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -112,6 +116,7 @@ group: group1`))
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding.Metadata.Group).To(Equal("group1"))
 		Expect(resp.IndexRuleBinding.Metadata.Name).To(Equal("name1"))
+		Expect(resp.IndexRuleBinding.Subject.Name).To(Equal("stream2"))
 	})
 
 	It("delete indexRuleBinding schema", func() {
@@ -133,8 +138,11 @@ group: group1`))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "create", "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-name: name2
-group: group1`))
+  name: name2
+  group: group1
+subject:
+  catalog: CATALOG_STREAM
+  name: stream2`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

@@ -171,7 +171,7 @@ var _ = Describe("Measure Data Query", func() {
 	BeforeEach(func() {
 		now = timestamp.NowMilli()
 		nowStr = now.Format(RFC3339)
-		interval = 500 * time.Millisecond
+		interval = 1 * time.Millisecond
 		endStr = now.Add(1 * time.Hour).Format(RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
@@ -180,7 +180,7 @@ var _ = Describe("Measure Data Query", func() {
 		cmd.RootCmdFlags(rootCmd)
 	})
 
-	It("query measure data", func() {
+	It("query all measure data", func() {
 		conn, err := grpclib.Dial(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -224,7 +224,7 @@ tagProjection:
 		)
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
-		interval := 500 * time.Millisecond
+		interval := -time.Minute
 		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
 		args := []string{"measure", "query", "-a", addr}
 		args = append(args, timeArgs...)
@@ -233,13 +233,13 @@ tagProjection:
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
- name: sw
- group: default
+ name: service_cpm_minute
+ group: sw_metric
 tagProjection:
  tagFamilies:
    - name: default
-	 tags:
-	   - id`))
+     tags:
+       - id`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())

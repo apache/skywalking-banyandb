@@ -65,6 +65,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// stream
 	cases_stream_data.Write(conn, "data.json", now, interval)
 	// measure
+	interval = time.Minute
 	cases_measure_data.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)

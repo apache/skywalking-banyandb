@@ -117,3 +117,13 @@ func bindTimeRangeFlag(commands ...*cobra.Command) {
 		c.Flags().StringVarP(&end, "end", "e", "", "End time of the time range during which the query is preformed")
 	}
 }
+
+func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
+	bindNameFlag(commands...)
+	for _, c := range commands {
+		c.Flags().StringVarP(&id, "id", "i", "", "the property's id")
+		c.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
+		_ = c.MarkFlagRequired("name")
+		_ = c.MarkFlagRequired("id")
+	}
+}
