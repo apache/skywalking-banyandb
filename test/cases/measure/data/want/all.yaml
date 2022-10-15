@@ -36,6 +36,28 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-13T13:34:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "10"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "7"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T13:34:19.389Z"
 - fields:
   - name: total
     value:
@@ -56,6 +78,28 @@ dataPoints:
       value:
         str:
           value: entity_2
+  timestamp: "2022-10-13T13:35:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "8"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T13:35:19.389Z"
 - fields:
   - name: total
     value:
@@ -76,6 +120,28 @@ dataPoints:
       value:
         str:
           value: entity_2
+  timestamp: "2022-10-13T13:36:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "3"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "9"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T13:36:19.389Z"
 - fields:
   - name: total
     value:
@@ -96,6 +162,28 @@ dataPoints:
       value:
         str:
           value: entity_3
+  timestamp: "2022-10-13T13:37:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "2"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "10"
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
+  timestamp: "2022-10-13T13:37:19.389Z"
 - fields:
   - name: total
     value:
@@ -116,6 +204,28 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-13T13:38:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "50"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "11"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T13:38:19.389Z"
 - fields:
   - name: total
     value:
@@ -136,3 +246,25 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-13T13:39:18.389Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "300"
+  - name: value
+    value:
+      int:
+        value: "4"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "12"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T13:39:19.389Z"

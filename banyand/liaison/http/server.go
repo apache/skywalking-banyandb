@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	stdhttp "net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -61,7 +60,7 @@ type service struct {
 	clientCloser context.CancelFunc
 	l            *logger.Logger
 
-	srv *stdhttp.Server
+	srv *http.Server
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -87,11 +86,11 @@ func (p *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	httpFS := stdhttp.FS(fSys)
-	fileServer := stdhttp.FileServer(stdhttp.FS(fSys))
+	httpFS := http.FS(fSys)
+	fileServer := http.FileServer(http.FS(fSys))
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
-	p.srv = &stdhttp.Server{
+	p.srv = &http.Server{
 		Addr:    p.listenAddr,
 		Handler: p.mux,
 	}
@@ -145,24 +144,24 @@ func (p *service) GracefulStop() {
 	p.clientCloser()
 }
 
-func intercept404(handler, on404 stdhttp.Handler) stdhttp.HandlerFunc {
-	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func intercept404(handler, on404 http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		hookedWriter := &hookedResponseWriter{ResponseWriter: w}
 		handler.ServeHTTP(hookedWriter, r)
 
 		if hookedWriter.got404 {
 			on404.ServeHTTP(w, r)
 		}
-	})
+	}
 }
 
 type hookedResponseWriter struct {
-	stdhttp.ResponseWriter
+	http.ResponseWriter
 	got404 bool
 }
 
 func (hrw *hookedResponseWriter) WriteHeader(status int) {
-	if status == stdhttp.StatusNotFound {
+	if status == http.StatusNotFound {
 		hrw.got404 = true
 	} else {
 		hrw.ResponseWriter.WriteHeader(status)
@@ -177,29 +176,29 @@ func (hrw *hookedResponseWriter) Write(p []byte) (int, error) {
 	return hrw.ResponseWriter.Write(p)
 }
 
-func serveFileContents(file string, files stdhttp.FileSystem) stdhttp.HandlerFunc {
-	return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.WriteHeader(stdhttp.StatusNotFound)
+			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, "404 not found")
 
 			return
 		}
 		index, err := files.Open(file)
 		if err != nil {
-			w.WriteHeader(stdhttp.StatusNotFound)
+			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		fi, err := index.Stat()
 		if err != nil {
-			w.WriteHeader(stdhttp.StatusNotFound)
+			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		stdhttp.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
+		http.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
 	}
 }

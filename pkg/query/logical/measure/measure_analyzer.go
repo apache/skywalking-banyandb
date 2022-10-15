@@ -153,7 +153,7 @@ func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, 
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
 	}
-	filter, entities, err := logical.BuildLocalFilter(criteria.Criteria, s, entityMap, entity)
+	filter, entities, err := logical.BuildLocalFilter(criteria.GetCriteria(), s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}

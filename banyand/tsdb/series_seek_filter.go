@@ -31,7 +31,7 @@ func (s *seekerBuilder) Filter(predicator index.Filter) SeekerBuilder {
 	return s
 }
 
-func (s *seekerBuilder) buildIndexFilter(block blockDelegate) (filterFn, error) {
+func (s *seekerBuilder) buildIndexFilter(block BlockDelegate) (filterFn, error) {
 	if s.predicator == nil {
 		return nil, nil
 	}

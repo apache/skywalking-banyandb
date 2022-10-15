@@ -90,13 +90,13 @@ message QueryRequest {
     model.v1.Sort field_value_sort = 3;
   } 
   // top limits the result based on a particular field.
-  // If order_by is specificed, top sorts the dataset based on order_by's output
+  // If order_by is specified, top sorts the dataset based on order_by's output
   Top top = 9;
   // offset is used to support pagination, together with the following limit.
-  // If top is sepcificed, offset processes the dataset based on top's output
+  // If top is specified, offset processes the dataset based on top's output
   uint32 offset = 10;
   // limit is used to impose a boundary on the number of records being returned.
-  // If top is sepcificed, limit processes the dataset based on top's output
+  // If top is specified, limit processes the dataset based on top's output
   uint32 limit = 11;
   // order_by is given to specify the sort for a tag.
   model.v1.QueryOrder order_by = 12;
