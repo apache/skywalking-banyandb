@@ -488,7 +488,7 @@ type LogicalExpression struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// op is a logial operation
+	// op is a logical operation
 	Op    LogicalExpression_LogicalOp `protobuf:"varint,1,opt,name=op,proto3,enum=banyandb.model.v1.LogicalExpression_LogicalOp" json:"op,omitempty"`
 	Left  *Criteria                   `protobuf:"bytes,2,opt,name=left,proto3" json:"left,omitempty"`
 	Right *Criteria                   `protobuf:"bytes,3,opt,name=right,proto3" json:"right,omitempty"`

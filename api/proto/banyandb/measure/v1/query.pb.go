@@ -178,13 +178,13 @@ type QueryRequest struct {
 	// agg aggregates data points based on a field
 	Agg *QueryRequest_Aggregation `protobuf:"bytes,8,opt,name=agg,proto3" json:"agg,omitempty"`
 	// top limits the result based on a particular field.
-	// If order_by is specificed, top sorts the dataset based on order_by's output
+	// If order_by is specified, top sorts the dataset based on order_by's output
 	Top *QueryRequest_Top `protobuf:"bytes,9,opt,name=top,proto3" json:"top,omitempty"`
 	// offset is used to support pagination, together with the following limit.
-	// If top is sepcificed, offset processes the dataset based on top's output
+	// If top is specified, offset processes the dataset based on top's output
 	Offset uint32 `protobuf:"varint,10,opt,name=offset,proto3" json:"offset,omitempty"`
 	// limit is used to impose a boundary on the number of records being returned.
-	// If top is sepcificed, limit processes the dataset based on top's output
+	// If top is specified, limit processes the dataset based on top's output
 	Limit uint32 `protobuf:"varint,11,opt,name=limit,proto3" json:"limit,omitempty"`
 	// order_by is given to specify the sort for a tag.
 	OrderBy *v1.QueryOrder `protobuf:"bytes,12,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`

@@ -35,13 +35,17 @@ import (
 
 type ID string
 
+const fieldFlagLength = 9
+
 var (
 	strDelimiter = []byte("\n")
 	NullTag      = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	TagFlag      = make([]byte, fieldFlagLength)
 
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 	ErrNullValue                   = errors.New("the tag value is null")
 	ErrMalformedElement            = errors.New("element is malformed")
+	ErrMalformedFieldFlag          = errors.New("field flag is malformed")
 )
 
 func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
@@ -358,4 +362,36 @@ func EncodeFamily(familySpec *databasev1.TagFamilySpec, family *modelv1.TagFamil
 		}
 	}
 	return proto.Marshal(data)
+}
+
+func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
+	switch fieldSpec.GetFieldType() {
+	case databasev1.FieldType_FIELD_TYPE_STRING:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}
+	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}
+	}
+	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+}
+
+func EncoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) []byte {
+	encodingMethod := byte(fieldSpec.GetEncodingMethod().Number())
+	compressionMethod := byte(fieldSpec.GetCompressionMethod().Number())
+	bb := make([]byte, fieldFlagLength)
+	bb[0] = encodingMethod<<4 | compressionMethod
+	copy(bb[1:], convert.Int64ToBytes(int64(interval)))
+	return bb
+}
+
+func DecodeFieldFlag(key []byte) (*databasev1.FieldSpec, time.Duration, error) {
+	if len(key) < fieldFlagLength {
+		return nil, 0, ErrMalformedFieldFlag
+	}
+	b := key[len(key)-9:]
+	return &databasev1.FieldSpec{
+		EncodingMethod:    databasev1.EncodingMethod(int32(b[0]) >> 4),
+		CompressionMethod: databasev1.CompressionMethod(int32(b[0] & 0x0F)),
+	}, time.Duration(convert.BytesToInt64(b[1:])), nil
 }

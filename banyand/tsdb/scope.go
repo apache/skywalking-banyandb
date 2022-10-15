@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package tsdb
 
 import (
@@ -87,5 +88,5 @@ func (sdd *scopedSeriesDatabase) Get(entity Entity) (Series, error) {
 }
 
 func (sdd *scopedSeriesDatabase) List(path Path) (SeriesList, error) {
-	return sdd.delegated.List(path.Prepand(sdd.scope))
+	return sdd.delegated.List(path.Prepend(sdd.scope))
 }

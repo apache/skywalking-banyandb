@@ -357,7 +357,7 @@
       "properties": {
         "op": {
           "$ref": "#/definitions/LogicalExpressionLogicalOp",
-          "title": "op is a logial operation"
+          "title": "op is a logical operation"
         },
         "left": {
           "$ref": "#/definitions/v1Criteria"
@@ -441,17 +441,17 @@
         },
         "top": {
           "$ref": "#/definitions/QueryRequestTop",
-          "title": "top limits the result based on a particular field.\nIf order_by is specificed, top sorts the dataset based on order_by's output"
+          "title": "top limits the result based on a particular field.\nIf order_by is specified, top sorts the dataset based on order_by's output"
         },
         "offset": {
           "type": "integer",
           "format": "int64",
-          "title": "offset is used to support pagination, together with the following limit.\nIf top is sepcificed, offset processes the dataset based on top's output"
+          "title": "offset is used to support pagination, together with the following limit.\nIf top is specified, offset processes the dataset based on top's output"
         },
         "limit": {
           "type": "integer",
           "format": "int64",
-          "title": "limit is used to impose a boundary on the number of records being returned.\nIf top is sepcificed, limit processes the dataset based on top's output"
+          "title": "limit is used to impose a boundary on the number of records being returned.\nIf top is specified, limit processes the dataset based on top's output"
         },
         "orderBy": {
           "$ref": "#/definitions/v1QueryOrder",

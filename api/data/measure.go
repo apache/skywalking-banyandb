@@ -34,3 +34,9 @@ var MeasureQueryKindVersion = common.KindVersion{
 	Kind:    "measure-query",
 }
 var TopicMeasureQuery = bus.BiTopic(MeasureQueryKindVersion.String())
+
+var TopNQueryKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "topN-query",
+}
+var TopicTopNQuery = bus.BiTopic(TopNQueryKindVersion.String())
