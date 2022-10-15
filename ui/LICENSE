@@ -42,7 +42,7 @@ MIT licenses
 
     @babel/parser 7.19.1 MIT
     @ctrl/tinycolor 3.4.1 MIT
-    @element-plus/icons-vue 2.0.9 MIT
+    @element-plus/icons-vue 2.0.10 MIT
     @floating-ui/core 1.0.1 MIT
     @floating-ui/dom 1.0.1 MIT
     @popperjs/core 2.11.7 MIT
