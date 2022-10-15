@@ -196,6 +196,23 @@ func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *common
 	})
 }
 
+func (e *etcdSchemaRegistry) TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error) {
+	aggregations, err := e.ListTopNAggregation(ctx, ListOpt{Group: metadata.GetGroup()})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []*databasev1.TopNAggregation
+	for _, aggrDef := range aggregations {
+		// filter sourceMeasure
+		if aggrDef.GetSourceMeasure().GetName() == metadata.GetName() {
+			result = append(result, aggrDef)
+		}
+	}
+
+	return result, nil
+}
+
 func formatMeasureKey(metadata *commonv1.Metadata) string {
 	return formatKey(MeasureKeyPrefix, metadata)
 }

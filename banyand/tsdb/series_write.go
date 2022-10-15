@@ -47,7 +47,7 @@ var _ WriterBuilder = (*writerBuilder)(nil)
 
 type writerBuilder struct {
 	series *seriesSpan
-	block  blockDelegate
+	block  BlockDelegate
 	values []struct {
 		family []byte
 		val    []byte
@@ -132,7 +132,7 @@ func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
 var _ Writer = (*writer)(nil)
 
 type writer struct {
-	block   blockDelegate
+	block   BlockDelegate
 	ts      time.Time
 	columns []struct {
 		family []byte

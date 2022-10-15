@@ -33,14 +33,18 @@ import (
 var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
-	verify        = func(args helpers.Args) {
+	verify        = func(innerGm gm.Gomega, args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			stream_test_data.VerifyFn(innerGm, SharedContext, args)
 		})
 	}
 )
 
-var _ = g.DescribeTable("Scanning Streams", verify,
+var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
+	gm.Eventually(func(innerGm gm.Gomega) {
+		verify(innerGm, args)
+	}).Should(gm.Succeed())
+},
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),

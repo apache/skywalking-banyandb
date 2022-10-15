@@ -16,99 +16,207 @@
 # under the License.
 
 dataPoints:
-  - fields:
-    - name: total
+- fields:
+  - name: total
+    value:
+      int:
+        value: "300"
+  - name: value
+    value:
+      int:
+        value: "4"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "300"
-    - name: value
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T14:17:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "300"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "5"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_1
-  - fields:
-    - name: total
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T14:17:49.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "50"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "50"
-    - name: value
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T14:16:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "50"
+  - name: value
+    value:
+      int:
+        value: "4"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "4"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_1
-  - fields:
-    - name: total
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T14:16:49.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "2"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "100"
-    - name: value
+        str:
+          value: entity_3
+  timestamp: "2022-10-13T14:15:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "5"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_3
-  - fields:
-    - name: total
+        str:
+          value: entity_3
+  timestamp: "2022-10-13T14:15:49.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "3"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "100"
-    - name: value
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T14:14:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "1"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_2
-  - fields:
-    - name: total
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T14:14:49.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "5"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "100"
-    - name: value
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T14:13:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "1"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_2
-  - fields:
-    - name: total
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T14:13:49.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "10"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "100"
-    - name: value
+        str:
+          value: entity_2
+  timestamp: "2022-10-13T14:12:50.440Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "1"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "1"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_1
+        str:
+          value: entity_1
+  timestamp: "2022-10-13T14:12:49.440Z"
