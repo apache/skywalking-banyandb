@@ -63,6 +63,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	now = timestamp.NowMilli().Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	casesStreamData.Write(conn, "data.json", now, interval)
+	interval = time.Minute
 	casesMeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)

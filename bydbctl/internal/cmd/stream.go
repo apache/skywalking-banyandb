@@ -18,7 +18,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/go-resty/resty/v2"
@@ -60,7 +59,7 @@ func newStreamCmd() *cobra.Command {
 					cr := &database_v1.StreamRegistryServiceCreateRequest{
 						Stream: s,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
@@ -89,7 +88,7 @@ func newStreamCmd() *cobra.Command {
 					cr := &database_v1.StreamRegistryServiceUpdateRequest{
 						Stream: s,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
@@ -144,9 +143,10 @@ func newStreamCmd() *cobra.Command {
 	}
 
 	queryCmd := &cobra.Command{
-		Use:     "query -f [file|dir|-]",
+		Use:     "query [-s start_time] [-e end_time] -f [file|dir|-]",
 		Version: version.Build(),
 		Short:   "Query data in a stream",
+		Long:    timeRangeUsage,
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {

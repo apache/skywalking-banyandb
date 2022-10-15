@@ -28,40 +28,40 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const measureSchemaPath = "/api/v1/measure/schema"
+const indexRuleBindingSchemaPath = "/api/v1/index-rule-binding/schema"
 
-var measureSchemaPathWithParams = measureSchemaPath + "/{group}/{name}"
+var indexRuleBindingSchemaPathWithParams = indexRuleBindingSchemaPath + "/{group}/{name}"
 
-func newMeasureCmd() *cobra.Command {
-	measureCmd := &cobra.Command{
-		Use:     "measure",
+func newIndexRuleBindingCmd() *cobra.Command {
+	indexRuleBindingCmd := &cobra.Command{
+		Use:     "indexRuleBinding",
 		Version: version.Build(),
-		Short:   "Measure operation",
+		Short:   "IndexRuleBinding operation",
 	}
 
 	createCmd := &cobra.Command{
 		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Create measures from files",
+		Short:   "Create indexRuleBindings from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Measure)
+					s := new(database_v1.IndexRuleBinding)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.MeasureRegistryServiceCreateRequest{
-						Measure: s,
+					cr := &database_v1.IndexRuleBindingRegistryServiceCreateRequest{
+						IndexRuleBinding: s,
 					}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
-					return request.req.SetBody(b).Post(getPath(measureSchemaPath))
+					return request.req.SetBody(b).Post(getPath(indexRuleBindingSchemaPath))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("measure %s.%s is created", reqBody.group, reqBody.name)
+					fmt.Printf("indexRuleBinding %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
 				})
@@ -71,17 +71,17 @@ func newMeasureCmd() *cobra.Command {
 	updateCmd := &cobra.Command{
 		Use:     "update -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "Update measures from files",
+		Short:   "Update indexRuleBindings from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Measure)
+					s := new(database_v1.IndexRuleBinding)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.MeasureRegistryServiceUpdateRequest{
-						Measure: s,
+					cr := &database_v1.IndexRuleBindingRegistryServiceUpdateRequest{
+						IndexRuleBinding: s,
 					}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
@@ -89,10 +89,10 @@ func newMeasureCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
-						Put(getPath(measureSchemaPathWithParams))
+						Put(getPath(indexRuleBindingSchemaPathWithParams))
 				},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("measure %s.%s is updated", reqBody.group, reqBody.name)
+					fmt.Printf("indexRuleBinding %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
 				})
@@ -102,10 +102,10 @@ func newMeasureCmd() *cobra.Command {
 	getCmd := &cobra.Command{
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
-		Short:   "Get a measure",
+		Short:   "Get a indexRuleBinding",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(measureSchemaPathWithParams))
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(indexRuleBindingSchemaPathWithParams))
 			}, yamlPrinter)
 		},
 	}
@@ -113,12 +113,12 @@ func newMeasureCmd() *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
-		Short:   "Delete a measure",
+		Short:   "Delete a indexRuleBinding",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(measureSchemaPathWithParams))
+				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(indexRuleBindingSchemaPathWithParams))
 			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("measure %s.%s is deleted", reqBody.group, reqBody.name)
+				fmt.Printf("indexRuleBinding %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
 			})
@@ -129,29 +129,16 @@ func newMeasureCmd() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:     "list [-g group]",
 		Version: version.Build(),
-		Short:   "List measures",
+		Short:   "List indexRuleBindings",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/measure/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/index-rule-binding/schema/lists/{group}"))
 			}, yamlPrinter)
 		},
 	}
 
-	queryCmd := &cobra.Command{
-		Use:     "query [-s start_time] [-e end_time] -f [file|dir|-]",
-		Version: version.Build(),
-		Short:   "Query data in a measure",
-		Long:    timeRangeUsage,
-		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
-				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/data"))
-				}, yamlPrinter)
-		},
-	}
-	bindFileFlag(createCmd, updateCmd, queryCmd)
-	bindTimeRangeFlag(queryCmd)
+	bindFileFlag(createCmd, updateCmd)
 
-	measureCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
-	return measureCmd
+	indexRuleBindingCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
+	return indexRuleBindingCmd
 }
