@@ -19,6 +19,7 @@ package grpc_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
@@ -185,6 +187,7 @@ func setupForRegistry() func() {
 		preloadStreamSvc,
 		tcp,
 	)
+	Eventually(helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second), 20*time.Second).Should(Succeed())
 	return func() {
 		deferFunc()
 		metaDeferFunc()
