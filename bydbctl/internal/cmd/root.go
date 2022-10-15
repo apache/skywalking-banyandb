@@ -55,7 +55,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
-	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd())
+	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd(), newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd())
 }
 
 func init() {
@@ -115,5 +115,15 @@ func bindTimeRangeFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
 		c.Flags().StringVarP(&start, "start", "s", "", "Start time of the time range during which the query is preformed")
 		c.Flags().StringVarP(&end, "end", "e", "", "End time of the time range during which the query is preformed")
+	}
+}
+
+func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
+	bindNameFlag(commands...)
+	for _, c := range commands {
+		c.Flags().StringVarP(&id, "id", "i", "", "the property's id")
+		c.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
+		_ = c.MarkFlagRequired("name")
+		_ = c.MarkFlagRequired("id")
 	}
 }

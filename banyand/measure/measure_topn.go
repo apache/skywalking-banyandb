@@ -137,7 +137,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
 	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
-	t.l.Warn().
+	t.l.Debug().
 		Str("TopN", t.topNSchema.GetMetadata().GetName()).
 		Int("rankNums", len(tuples)).
 		Msg("Write a tuple")
