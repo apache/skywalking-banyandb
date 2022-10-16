@@ -2,6 +2,7 @@
 
 CRUD operations create, read, update and delete measures.
 
+Measure intends to store data point.
 ## Create operation
 
 Create operation adds a new measure to the database's metadata registry repository. If the measure does not currently exist, create operation will create the schema.
@@ -71,10 +72,50 @@ EOF
 
 ## Read operation
 
+Read(Get) operation get a measure's schema.
+
+
+### Examples
+`bydbctl` is the command line tool to read a measure in this example.
+```shell
+$ bydbctl get -g sw_metric -n service_cpm_minute
+```
+
 ## Update operation
+Update operation update a measure's schema.
+
+### Examples
+
+`bydbctl` is the command line tool to update a measure in this example.
+```shell
+$ bydbctl measure create -f - <<EOF
+metadata:
+  name: service_cpm_minute
+  group: sw_metric
+tagFamilies:
+  - name: searchable
+    tags: 
+      - name: trace_id
+        type: TAG_TYPE_STRING
+EOF
+```
 
 ## Delete operation
+Delete operation delete a measure's schema.
+### Examples
+`bydbctl` is the command line tool to delete a measure in this example.
+```shell
+$ bydbctl delete -g sw_metric -n service_cpm_minute
+```
+
+## List operation
+List operation list all measures' schema in a group.
+### Examples
+`bydbctl` is the command line tool to list all the measures in a group in this example.
+```shell
+$ bydbctl measure list -g sw_metric
+```
 
 ## API Reference
 
-[MeasureService v1](../../api-reference.md#measureservice)
+[MeasureService v1](../../api-reference.md#MeasureService)
