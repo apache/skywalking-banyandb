@@ -21,7 +21,6 @@ import (
 	"container/heap"
 
 	"github.com/emirpasic/gods/utils"
-	"github.com/pkg/errors"
 )
 
 var _ heap.Interface = (*DedupPriorityQueue)(nil)
@@ -48,20 +47,6 @@ func NewPriorityQueue(comparator utils.Comparator, allowDuplicates bool) *DedupP
 		cache:           make(map[Element]struct{}),
 		allowDuplicates: allowDuplicates,
 	}
-}
-
-func (pq *DedupPriorityQueue) initCache() error {
-	if pq.allowDuplicates || len(pq.Items) == 0 {
-		return nil
-	}
-	for _, elem := range pq.Items {
-		if _, ok := pq.cache[elem]; !ok {
-			pq.cache[elem] = struct{}{}
-		} else {
-			return errors.New("duplicated item is not allowed")
-		}
-	}
-	return nil
 }
 
 // Len returns the DedupPriorityQueue length.
