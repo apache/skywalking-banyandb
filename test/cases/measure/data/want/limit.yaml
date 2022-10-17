@@ -24,7 +24,7 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "5"
+        value: "9"
   tagFamilies:
   - name: default
     tags:
@@ -32,7 +32,7 @@ dataPoints:
       value:
         str:
           value: entity_2
-  timestamp: "2022-10-13T14:13:50.440Z"
+  timestamp: "2022-10-17T12:57:03.444Z"
 - fields:
   - name: total
     value:
@@ -41,7 +41,7 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "1"
+        value: "3"
   tagFamilies:
   - name: default
     tags:
@@ -49,4 +49,4 @@ dataPoints:
       value:
         str:
           value: entity_2
-  timestamp: "2022-10-13T14:14:49.440Z"
+  timestamp: "2022-10-17T12:58:02.444Z"
