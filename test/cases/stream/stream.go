@@ -23,6 +23,7 @@ import (
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -32,12 +33,18 @@ import (
 var (
 	// SharedContext is the parallel execution context
 	SharedContext helpers.SharedContext
-	verify        = func(args helpers.Args) {
-		stream_test_data.VerifyFn(SharedContext, args)
+	verify        = func(innerGm gm.Gomega, args helpers.Args) {
+		gm.Eventually(func(innerGm gm.Gomega) {
+			stream_test_data.VerifyFn(innerGm, SharedContext, args)
+		})
 	}
 )
 
-var _ = g.DescribeTable("Scanning Streams", verify,
+var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
+	gm.Eventually(func(innerGm gm.Gomega) {
+		verify(innerGm, args)
+	}).Should(gm.Succeed())
+},
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
@@ -55,6 +62,8 @@ var _ = g.DescribeTable("Scanning Streams", verify,
 	g.Entry("numeric local index: less and eq", helpers.Args{Input: "less_eq", Duration: 1 * time.Hour}),
 	g.Entry("logical expression", helpers.Args{Input: "logical", Duration: 1 * time.Hour}),
 	g.Entry("having", helpers.Args{Input: "having", Duration: 1 * time.Hour}),
+	g.Entry("having non indexed", helpers.Args{Input: "having_non_indexed", Duration: 1 * time.Hour}),
+	g.Entry("having non indexed array", helpers.Args{Input: "having_non_indexed_arr", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
 	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 )

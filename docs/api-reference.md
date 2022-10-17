@@ -671,7 +671,7 @@ LogicalExpression supports logical operation
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logial operation |
+| op | [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp) |  | op is a logical operation |
 | left | [Criteria](#banyandb-model-v1-Criteria) |  |  |
 | right | [Criteria](#banyandb-model-v1-Criteria) |  |  |
 
@@ -1026,8 +1026,9 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | field_name | [string](#string) |  | field_name is the name of field used for ranking |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields ASC: bottomN DESC: topN UNSPECIFIED: topN &#43; bottomN |
 | group_by_tag_names | [string](#string) | repeated | group_by_tag_names groups data points into statistical counters |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) | repeated | criteria select partial data points from measure |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria select partial data points from measure |
 | counters_number | [int32](#int32) |  | counters_number sets the number of counters to be tracked. The default value is 1000 |
+| lru_size | [int32](#int32) |  | lru_size defines how much entry is allowed to be maintained in the memory |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 
 
@@ -2320,9 +2321,9 @@ QueryRequest is the request contract for query.
 | field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
 | group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
 | agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
-| top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specificed, top sorts the dataset based on order_by&#39;s output |
-| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is sepcificed, offset processes the dataset based on top&#39;s output |
-| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is sepcificed, limit processes the dataset based on top&#39;s output |
+| top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specified, top sorts the dataset based on order_by&#39;s output |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is specified, offset processes the dataset based on top&#39;s output |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 
 
@@ -2545,7 +2546,7 @@ TopNRequest is the request contract for query.
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
 | top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
 | agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range TODO validate enum defined_only |
-| conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. |
+| conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
 
 

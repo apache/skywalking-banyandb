@@ -31,13 +31,16 @@ import (
 var (
 	ErrTagNotDefined              = errors.New("tag is not defined")
 	ErrFieldNotDefined            = errors.New("field is not defined")
-	ErrInvalidConditionType       = errors.New("invalid pair type")
+	ErrUnsupportedConditionOp     = errors.New("unsupported condition operation")
+	ErrUnsupportedConditionValue  = errors.New("unsupported condition value type")
+	ErrInvalidCriteriaType        = errors.New("invalid criteria type")
 	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
 	ErrIndexNotDefined            = errors.New("index is not define for the tag")
 	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
-)
+	ErrInvalidData                = errors.New("data is invalid")
 
-var ErrInvalidData = errors.New("data is invalid")
+	nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+)
 
 type (
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
@@ -76,7 +79,11 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 				len(parsedTagFamily.Tags), familyName, len(refs))
 		}
 		for j, ref := range refs {
-			tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
+			if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
+				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
+			} else {
+				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+			}
 		}
 
 		tagFamily[i] = &modelv1.TagFamily{

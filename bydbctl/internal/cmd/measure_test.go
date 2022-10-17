@@ -165,24 +165,27 @@ var _ = Describe("Measure Data Query", func() {
 	var addr, grpcAddr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
+	var now time.Time
+	var nowStr, endStr string
+	var interval time.Duration
 	BeforeEach(func() {
+		now = timestamp.NowMilli()
+		nowStr = now.Format(RFC3339)
+		interval = 1 * time.Millisecond
+		endStr = now.Add(1 * time.Hour).Format(RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
-		time.Sleep(1 * time.Second)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})
 
-	It("query measure data", func() {
+	It("query all measure data", func() {
 		conn, err := grpclib.Dial(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		now := timestamp.NowMilli()
-		interval := 500 * time.Millisecond
-		end := now.Add(1 * time.Hour)
 		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
 		rootCmd.SetArgs([]string{"measure", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
@@ -197,7 +200,7 @@ tagProjection:
   tagFamilies:
     - name: default
       tags:
-        - id`, now.Format(RFC3339), end.Format(RFC3339))))
+        - id`, nowStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -213,6 +216,52 @@ tagProjection:
 			return len(resp.DataPoints)
 		}).Should(Equal(6))
 	})
+
+	DescribeTable("query measure data with time range flags", func(timeArgs ...string) {
+		conn, err := grpclib.Dial(
+			grpcAddr,
+			grpclib.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		now := timestamp.NowMilli()
+		interval := -time.Minute
+		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
+		args := []string{"measure", "query", "-a", addr}
+		args = append(args, timeArgs...)
+		args = append(args, "-f", "-")
+		rootCmd.SetArgs(args)
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+metadata:
+ name: service_cpm_minute
+ group: sw_metric
+tagProjection:
+ tagFamilies:
+   - name: default
+     tags:
+       - id`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(func() int {
+			out := issue()
+			resp := new(measure_v1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.DataPoints)
+		}).Should(Equal(6))
+	},
+		Entry("relative start", "--start", "-30m"),
+		Entry("relative end", "--end", "0m"),
+		Entry("absolute start", "--start", nowStr),
+		Entry("absolute end", "--end", endStr),
+		Entry("default"),
+		Entry("all relative", "--start", "-30m", "--end", "0m"),
+		Entry("all absolute", "--start", nowStr, "--end", endStr),
+	)
 
 	AfterEach(func() {
 		deferFunc()

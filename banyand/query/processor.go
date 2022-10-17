@@ -47,6 +47,7 @@ var (
 	_ Executor            = (*queryService)(nil)
 	_ bus.MessageListener = (*streamQueryProcessor)(nil)
 	_ bus.MessageListener = (*measureQueryProcessor)(nil)
+	_ bus.MessageListener = (*topNQueryProcessor)(nil)
 )
 
 type queryService struct {
@@ -56,6 +57,7 @@ type queryService struct {
 	pipeline    queue.Queue
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
+	tqp         *topNQueryProcessor
 }
 
 type streamQueryProcessor struct {
@@ -178,8 +180,9 @@ func (q *queryService) Name() string {
 
 func (q *queryService) PreRun() error {
 	q.log = logger.GetLogger(moduleName)
-	var err error
-	err = multierr.Append(err, q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp))
-	err = multierr.Append(err, q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp))
-	return err
+	return multierr.Combine(
+		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
+		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
+		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
+	)
 }

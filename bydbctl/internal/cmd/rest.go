@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -38,8 +39,18 @@ import (
 
 const (
 	// RFC3339 refers to https://www.rfc-editor.org/rfc/rfc3339
-	RFC3339   = "2006-01-02T15:04:05Z07:00"
-	timeRange = 30 * time.Minute
+	RFC3339        = "2006-01-02T15:04:05Z07:00"
+	timeRange      = 30 * time.Minute
+	timeRangeUsage = `"start" and "end" specify a time range during which the query is preformed,
+		they can be absolute time like "2006-01-02T15:04:05Z07:00"(https://www.rfc-editor.org/rfc/rfc3339), 
+		or relative time (to the current time) like "-30m", "30m". 
+		They are both optional and their default values follow the rules below: 
+		1. when "start" and "end" are both absent, "start = now - 30 minutes" and "end = now", 
+		namely past 30 minutes; 
+		2. when "start" is absent and "end" is present, this command calculates "start" (minus 30 units), 
+		e.g. "end = 2022-11-09T12:34:00Z", so "start = end - 30 minutes = 2022-11-09T12:04:00Z"; 
+		3. when "start" is present and "end" is absent, this command calculates "end" (plus 30 units), 
+		e.g. "start = 2022-11-09T12:04:00Z", so "end = start + 30 minutes = 2022-11-09T12:34:00Z".`
 )
 
 var errMalformedInput = errors.New("malformed input")
@@ -47,6 +58,9 @@ var errMalformedInput = errors.New("malformed input")
 type reqBody struct {
 	name       string
 	group      string
+	id         string
+	ids        []string
+	tags       []string
 	parsedData map[string]interface{}
 	data       []byte
 }
@@ -54,6 +68,20 @@ type reqBody struct {
 type request struct {
 	req *resty.Request
 	reqBody
+}
+
+func (r request) ids() string {
+	if len(r.reqBody.ids) == 0 {
+		return "*"
+	}
+	return strings.Join(r.reqBody.ids, ",")
+}
+
+func (r request) tags() string {
+	if len(r.reqBody.tags) == 0 {
+		return "*"
+	}
+	return strings.Join(r.reqBody.tags, ",")
 }
 
 type reqFn func(request request) (*resty.Response, error)
@@ -118,6 +146,9 @@ func parseFromFlags() (requests []reqBody, err error) {
 		return nil, err
 	}
 	requests[0].name = name
+	requests[0].id = id
+	requests[0].ids = ids
+	requests[0].tags = tags
 	return requests, nil
 }
 
@@ -138,7 +169,7 @@ func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err er
 		if startTS, err = parseTime(start); err != nil {
 			return nil, err
 		}
-		if endTS, err = parseTime(start); err != nil {
+		if endTS, err = parseTime(end); err != nil {
 			return nil, err
 		}
 	} else if start != "" {
@@ -154,26 +185,29 @@ func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err er
 	}
 	s := startTS.Format(RFC3339)
 	e := endTS.Format(RFC3339)
-	if requests, err = parseNameAndGroupFromYAML(reader); err != nil {
+	var rawRequests []reqBody
+	if rawRequests, err = parseNameAndGroupFromYAML(reader); err != nil {
 		return nil, err
 	}
-	for _, rb := range requests {
+	for _, rb := range rawRequests {
 		if rb.parsedData["timeRange"] != nil {
+			requests = append(requests, rb)
 			continue
 		}
 		timeRange := make(map[string]interface{})
-		timeRange["start"] = s
+		timeRange["begin"] = s
 		timeRange["end"] = e
 		rb.parsedData["timeRange"] = timeRange
 		rb.data, err = json.Marshal(rb.parsedData)
 		if err != nil {
 			return nil, err
 		}
+		requests = append(requests, rb)
 	}
 	return requests, nil
 }
 
-func parseTime(timestamp string) (time.Time, error) { // if timeStamp is duration(relative time), return (true, the uint of timestamp, nil).
+func parseTime(timestamp string) (time.Time, error) {
 	if len(timestamp) < 1 {
 		return time.Time{}, errors.New("time is empty")
 	}
@@ -186,6 +220,60 @@ func parseTime(timestamp string) (time.Time, error) { // if timeStamp is duratio
 		return time.Time{}, errors.WithMessagef(multierr.Combine(errAbsoluteTime, err), "time %s is neither absolute time nor relative time", timestamp)
 	}
 	return time.Now().Add(duration), nil
+}
+
+func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) {
+	contents, err := file.Read(filePath, reader)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range contents {
+		j, err := yaml.YAMLToJSON(c)
+		if err != nil {
+			return nil, err
+		}
+		var data map[string]interface{}
+		err = json.Unmarshal(j, &data)
+		if err != nil {
+			return nil, err
+		}
+		metadata, ok := data["metadata"].(map[string]interface{})
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata")
+		}
+		container, ok := metadata["container"].(map[string]interface{})
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: container")
+		}
+		group, ok := container["group"].(string)
+		if !ok {
+			group = viper.GetString("group")
+			if group == "" {
+				return nil, errors.New("please specify a group through the input json or the config file")
+			}
+			metadata["group"] = group
+		}
+		name, ok = container["name"].(string)
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
+		}
+		id, ok = metadata["id"].(string)
+		if !ok {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
+		}
+		j, err = json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, reqBody{
+			name:       name,
+			group:      group,
+			id:         id,
+			data:       j,
+			parsedData: data,
+		})
+	}
+	return requests, nil
 }
 
 type printer func(index int, reqBody reqBody, body []byte) error

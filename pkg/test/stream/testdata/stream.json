@@ -80,6 +80,10 @@
         {
           "name": "extended_tags",
           "type": "TAG_TYPE_STRING_ARRAY"
+        },
+        {
+          "name": "non_indexed_tags",
+          "type": "TAG_TYPE_STRING_ARRAY"
         }
       ]
     }

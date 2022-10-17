@@ -85,7 +85,7 @@ message LogicalExpression {
         LOGICAL_OP_AND = 1;
         LOGICAL_OP_OR = 2; 
     }
-    // op is a logial operation
+    // op is a logical operation
     LogicalOp op = 1;
     Criteria left = 2;
     Criteria right = 3;

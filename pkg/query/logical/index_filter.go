@@ -96,7 +96,7 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		}
 
 	}
-	return nil, nil, ErrInvalidConditionType
+	return nil, nil, ErrInvalidCriteriaType
 }
 
 func parseCondition(cond *model_v1.Condition, indexRule *database_v1.IndexRule, expr LiteralExpr, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
@@ -140,7 +140,7 @@ func parseCondition(cond *model_v1.Condition, indexRule *database_v1.IndexRule, 
 		}
 		return newNot(indexRule, and), []tsdb.Entity{entity}, nil
 	}
-	return nil, nil, ErrInvalidConditionType
+	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
 func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *model_v1.Condition) (LiteralExpr, tsdb.Entity, error) {
@@ -148,7 +148,7 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 	copy(parsedEntity, entity)
 	entityIdx, ok := entityDict[cond.Name]
 	if ok && cond.Op != model_v1.Condition_BINARY_OP_EQ {
-		return nil, nil, errors.WithMessagef(ErrInvalidConditionType, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
+		return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
 	}
 	switch v := cond.Value.Value.(type) {
 	case *model_v1.TagValue_Str:
@@ -180,8 +180,10 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil, nil
+	case *model_v1.TagValue_Null:
+		return nullLiteralExpr, nil, nil
 	}
-	return nil, nil, ErrInvalidConditionType
+	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionValue, "index filter parses %v", cond)
 }
 
 func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
@@ -580,7 +582,7 @@ func (bl bypassList) Max() (common.ItemID, error) {
 }
 
 func (bl bypassList) Len() int {
-	panic("not invoked")
+	return 0
 }
 
 func (bl bypassList) Iterator() posting.Iterator {

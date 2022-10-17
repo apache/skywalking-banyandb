@@ -178,13 +178,6 @@ func (s *Server) Validate() error {
 }
 
 func (s *Server) Serve() run.StopNotify {
-	lis, err := net.Listen("tcp", s.addr)
-	if err != nil {
-		s.log.Fatal().Err(err).Msg("Failed to listen")
-	}
-	if errValidate := s.Validate(); errValidate != nil {
-		s.log.Fatal().Err(errValidate).Msg("Failed to validate data")
-	}
 	var opts []grpclib.ServerOption
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
@@ -208,8 +201,17 @@ func (s *Server) Serve() run.StopNotify {
 
 	s.stopCh = make(chan struct{})
 	go func() {
+		lis, err := net.Listen("tcp", s.addr)
+		if err != nil {
+			s.log.Error().Err(err).Msg("Failed to listen")
+			close(s.stopCh)
+			return
+		}
 		s.log.Info().Str("addr", s.addr).Msg("Listening to")
-		_ = s.ser.Serve(lis)
+		err = s.ser.Serve(lis)
+		if err != nil {
+			s.log.Error().Err(err).Msg("server is interrupted")
+		}
 		close(s.stopCh)
 	}()
 	return s.stopCh

@@ -32,7 +32,7 @@ dataPoints:
     - name: value
       value:
         int:
-          value: "1"
+          value: "10"
     tagFamilies:
     - name: default
       tags:
