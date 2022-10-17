@@ -201,7 +201,9 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 		request.GetTimeRange().GetEnd().AsTime()),
 	)
 	defer func(seriesSpan tsdb.SeriesSpan) {
-		_ = seriesSpan.Close()
+		if seriesSpan != nil {
+			_ = seriesSpan.Close()
+		}
 	}(seriesSpan)
 	if err != nil {
 		return nil, err
