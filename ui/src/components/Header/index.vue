@@ -33,7 +33,7 @@ const isCollapse = computed(() => {
 const showButton = computed(() => {
     return header.showButton
 })
-const userImg = ref('../../../../../assets/banyandb_small.jpg')
+const userImg = ref('src/assets/banyandb_small.jpg')
 const handleSelect = (e) => {
     e === '/database'
         ? header.changeShowButton(true)
