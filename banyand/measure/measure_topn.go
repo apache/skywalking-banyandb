@@ -247,15 +247,20 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
 		return nil, 0, errors.New("no enough tag values for the entity")
 	}
-	entity := make(tsdb.Entity, 1+1+len(t.topNSchema.GetGroupByTagNames()))
+	// entity prefix
+	// 1) source measure Name + topN aggregation Name
+	// 2) sort direction
+	// 3) rank number
+	entity := make(tsdb.Entity, 1+1+1+len(t.topNSchema.GetGroupByTagNames()))
 	// entity prefix
 	entity[0] = []byte(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
-	entity[1] = convert.Int64ToBytes(int64(rankNum))
+	entity[1] = convert.Int64ToBytes(int64(t.sortDirection.Number()))
+	entity[2] = convert.Int64ToBytes(int64(rankNum))
 	// measureID as sharding key
 	for idx, tagVal := range tagValues {
 		var innerErr error
-		entity[idx+2], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
+		entity[idx+3], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
 		if innerErr != nil {
 			return nil, 0, innerErr
 		}

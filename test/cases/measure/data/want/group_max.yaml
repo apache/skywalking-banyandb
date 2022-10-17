@@ -16,39 +16,39 @@
 # under the License.
 
 dataPoints:
-  - fields:
-    - name: value
+- fields:
+  - name: value
+    value:
+      int:
+        value: "12"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "5"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_1
-  - fields:
-    - name: value
+        str:
+          value: entity_1
+- fields:
+  - name: value
+    value:
+      int:
+        value: "10"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "10"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_2
-  - fields:
-    - name: value
+        str:
+          value: entity_2
+- fields:
+  - name: value
+    value:
+      int:
+        value: "11"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
       value:
-        int:
-          value: "5"
-    tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_3
+        str:
+          value: entity_3

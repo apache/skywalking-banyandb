@@ -116,43 +116,16 @@ func (pq *DedupPriorityQueue) Peek() Element {
 	return nil
 }
 
-// Slice returns a sliced DedupPriorityQueue using the given bounds.
-func (pq *DedupPriorityQueue) Slice(start, end int) []Element {
-	return pq.Items[start:end]
+func (pq *DedupPriorityQueue) ReplaceLowest(newLowest Element) {
+	pq.Items[0] = newLowest
+	heap.Fix(pq, 0)
 }
 
 func (pq *DedupPriorityQueue) Values() []Element {
 	values := make([]Element, pq.Len())
-	for _, elem := range pq.Items {
-		values[elem.GetIndex()] = elem
+	for pq.Len() > 0 {
+		item := heap.Pop(pq).(Element)
+		values[pq.Len()] = item
 	}
 	return values
-}
-
-func (pq *DedupPriorityQueue) Left() Element {
-	if pq.Len() == 0 {
-		return nil
-	}
-	return pq.Items[0]
-}
-
-func (pq *DedupPriorityQueue) Right() Element {
-	if pq.Len() == 0 {
-		return nil
-	}
-	return pq.Items[pq.Len()-1]
-}
-
-func (pq *DedupPriorityQueue) WithNewItems(items []Element) (*DedupPriorityQueue, error) {
-	newPq := &DedupPriorityQueue{
-		Items:           items,
-		cache:           make(map[Element]struct{}),
-		allowDuplicates: pq.allowDuplicates,
-		comparator:      pq.comparator,
-	}
-	err := newPq.initCache()
-	if err != nil {
-		return nil, err
-	}
-	return newPq, nil
 }

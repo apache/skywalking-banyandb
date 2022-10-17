@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"math"
 	"time"
 
 	"github.com/pkg/errors"
@@ -88,7 +87,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	aggregator := createTopNPostAggregator(request.GetTopN(),
 		request.GetAgg(), request.GetFieldValueSort())
-	entity, err := locateEntity(topNSchema, request.GetConditions())
+	entity, err := locateEntity(topNSchema, request.GetFieldValueSort(), request.GetConditions())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
@@ -134,14 +133,17 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func locateEntity(topNSchema *databasev1.TopNAggregation, conditions []*modelv1.Condition) (tsdb.Entity, error) {
+func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.Sort, conditions []*modelv1.Condition) (tsdb.Entity, error) {
 	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, 1+len(topNSchema.GetGroupByTagNames()))
-	entity[0] = tsdb.AnyEntry
+	entity := make([]tsdb.Entry, 1+1+len(topNSchema.GetGroupByTagNames()))
+	// sortDirection
+	entity[0] = convert.Int64ToBytes(int64(sortDirection.Number()))
+	// rankNumber
+	entity[1] = tsdb.AnyEntry
 	for idx, tagName := range topNSchema.GetGroupByTagNames() {
-		entityMap[tagName] = idx + 1
+		entityMap[tagName] = idx + 2
 		// fill AnyEntry by default
-		entity[idx+1] = tsdb.AnyEntry
+		entity[idx+2] = tsdb.AnyEntry
 	}
 	for _, pairQuery := range conditions {
 		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
@@ -258,11 +260,14 @@ func (aggr postAggregationProcessor) Len() int {
 	return len(aggr.items)
 }
 
+// Less reports whether min/max heap has to be built.
+// For DESC, a min heap has to be built,
+// while for ASC, a max heap has to be built.
 func (aggr postAggregationProcessor) Less(i, j int) bool {
 	if aggr.sort == modelv1.Sort_SORT_DESC {
-		return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
+		return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
 	}
-	return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
+	return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
 }
 
 func (aggr *postAggregationProcessor) Swap(i, j int) {
@@ -298,6 +303,7 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 		heap.Fix(aggr, item.index)
 		return nil
 	}
+
 	aggrFunc, err := aggregation.NewInt64Func(aggr.aggrFunc)
 	if err != nil {
 		return err
@@ -307,24 +313,40 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 		int64Func: aggrFunc,
 	}
 	item.int64Func.In(val)
-	aggr.cache[key] = item
-	heap.Push(aggr, item)
+
+	if aggr.Len() < int(aggr.topN) {
+		aggr.cache[key] = item
+		heap.Push(aggr, item)
+	} else {
+		if lowest := aggr.items[0]; lowest != nil {
+			if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < val {
+				aggr.cache[key] = item
+				aggr.items[0] = item
+				heap.Fix(aggr, 0)
+			} else if aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > val {
+				aggr.cache[key] = item
+				aggr.items[0] = item
+				heap.Fix(aggr, 0)
+			}
+		}
+	}
+
 	return nil
 }
 
 func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
-	itemLen := int(math.Min(float64(aggr.topN), float64(aggr.Len())))
-	topNItems := make([]*measurev1.TopNList_Item, 0, itemLen)
+	topNItems := make([]*measurev1.TopNList_Item, aggr.Len())
 
-	for _, item := range aggr.items[0:itemLen] {
-		topNItems = append(topNItems, &measurev1.TopNList_Item{
+	for aggr.Len() > 0 {
+		item := heap.Pop(aggr).(*aggregatorItem)
+		topNItems[aggr.Len()] = &measurev1.TopNList_Item{
 			Name: item.key,
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
 					Int: &modelv1.Int{Value: item.int64Func.Val()},
 				},
 			},
-		})
+		}
 	}
 	return []*measurev1.TopNList{
 		{
@@ -360,8 +382,8 @@ func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.Len())
-		for _, elem := range timeline.Values() {
-			items[elem.GetIndex()] = &measurev1.TopNList_Item{
+		for idx, elem := range timeline.Values() {
+			items[idx] = &measurev1.TopNList_Item{
 				Name: elem.(*nonAggregatorItem).key,
 				Value: &modelv1.FieldValue{
 					Value: &modelv1.FieldValue_Int{
@@ -393,21 +415,11 @@ func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMi
 		if timeline.Len() < int(naggr.topN) {
 			heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
 		} else {
-			if right := timeline.Right(); right != nil {
-				if naggr.sort == modelv1.Sort_SORT_DESC && right.(*nonAggregatorItem).val < val {
-					heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
-					newTimeline, err := timeline.WithNewItems(timeline.Slice(0, int(naggr.topN)))
-					if err != nil {
-						return err
-					}
-					naggr.timelines[timestampMillis] = newTimeline
-				} else if naggr.sort != modelv1.Sort_SORT_DESC && right.(*nonAggregatorItem).val > val {
-					heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
-					newTimeline, err := timeline.WithNewItems(timeline.Slice(0, int(naggr.topN)))
-					if err != nil {
-						return err
-					}
-					naggr.timelines[timestampMillis] = newTimeline
+			if lowest := timeline.Peek(); lowest != nil {
+				if naggr.sort == modelv1.Sort_SORT_DESC && lowest.(*nonAggregatorItem).val < val {
+					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key})
+				} else if naggr.sort != modelv1.Sort_SORT_DESC && lowest.(*nonAggregatorItem).val > val {
+					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key})
 				}
 			}
 		}
@@ -417,19 +429,19 @@ func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMi
 	timeline := flow.NewPriorityQueue(func(a, b interface{}) int {
 		if naggr.sort == modelv1.Sort_SORT_DESC {
 			if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
-				return 1
+				return -1
 			} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
 				return 0
 			} else {
-				return -1
+				return 1
 			}
 		}
 		if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
-			return -1
+			return 1
 		} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
 			return 0
 		} else {
-			return 1
+			return -1
 		}
 	}, false)
 	naggr.timelines[timestampMillis] = timeline
