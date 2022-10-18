@@ -22,59 +22,63 @@ import SecondNavigationComponent from './components/SecondNavigation/index.vue'
 import TagNavigationComponent from './components/TagNavigation/index.vue'
 import DrawerRightComponent from './components/DrawerRight/index.vue'
 import DataTableComponent from './components/DataTable/index.vue'
+import { reactive } from '@vue/reactivity'
 
 // data
-let showDrawer = false
+let data = reactive({
+    showDrawer: false,
+    fileData: null
+})
 let navWidth = '0px'
-let fileData = null
 
 // methods
 function openDetail() {
-  showDrawer = !showDrawer
+    data.showDrawer = !data.showDrawer
 }
-function drawerRight(data) {
-  fileData = data
+function drawerRight(dataList) {
+    data.fileData = dataList
 }
 function closeDetail() {
-  showDrawer = false
+    data.showDrawer = false
 }
 
 </script>
 
 <template>
-  <div class="flex" style="height:100%; width:100%;">
-    <div :style="showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
-      <el-card style="max-height: 97.5%;">
-        <div style="width: 100%; height: 40px;">
-          <tag-navigation-component></tag-navigation-component>
+    <div class="flex" style="height:100%; width:100%;">
+        <div :style="data.showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
+            <el-card style="max-height: 97.5%;">
+                <div style="width: 100%; height: 40px;">
+                    <tag-navigation-component></tag-navigation-component>
+                </div>
+                <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
+                <second-navigation-component @openDetail="openDetail" :showDrawer="data.showDrawer" style="width: 100%">
+                </second-navigation-component>
+                <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
+            </el-card>
         </div>
-        <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
-        <second-navigation-component @openDetail="openDetail" :showDrawer="showDrawer"></second-navigation-component>
-        <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
-      </el-card>
+        <div class="bd-top bd-left drawer-right" v-if="data.showDrawer">
+            <drawer-right-component :fileData="data.fileData" @closeDetail="closeDetail"></drawer-right-component>
+        </div>
     </div>
-    <div class="bd-top bd-left drawer-right" v-if="showDrawer">
-      <drawer-right-component :fileData="fileData" @closeDetail="closeDetail"></drawer-right-component>
-    </div>
-  </div>
 </template>
 
 <style lang="scss">
 .el-card {
-  margin: 10px;
-  padding: 0;
-  height: 100%;
+    margin: 10px;
+    padding: 0;
+    height: 100%;
 }
 
 .el-card__body {
-  padding: 0;
+    padding: 0;
 }
 
 .drawer-right {
-  -webkit-animation: rtl-drawer-in .3s 1ms;
-  animation: rtl-drawer-in .3s 1ms;
-  width: 20%;
-  height: calc(100% - 5px);
-  background-color: var(--color-background);
+    -webkit-animation: rtl-drawer-in .3s 1ms;
+    animation: rtl-drawer-in .3s 1ms;
+    width: 20%;
+    height: calc(100% - 5px);
+    background-color: var(--color-background);
 }
 </style>
