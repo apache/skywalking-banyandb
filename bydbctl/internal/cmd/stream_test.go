@@ -190,7 +190,7 @@ var _ = Describe("Stream Data Query", func() {
 		cmd.RootCmdFlags(rootCmd)
 	})
 
-	It("query stream data", func() {
+	It("query stream all data", func() {
 		conn, err := grpclib.Dial(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -226,6 +226,7 @@ projection:
 			return len(resp.Elements)
 		}).Should(Equal(5))
 	})
+
 	DescribeTable("query stream data with time range flags", func(timeArgs ...string) {
 		conn, err := grpclib.Dial(
 			grpcAddr,
@@ -233,7 +234,7 @@ projection:
 		)
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
-		interval := 500 * time.Millisecond
+		interval := -1 * time.Millisecond
 		cases_stream_data.Write(conn, "data.json", now, interval)
 		args := []string{"stream", "query", "-a", addr}
 		args = append(args, timeArgs...)

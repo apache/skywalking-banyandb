@@ -14,9 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package aggregation
 
 import (
+	"math"
+
 	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -37,9 +40,13 @@ func NewInt64Func(af modelv1.AggregationFunction) (Int64Func, error) {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
 		return &countInt64Func{}, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
-		return &maxInt64Func{}, nil
+		return &maxInt64Func{
+			val: math.MinInt64,
+		}, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
-		return &minInt64Func{}, nil
+		return &minInt64Func{
+			val: math.MaxInt64,
+		}, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
 		return &sumInt64Func{}, nil
 	}

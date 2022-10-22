@@ -20,38 +20,51 @@
 <script setup>
 import stores from '@/stores/index'
 import { getStreamOrMeasure, getTableList } from '@/api/index'
-import { computed } from '@vue/runtime-core'
+import { computed, reactive } from '@vue/runtime-core'
 import { getCurrentInstance } from "@vue/runtime-core"
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const { proxy } = getCurrentInstance()
+const $loadingClose = proxy.$loadingClose
+const $loadingCreate = proxy.$loadingCreate
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
+
 const { tags } = stores()
 const currentMenu = computed(() => {
     return tags.currentMenu
 })
 const type = computed(() => {
-    return currentMenu.metadata.type
+    return tags.currentMenu && tags.currentMenu.metadata ? tags.currentMenu.metadata.type : ''
 })
 const group = computed(() => {
-    return currentMenu.metadata.group
+    return tags.currentMenu && tags.currentMenu.metadata ? tags.currentMenu.metadata.group : ''
 })
 const name = computed(() => {
-    return currentMenu.metadata.name
+    return tags.currentMenu && tags.currentMenu.metadata ? tags.currentMenu.metadata.name : ''
 })
 const multipleTable = ref()
-
 //data
-let total = 25
-let queryInfo = {
+let data = reactive({
+    loading: false,
+    total: 25,
+    queryInfo: {
+        pagenum: 1,
+        pagesize: 6
+    },
+    tableTags: [],
+    tableData: [],
+})
+// let total = 25
+/* let queryInfo = {
     pagenum: 1,
     pagesize: 6
-}
-let tableTags = []
-let tableData = []
+} */
+// let tableTags = []
+// let tableData = []
 let multipleSelection = []
 let checkAllFlag = false
 let fileData = {}
-let loading = false
+// let loading = false
 let index = 0
 let param = {
     metadata: {
@@ -78,10 +91,10 @@ let param = {
     }
 }
 
-watch(() => currentMenu, () => {
+watch(() => tags.currentMenu, () => {
     initData()
 })
-watch(() => tableTags, () => {
+watch(() => data.tableTags, () => {
     let tagFamily = fileData.tagFamilies[index]
     let tagsList = []
     tagFamily.tags.forEach((item) => {
@@ -92,23 +105,23 @@ watch(() => tableTags, () => {
     param.criteria[0].tagFamilyName = tagFamily.name
 })
 
-$bus.$on('checkAll', () => {
+$bus.on('checkAll', () => {
     if (!checkAllFlag) {
-        tableData.forEach(row => {
+        data.tableData.forEach(row => {
             multipleTable.toggleRowSelection(row)
         })
         checkAllFlag = true
     }
 })
-$bus.$on('checkNone', () => {
+$bus.on('checkNone', () => {
     multipleTable.clearSelection()
 })
-$bus.$on('changeTagFamilies', (i) => {
+$bus.on('changeTagFamilies', (i) => {
     index = i
-    tableTags = fileData.tagFamilies[i].tags
+    data.tableTags = fileData.tagFamilies[i].tags
     getTable()
 })
-$bus.$on('refresh', () => {
+$bus.on('refresh', () => {
     initData()
 })
 
@@ -119,40 +132,43 @@ const emit = defineEmits(['drawerRight'])
  * init data
  */
 function initData() {
-    this.$loading.create()
-    getStreamOrMeasure(type, group, name)
+    if (!currentMenu.value) {
+        return
+    }
+    $loadingCreate()
+    getStreamOrMeasure(type.value, group.value, name.value)
         .then((res) => {
             if (res.status == 200) {
-                fileData = res.data[type]
+                fileData = res.data[type.value]
                 index = 0
-                tableTags = fileData.tagFamilies[0].tags
+                data.tableTags = fileData.tagFamilies[0].tags
                 emit('drawerRight', fileData)
                 setTagFamily()
                 getTable()
             }
         })
         .finally(() => {
-            this.$loading.close()
+            $loadingClose()
         })
 }
 /**
  * get table data
  */
 function getTable() {
-    loading = true
-    let param = param
-    param.offset = queryInfo.pagenum
-    param.limit = queryInfo.pagesize
-    param.metadata = fileData.metadata
-    getTableList(param)
+    //data.loading = true
+    let paramList = param
+    paramList.offset = data.queryInfo.pagenum
+    paramList.limit = data.queryInfo.pagesize
+    paramList.metadata = fileData.metadata
+    /* getTableList(paramList)
         .then((res) => {
             if (res.status == 200) {
-                tableData = res.data.elements
+                data.tableData = res.data.elements
             }
         })
         .finally(() => {
-            loading = false
-        })
+            data.loading = false
+        }) */
 }
 /**
  * sort table data
@@ -168,33 +184,34 @@ function setTagFamily() {
     let tagOptions = tagFamilies.map((item, index) => {
         return { label: item.name, value: index }
     })
-    $bus.$emit('setOptions', tagOptions)
+    $bus.emit('setOptions', tagOptions)
 }
 function handleSelectionChange(val) {
     multipleSelection = val;
 }
 function handleSizeChange() { }
 function handleCurrentChange() { }
+initData()
 </script>
 
 <template>
     <div>
-        <el-table v-loading="loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe :data="tableData"
-            highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange" border
-            empty-text="No data yet">
+        <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
+            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe
+            :data="data.tableData" highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange"
+            border empty-text="No data yet">
             <el-table-column type="selection" width="55">
             </el-table-column>
             <el-table-column type="index" label="number" width="80">
             </el-table-column>
-            <el-table-column v-for="item in tableTags" sortable :sort-change="sortChange" :key="item.name"
+            <el-table-column v-for="item in data.tableTags" sortable :sort-change="sortChange" :key="item.name"
                 :label="item.name" :prop="item.name">
             </el-table-column>
         </el-table>
 
-        <el-pagination v-if="tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
-            @current-change="handleCurrentChange" :current-page="queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
-            :page-size="queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="total">
+        <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
+            @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
+            :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
         </el-pagination>
     </div>
 </template>

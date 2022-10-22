@@ -40,13 +40,20 @@ func NewExecutor(_ context.Context, streamService stream.Service, measureService
 		serviceRepo: serviceRepo,
 		pipeline:    pipeline,
 	}
+	// measure query processor
 	svc.mqp = &measureQueryProcessor{
 		measureService: measureService,
 		queryService:   svc,
 	}
+	// stream query processor
 	svc.sqp = &streamQueryProcessor{
 		streamService: streamService,
 		queryService:  svc,
+	}
+	// topN query processor
+	svc.tqp = &topNQueryProcessor{
+		measureService: measureService,
+		queryService:   svc,
 	}
 	return svc, nil
 }

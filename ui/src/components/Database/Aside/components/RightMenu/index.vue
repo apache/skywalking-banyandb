@@ -20,7 +20,6 @@
 <script setup>
 import RightMenuItem from './components/right-menu-item.vue'
 function handle() {
-    console.log(11111)
 }
 defineProps({
     rightMenuList: Array

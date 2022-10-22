@@ -30,10 +30,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	cases_measure "github.com/apache/skywalking-banyandb/test/cases/measure"
-	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
-	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
-	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	casesMeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
+	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	casesStream "github.com/apache/skywalking-banyandb/test/cases/stream"
+	casesStreamData "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	casesTopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
 func TestIntegrationColdQuery(t *testing.T) {
@@ -61,10 +62,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 	now = timestamp.NowMilli().Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
-	cases_stream_data.Write(conn, "data.json", now, interval)
-	cases_measure_data.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
-	cases_measure_data.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
-	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
+	casesStreamData.Write(conn, "data.json", now, interval)
+	interval = time.Minute
+	casesMeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
+	casesMeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
+	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
+	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(time.Second), interval)
 	Expect(conn.Close()).To(Succeed())
 	return []byte(addr)
 }, func(address []byte) {
@@ -74,11 +77,15 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		grpclib.WithBlock(),
 	)
-	cases_stream.SharedContext = helpers.SharedContext{
+	casesStream.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}
-	cases_measure.SharedContext = helpers.SharedContext{
+	casesMeasure.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   now,
+	}
+	casesTopn.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}

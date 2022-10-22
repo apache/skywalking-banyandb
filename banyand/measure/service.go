@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -54,12 +55,13 @@ type service struct {
 	root   string
 	dbOpts tsdb.DatabaseOpts
 
-	schemaRepo    schemaRepo
-	writeListener *writeCallback
-	l             *logger.Logger
-	metadata      metadata.Repo
-	pipeline      queue.Queue
-	repo          discovery.ServiceRepo
+	schemaRepo      schemaRepo
+	writeListener   bus.MessageListener
+	processListener bus.MessageListener
+	l               *logger.Logger
+	metadata        metadata.Repo
+	pipeline        queue.Queue
+	repo            discovery.ServiceRepo
 	// stop channel for the service
 	stopCh chan struct{}
 }
@@ -108,29 +110,36 @@ func (s *service) PreRun() error {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			continue
 		}
-		gp, err := s.schemaRepo.StoreGroup(g.Metadata)
-		if err != nil {
-			return err
+		gp, innerErr := s.schemaRepo.StoreGroup(g.Metadata)
+		if innerErr != nil {
+			return innerErr
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		schemas, err := s.metadata.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().Name})
+		allMeasureSchemas, innerErr := s.metadata.MeasureRegistry().
+			ListMeasure(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
 		cancel()
-		if err != nil {
-			return err
+		if innerErr != nil {
+			return innerErr
 		}
-		for _, sa := range schemas {
-			if _, innerErr := gp.StoreResource(sa); innerErr != nil {
+		for _, measureSchema := range allMeasureSchemas {
+			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
 				return innerErr
 			}
 		}
 	}
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
-
-	errWrite := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
-	if errWrite != nil {
-		return errWrite
+	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	if err != nil {
+		return err
 	}
+
+	s.processListener = setUpStreamingProcessCallback(s.l, &s.schemaRepo)
+	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.processListener)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -139,8 +148,9 @@ func (s *service) Serve() run.StopNotify {
 	// run a serial watcher
 	go s.schemaRepo.Watcher()
 
-	s.metadata.MeasureRegistry().RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule,
-		&s.schemaRepo)
+	s.metadata.MeasureRegistry().
+		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			&s.schemaRepo)
 
 	return s.stopCh
 }

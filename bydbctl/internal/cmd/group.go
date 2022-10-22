@@ -18,7 +18,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/go-resty/resty/v2"
@@ -52,7 +51,7 @@ func newGroupCmd() *cobra.Command {
 					cr := &database_v1.GroupRegistryServiceCreateRequest{
 						Group: g,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
@@ -81,7 +80,7 @@ func newGroupCmd() *cobra.Command {
 					cr := &database_v1.GroupRegistryServiceUpdateRequest{
 						Group: g,
 					}
-					b, err := json.Marshal(cr)
+					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}

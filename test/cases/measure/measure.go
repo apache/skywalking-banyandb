@@ -34,7 +34,7 @@ var (
 	verify        = func(args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			measureTestData.VerifyFn(innerGm, SharedContext, args)
-		})
+		}).Should(gm.Succeed())
 	}
 )
 

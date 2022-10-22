@@ -36,6 +36,7 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-17T12:49:45.912Z"
 - fields:
   - name: total
     value:
@@ -44,7 +45,28 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "1"
+        value: "10"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "7"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-17T12:49:46.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "2"
   tagFamilies:
   - name: default
     tags:
@@ -56,6 +78,7 @@ dataPoints:
       value:
         str:
           value: entity_2
+  timestamp: "2022-10-17T12:50:45.912Z"
 - fields:
   - name: total
     value:
@@ -64,7 +87,28 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "1"
+        value: "9"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "8"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-17T12:50:46.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "3"
   tagFamilies:
   - name: default
     tags:
@@ -76,6 +120,28 @@ dataPoints:
       value:
         str:
           value: entity_2
+  timestamp: "2022-10-17T12:51:45.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "8"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "9"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-17T12:51:46.912Z"
 - fields:
   - name: total
     value:
@@ -96,6 +162,28 @@ dataPoints:
       value:
         str:
           value: entity_3
+  timestamp: "2022-10-17T12:52:45.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "11"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "10"
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
+  timestamp: "2022-10-17T12:52:46.912Z"
 - fields:
   - name: total
     value:
@@ -116,6 +204,28 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-17T12:53:45.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "50"
+  - name: value
+    value:
+      int:
+        value: "12"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "11"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+  timestamp: "2022-10-17T12:53:46.912Z"
 - fields:
   - name: total
     value:
@@ -124,7 +234,7 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "5"
+        value: "6"
   tagFamilies:
   - name: default
     tags:
@@ -136,3 +246,25 @@ dataPoints:
       value:
         str:
           value: entity_1
+  timestamp: "2022-10-17T12:54:45.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "300"
+  - name: value
+    value:
+      int:
+        value: "7"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "12"
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+  timestamp: "2022-10-17T12:54:46.912Z"
