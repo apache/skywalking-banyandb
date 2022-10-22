@@ -21,8 +21,7 @@ import AsideComponent from '../components/Database/Aside/index.vue'
 import MainComponent from '../components/Database/Main/index.vue'
 import MainStartComponent from '../components/Database/Main/components/MainStart/index.vue'
 import stores from '../stores/index'
-import { computed } from '@vue/runtime-core'
-
+import { computed } from 'vue'
 const { aside, tags } = stores()
 
 // pinia data
@@ -61,11 +60,11 @@ function shrinkUp(e) {
     <div @mousemove="shrinkMove" @mouseup="shrinkUp" style="width:100%; height:100%">
         <el-container>
             <el-aside :width="fatherWidth" class="bd-top flex" style="position:relative;">
-                <aside-component></aside-component>
+                <AsideComponent></AsideComponent>
                 <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
             </el-aside>
             <el-main style="background-color: var(--color-background)">
-                <component :is="mainComponent"></component>
+                <component :is="mainComponent === 'mainStartCom' ? MainStartComponent : MainComponent"></component>
             </el-main>
         </el-container>
     </div>

@@ -121,18 +121,18 @@ func (p *Path) extractPrefix() {
 	}
 }
 
-func (p Path) Prepand(entry Entry) Path {
+func (p Path) Prepend(entry Entry) Path {
 	e := Hash(entry)
-	prepand := func(src []byte, entry []byte) []byte {
+	prependFunc := func(src []byte, entry []byte) []byte {
 		dst := make([]byte, len(src)+len(entry))
 		copy(dst, entry)
 		copy(dst[len(entry):], src)
 		return dst
 	}
-	p.template = prepand(p.template, e)
+	p.template = prependFunc(p.template, e)
 	p.offset += len(e)
 	p.extractPrefix()
-	p.mask = prepand(p.mask, maxIntBytes)
+	p.mask = prependFunc(p.mask, maxIntBytes)
 	return p
 }
 
@@ -147,9 +147,9 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(timeRange timestamp.TimeRange) ([]blockDelegate, error)
-	create(timeRange timestamp.TimeRange) (blockDelegate, error)
-	block(id GlobalItemID) (blockDelegate, error)
+	span(timeRange timestamp.TimeRange) ([]BlockDelegate, error)
+	create(timeRange timestamp.TimeRange) (BlockDelegate, error)
+	block(id GlobalItemID) (BlockDelegate, error)
 }
 
 var (
@@ -188,7 +188,7 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	return newSeries(s.context(), id, s), nil
 }
 
-func (s *seriesDB) block(id GlobalItemID) (blockDelegate, error) {
+func (s *seriesDB) block(id GlobalItemID) (BlockDelegate, error) {
 	seg := s.segCtrl.get(id.segID)
 	if seg == nil {
 		return nil, nil
@@ -250,9 +250,9 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) {
+func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
 	// TODO: return correct blocks
-	result := make([]blockDelegate, 0)
+	result := make([]BlockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		dd, err := s.blockController.span(timeRange)
 		if err != nil {
@@ -266,7 +266,7 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]blockDelegate, error) 
 	return result, nil
 }
 
-func (s *seriesDB) create(timeRange timestamp.TimeRange) (blockDelegate, error) {
+func (s *seriesDB) create(timeRange timestamp.TimeRange) (BlockDelegate, error) {
 	s.Lock()
 	defer s.Unlock()
 	ss := s.segCtrl.span(timeRange)
@@ -337,8 +337,11 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 	return sdb, nil
 }
 
+// HashEntity runs hash function (e.g. with xxhash algorithm) on each segment of the Entity,
+// and concatenates all uint64 in byte array. So the return length of the byte array will be
+// 8 (every uint64 has 8 bytes) * length of the input entity.
 func HashEntity(entity Entity) []byte {
-	result := make(Entry, 0, len(entity)*8)
+	result := make([]byte, 0, len(entity)*8)
 	for _, entry := range entity {
 		result = append(result, Hash(entry)...)
 	}
@@ -346,7 +349,7 @@ func HashEntity(entity Entity) []byte {
 }
 
 func SeriesID(entity Entity) common.SeriesID {
-	return common.SeriesID(convert.Hash((HashEntity(entity))))
+	return common.SeriesID(convert.Hash(HashEntity(entity)))
 }
 
 func Hash(entry []byte) []byte {

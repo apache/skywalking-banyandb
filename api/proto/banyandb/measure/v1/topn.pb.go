@@ -164,7 +164,7 @@ type TopNRequest struct {
 	// agg aggregates lists grouped by field names in the time_range
 	// TODO validate enum defined_only
 	Agg v11.AggregationFunction `protobuf:"varint,4,opt,name=agg,proto3,enum=banyandb.model.v1.AggregationFunction" json:"agg,omitempty"`
-	// criteria select counters.
+	// criteria select counters. Only equals are acceptable.
 	Conditions []*v11.Condition `protobuf:"bytes,5,rep,name=conditions,proto3" json:"conditions,omitempty"`
 	// field_value_sort indicates how to sort fields
 	FieldValueSort v11.Sort `protobuf:"varint,6,opt,name=field_value_sort,json=fieldValueSort,proto3,enum=banyandb.model.v1.Sort" json:"field_value_sort,omitempty"`

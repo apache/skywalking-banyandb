@@ -19,6 +19,7 @@
 
 <script setup>
 import HeaderComponent from './components/Header/index.vue'
+import RightMenuComponent from './components/Database/Aside/components/RightMenu/index.vue'
 import { computed } from '@vue/runtime-core'
 import stores from './stores/index'
 import { useRouter, useRoute } from 'vue-router'
@@ -27,7 +28,8 @@ import { getCurrentInstance } from "@vue/runtime-core";
 const route = useRoute()
 const router = useRouter()
 const { menuState, header } = stores()
-const $bus = getCurrentInstance().appContext.config.globalProperties.$bus
+const { proxy } = getCurrentInstance()
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const showRightMenu = computed(() => {
   return menuState.showRightMenu
 })
@@ -62,9 +64,8 @@ const initData = (() => {
 const appMouseDown = () => {
   menuState.changeShowRightMenu(false)
 }
-
 const handleRightItem = (index) => {
-  $bus.$emit('handleRightItem', index)
+  $bus.emit('handleRightItem', index)
 }
 </script>
 
@@ -92,9 +93,12 @@ const handleRightItem = (index) => {
 </template>
 
 <style lang="scss">
+html,
 body {
   padding: 0;
   margin: 0;
+  width: 100%;
+  height: 100%;
 }
 
 #app {

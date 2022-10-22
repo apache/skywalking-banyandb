@@ -38,6 +38,12 @@ function handleLeave() {
     <div class="flex right-menu-item align-item-center pointer" @mouseover="handleOver" @mouseleave="handleLeave"
         :style="{ backgroundColor: bdColor, color: colorStr}" @click="$emit('handleRightItem')">
         <i :class="icon"></i>
+        <el-icon>
+            <Folder v-if="icon === 'el-icon-folder'" />
+            <Document v-if="icon === 'el-icon-document'" />
+            <RefreshRight v-if="icon === 'el-icon-refresh-right'" />
+            <Delete v-if="icon === 'el-icon-delete'" />
+        </el-icon>
         <div style="width: 70%;" class="text-overflow-hidden margin-left-small">{{ name }}</div>
     </div>
 </template>

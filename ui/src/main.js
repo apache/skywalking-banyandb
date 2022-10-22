@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { createApp } from 'vue'
+import { createApp, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
@@ -43,9 +43,13 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import './styles/custom.scss'
 import './styles/main.scss'
+import * as ElIcon from '@element-plus/icons-vue'
 
 const app = createApp(App)
 
+for (let iconName in ElIcon){
+    app.component(iconName, ElIcon[iconName])
+}
 echarts.use([
     TitleComponent,
     TooltipComponent,
@@ -59,16 +63,16 @@ echarts.use([
 ])
 app.config.globalProperties.$http = axios
 app.config.globalProperties.$loading = ElLoading
-app.config.globalProperties.$loading.create = () => {
-    app.$loading.instance = ElLoading.service({
+app.config.globalProperties.$loadingCreate = () => {
+    app.config.globalProperties.instance = ElLoading.service({
         text: 'loading...',
         spinner: 'el-icon-loading',
         background: 'rgba(0, 0, 0, 0.8)',
     })
 }
-app.config.globalProperties.$loading.close = () => {
+app.config.globalProperties.$loadingClose = () => {
     nextTick(() => {
-        app.$loading.instance.close()
+        app.config.globalProperties.instance.close()
     })
 }
 app.config.globalProperties.$message = ElMessage
@@ -90,10 +94,9 @@ app.config.globalProperties.$message.success = () => {
         type: 'success'
     })
 }
-
+app.config.globalProperties.mittBus = new mitt()
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
 
 app.mount('#app')
-app.config.globalProperties.mittBus = new mitt()

@@ -43,33 +43,38 @@ const (
 	measureDir          = "testdata/measures"
 	indexRuleDir        = "testdata/index_rules"
 	indexRuleBindingDir = "testdata/index_rule_bindings"
+	topNAggregationDir  = "testdata/topn_aggregations"
 )
 
 //go:embed testdata/*
 var store embed.FS
 
 func PreloadSchema(e schema.Registry) error {
-	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {
-		return e.CreateGroup(context.TODO(), group.(*commonv1.Group))
+	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
+		return e.CreateGroup(context.TODO(), group)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure proto.Message) error {
-		return e.CreateMeasure(context.TODO(), measure.(*databasev1.Measure))
+	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
+		return e.CreateMeasure(context.TODO(), measure)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule proto.Message) error {
-		return e.CreateIndexRule(context.TODO(), indexRule.(*databasev1.IndexRule))
+	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
+		return e.CreateIndexRule(context.TODO(), indexRule)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding proto.Message) error {
-		return e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding.(*databasev1.IndexRuleBinding))
+	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
+		return e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-
+	if err := loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
+		return e.CreateTopNAggregation(context.TODO(), topN)
+	}); err != nil {
+		return errors.WithStack(err)
+	}
 	return nil
 }
 
@@ -77,7 +82,7 @@ func RandomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
 
-func loadSchema(dir string, resource proto.Message, loadFn func(resource proto.Message) error) error {
+func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T) error) error {
 	entries, err := store.ReadDir(dir)
 	if err != nil {
 		return err
@@ -109,20 +114,20 @@ func RegisterForNew(addr string, metricNum int) error {
 
 	ctx := context.Background()
 
-	if err := loadSchema(groupDir, &commonv1.Group{}, func(group proto.Message) error {
+	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
 		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
 			_, err = databasev1.NewGroupRegistryServiceClient(conn).
 				Create(rpcCtx, &databasev1.GroupRegistryServiceCreateRequest{
-					Group: group.(*commonv1.Group),
+					Group: group,
 				})
 			return err
 		})
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure proto.Message) error {
+	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
 		var err error
-		name := measure.(*databasev1.Measure).Metadata.Name
+		name := measure.GetMetadata().GetName()
 		num := metricNum
 		if name != "service_cpm_minute" {
 			num = 1
@@ -131,7 +136,7 @@ func RegisterForNew(addr string, metricNum int) error {
 			err = multierr.Append(err, grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
 				m := proto.Clone(measure).(*databasev1.Measure)
 				if i > 0 {
-					m.Metadata.Name = m.Metadata.Name + "_" + strconv.Itoa(i)
+					m.Metadata.Name = m.GetMetadata().GetName() + "_" + strconv.Itoa(i)
 				}
 				_, err = databasev1.NewMeasureRegistryServiceClient(conn).
 					Create(rpcCtx, &databasev1.MeasureRegistryServiceCreateRequest{
@@ -145,22 +150,22 @@ func RegisterForNew(addr string, metricNum int) error {
 		return errors.WithStack(err)
 	}
 
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule proto.Message) error {
+	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
 		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
 			_, err = databasev1.NewIndexRuleRegistryServiceClient(conn).
 				Create(rpcCtx, &databasev1.IndexRuleRegistryServiceCreateRequest{
-					IndexRule: indexRule.(*databasev1.IndexRule),
+					IndexRule: indexRule,
 				})
 			return err
 		})
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding proto.Message) error {
+	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
 		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
 			_, err = databasev1.NewIndexRuleBindingRegistryServiceClient(conn).
 				Create(rpcCtx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
-					IndexRuleBinding: indexRuleBinding.(*databasev1.IndexRuleBinding),
+					IndexRuleBinding: indexRuleBinding,
 				})
 			return err
 		})

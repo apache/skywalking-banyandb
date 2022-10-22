@@ -169,7 +169,7 @@ func newSeries(ctx context.Context, id common.SeriesID, blockDB blockDatabase) *
 var _ SeriesSpan = (*seriesSpan)(nil)
 
 type seriesSpan struct {
-	blocks    []blockDelegate
+	blocks    []BlockDelegate
 	seriesID  common.SeriesID
 	shardID   common.ShardID
 	timeRange timestamp.TimeRange
@@ -191,7 +191,7 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []blockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []BlockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
 	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,
