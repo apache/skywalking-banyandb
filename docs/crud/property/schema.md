@@ -1,25 +1,26 @@
 # CRUD Property
 
-CRUD operations create, read, update and delete property.
+CRUD operations create/update, read and delete property.
 
 Property stores the user defined data.
-## Create / Update operation
 
-Apply creates a property if it's absent, or update an existed one based on a strategy.If the property does not currently exist, create operation will create the schema.
+[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
 
-### Examples
+## Apply (Create/Update) operation
 
-`bydbctl` is the command line tool to create a property in this example.
+Apply creates a property if it's absent, or updates an existed one based on a strategy. If the property does not currently exist, create operation will create the property.
 
-A property belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM`
-before creating a property.
+### Examples of applying
+
+A property belongs to a unique group. We should create such a group before creating a property.
+
+The group's catalog should be empty.
 
 ```shell
 $ bydbctl group create -f - <<EOF
 metadata:
   name: default
-catalog: CATALOG_STREAM
-resource_opts:
+schema_opts:
   shard_num: 2
   block_interval:
     unit: UNIT_HOUR
@@ -32,55 +33,92 @@ resource_opts:
     num: 7
 EOF
 ```
+
+The group creates two shards to store data points. Every day, it would create a
+segment that will generate a block every 2 hours.
+
+The data in this group will keep 7 days.
+
 Then, below command will create a new property:
 
 ```shell
-$ bydbctl property create -f - <<EOF
+$ bydbctl property apply -f - <<EOF
 metadata:
- container:
-  group: default
-  name: container1
- id: property1
+  container:
+    group: default
+    name: container1
+  id: property1
+tags:
+- key: name
+  value:
+    str:
+      value: "hello"
+- key: state
+  value:
+    str:
+      value: "succeed"
 EOF
 ```
 
+The operation supports updating partial tags.
 
-## Read(Get) operation
-Read operation read a property's schema.
-
-### Examples
-`bydbctl` is the command line tool to get a property in this example.
 ```shell
-$ bydbctl property get -g default -n property1
-```
-## Update operation
-Update operation update a property's schema.
-
-### Examples
-`bydbctl` is the command line tool to update a property in this example.
-```shell
-$ bydbctl property update -f - <<EOF
+$ bydbctl property apply -f - <<EOF
 metadata:
- container:
-  group: default
-  name: container1
- id: property1
+  container:
+    group: default
+    name: sw
+  id: ui_template
+tags:
+- key: state
+  value:
+    str:
+      value: "failed"
 EOF
+```
+
+## Get operation
+
+Get operation gets a property.
+
+### Examples of getting
+
+```shell
+$ bydbctl property get -g default -n sw --id ui_template
+```
+
+The operation could filter data by tags.
+
+```shell
+$ bydbctl property get -g default -n sw --id ui_template --tags state
 ```
 
 ## Delete operation
-Delete operation delete a property's schema.
 
-### Examples
-`bydbctl` is the command line tool to delete a property in this example.
+Delete operation delete a property.
+
+### Examples of deleting
+
 ```shell
-$ bydbctl property delete -g default -n container1 -i property1
+$ bydbctl property delete -g default -n sw --id ui_template.
+```
+
+The delete operation could remove specific tags instead of the whole property.
+
+```shell
+$ bydbctl property delete -g default -n sw --id ui_template --tags state.
 ```
 
 ## List operation
+
 List operation lists all properties.
-### Examples
-`bydbctl` is the command line tool to list all the properties in this example.
+
+### Examples of listing
+
 ```shell
-$ bydbctl property list -g default -n container1 -i property1
+$ bydbctl property list -g default -n sw
 ```
+
+## API Reference
+
+[MeasureService v1](../../api-reference.md#PropertyService)

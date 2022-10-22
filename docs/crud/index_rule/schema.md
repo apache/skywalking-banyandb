@@ -1,25 +1,26 @@
 # CRUD IndexRules
 
-CRUD operations create, read, update and delete indexRule binding.
+CRUD operations create, read, update and delete index rules.
 
 IndexRule defines how to generate indices based on tags and the index type.
-IndexRule should bind to a subject through an IndexRuleBinding to generate proper indices.
+IndexRule should bind to a subject(stream or measure) through an IndexRuleBinding to generate proper indices.
+
+[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
 
 ## Create operation
 
-Create operation adds a new indexRule to the database's metadata registry repository. If the indexRule does not currently exist, create operation will create the schema.
+Create operation adds a new index rule to the database's metadata registry repository. If the index rule does not currently exist, create operation will create the schema.
 
-### Examples
+### Examples of creating
 
-`bydbctl` is the command line tool to create a indexRule in this example.
+An index rule belongs to its subjects' group. We should create such a group if there is no such group.
 
-A indexRule belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM`
-before creating a indexRule.
+The command supposes that the index rule will bind to streams. So it creates a `CATALOG_STREAM` group here.
 
 ```shell
 $ bydbctl group create -f - <<EOF
 metadata:
-  name: sw_metric
+  name: sw_stream
 catalog: CATALOG_STREAM
 resource_opts:
   shard_num: 2
@@ -35,72 +36,78 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store indexRule data points. Every one day, it would create a
-segment which will generate a block every 2 hours.
+The group creates two shards to store indexRule data points. Every day, it would create a
+segment that will generate a block every 2 hours.
 
 The data in this group will keep 7 days.
 
-Then, below command will create a new indexRule:
+Then, the next command will create a new index rule:
 
 ```shell
 $ bydbctl indexRule create -f - <<EOF
 metadata:
-  name: sw
-  group: default
-tagFamilies:
-  - name: searchable
-    tags: 
-      - name: trace_id
-        type: TAG_TYPE_STRING
+  name: trace_id
+  group: sw_stream
+tags:
+- trace_id
+type: TYPE_TREE
+location: LOCATION_GLOBAL
 EOF
 ```
 
-## Read operation
+This YAML creates an index rule which uses the tag `trace_id` to generate a `TREE_TYPE` index which is located at `GLOBAL`.
 
-Read(Get) operation get a indexRule's schema.
+## Get operation
 
+Get(Read) operation gets an index rule's schema.
 
-### Examples
-`bydbctl` is the command line tool to create a indexRule in this example.
+### Examples of getting
+
 ```shell
-$ bydbctl get -g default -n sw
+$ bydbctl get -g sw_stream -n trace_id
 ```
 
 ## Update operation
-Update operation update a indexRule's schema.
 
-### Examples
+Update operation updates an index rule's schema.
 
-`bydbctl` is the command line tool to update a indexRule in this example.
+### Examples of updating
+
+This example changes the type from `TREE` to `INVERTED`.
+
 ```shell
-$ bydbctl indexRule create -f - <<EOF
+$ bydbctl indexRule update -f - <<EOF
 metadata:
-  name: sw
-  group: default
-tagFamilies:
-  - name: searchable
-    tags: 
-      - name: trace_id
-        type: TAG_TYPE_STRING
+  name: trace_id
+  group: sw_stream
+tags:
+- trace_id
+type: TYPE_INVERTED
+location: LOCATION_GLOBAL
 EOF
 
 ```
 
 ## Delete operation
-Delete operation delete a indexRule's schema.
-### Examples
-`bydbctl` is the command line tool to delete an indexRule in this example.
+
+Delete operation deletes an index rule's schema.
+
+### Examples of deleting
+
 ```shell
-$ bydbctl indexRuleBind delete -g default -n sw
+$ bydbctl indexRuleBind delete -g sw_stream -n trace_id
 ```
 
 ## List operation
-List operation list all indexRule's schema of a group.
-### Examples
-`bydbctl` is the command line tool to list all the indexRules in a group in this example.
+
+List operation list all index rules' schema in a group.
+
+### Examples of listing
+
 ```shell
-$ bydbctl indexRule list -g default
+$ bydbctl indexRule list -g sw_stream
 ```
+
 ## API Reference
 
 [indexRuleService v1](../../api-reference.md#IndexRuleRegistryService)

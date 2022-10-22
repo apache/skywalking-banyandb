@@ -1,21 +1,19 @@
 # CRUD indexRuleBindings
 
-CRUD operations create, read, update and delete indexRuleBinding binding.
+CRUD operations create, read, update and delete index rule bindings.
 
-IndexRuleBinding is a bridge to connect severalIndexRules to a subject
-This binding is valid between begin_at_nanoseconds and expire_at_nanoseconds, that provides flexible strategies
-to control how to generate time series indices.
+An index rule binding is a bridge to connect several index rules to a subject.
+This binding is valid between `begin_at_nanoseconds` and `expire_at_nanoseconds`, that provides flexible strategies to control how to generate time series indices.
+
+[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
 
 ## Create operation
 
-Create operation adds a new indexRuleBinding to the database's metadata registry repository. If the indexRuleBinding does not currently exist, create operation will create the schema.
+Create operation adds a new index rule binding to the database's metadata registry repository. If the index rule binding does not currently exist, create operation will create the schema.
 
 ### Examples
 
-`bydbctl` is the command line tool to create a indexRuleBinding in this example.
-
-A indexRuleBinding belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM`
-before creating a indexRuleBinding.
+An index rule binding belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM` before creating a index rule binding. The subject(stream/measure) and index rule MUST live in the same group with the binding.
 
 ```shell
 $ bydbctl group create -f - <<EOF
@@ -46,62 +44,97 @@ Then, below command will create a new indexRuleBinding:
 ```shell
 $ bydbctl indexRuleBinding create -f - <<EOF
 metadata:
+  name: stream_binding
+  group: sw_stream
+rules:
+- trace_id
+- duration
+- endpoint_id
+- status_code
+- http.method
+- db.instance
+- db.type
+- mq.broker
+- mq.queue
+- mq.topic
+- extended_tags
+subject:
+  catalog: CATALOG_STREAM
   name: sw
-  group: default
-tagFamilies:
-  - name: searchable
-    tags: 
-      - name: trace_id
-        type: TAG_TYPE_STRING
+begin_at: '2021-04-15T01:30:15.01Z'
+expire_at: '2121-04-15T01:30:15.01Z'
 EOF
 ```
 
-## Read operation
+The YAML contains:
 
-Read(Get) operation get an indexRuleBinding's schema.
+* `rules`: references to the name of index rules.
+* `subject`: stream or measure's name and catalog.
+* `begin_at` and `expire_at`: the TTL of this binding.
 
+## Get operation
 
-### Examples
-`bydbctl` is the command line tool to get a indexRuleBinding in this example.
+Get(Read) operation gets an index rule binding's schema.
+
+### Examples of getting
+
 ```shell
-$ bydbctl indexRuleBinding get -g default -n sw
+$ bydbctl indexRuleBinding get -g sw_stream -n stream_binding
 ```
 
 ## Update operation
-Update operation update an indexRuleBinding's schema.
 
-### Examples
+Update operation update an index rule binding's schema.
 
-`bydbctl` is the command line tool to update an indexRuleBinding in this example.
+### Examples updating
+
 ```shell
 $ bydbctl indexRuleBinding create -f - <<EOF
 metadata:
+  name: stream_binding
+  group: sw_stream
+rules:
+- trace_id
+- duration
+- endpoint_id
+- status_code
+- http.method
+- db.instance
+- db.type
+- mq.broker
+- mq.queue
+- mq.topic
+# Remove this rule
+# - extended_tags
+subject:
+  catalog: CATALOG_STREAM
   name: sw
-  group: default
-tagFamilies:
-  - name: searchable
-    tags: 
-      - name: trace_id
-        type: TAG_TYPE_STRING
+begin_at: '2021-04-15T01:30:15.01Z'
+expire_at: '2121-04-15T01:30:15.01Z'
 EOF
-
 ```
 
+The new YAML removed the index rule `extended_tags`'s binding.
+
 ## Delete operation
-Delete operation delete an indexRuleBinding's schema.
-### Examples
-`bydbctl` is the command line tool to delete a indexRuleBinding in this example.
+
+Delete operation delete an index rule binding's schema.
+### Examples of deleting
+
 ```shell
-$ bydbctl indexRuleBinding delete -g default -n sw
+$ bydbctl indexRuleBinding delete -g sw_stream -n stream_binding
 ```
 
 ## List operation
-List operation list all indexRuleBinding's schema of a group.
-### Examples
-`bydbctl` is the command line tool to list all the indexRuleBindings in a group in this example.
+
+List operation list all index rule bindings in a group.
+
+### Examples of listing
+
 ```shell
-$ bydbctl indexRuleBinding list -g default
+$ bydbctl indexRuleBinding list -g sw_stream
 ```
+
 ## API Reference
 
 [indexRuleBindingService v1](../../api-reference.md#IndexRuleBindingRegistryService)

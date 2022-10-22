@@ -2,14 +2,13 @@
 
 CRUD operations create, read, update and delete measures.
 
-Measure intends to store data point.
+[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+
 ## Create operation
 
 Create operation adds a new measure to the database's metadata registry repository. If the measure does not currently exist, create operation will create the schema.
 
-### Examples
-
-`bydbctl` is the command line tool to create a measure in this example.
+### Examples of creating
 
 A measure belongs to a unique group. We should create such a group with a catalog `CATALOG_MEASURE`
 before creating a measure.
@@ -33,12 +32,12 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store measure data points. Every one day, it would create a
-segment which will generate a block every 2 hours.
+The group creates two shards to store data points. Every day, it would create a
+segment that will generate a block every 2 hours.
 
 The data in this group will keep 7 days.
 
-Then, below command will create a new measure:
+Then, the below command will create a new measure:
 
 ```shell
 $ bydbctl measure create -f - <<EOF
@@ -68,25 +67,24 @@ interval: 1m
 EOF
 ```
 
-`service_cpm_minute` expect to ingest a series of data points with one minute interval.
+`service_cpm_minute` expects to ingest a series of data points with a minute interval.
 
-## Read operation
+## Get operation
 
-Read(Get) operation get a measure's schema.
+Get(Read) operation gets a measure's schema.
 
+### Examples of getting
 
-### Examples
-`bydbctl` is the command line tool to read a measure in this example.
 ```shell
 $ bydbctl get -g sw_metric -n service_cpm_minute
 ```
 
 ## Update operation
-Update operation update a measure's schema.
 
-### Examples
+Update operation changes a measure's schema.
 
-`bydbctl` is the command line tool to update a measure in this example.
+### Examples of updating
+
 ```shell
 $ bydbctl measure create -f - <<EOF
 metadata:
@@ -101,17 +99,21 @@ EOF
 ```
 
 ## Delete operation
-Delete operation delete a measure's schema.
-### Examples
-`bydbctl` is the command line tool to delete a measure in this example.
+
+Delete operation removes a measure's schema.
+
+### Examples of deleting
+
 ```shell
 $ bydbctl delete -g sw_metric -n service_cpm_minute
 ```
 
 ## List operation
-List operation list all measures' schema in a group.
-### Examples
-`bydbctl` is the command line tool to list all the measures in a group in this example.
+
+The list operation shows all measures' schema in a group.
+
+### Examples of listing
+
 ```shell
 $ bydbctl measure list -g sw_metric
 ```
