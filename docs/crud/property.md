@@ -19,35 +19,18 @@ The group's catalog should be empty.
 ```shell
 $ bydbctl group create -f - <<EOF
 metadata:
-  name: default
-schema_opts:
-  shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
-  segment_interval:
-    unit: UNIT_DAY
-    num: 1
-  ttl:
-    unit: UNIT_DAY
-    num: 7
+  name: sw
 EOF
 ```
-
-The group creates two shards to store data points. Every day, it would create a
-segment that will generate a block every 2 hours.
-
-The data in this group will keep 7 days.
 
 Then, below command will create a new property:
 
 ```shell
 $ bydbctl property apply -f - <<EOF
 metadata:
-  container:
-    group: default
-    name: container1
-  id: property1
+    group: sw
+    name: ui_template
+  id: General-Service
 tags:
 - key: name
   value:
@@ -66,9 +49,9 @@ The operation supports updating partial tags.
 $ bydbctl property apply -f - <<EOF
 metadata:
   container:
-    group: default
-    name: sw
-  id: ui_template
+    group: sw
+    name: ui_template
+  id: General-Service
 tags:
 - key: state
   value:
@@ -84,13 +67,13 @@ Get operation gets a property.
 ### Examples of getting
 
 ```shell
-$ bydbctl property get -g default -n sw --id ui_template
+$ bydbctl property get -g sw -n ui_template --id General-Service
 ```
 
 The operation could filter data by tags.
 
 ```shell
-$ bydbctl property get -g default -n sw --id ui_template --tags state
+$ bydbctl property get -g sw -n ui_template --id General-Service --tags state
 ```
 
 ## Delete operation
@@ -100,13 +83,13 @@ Delete operation delete a property.
 ### Examples of deleting
 
 ```shell
-$ bydbctl property delete -g default -n sw --id ui_template.
+$ bydbctl property delete -g sw -n ui_template --id General-Service.
 ```
 
 The delete operation could remove specific tags instead of the whole property.
 
 ```shell
-$ bydbctl property delete -g default -n sw --id ui_template --tags state.
+$ bydbctl property delete -g sw -n ui_template --id General-Service --tags state.
 ```
 
 ## List operation
@@ -116,7 +99,7 @@ List operation lists all properties.
 ### Examples of listing
 
 ```shell
-$ bydbctl property list -g default -n sw
+$ bydbctl property list -g sw -n ui_template
 ```
 
 ## API Reference
