@@ -41,6 +41,7 @@ func HTTPHealthCheck(addr string) func() error {
 			return ErrServiceUnhealthy
 		}
 		l.Info().Stringer("response", resp).Msg("connected")
+		time.Sleep(500 * time.Millisecond)
 		return nil
 	}
 }

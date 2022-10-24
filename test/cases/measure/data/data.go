@@ -103,7 +103,7 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
 		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
-		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(i) * interval))
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(-time.Duration(len(templates)-i-1) * interval))
 		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
 			Should(gm.Succeed())
 	}
