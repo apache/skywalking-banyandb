@@ -166,13 +166,13 @@ var _ = Describe("Measure Data Query", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	var now time.Time
-	var nowStr, endStr string
+	var startStr, endStr string
 	var interval time.Duration
 	BeforeEach(func() {
 		now = timestamp.NowMilli()
-		nowStr = now.Format(RFC3339)
+		startStr = now.Add(-20 * time.Minute).Format(RFC3339)
 		interval = 1 * time.Millisecond
-		endStr = now.Add(1 * time.Hour).Format(RFC3339)
+		endStr = now.Add(5 * time.Minute).Format(RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr
@@ -200,7 +200,7 @@ tagProjection:
   tagFamilies:
     - name: default
       tags:
-        - id`, nowStr, endStr)))
+        - id`, startStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -224,7 +224,7 @@ tagProjection:
 		)
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
-		interval := -time.Minute
+		interval := time.Minute
 		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
 		args := []string{"measure", "query", "-a", addr}
 		args = append(args, timeArgs...)
@@ -256,11 +256,11 @@ tagProjection:
 	},
 		Entry("relative start", "--start", "-30m"),
 		Entry("relative end", "--end", "0m"),
-		Entry("absolute start", "--start", nowStr),
+		Entry("absolute start", "--start", startStr),
 		Entry("absolute end", "--end", endStr),
 		Entry("default"),
 		Entry("all relative", "--start", "-30m", "--end", "0m"),
-		Entry("all absolute", "--start", nowStr, "--end", endStr),
+		Entry("all absolute", "--start", startStr, "--end", endStr),
 	)
 
 	AfterEach(func() {
