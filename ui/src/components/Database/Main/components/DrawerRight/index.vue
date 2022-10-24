@@ -18,40 +18,49 @@
 -->
 
 <script setup>
-import { computed, watch } from '@vue/runtime-core'
+import { computed, reactive, watch } from '@vue/runtime-core'
 import DetailListComponent from './components/detail-list.vue'
 import DetailTableComponent from './components/detail-table.vue'
-defineProps({
+const props = defineProps({
     fileData: {
         type: Object,
     }
 })
 const emit = defineEmits(['closeDetail'])
 // data
-let tagFamily = 0
-let options = []
-let closeColor = 'var(--color-main-font)'
-let closeBackGroundColor = 'var(--color-white)'
-let detailList = []
+let data = reactive({
+    closeColor: 'var(--color-main-font)',
+    closeBackGroundColor: 'var(--color-white)',
+    detailList: [],
+    options: [],
+    tagFamily: 0
+})
 
 const tableData = computed(() => {
-    let tags = fileData.tagFamilies[tagFamily].tags
-    return tags.map((item) => {
+    console.log('tableData')
+    let tags = props.fileData.tagFamilies[data.tagFamily].tags
+    console.log(tags)
+    let arr = tags.map((item) => {
         return { tags: item.name, type: item.type }
     })
+    console.log('arr', arr)
+    return arr
 })
-watch(() => fileData, () => {
-    options = fileData.tagFamilies.map((item, index) => {
+watch(() => props.fileData, () => {
+    data.options = props.fileData.tagFamilies.map((item, index) => {
         return { label: item.name, value: index }
     })
+    initData()
 })
-
+data.options = props.fileData.tagFamilies.map((item, index) => {
+    return { label: item.name, value: index }
+})
 initData()
 
 function initData() {
-    let metadata = fileData.metadata
+    let metadata = props.fileData.metadata
     let tagsNumber = 0
-    fileData.tagFamilies.forEach((item) => {
+    props.fileData.tagFamilies.forEach((item) => {
         tagsNumber += item.tags.length
     })
     let detail = [
@@ -66,23 +75,23 @@ function initData() {
             value: metadata.modRevision
         }, {
             key: "Tags families number",
-            value: fileData.tagFamilies.length
+            value: props.fileData.tagFamilies.length
         }, {
             key: "Tags number",
             value: tagsNumber
         }, {
             key: "UpdatedAt",
-            value: fileData.updatedAt == null ? 'null' : fileData.updatedAt
+            value: props.fileData.updatedAt == null ? 'null' : props.fileData.updatedAt
         }]
-    detailList = detail
+    data.detailList = detail
 }
 function handleOver() {
-    closeColor = 'var(--color-main)'
-    closeBackgroundColor = 'var(--color-select)'
+    data.closeColor = 'var(--color-main)'
+    data.closeBackgroundColor = 'var(--color-select)'
 }
 function handleLeave() {
-    closeColor = "var(--color-main-font)"
-    closeBackgroundColor = "var(--color-white)"
+    data.closeColor = "var(--color-main-font)"
+    data.closeBackgroundColor = "var(--color-white)"
 }
 function closeDetail() {
     emit('closeDetail')
@@ -100,21 +109,24 @@ function closeDetail() {
                             {{fileData.metadata.name}}
                         </span>
                     </div>
-                    <i class="el-icon-close pointer detail-close icon" @click="closeDetail" @mouseover="handleOver"
-                        @mouseleave="handleLeave"
-                        :style="{ color: closeColor, backgroundColor: closeBackgroundColor }"></i>
+                    <el-icon class="el-icon-close pointer detail-close icon" @click="closeDetail"
+                        @mouseover="handleOver" @mouseleave="handleLeave"
+                        :style="{ color: data.closeColor, backgroundColor: data.closeBackgroundColor }">
+                        <Close />
+                    </el-icon>
                 </div>
                 <div class="text-secondary-color text-tips text-start text-family margin-top-bottom-little">
                     {{fileData.metadata.group}}</div>
-                <div v-for="item in detailList" :key="item.key">
+                <div v-for="item in data.detailList" :key="item.key">
                     <detail-list-component :keyName="item.key" :value="item.value"></detail-list-component>
                 </div>
                 <div class="text-main-color text-tips text-start text-family margin-top-bottom-little"
                     style="margin-top: 20px;">Tags
                     families</div>
                 <div class="flex align-start" style="margin-bottom: 10px;">
-                    <el-select v-model="tagFamily" style="width: 100%;" filterable placeholder="Please select">
-                        <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value">
+                    <el-select v-model="data.tagFamily" style="width: 100%;" filterable placeholder="Please select">
+                        <el-option v-for="item in data.options" :key="item.value" :label="item.label"
+                            :value="item.value">
                         </el-option>
                     </el-select>
                 </div>

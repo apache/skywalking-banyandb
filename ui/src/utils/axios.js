@@ -23,7 +23,7 @@ import axios from "axios"
 import { ElMessage } from "element-plus"
 
 const axiosService = axios.create({
-    //baseURL: "http://34.92.1.105:18913",// process.env.VUE_APP_BASE_API,
+    // baseURL: "http://34.92.85.178:18913",// process.env.VUE_APP_BASE_API,
     timeout: 30000
 })
 
@@ -81,11 +81,12 @@ axiosService.interceptors.response.use(
         console.log(error.message)
         const resErr = error.data
         console.log(resErr)
-        let msg = error.data.message ? error.data.message : error.message
+        
+        let msg = error.data && error.data.message ? error.data.message : error.message
         ElMessage({
             message: msg,
             type: "error",
-            duration: 5000
+            duration: 3000
         })
         return Promise.reject(error)
     }

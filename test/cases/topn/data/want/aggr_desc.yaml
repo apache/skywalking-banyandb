@@ -17,16 +17,16 @@
 
 lists:
 - items:
+  - name: entity_1
+    value:
+      int:
+        value: "12"
+  - name: entity_3
+    value:
+      int:
+        value: "11"
   - name: entity_2
     value:
       int:
         value: "10"
-  - name: entity_3
-    value:
-      int:
-        value: "5"
-  - name: entity_1
-    value:
-      int:
-        value: "5"
-  timestamp: "2022-10-13T14:35:00Z"
+  timestamp: "2022-10-17T12:54:00Z"
