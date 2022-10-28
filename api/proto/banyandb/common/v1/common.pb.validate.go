@@ -567,17 +567,6 @@ func (m *Group) validate(all bool) error {
 
 	// no validation rules for Catalog
 
-	if m.GetResourceOpts() == nil {
-		err := GroupValidationError{
-			field:  "ResourceOpts",
-			reason: "value is required",
-		}
-		if !all {
-			return err
-		}
-		errors = append(errors, err)
-	}
-
 	if all {
 		switch v := interface{}(m.GetResourceOpts()).(type) {
 		case interface{ ValidateAll() error }:

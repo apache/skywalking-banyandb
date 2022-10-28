@@ -5,13 +5,17 @@
 
 ## Get Banyand
 
+### Released binaries
+
+Get binaries from [download](https://skywalking.apache.org/downloads/).
+
 ### Build From Source
 
 #### Requirements
 
 Users who want to build a binary from sources have to set up:
 
-* Go >= 1.18
+* Go >= 1.19
 * Linux or MacOS
 * GNU make
 
@@ -99,20 +103,29 @@ Usage:
    standalone [flags]
 
 Flags:
-      --addr string                          the address of banyand listens (default ":17912")
+  --addr string                          the address of banyand listens (default ":17912")
       --cert-file string                     the TLS cert file
+      --etcd-listen-client-url string        A URL to listen on for client traffic (default "http://localhost:2379")
+      --etcd-listen-peer-url string          A URL to listen on for peer traffic (default "http://localhost:2380")
+      --grpc-addr string                     the grpc addr (default "localhost:17912")
   -h, --help                                 help for standalone
+      --http-addr string                     listen addr for http (default ":17913")
       --key-file string                      the TLS key file
       --logging.env string                   the logging (default "dev")
-      --logging.level string                 the level of logging (default "debug")
+      --logging.level string                 the level of logging (default "info")
       --max-recv-msg-size int                the size of max receiving message (default 10485760)
+      --measure-block-mem-size int           block memory size (default 16777216)
       --measure-root-path string             the root path of database (default "/tmp")
+      --measure-seriesmeta-mem-size int      series metadata memory size (default 1048576)
       --metadata-root-path string            the root path of metadata (default "/tmp")
   -n, --name string                          name of this service (default "standalone")
       --observability-listener-addr string   listen addr for observability (default ":2121")
-      --pprof-listener-addr string           listen addr for pprof (default "127.0.0.1:6060")
+      --pprof-listener-addr string           listen addr for pprof (default ":6060")
       --show-rungroup-units                  show rungroup units
+      --stream-block-mem-size int            block memory size (default 8388608)
+      --stream-global-index-mem-size int     global index memory size (default 2097152)
       --stream-root-path string              the root path of database (default "/tmp")
+      --stream-seriesmeta-mem-size int       series metadata memory size (default 1048576)
       --tls                                  connection uses TLS if true, else plain TCP
   -v, --version                              version for standalone
 ```

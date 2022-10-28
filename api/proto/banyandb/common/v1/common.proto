@@ -75,7 +75,7 @@ message Group {
     // catalog denotes which type of data the group contains
     common.v1.Catalog catalog = 2;
     // resourceOpts indicates the structure of the underlying kv storage
-    ResourceOpts resource_opts = 3 [(validate.rules).message.required = true];
+    ResourceOpts resource_opts = 3; 
     // updated_at indicates when resources of the group are updated
     google.protobuf.Timestamp updated_at = 4;
 }

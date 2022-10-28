@@ -50,5 +50,5 @@ lists:
   - name: entity_1
     value:
       int:
-        value: "6"
+        value: "7"
   timestamp: "2022-10-17T12:54:00Z"
