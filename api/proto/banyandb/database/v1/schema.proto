@@ -17,14 +17,14 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.database.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-
 package banyandb.database.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
+option java_package = "org.apache.skywalking.banyandb.database.v1";
 
 enum TagType {
   TAG_TYPE_UNSPECIFIED = 0;

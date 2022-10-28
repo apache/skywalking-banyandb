@@ -17,16 +17,16 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.measure.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
-
 package banyandb.measure.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
+option java_package = "org.apache.skywalking.banyandb.measure.v1";
 
 // DataPoint is stored in Measures
 message DataPoint {
@@ -74,7 +74,7 @@ message QueryRequest {
   message Aggregation {
     model.v1.AggregationFunction function = 1;
     // field_name must be one of files indicated by the field_projection
-    string field_name = 2; 
+    string field_name = 2;
   }
   // agg aggregates data points based on a field
   Aggregation agg = 8;
@@ -88,7 +88,7 @@ message QueryRequest {
     // DESC: topN
     // UNSPECIFIED: topN
     model.v1.Sort field_value_sort = 3;
-  } 
+  }
   // top limits the result based on a particular field.
   // If order_by is specified, top sorts the dataset based on order_by's output
   Top top = 9;

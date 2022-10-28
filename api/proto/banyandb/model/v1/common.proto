@@ -19,61 +19,61 @@ syntax = "proto3";
 
 package banyandb.model.v1;
 
-option java_package = "org.apache.skywalking.banyandb.model.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
-
 import "google/protobuf/struct.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
+option java_package = "org.apache.skywalking.banyandb.model.v1";
+
 message ID {
-    string value = 1;
+  string value = 1;
 }
 
 message Str {
-    string value = 1;
+  string value = 1;
 }
 
 message Int {
-    int64 value = 1;
+  int64 value = 1;
 }
 
 message StrArray {
-    repeated string value = 1;
+  repeated string value = 1;
 }
 
 message IntArray {
-    repeated int64 value = 1;
+  repeated int64 value = 1;
 }
 
 message TagValue {
-    oneof value {
-        google.protobuf.NullValue null = 1;
-        Str str = 2;
-        StrArray str_array = 3;
-        Int int = 4;
-        IntArray int_array = 5;
-        bytes binary_data = 6;
-        ID id = 7;
-    }
+  oneof value {
+    google.protobuf.NullValue null = 1;
+    Str str = 2;
+    StrArray str_array = 3;
+    Int int = 4;
+    IntArray int_array = 5;
+    bytes binary_data = 6;
+    ID id = 7;
+  }
 }
 
 message TagFamilyForWrite {
-    repeated TagValue tags = 1;
+  repeated TagValue tags = 1;
 }
 
 message FieldValue {
-    oneof value {
-        google.protobuf.NullValue null = 1;
-        model.v1.Str str = 2;
-        model.v1.Int int = 3;
-        bytes binary_data = 4;
-    }
+  oneof value {
+    google.protobuf.NullValue null = 1;
+    model.v1.Str str = 2;
+    model.v1.Int int = 3;
+    bytes binary_data = 4;
+  }
 }
 
 enum AggregationFunction {
-    AGGREGATION_FUNCTION_UNSPECIFIED = 0;
-    AGGREGATION_FUNCTION_MEAN = 1;
-    AGGREGATION_FUNCTION_MAX = 2;
-    AGGREGATION_FUNCTION_MIN = 3;
-    AGGREGATION_FUNCTION_COUNT = 4;
-    AGGREGATION_FUNCTION_SUM = 5;
+  AGGREGATION_FUNCTION_UNSPECIFIED = 0;
+  AGGREGATION_FUNCTION_MEAN = 1;
+  AGGREGATION_FUNCTION_MAX = 2;
+  AGGREGATION_FUNCTION_MIN = 3;
+  AGGREGATION_FUNCTION_COUNT = 4;
+  AGGREGATION_FUNCTION_SUM = 5;
 }

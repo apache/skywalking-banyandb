@@ -30,10 +30,11 @@ PROJECTS := ui banyand bydbctl
 ##@ Build targets
 
 clean: TARGET=clean
-clean: PROJECTS:=$(PROJECTS) pkg
+clean: PROJECTS:=api $(PROJECTS) pkg
 clean: default  ## Clean artifacts in all projects
 	rm -rf build
 	rm -f .env
+	rm -f *.out
 
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
@@ -81,26 +82,29 @@ format: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 format: tidy
 format: default ## Run the linters on all projects
 
+check-req: ## Check the requirements
+	@$(MAKE) -C scripts/ci/check test
+	@$(MAKE) -C ui check-version
 
 check: ## Check that the status is consistent with CI
-	$(MAKE) -C scripts/ci/check test
-	$(MAKE) -C ui check-version
-	$(MAKE) license-dep
+	$(MAKE) license-check
 	$(MAKE) format
+	$(MAKE) tidy
+	git add --renormalize .
 	mkdir -p /tmp/artifacts
 	git diff >/tmp/artifacts/check.diff 2>&1
-	go mod tidy
 	@if [ ! -z "`git status -s`" ]; then \
 		echo "Following files are not consistent with CI:"; \
 		git status -s; \
 		cat /tmp/artifacts/check.diff; \
 		exit 1; \
 	fi
-	
+
 pre-push: ## Check source files before pushing to the remote repo
+	$(MAKE) check-req
 	$(MAKE) generate
 	$(MAKE) lint
-	$(MAKE) license-check
+	$(MAKE) license-dep
 	$(MAKE) check
 
 ##@ License targets

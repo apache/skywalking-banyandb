@@ -17,49 +17,49 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.measure.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
-
 package banyandb.measure.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
-//TopNList contains a series of topN items
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
+option java_package = "org.apache.skywalking.banyandb.measure.v1";
+
+// TopNList contains a series of topN items
 message TopNList {
-    // timestamp is in the timeunit of milliseconds.
-    google.protobuf.Timestamp timestamp = 1;
-    message Item {
-        string name = 1;
-        model.v1.FieldValue value = 2;
-    }
-    // items contains top-n items in a list
-    repeated Item items = 2;
+  // timestamp is in the timeunit of milliseconds.
+  google.protobuf.Timestamp timestamp = 1;
+  message Item {
+    string name = 1;
+    model.v1.FieldValue value = 2;
+  }
+  // items contains top-n items in a list
+  repeated Item items = 2;
 }
 
 // TopNResponse is the response for a query to the Query module.
 message TopNResponse {
-    // lists contain a series topN lists ranked by timestamp
-    // if agg_func in query request is specified, lists' size should be one.
-    repeated TopNList lists = 1;
+  // lists contain a series topN lists ranked by timestamp
+  // if agg_func in query request is specified, lists' size should be one.
+  repeated TopNList lists = 1;
 }
 
 // TopNRequest is the request contract for query.
 message TopNRequest {
-    // metadata is required
-    common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-    // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
-    model.v1.TimeRange time_range = 2 [(validate.rules).message.required = true];
-    // top_n set the how many items should be returned in each list.
-    int32 top_n = 3 [(validate.rules).int32.gt = 0];
-    // agg aggregates lists grouped by field names in the time_range
-    // TODO validate enum defined_only
-    model.v1.AggregationFunction agg = 4;
-    // criteria select counters. Only equals are acceptable.
-    repeated model.v1.Condition conditions = 5;
-    // field_value_sort indicates how to sort fields
-    model.v1.Sort field_value_sort = 6;
+  // metadata is required
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
+  model.v1.TimeRange time_range = 2 [(validate.rules).message.required = true];
+  // top_n set the how many items should be returned in each list.
+  int32 top_n = 3 [(validate.rules).int32.gt = 0];
+  // agg aggregates lists grouped by field names in the time_range
+  // TODO validate enum defined_only
+  model.v1.AggregationFunction agg = 4;
+  // criteria select counters. Only equals are acceptable.
+  repeated model.v1.Condition conditions = 5;
+  // field_value_sort indicates how to sort fields
+  model.v1.Sort field_value_sort = 6;
 }

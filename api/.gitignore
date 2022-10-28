@@ -1,0 +1,8 @@
+# proto generated files
+
+*pb.go
+*pb.validate.go
+*pb.gw.go
+
+openapi
+api-reference.md

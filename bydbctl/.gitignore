@@ -14,21 +14,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 
-LINT_OPTS ?= --timeout 1m0s
-
-include $(mk_dir)lint-bin.mk
-
-##@ Code quality targets
-
-.PHONY: lint
-lint: $(LINTER)
-	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/deprecated-golangci.yml
-
-.PHONY: format
-format: $(BUF)
-format: $(LINTER)
-	$(LINTER) --verbose run --fix -c $(root_dir)/.golangci-format.yml ./...
-	$(BUF) format -w
+# Binaries for programs and plugins
+build

@@ -17,28 +17,28 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.measure.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
-
 package banyandb.measure.v1;
 
 import "banyandb/measure/v1/query.proto";
-import "banyandb/measure/v1/write.proto";
 import "banyandb/measure/v1/topn.proto";
+import "banyandb/measure/v1/write.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
+option java_package = "org.apache.skywalking.banyandb.measure.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path:"/api"
+  base_path: "/api"
 };
 
 service MeasureService {
-  rpc Query(banyandb.measure.v1.QueryRequest) returns (banyandb.measure.v1.QueryResponse){
-    option(google.api.http) = {
-      post:"/v1/measure/data"
-      body:"*"
+  rpc Query(banyandb.measure.v1.QueryRequest) returns (banyandb.measure.v1.QueryResponse) {
+    option (google.api.http) = {
+      post: "/v1/measure/data"
+      body: "*"
     };
-  };
+  }
+
   rpc Write(stream banyandb.measure.v1.WriteRequest) returns (stream banyandb.measure.v1.WriteResponse);
   rpc TopN(banyandb.measure.v1.TopNRequest) returns (banyandb.measure.v1.TopNResponse);
 }

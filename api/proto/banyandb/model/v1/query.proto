@@ -17,105 +17,105 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.model.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
-
 package banyandb.model.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/model/v1/common.proto";
+import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
+option java_package = "org.apache.skywalking.banyandb.model.v1";
 
 // Pair is the building block of a record which is equivalent to a key-value pair.
 // In the context of Trace, it could be metadata of a trace such as service_name, service_instance, etc.
 // Besides, other tags are organized in key-value pair in the underlying storage layer.
 // One should notice that the values can be a multi-value.
 message Tag {
-    string key = 1;
-    TagValue value = 2;
+  string key = 1;
+  TagValue value = 2;
 }
 
 message TagFamily {
-    string name = 1;
-    repeated Tag tags = 2;
+  string name = 1;
+  repeated Tag tags = 2;
 }
 
 // Condition consists of the query condition with a single binary operator to be imposed
 // For 1:1 BinaryOp, values in condition must be an array with length = 1,
 // while for 1:N BinaryOp, values can be an array with length >= 1.
 message Condition {
-    // BinaryOp specifies the operation imposed to the given query condition
-    // For EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.
-    // HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.
-    // For example, "keyA" contains "valueA" **and** "valueB"
-    // MATCH performances a full-text search if the tag is analyzed.
-    // The string value applies to the same analyzer as the tag, but string array value does not.
-    // Each item in a string array is seen as a token instead of a query expression.
-    enum BinaryOp {
-        BINARY_OP_UNSPECIFIED = 0;
-        BINARY_OP_EQ = 1;
-        BINARY_OP_NE = 2;
-        BINARY_OP_LT = 3;
-        BINARY_OP_GT = 4;
-        BINARY_OP_LE = 5;
-        BINARY_OP_GE = 6;
-        BINARY_OP_HAVING = 7;
-        BINARY_OP_NOT_HAVING = 8;
-        BINARY_OP_IN = 9;
-        BINARY_OP_NOT_IN = 10;
-        BINARY_OP_MATCH = 11;
-    }
-    string name = 1;
-    BinaryOp op = 2;
-    TagValue value = 3;
+  // BinaryOp specifies the operation imposed to the given query condition
+  // For EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.
+  // HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.
+  // For example, "keyA" contains "valueA" **and** "valueB"
+  // MATCH performances a full-text search if the tag is analyzed.
+  // The string value applies to the same analyzer as the tag, but string array value does not.
+  // Each item in a string array is seen as a token instead of a query expression.
+  enum BinaryOp {
+    BINARY_OP_UNSPECIFIED = 0;
+    BINARY_OP_EQ = 1;
+    BINARY_OP_NE = 2;
+    BINARY_OP_LT = 3;
+    BINARY_OP_GT = 4;
+    BINARY_OP_LE = 5;
+    BINARY_OP_GE = 6;
+    BINARY_OP_HAVING = 7;
+    BINARY_OP_NOT_HAVING = 8;
+    BINARY_OP_IN = 9;
+    BINARY_OP_NOT_IN = 10;
+    BINARY_OP_MATCH = 11;
+  }
+  string name = 1;
+  BinaryOp op = 2;
+  TagValue value = 3;
 }
 
 // tag_families are indexed.
 message Criteria {
-    oneof exp {
-        LogicalExpression le = 1;
-        Condition condition = 2;
-    }
+  oneof exp {
+    LogicalExpression le = 1;
+    Condition condition = 2;
+  }
 }
 
 // LogicalExpression supports logical operation
 message LogicalExpression {
-    enum LogicalOp {
-        LOGICAL_OP_UNSPECIFIED = 0;
-        LOGICAL_OP_AND = 1;
-        LOGICAL_OP_OR = 2; 
-    }
-    // op is a logical operation
-    LogicalOp op = 1;
-    Criteria left = 2;
-    Criteria right = 3;
+  enum LogicalOp {
+    LOGICAL_OP_UNSPECIFIED = 0;
+    LOGICAL_OP_AND = 1;
+    LOGICAL_OP_OR = 2;
+  }
+  // op is a logical operation
+  LogicalOp op = 1;
+  Criteria left = 2;
+  Criteria right = 3;
 }
 
 enum Sort {
-    SORT_UNSPECIFIED = 0;
-    SORT_DESC = 1;
-    SORT_ASC = 2;
+  SORT_UNSPECIFIED = 0;
+  SORT_DESC = 1;
+  SORT_ASC = 2;
 }
 
 // QueryOrder means a Sort operation to be done for a given index rule.
 // The index_rule_name refers to the name of a index rule bound to the subject.
 message QueryOrder {
-    string index_rule_name = 1;
-    Sort sort = 2;
+  string index_rule_name = 1;
+  Sort sort = 2;
 }
 
 // TagProjection is used to select the names of keys to be returned.
 message TagProjection {
-    message TagFamily {
-        string name = 1;
-        repeated string tags = 2;
-    }
-    repeated TagFamily tag_families = 1 [(validate.rules).repeated.min_items = 1];
+  message TagFamily {
+    string name = 1;
+    repeated string tags = 2;
+  }
+  repeated TagFamily tag_families = 1 [(validate.rules).repeated.min_items = 1];
 }
 
 // TimeRange is a range query for uint64,
 // the range here follows left-inclusive and right-exclusive rule, i.e. [begin, end) if both edges exist
 message TimeRange {
-    google.protobuf.Timestamp begin = 1;
-    google.protobuf.Timestamp end = 2;
+  google.protobuf.Timestamp begin = 1;
+  google.protobuf.Timestamp end = 2;
 }

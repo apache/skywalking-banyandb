@@ -17,30 +17,29 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.property.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
-
 package banyandb.property.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
+option java_package = "org.apache.skywalking.banyandb.property.v1";
 
 // Metadata is for multi-tenant use
 message Metadata {
-    // container is created when it receives the first property
-    common.v1.Metadata container = 1;
-    // id identifies a property
-    string id = 2; 
+  // container is created when it receives the first property
+  common.v1.Metadata container = 1;
+  // id identifies a property
+  string id = 2;
 }
 
 // Property stores the user defined data
 message Property {
-    // metadata is the identity of a property
-    Metadata metadata = 1;
-    // tag stores the content of a property
-    repeated model.v1.Tag tags = 2;
-    // updated_at indicates when the property is updated
-    google.protobuf.Timestamp updated_at = 3;
+  // metadata is the identity of a property
+  Metadata metadata = 1;
+  // tag stores the content of a property
+  repeated model.v1.Tag tags = 2;
+  // updated_at indicates when the property is updated
+  google.protobuf.Timestamp updated_at = 3;
 }
-    
