@@ -50,6 +50,8 @@ jobs:
       - name: Update dependencies 
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Check requirements
+        run: make check-req
       - name: Generate codes
         run: make generate
       - name: Lint
@@ -81,6 +83,8 @@ jobs:
       - name: Update dependencies 
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Generate codes
+        run: make generate
       - name: Build
         run: make build
       - name: Build release

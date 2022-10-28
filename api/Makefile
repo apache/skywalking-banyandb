@@ -35,19 +35,14 @@ $(BUF):
 	@rm -f $(tool_bin)/protoc-gen-openapiv2
 	@rm -f $(tool_bin)/protoc-gen-validate
 	@rm -f $(tool_bin)/buf
-	@rm -f $(tool_bin)/protoc-gen-buf-breaking
-	@rm -f $(tool_bin)/protoc-gen-buf-lint
 	@GOBIN=$(tool_bin) go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
 	@GOBIN=$(tool_bin) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
 	@GOBIN=$(tool_bin) go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v1.5.1
 	@GOBIN=$(tool_bin) go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.10.3
 	@GOBIN=$(tool_bin) go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.10.3
 	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/buf@$(buf_version)
-	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-breaking@$(buf_version)
-	@GOBIN=$(tool_bin) go install github.com/bufbuild/buf/cmd/protoc-gen-buf-lint@$(buf_version)
 	@GOBIN=$(tool_bin) go install github.com/envoyproxy/protoc-gen-validate@v0.6.7
 
 generate: $(BUF)
-	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate
-	@echo "Protobuf schema files are compiled"
-	mv proto/api-reference.md $(root_dir)/docs
+	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate && \
+	  cp proto/api-reference.md $(root_dir)/docs

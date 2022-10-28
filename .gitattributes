@@ -14,21 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 
-LINT_OPTS ?= --timeout 1m0s
+# Set the default behavior, in case people don't have core.autocrlf set.
+* text eof=lf
 
-include $(mk_dir)lint-bin.mk
+# Denote all files that are truly binary and should not be modified.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
 
-##@ Code quality targets
-
-.PHONY: lint
-lint: $(LINTER)
-	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/deprecated-golangci.yml
-
-.PHONY: format
-format: $(BUF)
-format: $(LINTER)
-	$(LINTER) --verbose run --fix -c $(root_dir)/.golangci-format.yml ./...
-	$(BUF) format -w
+go.sum merge=union

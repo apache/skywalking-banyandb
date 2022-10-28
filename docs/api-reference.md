@@ -161,17 +161,17 @@
     - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
     - [QueryResponse](#banyandb-measure-v1-QueryResponse)
   
-- [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
-    - [DataPointValue](#banyandb-measure-v1-DataPointValue)
-    - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
-    - [WriteRequest](#banyandb-measure-v1-WriteRequest)
-    - [WriteResponse](#banyandb-measure-v1-WriteResponse)
-  
 - [banyandb/measure/v1/topn.proto](#banyandb_measure_v1_topn-proto)
     - [TopNList](#banyandb-measure-v1-TopNList)
     - [TopNList.Item](#banyandb-measure-v1-TopNList-Item)
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
+  
+- [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
+    - [DataPointValue](#banyandb-measure-v1-DataPointValue)
+    - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
+    - [WriteRequest](#banyandb-measure-v1-WriteRequest)
+    - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
@@ -2419,82 +2419,6 @@ QueryResponse is the response for a query to the Query module.
 
 
 
-<a name="banyandb_measure_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/measure/v1/write.proto
-
-
-
-<a name="banyandb-measure-v1-DataPointValue"></a>
-
-### DataPointValue
-DataPointValue is the data point for writing. It only contains values.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
-| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
-| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-InternalWriteRequest"></a>
-
-### InternalWriteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
-| request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-WriteRequest"></a>
-
-### WriteRequest
-WriteRequest is the request contract for write
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
-| data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-WriteResponse"></a>
-
-### WriteResponse
-WriteResponse is the response contract for write
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_measure_v1_topn-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2563,6 +2487,82 @@ TopNResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | lists | [TopNList](#banyandb-measure-v1-TopNList) | repeated | lists contain a series topN lists ranked by timestamp if agg_func in query request is specified, lists&#39; size should be one. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_measure_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/measure/v1/write.proto
+
+
+
+<a name="banyandb-measure-v1-DataPointValue"></a>
+
+### DataPointValue
+DataPointValue is the data point for writing. It only contains values.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
+| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
+| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalWriteRequest"></a>
+
+### InternalWriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| series_hash | [bytes](#bytes) |  |  |
+| request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-WriteRequest"></a>
+
+### WriteRequest
+WriteRequest is the request contract for write
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
+| data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-WriteResponse"></a>
+
+### WriteResponse
+WriteResponse is the response contract for write
 
 
 
