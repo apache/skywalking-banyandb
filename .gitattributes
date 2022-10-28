@@ -16,7 +16,7 @@
 # under the License.
 
 # Set the default behavior, in case people don't have core.autocrlf set.
-* text=auto
+* text eof=lf
 
 # Denote all files that are truly binary and should not be modified.
 *.png binary
