@@ -17,89 +17,91 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.property.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
-
 package banyandb.property.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/property/v1/property.proto";
-import "validate/validate.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
+import "validate/validate.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
+option java_package = "org.apache.skywalking.banyandb.property.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-    base_path:"/api"
+  base_path: "/api"
 };
 
 message ApplyRequest {
-    banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
-    enum Strategy {
-        STRATEGY_UNSPECIFIED=0;
-        STRATEGY_MERGE=1;
-        STRATEGY_REPLACE=2;
-    }
-    // strategy indicates how to update a property. It defaults to STRATEGY_MERGE
-    Strategy strategy = 2;
+  banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
+  enum Strategy {
+    STRATEGY_UNSPECIFIED = 0;
+    STRATEGY_MERGE = 1;
+    STRATEGY_REPLACE = 2;
+  }
+  // strategy indicates how to update a property. It defaults to STRATEGY_MERGE
+  Strategy strategy = 2;
 }
 
 message ApplyResponse {
-    // created indicates whether the property existed.
-    // True: the property is absent. False: the property existed.
-    bool created = 1;
-    uint32 tags_num = 2;
+  // created indicates whether the property existed.
+  // True: the property is absent. False: the property existed.
+  bool created = 1;
+  uint32 tags_num = 2;
 }
 
 message DeleteRequest {
-    banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-    repeated string tags = 2;
+  banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  repeated string tags = 2;
 }
 
 message DeleteResponse {
-    bool deleted = 1;
-    uint32 tags_num = 2;
+  bool deleted = 1;
+  uint32 tags_num = 2;
 }
 
 message GetRequest {
-    banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-    repeated string tags = 2;
+  banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  repeated string tags = 2;
 }
 
 message GetResponse {
-    banyandb.property.v1.Property property = 1;
+  banyandb.property.v1.Property property = 1;
 }
 
 message ListRequest {
-    banyandb.common.v1.Metadata container = 1 [(validate.rules).message.required = true];
-    repeated string ids = 2;
-    repeated string tags = 3;
+  banyandb.common.v1.Metadata container = 1 [(validate.rules).message.required = true];
+  repeated string ids = 2;
+  repeated string tags = 3;
 }
 
 message ListResponse {
-    repeated banyandb.property.v1.Property property = 1;
+  repeated banyandb.property.v1.Property property = 1;
 }
 
 service PropertyService {
-    // Apply creates a property if it's absent, or update a existed one based on a strategy.
-    rpc Apply(ApplyRequest) returns (ApplyResponse){
-        option(google.api.http) = {
-            put:"/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"
-            body:"*"
-        };
+  // Apply creates a property if it's absent, or update a existed one based on a strategy.
+  rpc Apply(ApplyRequest) returns (ApplyResponse) {
+    option (google.api.http) = {
+      put: "/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"
+      body: "*"
     };
-    rpc Delete(DeleteRequest) returns (DeleteResponse){
-        option(google.api.http) = {
-            delete:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
-        };
+  }
+
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
     };
-    rpc Get(GetRequest) returns (GetResponse){
-        option(google.api.http) = {
-            get:"/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
-        };
+  }
+
+  rpc Get(GetRequest) returns (GetResponse) {
+    option (google.api.http) = {
+      get: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
     };
-    rpc List(ListRequest) returns (ListResponse){
-        option(google.api.http) = {
-            get:"/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
-        };
+  }
+
+  rpc List(ListRequest) returns (ListResponse) {
+    option (google.api.http) = {
+      get: "/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
     };
+  }
 }

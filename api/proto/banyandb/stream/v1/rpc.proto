@@ -17,9 +17,6 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.stream.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
-
 package banyandb.stream.v1;
 
 import "banyandb/stream/v1/query.proto";
@@ -27,16 +24,19 @@ import "banyandb/stream/v1/write.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
+option java_package = "org.apache.skywalking.banyandb.stream.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path:"/api"
+  base_path: "/api"
 };
 
 service StreamService {
-  rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse){
-    option(google.api.http) = {
-      post:"/v1/stream/data"
-      body:"*"
+  rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse) {
+    option (google.api.http) = {
+      post: "/v1/stream/data"
+      body: "*"
     };
-  };
+  }
+
   rpc Write(stream banyandb.stream.v1.WriteRequest) returns (stream banyandb.stream.v1.WriteResponse);
 }
