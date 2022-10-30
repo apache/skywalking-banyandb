@@ -40,6 +40,7 @@ const data = reactive({
 const userImg = ref('src/assets/banyandb_small.jpg')
 const handleSelect = (e) => {
     sessionStorage.setItem('active', e)
+    data.activeMenu = e
     e === '/stream' || e === '/measure'
         ? header.changeShowButton(true)
         : header.changeShowButton(false)
@@ -89,7 +90,7 @@ initData()
                 </el-tooltip>
             </div>
             <div v-else class="icon-size"></div>
-            <span v-if="header.showButton && tags.currentMenu"
+            <span v-if="header.showButton && tags.currentMenu && data.activeMenu == '/stream'"
                 :title="tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.type + ' / ' + tags.currentMenu.metadata.name"
                 class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{
                         tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.name
