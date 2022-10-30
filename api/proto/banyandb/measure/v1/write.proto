@@ -17,17 +17,17 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.measure.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
-
 package banyandb.measure.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
+import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
-//DataPointValue is the data point for writing. It only contains values.
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
+option java_package = "org.apache.skywalking.banyandb.measure.v1";
+
+// DataPointValue is the data point for writing. It only contains values.
 message DataPointValue {
   // timestamp is in the timeunit of milliseconds.
   google.protobuf.Timestamp timestamp = 1 [(validate.rules).timestamp.required = true];

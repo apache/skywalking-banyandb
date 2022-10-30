@@ -17,15 +17,15 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.stream.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
-
 package banyandb.stream.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
+option java_package = "org.apache.skywalking.banyandb.stream.v1";
 
 // Element represents
 // (stream context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.

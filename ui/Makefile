@@ -31,17 +31,18 @@ check-version: install
 install:
 	npm install 
 
-.PHONY: generate
-generate: build
- 
 .PHONY: all
 all: build
 
-.PHONY: build
-build: install
+.PHONY: generate
+generate: install
 	@echo "Building $(NAME)"
 	npm run build
 	@echo "Done building $(NAME)"
+
+.PHONY: build
+build: 
+	@echo "Run generate to build the UI"
 
 .PHONY: test
 test:

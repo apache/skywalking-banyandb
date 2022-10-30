@@ -17,27 +17,27 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.database.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-
 package banyandb.database.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
+option java_package = "org.apache.skywalking.banyandb.database.v1";
 
 message Node {
-    string id = 1;
-    string addr = 2;
-    google.protobuf.Timestamp updated_at = 3;
-    google.protobuf.Timestamp created_at = 4;
+  string id = 1;
+  string addr = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  google.protobuf.Timestamp created_at = 4;
 }
 
 message Shard {
-    uint64 id = 1;
-    common.v1.Metadata metadata = 2;
-    common.v1.Catalog catalog = 3;
-    Node node = 4;
-    uint32 total = 5;
-    google.protobuf.Timestamp updated_at = 6;
-    google.protobuf.Timestamp created_at = 7;
+  uint64 id = 1;
+  common.v1.Metadata metadata = 2;
+  common.v1.Catalog catalog = 3;
+  Node node = 4;
+  uint32 total = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  google.protobuf.Timestamp created_at = 7;
 }
