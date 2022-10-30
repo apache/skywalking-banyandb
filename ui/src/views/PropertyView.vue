@@ -17,20 +17,23 @@
   ~ under the License.
 -->
 
-<script>
-export default {
-  name: 'Home',
-}
-</script>
-
 <template>
-  <div>
-    <h1 class="home">
-      This is the home page
-    </h1>
+  <div class="about">
+    <h1>This is the property page</h1>
   </div>
 </template>
 
-<style lang="scss" scoped>
+<script>
+export default{
+  name: 'AboutView',
+  data() {
+    return {
+      
+    }
+  },
+}
+</script>
 
+<style lang="scss" scoped>
+  
 </style>
