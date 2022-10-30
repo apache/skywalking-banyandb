@@ -17,33 +17,30 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.database.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-
 package banyandb.database.v1;
 
-import "banyandb/database/v1/schema.proto";
 import "banyandb/common/v1/common.proto";
+import "banyandb/database/v1/schema.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
+option java_package = "org.apache.skywalking.banyandb.database.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path:"/api"
+  base_path: "/api"
 };
 
 message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamRegistryServiceCreateResponse {
-}
+message StreamRegistryServiceCreateResponse {}
 
 message StreamRegistryServiceUpdateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamRegistryServiceUpdateResponse {
-}
+message StreamRegistryServiceUpdateResponse {}
 
 message StreamRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -79,33 +76,38 @@ message StreamRegistryServiceListResponse {
 }
 
 service StreamRegistryService {
-  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse){
-    option(google.api.http) = {
-      post:"/v1/stream/schema"
-      body:"*"
+  rpc Create(StreamRegistryServiceCreateRequest) returns (StreamRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/stream/schema"
+      body: "*"
     };
-  };
-  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse){
-    option(google.api.http) = {
-      put:"/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"
-      body:"*"
+  }
+
+  rpc Update(StreamRegistryServiceUpdateRequest) returns (StreamRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/stream/schema/{stream.metadata.group}/{stream.metadata.name}"
+      body: "*"
     };
-  };
-  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse){
-    option(google.api.http) = {
-      delete:"/v1/stream/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/stream/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse){
-    option(google.api.http) = {
-      get:"/v1/stream/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse) {
+    option (google.api.http) = {
+      get: "/v1/stream/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse){
-    option(google.api.http) = {
-      get:"/v1/stream/schema/lists/{group}"
+  }
+
+  rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse) {
+    option (google.api.http) = {
+      get: "/v1/stream/schema/lists/{group}"
     };
-  };
+  }
+
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(StreamRegistryServiceExistRequest) returns (StreamRegistryServiceExistResponse);
 }
@@ -114,15 +116,13 @@ message IndexRuleBindingRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingRegistryServiceCreateResponse {
-}
+message IndexRuleBindingRegistryServiceCreateResponse {}
 
 message IndexRuleBindingRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingRegistryServiceUpdateResponse {
-}
+message IndexRuleBindingRegistryServiceUpdateResponse {}
 
 message IndexRuleBindingRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -158,33 +158,38 @@ message IndexRuleBindingRegistryServiceExistResponse {
 }
 
 service IndexRuleBindingRegistryService {
-  rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse){
-    option(google.api.http) = {
-      post:"/v1/index-rule-binding/schema"
-      body:"*"
+  rpc Create(IndexRuleBindingRegistryServiceCreateRequest) returns (IndexRuleBindingRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/index-rule-binding/schema"
+      body: "*"
     };
-  };
-  rpc Update(IndexRuleBindingRegistryServiceUpdateRequest) returns (IndexRuleBindingRegistryServiceUpdateResponse){
-    option(google.api.http) = {
-      put:"/v1/index-rule-binding/schema/{index_rule_binding.metadata.group}/{index_rule_binding.metadata.name}"
-      body:"*"
+  }
+
+  rpc Update(IndexRuleBindingRegistryServiceUpdateRequest) returns (IndexRuleBindingRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/index-rule-binding/schema/{index_rule_binding.metadata.group}/{index_rule_binding.metadata.name}"
+      body: "*"
     };
-  };
-  rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse){
-    option(google.api.http) = {
-      delete:"/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse){
-    option(google.api.http) = {
-      get:"/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse) {
+    option (google.api.http) = {
+      get: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse){
-    option(google.api.http) = {
-      get:"/v1/index-rule-binding/schema/lists/{group}"
+  }
+
+  rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse) {
+    option (google.api.http) = {
+      get: "/v1/index-rule-binding/schema/lists/{group}"
     };
-  };
+  }
+
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(IndexRuleBindingRegistryServiceExistRequest) returns (IndexRuleBindingRegistryServiceExistResponse);
 }
@@ -193,15 +198,13 @@ message IndexRuleRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleRegistryServiceCreateResponse {
-}
+message IndexRuleRegistryServiceCreateResponse {}
 
 message IndexRuleRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleRegistryServiceUpdateResponse {
-}
+message IndexRuleRegistryServiceUpdateResponse {}
 
 message IndexRuleRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -237,33 +240,38 @@ message IndexRuleRegistryServiceExistResponse {
 }
 
 service IndexRuleRegistryService {
-  rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse){
-    option(google.api.http) = {
-      post:"/v1/index-rule/schema"
-      body:"*"
+  rpc Create(IndexRuleRegistryServiceCreateRequest) returns (IndexRuleRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/index-rule/schema"
+      body: "*"
     };
-  };
-  rpc Update(IndexRuleRegistryServiceUpdateRequest) returns (IndexRuleRegistryServiceUpdateResponse){
-    option(google.api.http) = {
-      put:"/v1/index-rule/schema/{index_rule.metadata.group}/{index_rule.metadata.name}"
-      body:"*"
+  }
+
+  rpc Update(IndexRuleRegistryServiceUpdateRequest) returns (IndexRuleRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/index-rule/schema/{index_rule.metadata.group}/{index_rule.metadata.name}"
+      body: "*"
     };
-  };
-  rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse){
-    option(google.api.http) = {
-      delete:"/v1/index-rule/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse){
-    option(google.api.http) = {
-      get:"/v1/index-rule/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse) {
+    option (google.api.http) = {
+      get: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse){
-    option(google.api.http) = {
-      get:"/v1/index-rule/schema/lists/{group}"
+  }
+
+  rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse) {
+    option (google.api.http) = {
+      get: "/v1/index-rule/schema/lists/{group}"
     };
-  };
+  }
+
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(IndexRuleRegistryServiceExistRequest) returns (IndexRuleRegistryServiceExistResponse);
 }
@@ -272,15 +280,13 @@ message MeasureRegistryServiceCreateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureRegistryServiceCreateResponse {
-}
+message MeasureRegistryServiceCreateResponse {}
 
 message MeasureRegistryServiceUpdateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureRegistryServiceUpdateResponse {
-}
+message MeasureRegistryServiceUpdateResponse {}
 
 message MeasureRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -316,33 +322,38 @@ message MeasureRegistryServiceExistResponse {
 }
 
 service MeasureRegistryService {
-  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse){
-    option(google.api.http) = {
-      post:"/v1/measure/schema"
-      body:"*"
+  rpc Create(MeasureRegistryServiceCreateRequest) returns (MeasureRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/measure/schema"
+      body: "*"
     };
-  };
-  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse){
-    option(google.api.http) = {
-      put:"/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"
-      body:"*"
+  }
+
+  rpc Update(MeasureRegistryServiceUpdateRequest) returns (MeasureRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/measure/schema/{measure.metadata.group}/{measure.metadata.name}"
+      body: "*"
     };
-  };
-  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse){
-    option(google.api.http) = {
-      delete:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/measure/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse){
-    option(google.api.http) = {
-      get:"/v1/measure/schema/{metadata.group}/{metadata.name}"
+  }
+
+  rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse) {
+    option (google.api.http) = {
+      get: "/v1/measure/schema/{metadata.group}/{metadata.name}"
     };
-  };
-  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse){
-    option(google.api.http) = {
-      get:"/v1/measure/schema/lists/{group}"
+  }
+
+  rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse) {
+    option (google.api.http) = {
+      get: "/v1/measure/schema/lists/{group}"
     };
-  };
+  }
+
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(MeasureRegistryServiceExistRequest) returns (MeasureRegistryServiceExistResponse);
 }
@@ -351,17 +362,13 @@ message GroupRegistryServiceCreateRequest {
   banyandb.common.v1.Group group = 1;
 }
 
-message GroupRegistryServiceCreateResponse {
-
-}
+message GroupRegistryServiceCreateResponse {}
 
 message GroupRegistryServiceUpdateRequest {
   banyandb.common.v1.Group group = 1;
 }
 
-message GroupRegistryServiceUpdateResponse {
-
-}
+message GroupRegistryServiceUpdateResponse {}
 
 message GroupRegistryServiceDeleteRequest {
   string group = 1;
@@ -379,8 +386,7 @@ message GroupRegistryServiceGetResponse {
   banyandb.common.v1.Group group = 1;
 }
 
-message GroupRegistryServiceListRequest {
-}
+message GroupRegistryServiceListRequest {}
 
 message GroupRegistryServiceListResponse {
   repeated banyandb.common.v1.Group group = 1;
@@ -395,33 +401,38 @@ message GroupRegistryServiceExistResponse {
 }
 
 service GroupRegistryService {
-  rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse){
-    option(google.api.http) = {
-      post:"/v1/group/schema"
-      body:"*"
+  rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/group/schema"
+      body: "*"
     };
-  };
-  rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse){
-    option(google.api.http) = {
-      put:"/v1/group/schema/{group.metadata.name}"
-      body:"*"
+  }
+
+  rpc Update(GroupRegistryServiceUpdateRequest) returns (GroupRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/group/schema/{group.metadata.name}"
+      body: "*"
     };
-  };
-  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse){
-    option(google.api.http) = {
-      delete:"/v1/group/schema/{group}"
+  }
+
+  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/group/schema/{group}"
     };
-  };
-  rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse){
-    option(google.api.http) = {
-      get:"/v1/group/schema/{group}"
+  }
+
+  rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse) {
+    option (google.api.http) = {
+      get: "/v1/group/schema/{group}"
     };
-  };
-  rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse){
-    option(google.api.http) = {
-      get:"/v1/group/schema/lists"
+  }
+
+  rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse) {
+    option (google.api.http) = {
+      get: "/v1/group/schema/lists"
     };
-  };
+  }
+
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
 }
@@ -430,15 +441,13 @@ message TopNAggregationRegistryServiceCreateRequest {
   banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
-message TopNAggregationRegistryServiceCreateResponse {
-}
+message TopNAggregationRegistryServiceCreateResponse {}
 
 message TopNAggregationRegistryServiceUpdateRequest {
   banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
-message TopNAggregationRegistryServiceUpdateResponse {
-}
+message TopNAggregationRegistryServiceUpdateResponse {}
 
 message TopNAggregationRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;

@@ -17,34 +17,34 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.database.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-
 package banyandb.database.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/database.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
+option java_package = "org.apache.skywalking.banyandb.database.v1";
 
 enum Action {
-    ACTION_UNSPECIFIED = 0;
-    ACTION_PUT = 1;
-    ACTION_DELETE = 2;
+  ACTION_UNSPECIFIED = 0;
+  ACTION_PUT = 1;
+  ACTION_DELETE = 2;
 }
 
 message ShardEvent {
-    Shard shard = 1;
-    Action action = 2;
-    google.protobuf.Timestamp time = 3;
+  Shard shard = 1;
+  Action action = 2;
+  google.protobuf.Timestamp time = 3;
 }
 
 message EntityEvent {
-    common.v1.Metadata subject = 1; 
-    message TagLocator {
-        uint32 family_offset = 1;
-        uint32 tag_offset = 2;
-    }
-    repeated TagLocator entity_locator = 2;
-    Action action = 3;
-    google.protobuf.Timestamp time = 4; 
+  common.v1.Metadata subject = 1;
+  message TagLocator {
+    uint32 family_offset = 1;
+    uint32 tag_offset = 2;
+  }
+  repeated TagLocator entity_locator = 2;
+  Action action = 3;
+  google.protobuf.Timestamp time = 4;
 }

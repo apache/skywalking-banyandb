@@ -37,10 +37,39 @@ Once we've discussed your changes and you've got your code ready, make sure that
 * References the original issue in the description, e.g., "Resolves #123".
 * Has a [good commit message](http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html).
 
+## Requirements
+
+Users who want to build a binary from sources have to set up:
+
+* Go 1.19
+* Node 16.15
+* Git >= 2.30
+* Linux, MacOS or Windows+WSL2
+* GNU make
+
+### Windows
+
+BanyanDB is built on Linux and MacOS that introduced several platform-specific characters to the building system. Therefore, we highly recommend you to use [WSL2+Ubuntu](https://ubuntu.com/wsl) to execute tasks of the Makefile.
+
+#### End of line sequence
+
+BanyanDB ALWAYS use `LF`(`\n`) as the line endings, even on a Windows. So we need your development tool and IDEs to generate new files with `LF` as its end of lines.
+
 ## Building and Testing
 
-Clone the source code and run `make build` in the source directory,
-which will build the default binary file in `<sub_project>/build/bin/`.
+Clone the source code and check the necessary tools by
+
+```shell
+make check-req
+```
+
+Once the checking passes, you should generate files for building by
+
+```shell
+make generate
+```
+
+Finally, run `make build` in the source directory, which will build the default binary file in `<sub_project>/build/bin/`.
 
 ```shell
 make build
@@ -64,16 +93,6 @@ make lint
 
 If you found some errors in the output of the above command, try `make format` to fix some obvious style issues. As for the complicated errors, please correct them manually.
 
-## Test your changes before pushing
-
-We have a series of checking tests to verify your changes by
-
-```shell
-make pre-push
-```
-
-Please fix any errors raised by the above command.
-
 ## Update licenses
 
 If you import new dependencies or upgrade an existing one, trigger the licenses generator
@@ -82,3 +101,16 @@ to update the license files.
 ```shell
 make license-dep 
 ```
+
+> Caveat: This task is a step of `make pre-push`. You can run it to update licenses.
+
+## Test your changes before pushing
+
+After you commit the local changes, we have a series of checking tests to verify your changes by
+
+```shell
+git commit
+make pre-push
+```
+
+Please fix any errors raised by the above command.

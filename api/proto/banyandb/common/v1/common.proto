@@ -17,65 +17,66 @@
 
 syntax = "proto3";
 
-option java_package = "org.apache.skywalking.banyandb.common.v1";
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1";
-
 package banyandb.common.v1;
 
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1";
+option java_package = "org.apache.skywalking.banyandb.common.v1";
+
 enum Catalog {
-    CATALOG_UNSPECIFIED = 0;
-    CATALOG_STREAM = 1;
-    CATALOG_MEASURE = 2;
+  CATALOG_UNSPECIFIED = 0;
+  CATALOG_STREAM = 1;
+  CATALOG_MEASURE = 2;
 }
 
 // Metadata is for multi-tenant, multi-model use
 message Metadata {
-    // group contains a set of options, like retention policy, max
-    string group = 1;
-    // name of the entity
-    string name = 2 [(validate.rules).string.min_len = 1];
-    uint32 id = 3;
-    // readonly. create_revision is the revision of last creation on this key.
-    int64 create_revision = 4;
-    // readonly. mod_revision is the revision of last modification on this key.
-    int64 mod_revision = 5;
+  // group contains a set of options, like retention policy, max
+  string group = 1;
+  // name of the entity
+  string name = 2 [(validate.rules).string.min_len = 1];
+  uint32 id = 3;
+  // readonly. create_revision is the revision of last creation on this key.
+  int64 create_revision = 4;
+  // readonly. mod_revision is the revision of last modification on this key.
+  int64 mod_revision = 5;
 }
 
 // IntervalRule is a structured duration
 message IntervalRule {
-    enum Unit {
-        UNIT_UNSPECIFIED = 0;
-        UNIT_HOUR = 1;
-        UNIT_DAY = 2;
-    }
-    // unit can only be UNIT_HOUR or UNIT_DAY
-    Unit unit = 1 [(validate.rules).enum.defined_only = true];
-    uint32 num = 2 [(validate.rules).uint32.gt = 0];
+  enum Unit {
+    UNIT_UNSPECIFIED = 0;
+    UNIT_HOUR = 1;
+    UNIT_DAY = 2;
+  }
+  // unit can only be UNIT_HOUR or UNIT_DAY
+  Unit unit = 1 [(validate.rules).enum.defined_only = true];
+  uint32 num = 2 [(validate.rules).uint32.gt = 0];
 }
 
 message ResourceOpts {
-    // shard_num is the number of shards
-    uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
-    // block_interval indicates the length of a block
-    // block_interval should be less than or equal to segment_interval
-    IntervalRule block_interval = 2 [(validate.rules).message.required = true];
-    // segment_interval indicates the length of a segment
-    IntervalRule segment_interval = 3 [(validate.rules).message.required = true];;
-    // ttl indicates time to live, how long the data will be cached
-    IntervalRule ttl = 4 [(validate.rules).message.required = true];
+  // shard_num is the number of shards
+  uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
+  // block_interval indicates the length of a block
+  // block_interval should be less than or equal to segment_interval
+  IntervalRule block_interval = 2 [(validate.rules).message.required = true];
+  // segment_interval indicates the length of a segment
+  IntervalRule segment_interval = 3 [(validate.rules).message.required = true];
+
+  // ttl indicates time to live, how long the data will be cached
+  IntervalRule ttl = 4 [(validate.rules).message.required = true];
 }
 
 // Group is an internal object for Group management
 message Group {
-    // metadata define the group's identity
-    common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-    // catalog denotes which type of data the group contains
-    common.v1.Catalog catalog = 2;
-    // resourceOpts indicates the structure of the underlying kv storage
-    ResourceOpts resource_opts = 3; 
-    // updated_at indicates when resources of the group are updated
-    google.protobuf.Timestamp updated_at = 4;
+  // metadata define the group's identity
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // catalog denotes which type of data the group contains
+  common.v1.Catalog catalog = 2;
+  // resourceOpts indicates the structure of the underlying kv storage
+  ResourceOpts resource_opts = 3;
+  // updated_at indicates when resources of the group are updated
+  google.protobuf.Timestamp updated_at = 4;
 }
