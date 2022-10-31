@@ -68,7 +68,9 @@ resource_opts:
     num: 7`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
 			})
 		}
 		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
@@ -85,7 +87,9 @@ tagFamilies:
         type: TAG_TYPE_STRING`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
 			})
 		}
 		Eventually(createStream).Should(ContainSubstring("stream group1.name1 is created"))

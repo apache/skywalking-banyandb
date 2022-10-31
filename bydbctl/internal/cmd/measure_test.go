@@ -68,7 +68,9 @@ resource_opts:
     num: 7`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
 			})
 		}
 		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
@@ -80,7 +82,9 @@ metadata:
   group: group1`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
 			})
 		}
 		Eventually(createMeasure).Should(ContainSubstring("measure group1.name1 is created"))
