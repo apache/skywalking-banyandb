@@ -32,11 +32,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
 var (
-	ErrNotRangeOperation = errors.New("this is not an range operation")
-	ErrEmptyTree         = errors.New("tree is empty")
+	ErrNotRangeOperation        = errors.New("this is not an range operation")
+	ErrEmptyTree                = errors.New("tree is empty")
+	ErrInvalidLogicalExpression = errors.New("invalid logical expression")
 )
 
 type GlobalIndexError struct {
@@ -72,6 +74,9 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		return eNode, []tsdb.Entity{entity}, nil
 	case *model_v1.Criteria_Le:
 		le := criteria.GetLe()
+		if le.GetLeft() == nil && le.GetRight() == nil {
+			return nil, nil, errors.WithMessagef(ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+		}
 		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
@@ -260,6 +265,9 @@ func (n *node) append(sub index.Filter) *node {
 }
 
 func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
+	if len(n.SubNodes) < 1 {
+		return roaring.EmptyPostingList, nil
+	}
 	var result posting.List
 	for _, sn := range n.SubNodes {
 		r, err := sn.Execute(searcher, seriesID)
