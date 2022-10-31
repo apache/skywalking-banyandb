@@ -25,10 +25,18 @@ tagProjection:
 criteria:
   le:
     op: "LOGICAL_OP_AND"
-    left:
+    right:
       condition:
         name: "id"
         op: "BINARY_OP_EQ"
         value:
           str:
             value: "1"
+    left:
+      condition:
+        name: "service_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "service_1"
+

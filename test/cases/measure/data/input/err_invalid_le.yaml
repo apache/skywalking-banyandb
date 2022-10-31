@@ -16,19 +16,14 @@
 # under the License.
 
 metadata:
-  name: "service_traffic"
+  name: "service_cpm_minute"
   group: "sw_metric"
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["id", "service_id"]
+    tags: ["id", "entity_id"]
+fieldProjection:
+  names: ["total", "value"]
 criteria:
   le:
     op: "LOGICAL_OP_AND"
-    left:
-      condition:
-        name: "id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "1"
