@@ -32,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
 var (
@@ -88,6 +87,9 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
 			return nil, nil, nil
+		}
+		if left == nil && right == nil {
+			return nil, entities, nil
 		}
 		switch le.Op {
 		case model_v1.LogicalExpression_LOGICAL_OP_AND:
@@ -266,7 +268,7 @@ func (n *node) append(sub index.Filter) *node {
 
 func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
 	if len(n.SubNodes) < 1 {
-		return roaring.EmptyPostingList, nil
+		return bList, nil
 	}
 	var result posting.List
 	for _, sn := range n.SubNodes {
