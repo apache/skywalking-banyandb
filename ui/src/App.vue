@@ -54,7 +54,7 @@ const initData = (() => {
   } else {
     activePath = path
   }
-  if (name == "Database") {
+  if (name == "Stream" || name == "Measure") {
     header.changeShowButton(true)
   } else {
     header.changeShowButton(false)

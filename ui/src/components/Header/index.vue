@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import { ref } from "vue";
+import { ref, reactive } from "vue";
 import { computed } from '@vue/runtime-core'
 import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
 import stores from '../../stores/index'
@@ -33,9 +33,15 @@ const isCollapse = computed(() => {
 const showButton = computed(() => {
     return header.showButton
 })
+const data = reactive({
+    activeMenu: '/dashboard'
+})
+
 const userImg = ref('src/assets/banyandb_small.jpg')
 const handleSelect = (e) => {
-    e === '/database'
+    sessionStorage.setItem('active', e)
+    data.activeMenu = e
+    e === '/stream' || e === '/measure'
         ? header.changeShowButton(true)
         : header.changeShowButton(false)
 }
@@ -51,10 +57,16 @@ const changeAsideWidth = () => {
 defineProps({
     active: {
         type: String,
-        default: '/home'
+        default: '/dashboard'
     }
 })
-
+function initData() {
+    data.activeMenu = sessionStorage.getItem('active')
+    data.activeMenu === '/stream' || data.activeMenu === '/measure'
+        ? header.changeShowButton(true)
+        : header.changeShowButton(false)
+}
+initData()
 </script>
 
 <template>
@@ -78,20 +90,20 @@ defineProps({
                 </el-tooltip>
             </div>
             <div v-else class="icon-size"></div>
-            <span v-if="header.showButton && tags.currentMenu"
+            <span v-if="header.showButton && tags.currentMenu && data.activeMenu == '/stream'"
                 :title="tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.type + ' / ' + tags.currentMenu.metadata.name"
                 class="text-overflow-hidden text-general-color pointer margin-left-small" style="width:380px;">{{
-                tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.name
+                        tags.currentMenu.metadata.group + ' / ' + tags.currentMenu.metadata.name
                 }}</span>
             <div v-else style="width:380px;" class="margin-left-small"></div>
         </div>
-        <div class="navigation" style="margin-right: 400px;">
-            <el-menu active-text-color="#6E38F7" router class="el-menu-demo" mode="horizontal" :default-active="active"
-                @select="handleSelect">
-                <el-menu-item index="/home">Home</el-menu-item>
-                <el-menu-item index="/database">Database</el-menu-item>
-                <el-menu-item index="/structure">Structure</el-menu-item>
-                <el-menu-item index="/about">About Us</el-menu-item>
+        <div class="navigation" style="margin-right: 20%">
+            <el-menu active-text-color="#6E38F7" router :ellipsis="false" class="el-menu-demo" mode="horizontal"
+                :default-active="data.activeMenu" @select="handleSelect">
+                <el-menu-item index="/dashboard">Dashboard</el-menu-item>
+                <el-menu-item index="/stream">Stream</el-menu-item>
+                <el-menu-item index="/measure">Measure</el-menu-item>
+                <el-menu-item index="/property">Property</el-menu-item>
             </el-menu>
         </div>
         <div class="person flex justify-around align-item-center">
@@ -127,20 +139,26 @@ defineProps({
     }
 }
 
+.el-menu-item {
+    font-weight: var(--weight-lt);
+    font-size: var(--size-lt);
+    font-family: var(--font-family-main);
+}
+
+.el-menu-item:hover {
+    color: var(--el-menu-active-color) !important;
+}
+
 .navigation {
-    width: 500px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .person {
     width: 140px;
     height: 100%;
     margin-right: 30px;
-}
-
-.el-menu-item {
-    font-weight: var(--weight-lt);
-    font-size: var(--size-lt);
-    font-family: var(--font-family-main);
 }
 
 .icon-size {

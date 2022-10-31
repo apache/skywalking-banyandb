@@ -17,10 +17,19 @@
   ~ under the License.
 -->
 
+<script setup>
+defineProps({
+  type: {
+    type: String,
+    default: 'stream'
+  }
+})
+</script>
+
 <template>
   <div class="startContainer flex center column">
       <div class="text-big text-placeholder-color text-family margin-top-bottom">Welcome to BanyanDB Manager!</div>
-      <div class="text-title text-placeholder-color text-famil">Please open the file to start working!</div>
+      <div class="text-title text-placeholder-color text-famil">Please open the {{type}} to start working!</div>
   </div>
 </template>
 
