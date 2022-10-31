@@ -60,14 +60,15 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	Expect(err).NotTo(HaveOccurred())
-	now = timestamp.NowMilli().Add(-time.Hour * 24)
+	ns := timestamp.NowMilli().UnixNano()
+	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	casesStreamData.Write(conn, "data.json", now, interval)
 	interval = time.Minute
 	casesMeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(time.Second), interval)
+	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(10*time.Second), interval)
 	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
 	Expect(conn.Close()).To(Succeed())
 	return []byte(addr)

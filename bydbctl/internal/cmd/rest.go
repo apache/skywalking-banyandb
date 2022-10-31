@@ -38,8 +38,6 @@ import (
 )
 
 const (
-	// RFC3339 refers to https://www.rfc-editor.org/rfc/rfc3339
-	RFC3339        = "2006-01-02T15:04:05Z07:00"
 	timeRange      = 30 * time.Minute
 	timeRangeUsage = `"start" and "end" specify a time range during which the query is preformed,
 		they can be absolute time like "2006-01-02T15:04:05Z07:00"(https://www.rfc-editor.org/rfc/rfc3339), 
@@ -183,8 +181,8 @@ func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err er
 		}
 		startTS = endTS.Add(-timeRange)
 	}
-	s := startTS.Format(RFC3339)
-	e := endTS.Format(RFC3339)
+	s := startTS.Format(time.RFC3339)
+	e := endTS.Format(time.RFC3339)
 	var rawRequests []reqBody
 	if rawRequests, err = parseNameAndGroupFromYAML(reader); err != nil {
 		return nil, err
@@ -211,7 +209,7 @@ func parseTime(timestamp string) (time.Time, error) {
 	if len(timestamp) < 1 {
 		return time.Time{}, errors.New("time is empty")
 	}
-	t, errAbsoluteTime := time.Parse(timestamp, RFC3339)
+	t, errAbsoluteTime := time.Parse(timestamp, time.RFC3339)
 	if errAbsoluteTime == nil {
 		return t, nil
 	}
