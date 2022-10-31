@@ -60,7 +60,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	Expect(err).NotTo(HaveOccurred())
-	now = timestamp.NowMilli().Add(-time.Hour * 24)
+	ns := timestamp.NowMilli().UnixNano()
+	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	casesStreamData.Write(conn, "data.json", now, interval)
 	interval = time.Minute
