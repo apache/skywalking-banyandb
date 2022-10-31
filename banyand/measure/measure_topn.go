@@ -37,7 +37,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
@@ -45,7 +44,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -54,10 +52,9 @@ const (
 )
 
 var (
-	_ bus.MessageListener = (*topNProcessCallback)(nil)
-	_ io.Closer           = (*topNStreamingProcessor)(nil)
-	_ io.Closer           = (*topNProcessorManager)(nil)
-	_ flow.Sink           = (*topNStreamingProcessor)(nil)
+	_ io.Closer = (*topNStreamingProcessor)(nil)
+	_ io.Closer = (*topNProcessorManager)(nil)
+	_ flow.Sink = (*topNStreamingProcessor)(nil)
 
 	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
 
@@ -169,7 +166,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	if err != nil {
 		return err
 	}
-	span, err := series.Span(timestamp.NewInclusiveTimeRangeDuration(eventTime, 0))
+	span, err := series.Create(eventTime)
 	if err != nil {
 		if span != nil {
 			_ = span.Close()
@@ -324,16 +321,16 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) error {
-	manager.RLock()
-	defer manager.RUnlock()
-	for _, processorList := range manager.processorMap {
-		for _, processor := range processorList {
-			processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) {
+	go func() {
+		manager.RLock()
+		defer manager.RUnlock()
+		for _, processorList := range manager.processorMap {
+			for _, processor := range processorList {
+				processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+			}
 		}
-	}
-
-	return nil
+	}()
 }
 
 func (manager *topNProcessorManager) start() error {
@@ -516,41 +513,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			}),
 		}
 	}, nil
-}
-
-// topNProcessCallback listens pipeline for writing requests
-type topNProcessCallback struct {
-	l          *logger.Logger
-	schemaRepo *schemaRepo
-}
-
-func setUpStreamingProcessCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
-	return &topNProcessCallback{
-		l:          l,
-		schemaRepo: schemaRepo,
-	}
-}
-
-func (cb *topNProcessCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*measurev1.InternalWriteRequest)
-	if !ok {
-		cb.l.Warn().Msg("invalid event data type")
-		return
-	}
-
-	// first get measure existence
-	m, ok := cb.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
-	if !ok {
-		cb.l.Warn().Msg("cannot find measure definition")
-		return
-	}
-
-	err := m.processorManager.onMeasureWrite(writeEvent.GetRequest())
-	if err != nil {
-		cb.l.Debug().Err(err).Msg("fail to send to the streaming processor")
-	}
-
-	return
 }
 
 var (

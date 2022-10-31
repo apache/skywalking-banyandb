@@ -50,15 +50,6 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 		close(waitCh)
 		return err
 	}
-	// send to stream processor
-	err = s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
-		Metadata:  s.GetMetadata(),
-		DataPoint: value,
-	})
-	if err != nil {
-		close(waitCh)
-		return err
-	}
 	<-waitCh
 	return nil
 }
@@ -149,6 +140,10 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 		Cb:          cb,
 	}
 	s.indexWriter.Write(m)
+	s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
+		Metadata:  s.GetMetadata(),
+		DataPoint: value,
+	})
 	return err
 }
 

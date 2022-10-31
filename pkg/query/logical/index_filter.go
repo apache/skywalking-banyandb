@@ -35,8 +35,9 @@ import (
 )
 
 var (
-	ErrNotRangeOperation = errors.New("this is not an range operation")
-	ErrEmptyTree         = errors.New("tree is empty")
+	ErrNotRangeOperation        = errors.New("this is not an range operation")
+	ErrEmptyTree                = errors.New("tree is empty")
+	ErrInvalidLogicalExpression = errors.New("invalid logical expression")
 )
 
 type GlobalIndexError struct {
@@ -72,6 +73,9 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		return eNode, []tsdb.Entity{entity}, nil
 	case *model_v1.Criteria_Le:
 		le := criteria.GetLe()
+		if le.GetLeft() == nil && le.GetRight() == nil {
+			return nil, nil, errors.WithMessagef(ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+		}
 		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
@@ -83,6 +87,9 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
 			return nil, nil, nil
+		}
+		if left == nil && right == nil {
+			return nil, entities, nil
 		}
 		switch le.Op {
 		case model_v1.LogicalExpression_LOGICAL_OP_AND:
@@ -260,6 +267,9 @@ func (n *node) append(sub index.Filter) *node {
 }
 
 func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
+	if len(n.SubNodes) < 1 {
+		return bList, nil
+	}
 	var result posting.List
 	for _, sn := range n.SubNodes {
 		r, err := sn.Execute(searcher, seriesID)

@@ -55,13 +55,12 @@ type service struct {
 	root   string
 	dbOpts tsdb.DatabaseOpts
 
-	schemaRepo      schemaRepo
-	writeListener   bus.MessageListener
-	processListener bus.MessageListener
-	l               *logger.Logger
-	metadata        metadata.Repo
-	pipeline        queue.Queue
-	repo            discovery.ServiceRepo
+	schemaRepo    schemaRepo
+	writeListener bus.MessageListener
+	l             *logger.Logger
+	metadata      metadata.Repo
+	pipeline      queue.Queue
+	repo          discovery.ServiceRepo
 	// stop channel for the service
 	stopCh chan struct{}
 }
@@ -133,13 +132,6 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-
-	s.processListener = setUpStreamingProcessCallback(s.l, &s.schemaRepo)
-	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.processListener)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
