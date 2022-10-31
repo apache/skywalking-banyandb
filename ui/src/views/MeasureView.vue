@@ -60,11 +60,11 @@ function shrinkUp(e) {
     <div @mousemove="shrinkMove" @mouseup="shrinkUp" style="width:100%; height:100%">
         <el-container>
             <el-aside :width="fatherWidth" class="bd-top flex" style="position:relative;">
-                <AsideComponent></AsideComponent>
+                <AsideComponent type="measure"></AsideComponent>
                 <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
             </el-aside>
             <el-main style="background-color: var(--color-background)">
-                <component :is="mainComponent === 'mainStartCom' ? MainStartComponent : MainComponent"></component>
+                <component :is="MainStartComponent" type="measure"></component>
             </el-main>
         </el-container>
     </div>

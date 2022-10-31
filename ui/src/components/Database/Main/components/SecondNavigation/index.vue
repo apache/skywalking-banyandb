@@ -99,30 +99,45 @@ function openDesign() { }
 </script>
 
 <template>
-    <div class="flex second-nav-contain align-item-center">
-        <el-select v-model="data.tagFamily" @change="changeTagFamilies" style="width: 150px" filterable
-            placeholder="Please select">
-            <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
-            </el-option>
-        </el-select>
-        <el-date-picker class="date-picker" v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
-            range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
-        </el-date-picker>
+    <div class="flex second-nav-contain justify-start align-item-center">
+        <div class="flex justify-start align-item-center" style="width: 10%">
+            <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
+                <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
+                </el-option>
+            </el-select>
+        </div>
 
-        <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
-            <template #append>
-                <el-button :icon="Search" />
-            </template>
-        </el-input>
-        <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right" disabled>Refresh</el-button>
-        <el-button class="nav-button" @click="openDetail">{{ showDrawer ? "Close Detail" : "Open Detail" }}</el-button>
-        <el-button class="nav-button" @click="openDesign" disabled>Open Design</el-button>
+        <div class="flex justify-between align-item-center" style="width: 89%; margin-left: 1%;" >
+            <div class="flex justify-start align-item-center" style="width: 35%">
+                <el-date-picker v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
+                    range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
+                </el-date-picker>
+            </div>
+
+            <div class="flex justify-start align-item-center" style="width: 35%">
+                <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
+                    <template #append>
+                        <el-button :icon="Search" />
+                    </template>
+                </el-input>
+            </div>
+            <div class="flex justify-start align-item-center" style="width: 8%">
+                <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right" disabled>Refresh</el-button>
+            </div>
+            <div class="flex justify-start align-item-center" style="width: 8%">
+                <el-button class="nav-button" @click="openDetail">{{ showDrawer ? "Close Detail" : "Open Detail" }}
+                </el-button>
+            </div>
+            <div class="flex justify-start align-item-center" style="width: 8%">
+                <el-button class="nav-button" @click="openDesign" disabled>Open Design</el-button>
+            </div>
+        </div>
     </div>
 </template>
 
 <style lang="scss" scoped>
 .nav-button {
-    width: 8%;
+    width: 100%;
     margin: 0;
 }
 
@@ -131,24 +146,9 @@ function openDesign() { }
     height: 50px;
     padding: 0 10px 0 10px;
 
-    .date-picker {
-        width: 250px;
-        margin: 0 10px 0 10px;
-    }
-
     .search-input {
-        width: 250px;
+        width: 100%;
         margin: 0;
     }
-
-    .refresh {
-        width: 5.5%;
-        height: 80%;
-    }
-}
-
-.picker {
-    width: 95%;
-    margin-left: 10px;
 }
 </style>

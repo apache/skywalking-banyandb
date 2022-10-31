@@ -84,6 +84,15 @@ const tagsList = computed(() => {
 const currentMenu = computed(() => {
     return tags.currentMenu
 })
+// props data
+const props = defineProps({
+    type: {
+        type: String,
+        required: true,
+        default: ''
+    }
+})
+
 
 // data
 let data = reactive({
@@ -116,6 +125,7 @@ function getGroupLists() {
                 let group = res.data.group
                 let length = group.length
                 data.groupLists = group
+                deleteOtherGroup()
                 data.groupLists.forEach((item, index) => {
                     let catalog = item.catalog
                     let type = catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
@@ -138,6 +148,16 @@ function getGroupLists() {
         .finally(() => {
             $loadingClose()
         })
+}
+
+function deleteOtherGroup() {
+    for (let i = 0; i < data.groupLists.length; i++) {
+        let type = data.groupLists[i].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+        if (type !== props.type) {
+            data.groupLists.splice(i, 1)
+            i--
+        }
+    }
 }
 
 function stopPropagation(e) {
@@ -465,7 +485,7 @@ $bus.on('handleRightItem', (index) => {
                             <Folder />
                         </el-icon>
                         <div slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">{{
-                        item.metadata.name
+                                item.metadata.name
                         }}</div>
                     </template>
                     <div v-for="(itemChildren, indexChildren) in item.children" :key="itemChildren.metadata.name">
@@ -486,7 +506,7 @@ $bus.on('handleRightItem', (index) => {
             </div>
         </el-menu>
         <el-dialog title="Tips" v-model="data.dialogVisible" width="25%" center>
-            <span>Are you sure to delete this {{data.rightClickType}}?</span>
+            <span>Are you sure to delete this {{ data.rightClickType }}?</span>
             <span slot="footer" class="dialog-footer">
                 <el-button @click="data.dialogVisible = false">cancel</el-button>
                 <el-button type="primary" @click="deleteGroupOrResources">delete</el-button>
@@ -507,7 +527,7 @@ $bus.on('handleRightItem', (index) => {
             </el-form>
             <div slot="footer" class="dialog-footer">
                 <el-button @click="cancelCreateEditDialog">cancel</el-button>
-                <el-button type="primary" @click="confirmForm">{{data.setGroup}}
+                <el-button type="primary" @click="confirmForm">{{ data.setGroup }}
                 </el-button>
             </div>
         </el-dialog>
