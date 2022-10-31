@@ -61,7 +61,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	)
 	Expect(err).NotTo(HaveOccurred())
 	ns := timestamp.NowMilli().UnixNano()
-	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(10 * time.Second).Add(-time.Hour * 24)
+	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
 	casesStreamData.Write(conn, "data.json", now, interval)
 	interval = time.Minute
