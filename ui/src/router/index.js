@@ -18,47 +18,47 @@
  */
 
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
+import DashboardView from '../views/DashboardView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
-import DatabaseView from '../views/DatabaseView.vue'
-import AboutView from '../views/AboutView.vue'
-import StructureView from '../views/StructureView.vue'
+import StreamView from '../views/StreamView.vue'
+import PropertyView from '../views/PropertyView.vue'
+import MeasureView from '../views/MeasureView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      redirect: '/home'
+      redirect: '/dashboard'
     },
     {
-      path: '/home',
-      name: 'Home',
-      component: HomeView,
+      path: '/dashboard',
+      name: 'Dashboard',
+      component: DashboardView,
       meta: {
         keepAlive: false,
       }
     },
     {
-      path: '/database',
-      name: 'Database',
-      component: DatabaseView,
+      path: '/stream',
+      name: 'Stream',
+      component: StreamView,
       meta: {
         keepAlive: true,
       }
     },
     {
-      path: '/structure',
-      name: 'StructureView',
-      component: StructureView,
+      path: '/measure',
+      name: 'Measure',
+      component: MeasureView,
       meta: {
         keepAlive: false,
       }
     },
     {
-      path: '/about',
-      name: 'AboutView',
-      component: AboutView,
+      path: '/property',
+      name: 'Property',
+      component: PropertyView,
       meta: {
         keepAlive: false,
       }

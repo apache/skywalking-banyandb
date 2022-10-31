@@ -17,14 +17,20 @@
   ~ under the License.
 -->
 
-<template>
-    <h1>
-        this is structure
-    </h1>
-</template>
-
 <script>
-export default{
-    name: 'StructureView',
+export default {
+  name: 'Dashboard',
 }
 </script>
+
+<template>
+  <div>
+    <h1 class="home">
+      This is the dashboard page
+    </h1>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+
+</style>
