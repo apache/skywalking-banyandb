@@ -293,24 +293,30 @@ func (sc *segmentController) segments() (ss []*segment) {
 	return r
 }
 
-func (sc *segmentController) Current() bucket.Reporter {
-	sc.RLock()
-	defer sc.RUnlock()
+func (sc *segmentController) Current() (bucket.Reporter, error) {
 	now := sc.clock.Now()
-	for _, s := range sc.lst {
-		if s.suffix == sc.Format(now) {
-			return s
+	ns := uint64(now.UnixNano())
+	if b := func() bucket.Reporter {
+		sc.RLock()
+		defer sc.RUnlock()
+		for _, s := range sc.lst {
+			if s.Contains(ns) {
+				return s
+			}
 		}
+		return nil
+	}(); b != nil {
+		return b, nil
 	}
-	// return the latest segment before now
-	if len(sc.lst) > 0 {
-		return sc.lst[len(sc.lst)-1]
-	}
-	return nil
+	return sc.create(sc.Format(now), true)
 }
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
-	seg := sc.Current().(*segment)
+	c, err := sc.Current()
+	if err != nil {
+		return nil, err
+	}
+	seg := c.(*segment)
 	reporter, err := sc.create(sc.Format(
 		sc.segmentSize.NextTime(seg.Start)), true)
 	if errors.Is(err, ErrEndOfSegment) {
@@ -351,7 +357,7 @@ func (sc *segmentController) Parse(value string) (time.Time, error) {
 }
 
 func (sc *segmentController) open() error {
-	err := WalkDir(
+	return WalkDir(
 		sc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
@@ -363,21 +369,16 @@ func (sc *segmentController) open() error {
 			}
 			return err
 		})
-	if err != nil {
-		return err
-	}
-	if sc.Current() == nil {
-		_, err = sc.create(sc.Format(sc.clock.Now()), true)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (sc *segmentController) create(suffix string, createBlockIfEmpty bool) (*segment, error) {
 	sc.Lock()
 	defer sc.Unlock()
+	for _, s := range sc.lst {
+		if s.suffix == suffix {
+			return s, nil
+		}
+	}
 	segPath, err := mkdir(segTemplate, sc.location, suffix)
 	if err != nil {
 		return nil, err

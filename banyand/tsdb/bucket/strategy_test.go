@@ -109,10 +109,10 @@ func (c *controller) Next() (bucket.Reporter, error) {
 	return c.reporter, nil
 }
 
-func (c *controller) Current() bucket.Reporter {
+func (c *controller) Current() (bucket.Reporter, error) {
 	c.mux.RLock()
 	defer c.mux.RUnlock()
-	return c.reporter
+	return c.reporter, nil
 }
 
 func (c *controller) OnMove(prev bucket.Reporter, next bucket.Reporter) {

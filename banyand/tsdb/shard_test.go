@@ -540,5 +540,67 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 		})
+		It("creates arbitrary blocks", func() {
+			clock.Set(time.Date(1970, 0o1, 0o1, 1, 0, 0, 0, time.Local))
+			By("open 1 block")
+			var err error
+			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  1,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.HOUR,
+					Num:  12,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  7,
+				},
+				2,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			By("01/01 00:01 1st block is opened")
+			t1 := clock.Now()
+			Eventually(func() []tsdb.BlockState {
+				return shard.State().Blocks
+			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o1),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
+				},
+			}))
+			By("01/01 11:00 2nd block is opened")
+			clock.Add(10 * time.Hour)
+			t2 := clock.Now().Add(2 * time.Hour)
+			Eventually(func() []tsdb.BlockState {
+				if clock.TriggerTimer() {
+					GinkgoWriter.Println("01/01 10:00 has been triggered")
+				}
+				return shard.State().Blocks
+			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o1),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 13),
+					},
+					// The last block only takes 11 hours to align the segment's size
+					TimeRange: timestamp.NewTimeRangeDuration(t2, 11*time.Hour, true, false),
+				},
+			}))
+			Eventually(func() []tsdb.BlockID {
+				return shard.State().OpenBlocks
+			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{}))
+		})
 	})
 })
