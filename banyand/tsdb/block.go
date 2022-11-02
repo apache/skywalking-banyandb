@@ -80,7 +80,7 @@ type block struct {
 type blockOpts struct {
 	segID     uint16
 	blockSize IntervalRule
-	startTime time.Time
+	timeRange timestamp.TimeRange
 	suffix    string
 	path      string
 	queue     bucket.Queue
@@ -92,15 +92,14 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		return nil, err
 	}
 	id := GenerateInternalID(opts.blockSize.Unit, suffixInteger)
-	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
 	clock, _ := timestamp.GetClock(ctx)
 	b = &block{
 		segID:     opts.segID,
 		blockID:   id,
 		path:      opts.path,
 		l:         logger.Fetch(ctx, "block"),
-		TimeRange: timeRange,
-		Reporter:  bucket.NewTimeBasedReporter(timeRange, clock),
+		TimeRange: opts.timeRange,
+		Reporter:  bucket.NewTimeBasedReporter(opts.timeRange, clock),
 		flushCh:   make(chan struct{}, 1),
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -173,6 +174,9 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	}
 	if opts.TTL.Num == 0 {
 		return nil, errors.Wrap(ErrOpenDatabase, "ttl is absent")
+	}
+	if opts.SegmentInterval.EstimatedDuration() > 24*time.Hour {
+		return nil, errors.Wrap(ErrOpenDatabase, "segment interval should not be greater than 24 hours")
 	}
 	db := &database{
 		location:    opts.Location,

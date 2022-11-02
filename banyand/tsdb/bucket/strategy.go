@@ -82,16 +82,17 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 	if strategy.logger == nil {
 		strategy.logger = logger.GetLogger("bucket-strategy")
 	}
+	c, err := ctrl.Current()
+	if err != nil {
+		return nil, err
+	}
+	strategy.current.Store(c)
 	return strategy, nil
 }
 
 func (s *Strategy) Run() {
-	for s.current.Load() == nil {
-		s.current.Store(s.ctrl.Current())
-	}
 	go func(s *Strategy) {
 		for {
-
 			c := s.current.Load().(Reporter).Report()
 			if !s.observe(c) {
 				return
@@ -110,7 +111,6 @@ func (s *Strategy) String() string {
 }
 
 func (s *Strategy) observe(c Channel) bool {
-	var err error
 	var next Reporter
 	moreBucket := true
 	for {
@@ -122,11 +122,13 @@ func (s *Strategy) observe(c Channel) bool {
 			ratio := Ratio(status.Volume) / Ratio(status.Capacity)
 			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
 			if ratio >= s.ratio && next == nil && moreBucket {
-				next, err = s.ctrl.Next()
+				n, err := s.ctrl.Next()
 				if errors.Is(err, ErrNoMoreBucket) {
 					moreBucket = false
 				} else if err != nil {
 					s.logger.Err(err).Msg("failed to create the next bucket")
+				} else {
+					next = n
 				}
 			}
 			if ratio >= 1.0 {

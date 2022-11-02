@@ -24,6 +24,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -148,7 +149,7 @@ type SeriesDatabase interface {
 type blockDatabase interface {
 	shardID() common.ShardID
 	span(timeRange timestamp.TimeRange) ([]BlockDelegate, error)
-	create(timeRange timestamp.TimeRange) (BlockDelegate, error)
+	create(ts time.Time) (BlockDelegate, error)
 	block(id GlobalItemID) (BlockDelegate, error)
 }
 
@@ -266,9 +267,10 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) 
 	return result, nil
 }
 
-func (s *seriesDB) create(timeRange timestamp.TimeRange) (BlockDelegate, error) {
+func (s *seriesDB) create(ts time.Time) (BlockDelegate, error) {
 	s.Lock()
 	defer s.Unlock()
+	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
 	ss := s.segCtrl.span(timeRange)
 	if len(ss) > 0 {
 		s := ss[0]

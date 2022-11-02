@@ -140,7 +140,7 @@ func (s *series) Create(t time.Time) (SeriesSpan, error) {
 			Msg("load a series span")
 		return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks, s.id, s.shardID), nil
 	}
-	b, err := s.blockDB.create(tr)
+	b, err := s.blockDB.create(t)
 	if err != nil {
 		return nil, err
 	}

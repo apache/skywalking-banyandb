@@ -84,6 +84,10 @@ func NewInclusiveTimeRangeDuration(start time.Time, duration time.Duration) Time
 	return NewTimeRangeDuration(start, duration, true, true)
 }
 
+func NewSectionTimeRange(start, end time.Time) TimeRange {
+	return NewTimeRange(start, end, true, false)
+}
+
 func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange {
 	return TimeRange{
 		Start:        start,

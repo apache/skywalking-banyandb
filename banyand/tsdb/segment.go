@@ -60,7 +60,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		return nil, err
 	}
 	id := GenerateInternalID(segmentSize.Unit, suffixInteger)
-	timeRange := timestamp.NewTimeRange(startTime, segmentSize.NextTime(startTime), true, false)
+	timeRange := timestamp.NewSectionTimeRange(startTime, segmentSize.NextTime(startTime))
 	l := logger.Fetch(ctx, "segment")
 	segCtx := context.WithValue(ctx, logger.ContextKey, l)
 	clock, segCtx := timestamp.GetClock(segCtx)
@@ -73,8 +73,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange, clock),
 	}
-	isHead := s.End.After(clock.Now())
-	err = s.blockController.open(isHead)
+	err = s.blockController.open()
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +100,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 			}
 		}
 	}
-	if !isHead {
+	if !s.End.After(clock.Now()) {
 		return
 	}
 	s.blockManageStrategy, err = bucket.NewStrategy(s.blockController, bucket.WithLogger(s.l))
@@ -175,33 +174,31 @@ func newBlockController(segCtx context.Context, segID uint16, location string, s
 	}
 }
 
-func (bc *blockController) Current() bucket.Reporter {
-	bc.RLock()
-	defer bc.RUnlock()
+func (bc *blockController) Current() (bucket.Reporter, error) {
 	now := bc.clock.Now()
-	for _, s := range bc.lst {
-		if s.suffix == bc.Format(now) {
-			return s
+	ns := uint64(now.UnixNano())
+	if b := func() bucket.Reporter {
+		bc.RLock()
+		defer bc.RUnlock()
+		for _, s := range bc.lst {
+			if s.Contains(ns) {
+				return s
+			}
 		}
+		return nil
+	}(); b != nil {
+		return b, nil
 	}
-	// return the latest segment before now
-	if len(bc.lst) > 0 {
-		return bc.lst[len(bc.lst)-1]
-	}
-	return nil
+	return bc.create(now)
 }
 
 func (bc *blockController) Next() (bucket.Reporter, error) {
-	b := bc.Current().(*block)
-	reporter, err := bc.create(
-		bc.blockSize.NextTime(b.Start))
-	if errors.Is(err, ErrEndOfSegment) {
-		return nil, bucket.ErrNoMoreBucket
-	}
+	c, err := bc.Current()
 	if err != nil {
 		return nil, err
 	}
-	return reporter, err
+	b := c.(*block)
+	return bc.create(bc.blockSize.NextTime(b.Start))
 }
 
 func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
@@ -327,8 +324,8 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) open(createIfEmpty bool) error {
-	err := WalkDir(
+func (bc *blockController) open() error {
+	return WalkDir(
 		bc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
@@ -337,19 +334,6 @@ func (bc *blockController) open(createIfEmpty bool) error {
 			_, err := bc.load(suffix, absolutePath)
 			return err
 		})
-	if err != nil {
-		return err
-	}
-	if !createIfEmpty {
-		return nil
-	}
-	if bc.Current() == nil {
-		_, err := bc.create(bc.clock.Now())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (bc *blockController) create(startTime time.Time) (*block, error) {
@@ -357,11 +341,16 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 		startTime = bc.segTimeRange.Start
 	}
 	if !startTime.Before(bc.segTimeRange.End) {
-		return nil, ErrEndOfSegment
+		return nil, bucket.ErrNoMoreBucket
 	}
 	bc.Lock()
 	defer bc.Unlock()
 	suffix := bc.Format(startTime)
+	for _, b := range bc.lst {
+		if b.suffix == suffix {
+			return b, nil
+		}
+	}
 	segPath, err := mkdir(blockTemplate, bc.location, suffix)
 	if err != nil {
 		return nil, err
@@ -374,6 +363,10 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 	if err != nil {
 		return nil, err
 	}
+	endTime := bc.blockSize.NextTime(starTime)
+	if endTime.After(bc.segTimeRange.End) {
+		endTime = bc.segTimeRange.End
+	}
 	if b, err = newBlock(
 		common.SetPosition(bc.segCtx, func(p common.Position) common.Position {
 			p.Block = suffix
@@ -382,7 +375,7 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 		blockOpts{
 			segID:     bc.segID,
 			path:      path,
-			startTime: starTime,
+			timeRange: timestamp.NewSectionTimeRange(starTime, endTime),
 			suffix:    suffix,
 			blockSize: bc.blockSize,
 			queue:     bc.blockQueue,
