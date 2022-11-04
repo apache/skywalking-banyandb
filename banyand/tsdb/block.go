@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -49,7 +50,10 @@ const (
 	componentSecondLSMIdx      = "lsm"
 
 	defaultMainMemorySize = 8 << 20
+	defaultEnqueueTimeout = 500 * time.Millisecond
 )
+
+var ErrBlockClosingInterrupted = errors.New("interrupt to close the block")
 
 type block struct {
 	path       string
@@ -106,13 +110,14 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		deleted:   &atomic.Bool{},
 		queue:     opts.queue,
 	}
+	b.closed.Store(true)
 	b.options(ctx)
 	position := ctx.Value(common.PositionKey)
 	if position != nil {
 		b.position = position.(common.Position)
 	}
 
-	return b, b.open()
+	return b, nil
 }
 
 func (b *block) options(ctx context.Context) {
@@ -187,24 +192,28 @@ func (b *block) open() (err error) {
 	return nil
 }
 
-func (b *block) delegate() (BlockDelegate, error) {
+func (b *block) delegate(ctx context.Context) (BlockDelegate, error) {
 	if b.deleted.Load() {
-		return nil, errors.WithMessagef(ErrBlockAbsent, "block %d is deleted", b.blockID)
+		return nil, errors.WithMessagef(ErrBlockAbsent, "block %s is deleted", b)
+	}
+	blockID := BlockID{
+		BlockID: b.blockID,
+		SegID:   b.segID,
 	}
 	if b.incRef() {
+		b.queue.Touch(blockID)
 		return &bDelegate{
 			delegate: b,
 		}, nil
 	}
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	b.queue.Push(BlockID{
-		BlockID: b.blockID,
-		SegID:   b.segID,
-	})
-	// TODO: remove the block which fails to open from the queue
-	err := b.open()
-	if err != nil {
+	if err := b.queue.Push(ctx, blockID, func() error {
+		if !b.Closed() {
+			return nil
+		}
+		return b.open()
+	}); err != nil {
 		b.l.Error().Err(err).Stringer("block", b).Msg("fail to open block")
 		return nil, err
 	}
@@ -240,14 +249,23 @@ loop:
 	goto loop
 }
 
-func (b *block) waitDone() {
-loop:
-	if b.ref.Load() < 1 {
-		b.ref.Store(0)
-		return
-	}
-	runtime.Gosched()
-	goto loop
+func (b *block) waitDone(stopped *atomic.Bool) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+	loop:
+		if b.ref.Load() < 1 {
+			b.ref.Store(0)
+			close(ch)
+			return
+		}
+		if stopped.Load() {
+			close(ch)
+			return
+		}
+		runtime.Gosched()
+		goto loop
+	}()
+	return ch
 }
 
 func (b *block) flush() {
@@ -261,28 +279,37 @@ func (b *block) flush() {
 	}
 }
 
-func (b *block) close() {
+func (b *block) close(ctx context.Context) (err error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.closed.Load() {
-		return
+		return nil
 	}
 	b.closed.Store(true)
-	b.waitDone()
+	stopWaiting := &atomic.Bool{}
+	ch := b.waitDone(stopWaiting)
+	select {
+	case <-ctx.Done():
+		b.closed.Store(false)
+		stopWaiting.Store(true)
+		return errors.Wrapf(ErrBlockClosingInterrupted, "block:%s", b)
+	case <-ch:
+	}
 	for _, closer := range b.closableLst {
-		_ = closer.Close()
+		err = multierr.Append(err, closer.Close())
 	}
 	close(b.stopCh)
+	return err
 }
 
-func (b *block) stopThenClose() {
+func (b *block) stopThenClose(ctx context.Context) error {
 	if b.Reporter != nil {
 		b.Stop()
 	}
-	b.close()
+	return b.close(ctx)
 }
 
-func (b *block) delete() error {
+func (b *block) delete(ctx context.Context) error {
 	if b.deleted.Load() {
 		return nil
 	}
@@ -290,7 +317,7 @@ func (b *block) delete() error {
 	if b.Reporter != nil {
 		b.Stop()
 	}
-	b.close()
+	b.close(ctx)
 	return os.RemoveAll(b.path)
 }
 
@@ -299,7 +326,7 @@ func (b *block) Closed() bool {
 }
 
 func (b *block) String() string {
-	return fmt.Sprintf("BlockID-%d-%d", b.segID, b.blockID)
+	return fmt.Sprintf("BlockID-%d-%d", parseSuffix(b.segID), parseSuffix(b.blockID))
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {

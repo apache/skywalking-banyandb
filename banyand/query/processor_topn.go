@@ -196,7 +196,9 @@ func familyIdentity(name string, flag []byte) []byte {
 }
 
 func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.TopNRequest) ([]tsdb.Iterator, error) {
-	seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRange(
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seriesSpan, err := series.Span(ctx, timestamp.NewInclusiveTimeRange(
 		request.GetTimeRange().GetBegin().AsTime(),
 		request.GetTimeRange().GetEnd().AsTime()),
 	)

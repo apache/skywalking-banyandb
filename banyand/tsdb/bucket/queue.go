@@ -17,29 +17,45 @@
 package bucket
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/golang-lru/simplelru"
+	"github.com/robfig/cron/v3"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type EvictFn func(id interface{})
+type (
+	EvictFn       func(ctx context.Context, id interface{}) error
+	OnAddRecentFn func() error
+)
 
 type Queue interface {
-	Push(id interface{})
-	Remove(id interface{})
+	io.Closer
+	Touch(id fmt.Stringer) bool
+	Push(ctx context.Context, id fmt.Stringer, fn OnAddRecentFn) error
+	Remove(id fmt.Stringer)
 	Len() int
+	Volume() int
 	All() []interface{}
 }
 
 const (
-	DefaultRecentRatio  = 0.25
-	DefaultGhostEntries = 0.50
+	DefaultRecentRatio = 0.25
+
+	defaultEvictBatchSize = 10
 )
 
 var ErrInvalidSize = errors.New("invalid size")
 
 type lruQueue struct {
+	l          *logger.Logger
 	size       int
 	recentSize int
 	evictSize  int
@@ -49,15 +65,17 @@ type lruQueue struct {
 	frequent    simplelru.LRUCache
 	recentEvict simplelru.LRUCache
 	lock        sync.RWMutex
+
+	stopCh chan struct{}
 }
 
-func NewQueue(size int, evictFn EvictFn) (Queue, error) {
+func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Clock, evictFn EvictFn) (Queue, error) {
 	if size <= 0 {
 		return nil, ErrInvalidSize
 	}
 
 	recentSize := int(float64(size) * DefaultRecentRatio)
-	evictSize := int(float64(size) * DefaultGhostEntries)
+	evictSize := maxSize - size
 
 	recent, err := simplelru.NewLRU(size, nil)
 	if err != nil {
@@ -79,37 +97,108 @@ func NewQueue(size int, evictFn EvictFn) (Queue, error) {
 		recentEvict: recentEvict,
 		evictSize:   evictSize,
 		evictFn:     evictFn,
+		l:           logger,
+		stopCh:      make(chan struct{}),
 	}
+	parser := cron.NewParser(cron.Second)
+	// every 60 seconds to clean up recentEvict
+	scheduler, err := parser.Parse("59")
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		now := clock.Now()
+		for {
+			next := scheduler.Next(now)
+			timer := clock.Timer(next.Sub(now))
+			select {
+			case now = <-timer.C:
+				c.l.Info().Time("now", now).Msg("wakes")
+				var evictLen int
+				c.lock.RLock()
+				evictLen = c.recentEvict.Len()
+				c.lock.RUnlock()
+				if evictLen < 1 {
+					continue
+				}
+				for i := 0; i < defaultEvictBatchSize; i++ {
+					c.lock.Lock()
+					if evictLen < 1 {
+						continue
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					if err := c.removeOldest(ctx, c.recentEvict); err != nil {
+						c.l.Error().Err(err).Msg("failed to remove oldest blocks")
+					}
+					cancel()
+					c.lock.Unlock()
+				}
+			case <-c.stopCh:
+				c.l.Info().Msg("stop")
+				timer.Stop()
+				return
+			}
+		}
+	}()
 	return c, nil
 }
 
-func (q *lruQueue) Push(id interface{}) {
+func (q *lruQueue) Touch(id fmt.Stringer) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	if q.frequent.Contains(id) {
-		q.frequent.Add(id, nil)
-		return
+		q.l.Debug().Stringer("id", id).Msg("get from frequent")
+		return true
 	}
 
 	if q.recent.Contains(id) {
+		q.l.Debug().Stringer("id", id).Msg("promote from recent to frequent")
 		q.recent.Remove(id)
 		q.frequent.Add(id, nil)
-		return
+		return true
+	}
+	return false
+}
+
+func (q *lruQueue) Push(ctx context.Context, id fmt.Stringer, fn OnAddRecentFn) error {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	if q.frequent.Contains(id) {
+		q.l.Debug().Stringer("id", id).Msg("push to frequent")
+		q.frequent.Add(id, nil)
+		return nil
+	}
+
+	if q.recent.Contains(id) {
+		q.l.Debug().Stringer("id", id).Msg("promote from recent to frequent")
+		q.recent.Remove(id)
+		q.frequent.Add(id, nil)
+		return nil
 	}
 
 	if q.recentEvict.Contains(id) {
-		q.ensureSpace(true)
+		q.l.Debug().Stringer("id", id).Msg("restore from recentEvict")
+		if err := q.ensureSpace(ctx, true); err != nil {
+			return err
+		}
 		q.recentEvict.Remove(id)
 		q.frequent.Add(id, nil)
-		return
+		return nil
 	}
 
-	q.ensureSpace(false)
+	if err := q.ensureSpace(ctx, false); err != nil {
+		return err
+	}
 	q.recent.Add(id, nil)
+	if fn == nil {
+		return nil
+	}
+	return fn()
 }
 
-func (q *lruQueue) Remove(id interface{}) {
+func (q *lruQueue) Remove(id fmt.Stringer) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -134,6 +223,10 @@ func (q *lruQueue) Len() int {
 	return q.recent.Len() + q.frequent.Len()
 }
 
+func (q *lruQueue) Volume() int {
+	return q.size + q.recentSize + q.evictSize
+}
+
 func (q *lruQueue) All() []interface{} {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
@@ -144,32 +237,50 @@ func (q *lruQueue) All() []interface{} {
 	return all
 }
 
-func (q *lruQueue) ensureSpace(recentEvict bool) {
+func (q *lruQueue) ensureSpace(ctx context.Context, recentEvict bool) error {
 	recentLen := q.recent.Len()
 	freqLen := q.frequent.Len()
 	if recentLen+freqLen < q.size {
-		return
+		return nil
 	}
 	if recentLen > 0 && (recentLen > q.recentSize || (recentLen == q.recentSize && !recentEvict)) {
-		k, _, _ := q.recent.RemoveOldest()
-		q.addLst(q.recentEvict, q.evictSize, k)
-		return
+		k, _, ok := q.recent.GetOldest()
+		if !ok {
+			return errors.New("failed to get oldest from recent queue")
+		}
+		if err := q.addLst(ctx, q.recentEvict, q.evictSize, k); err != nil {
+			return err
+		}
+		q.recent.Remove(k)
+		return nil
 	}
-	q.removeOldest(q.frequent)
+	return q.removeOldest(ctx, q.frequent)
 }
 
-func (q *lruQueue) addLst(lst simplelru.LRUCache, size int, id interface{}) {
+func (q *lruQueue) addLst(ctx context.Context, lst simplelru.LRUCache, size int, id interface{}) error {
 	if lst.Len() < size {
 		lst.Add(id, nil)
-		return
+		return nil
 	}
-	q.removeOldest(lst)
+	if err := q.removeOldest(ctx, lst); err != nil {
+		return err
+	}
 	lst.Add(id, nil)
+	return nil
 }
 
-func (q *lruQueue) removeOldest(lst simplelru.LRUCache) {
-	oldestID, _, ok := lst.RemoveOldest()
+func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache) error {
+	oldestID, _, ok := lst.GetOldest()
 	if ok && q.evictFn != nil {
-		q.evictFn(oldestID)
+		if err := q.evictFn(ctx, oldestID); err != nil {
+			return err
+		}
+		_ = lst.Remove(oldestID)
 	}
+	return nil
+}
+
+func (q *lruQueue) Close() error {
+	close(q.stopCh)
+	return nil
 }

@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -51,7 +52,7 @@ var (
 var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()

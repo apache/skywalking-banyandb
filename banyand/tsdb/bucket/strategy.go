@@ -117,7 +117,7 @@ func (s *Strategy) observe(c Channel) bool {
 		select {
 		case status, more := <-c:
 			if !more {
-				return true
+				return moreBucket
 			}
 			ratio := Ratio(status.Volume) / Ratio(status.Capacity)
 			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
@@ -136,7 +136,7 @@ func (s *Strategy) observe(c Channel) bool {
 				if next != nil {
 					s.current.Store(next)
 				}
-				return true
+				return moreBucket
 			}
 		case <-s.stopCh:
 			return false

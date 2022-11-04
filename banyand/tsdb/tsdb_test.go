@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -100,7 +101,7 @@ func verifyDatabaseStructure(tester *assert.Assertions, tempDir string, now time
 func openDatabase(ctx context.Context, t *require.Assertions, path string) (db Database) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	db, err := OpenDatabase(
 		context.WithValue(ctx, logger.ContextKey, logger.GetLogger("test")),

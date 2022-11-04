@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -96,7 +97,9 @@ func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, sh
 			return elementsInShard, errors.WithStack(err)
 		}
 		err = func() error {
-			item, closer, errInner := series.Get(itemID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			item, closer, errInner := series.Get(ctx, itemID)
 			defer func(closer io.Closer) {
 				if closer != nil {
 					_ = closer.Close()

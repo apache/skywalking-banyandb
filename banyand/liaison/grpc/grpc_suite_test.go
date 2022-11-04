@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestGrpc(t *testing.T) {
@@ -34,6 +35,6 @@ func TestGrpc(t *testing.T) {
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).Should(Succeed())
 })
