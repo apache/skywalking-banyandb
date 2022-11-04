@@ -18,6 +18,7 @@
 package tsdb
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -76,19 +77,18 @@ func (rc *retentionController) run() {
 	for {
 		next := rc.scheduler.Next(now)
 		timer := rc.segment.clock.Timer(next.Sub(now))
-		for {
-			select {
-			case now = <-timer.C:
-				rc.l.Info().Time("now", now).Msg("wake")
-				if err := rc.segment.remove(now.Add(-rc.duration)); err != nil {
-					rc.l.Error().Err(err)
-				}
-			case <-rc.stopCh:
-				timer.Stop()
-				rc.l.Info().Msg("stop")
-				return
+		select {
+		case now = <-timer.C:
+			rc.l.Info().Time("now", now).Msg("wake")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			if err := rc.segment.remove(ctx, now.Add(-rc.duration)); err != nil {
+				rc.l.Error().Err(err)
 			}
-			break
+			cancel()
+		case <-rc.stopCh:
+			timer.Stop()
+			rc.l.Info().Msg("stop")
+			return
 		}
 	}
 }

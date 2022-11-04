@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 )
 
@@ -45,7 +46,7 @@ func TestMeasure(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).To(gomega.Succeed())
 })
 

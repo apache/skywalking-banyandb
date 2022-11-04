@@ -166,7 +166,9 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	if err != nil {
 		return err
 	}
-	span, err := series.Create(eventTime)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	span, err := series.Create(ctx, eventTime)
 	if err != nil {
 		if span != nil {
 			_ = span.Close()

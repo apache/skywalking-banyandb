@@ -43,6 +43,7 @@ projection:
 timeRange:
   begin: 2022-10-15T22:32:48+08:00
   end: 2022-10-15T23:32:48+08:00
+EOF
 ```
 
 The below command could query data in the last 30 minutes using relative time duration :
@@ -58,6 +59,7 @@ projection:
     tags: ["trace_id"]
   - name: "data"
     tags: ["data_binary"]
+EOF
 ```
 
 ## API Reference

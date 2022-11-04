@@ -18,6 +18,9 @@
 package stream
 
 import (
+	"context"
+	"time"
+
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -87,7 +90,9 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		return err
 	}
 	t := timestamp.MToN(tp)
-	wp, err := series.Create(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wp, err := series.Create(ctx, t)
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
