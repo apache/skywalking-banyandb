@@ -84,7 +84,7 @@ Another option named `interval` plays a critical role in encoding. It indicates 
 
 #### TopNAggregation
 
-Find the Top-N entities from a dataset in a time range is a common scenario. We could see the diagrams like "Top 10 throughput endpoints", and "Most slow 20 endpoints", etc on SkyWalking's UI. Exploring and analyzing the top entities can always find some high-value information.
+Find the Top-N entities from a dataset in a time range is a common scenario. We could see the diagrams like "Top 10 throughput endpoints", and "Most slow 20 endpoints", etc on SkyWalking's UI. Exploring and analyzing the top entities can always reveal some high-value information.
 
 BanyanDB introduces the `TopNAggregation`, aiming to pre-calculate the top/bottom entities during the measure writing phase. In the query phase, BanyanDB can quickly retrieve the top/bottom records. The performance would be much better than `top()` function which is based on the query phase aggregation procedure.
 
