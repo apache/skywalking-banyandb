@@ -113,7 +113,7 @@ lru_size: 10
 
 Tags in `group_by_tag_names` are used as dimensions. These tags can be searched (only equality is supported) in the query phase. Tags do not exist in `group_by_tag_names` will be dropped in the pre-calculating phase.
 
-`counters_number` denotes the number of entity cardinality. As the example shows, calculating the Top 100 among 10 thousand is easier than among 10 million.
+`counters_number` denotes the number of entity cardinality. As the above example shows, calculating the Top 100 among 10 thousands is easier than among 10 millions.
 
 `lru_size` is a late data optimizing flag. The higher the number, the more late data, but the more memory space is consumed.
 
