@@ -84,7 +84,7 @@ Another option named `interval` plays a critical role in encoding. It indicates 
 
 #### TopNAggregation
 
-Find the Top-N entities from a dataset in a time range is a common scenario. We could see the diagrams like "Top 10 throughput endpoints", and "Most slow 20 endpoints", etc on SkyWalking's UI. Exploring and analyzing the top entities can always find some high-value information.
+Find the Top-N entities from a dataset in a time range is a common scenario. We could see the diagrams like "Top 10 throughput endpoints", and "Most slow 20 endpoints", etc on SkyWalking's UI. Exploring and analyzing the top entities can always reveal some high-value information.
 
 BanyanDB introduces the `TopNAggregation`, aiming to pre-calculate the top/bottom entities during the measure writing phase. In the query phase, BanyanDB can quickly retrieve the top/bottom records. The performance would be much better than `top()` function which is based on the query phase aggregation procedure.
 
@@ -106,14 +106,14 @@ counters_number: 10000
 lru_size: 10
 ```
 
-`endpoint_cpm_minute_top_bottom` is watching the data ingesting of `endpoint_cpm_minute` to generate top 1000 and bottom 1000 entity cardinalities respectively. If you want to only calculate Top 1000 or Bottom 1000, the `field_value_sort` could be `DESC` or `ASC`.
+`endpoint_cpm_minute_top_bottom` is watching the data ingesting of the source measure `endpoint_cpm_minute` to generate both top 1000 and bottom 1000 entity cardinalities. If only Top 1000 or Bottom 1000 is needed, the `field_value_sort` could be `DESC` or `ASC` respectively.
 
 * SORT_DESC: Top-N. In a series of `1,2,3...1000`. Top10's result is `1000,999...991`.
 * SORT_ASC: Bottom-N. In a series of `1,2,3...1000`. Bottom10's result is `1,2...10`.
 
-Tags in `group_by_tag_names` need to be as dimensions. The query phase could retrieve these tags. Tags no in `group_by_tag_names` could be dropped in the calculating phase.
+Tags in `group_by_tag_names` are used as dimensions. These tags can be searched (only equality is supported) in the query phase. Tags do not exist in `group_by_tag_names` will be dropped in the pre-calculating phase.
 
-`counters_number` denotes the number of entity cardinality. As the example shows, calculating the Top 100 among 10 thousand is easier than among 10 million.
+`counters_number` denotes the number of entity cardinality. As the above example shows, calculating the Top 100 among 10 thousands is easier than among 10 millions.
 
 `lru_size` is a late data optimizing flag. The higher the number, the more late data, but the more memory space is consumed.
 
