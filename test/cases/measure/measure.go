@@ -52,5 +52,7 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("match a node", helpers.Args{Input: "match_node", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("match nodes", helpers.Args{Input: "match_nodes", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("filter by entity id", helpers.Args{Input: "entity", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("filter by entity id and service id", helpers.Args{Input: "entity_service", Want: "entity", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("without field", helpers.Args{Input: "no_field", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("invalid logical expression", helpers.Args{Input: "err_invalid_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 )

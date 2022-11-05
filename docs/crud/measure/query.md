@@ -43,6 +43,7 @@ fieldProjection:
 timeRange:
   begin: 2022-10-15T22:32:48Z
   end: 2022-10-15T23:32:48Z
+EOF
 ```
 
 The below command could query data in the last 30 minutes using relative time duration :
@@ -58,6 +59,7 @@ tagProjection:
     tags: ["id", "entity_id"]
 fieldProjection:
   names: ["total", "value"]
+EOF
 ```
 
 ## API Reference

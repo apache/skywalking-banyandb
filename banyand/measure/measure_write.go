@@ -19,6 +19,8 @@ package measure
 
 import (
 	"bytes"
+	"context"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -50,15 +52,6 @@ func (s *measure) Write(value *measurev1.DataPointValue) error {
 		close(waitCh)
 		return err
 	}
-	// send to stream processor
-	err = s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
-		Metadata:  s.GetMetadata(),
-		DataPoint: value,
-	})
-	if err != nil {
-		close(waitCh)
-		return err
-	}
 	<-waitCh
 	return nil
 }
@@ -84,7 +77,9 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if err != nil {
 		return err
 	}
-	wp, err := series.Create(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wp, err := series.Create(ctx, t)
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()
@@ -149,6 +144,10 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 		Cb:          cb,
 	}
 	s.indexWriter.Write(m)
+	s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
+		Metadata:  s.GetMetadata(),
+		DataPoint: value,
+	})
 	return err
 }
 

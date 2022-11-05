@@ -14,25 +14,26 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-package bucket_test
+package flags
 
 import (
-	"testing"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"time"
 )
 
-func TestBucket(t *testing.T) {
-	RegisterFailHandler(Fail)
-	BeforeSuite(func() {
-		Expect(logger.Init(logger.Logging{
-			Env:   "dev",
-			Level: flags.LogLevel,
-		})).Should(Succeed())
-	})
-	RunSpecs(t, "Bucket Suite")
+var (
+	eventuallyTimeout string
+	EventuallyTimeout time.Duration
+	LogLevel          = "debug"
+)
+
+func init() {
+	if eventuallyTimeout == "" {
+		EventuallyTimeout = time.Second * 3
+		return
+	}
+	d, err := time.ParseDuration(eventuallyTimeout)
+	if err != nil {
+		panic(err)
+	}
+	EventuallyTimeout = d
 }

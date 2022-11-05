@@ -60,7 +60,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		return nil, err
 	}
 	id := GenerateInternalID(segmentSize.Unit, suffixInteger)
-	timeRange := timestamp.NewTimeRange(startTime, segmentSize.NextTime(startTime), true, false)
+	timeRange := timestamp.NewSectionTimeRange(startTime, segmentSize.NextTime(startTime))
 	l := logger.Fetch(ctx, "segment")
 	segCtx := context.WithValue(ctx, logger.ContextKey, l)
 	clock, segCtx := timestamp.GetClock(segCtx)
@@ -73,8 +73,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		TimeRange:       timeRange,
 		Reporter:        bucket.NewTimeBasedReporter(timeRange, clock),
 	}
-	isHead := s.End.After(clock.Now())
-	err = s.blockController.open(isHead)
+	err = s.blockController.open()
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +100,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 			}
 		}
 	}
-	if !isHead {
+	if !s.End.After(clock.Now()) {
 		return
 	}
 	s.blockManageStrategy, err = bucket.NewStrategy(s.blockController, bucket.WithLogger(s.l))
@@ -112,10 +111,14 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 	return s, nil
 }
 
-func (s *segment) close() {
-	s.blockController.close()
+func (s *segment) close(ctx context.Context) error {
+	if err := s.blockController.close(ctx); err != nil {
+		return err
+	}
 	if s.globalIndex != nil {
-		s.globalIndex.Close()
+		if err := s.globalIndex.Close(); err != nil {
+			return err
+		}
 	}
 	if s.blockManageStrategy != nil {
 		s.blockManageStrategy.Close()
@@ -123,19 +126,22 @@ func (s *segment) close() {
 	if s.Reporter != nil {
 		s.Stop()
 	}
+	return nil
 }
 
-func (s *segment) closeBlock(id uint16) {
-	s.blockController.closeBlock(id)
+func (s *segment) closeBlock(ctx context.Context, id uint16) error {
+	return s.blockController.closeBlock(ctx, id)
 }
 
-func (s *segment) delete() error {
-	s.close()
+func (s *segment) delete(ctx context.Context) error {
+	if err := s.close(ctx); err != nil {
+		return err
+	}
 	return os.RemoveAll(s.path)
 }
 
 func (s segment) String() string {
-	return fmt.Sprintf("SegID-%d", s.id)
+	return fmt.Sprintf("SegID-%d", parseSuffix(s.id))
 }
 
 func (s *segment) Stats() observability.Statistics {
@@ -175,43 +181,63 @@ func newBlockController(segCtx context.Context, segID uint16, location string, s
 	}
 }
 
-func (bc *blockController) Current() bucket.Reporter {
-	bc.RLock()
-	defer bc.RUnlock()
+func (bc *blockController) Current() (bucket.Reporter, error) {
 	now := bc.clock.Now()
-	for _, s := range bc.lst {
-		if s.suffix == bc.Format(now) {
-			return s
+	ns := uint64(now.UnixNano())
+	if b := func() *block {
+		bc.RLock()
+		defer bc.RUnlock()
+		for _, s := range bc.lst {
+			if s.Contains(ns) {
+				return s
+			}
 		}
+		return nil
+	}(); b != nil {
+		if b.Closed() {
+			if err := b.open(); err != nil {
+				return nil, err
+			}
+		}
+		return b, nil
 	}
-	// return the latest segment before now
-	if len(bc.lst) > 0 {
-		return bc.lst[len(bc.lst)-1]
-	}
-	return nil
+	return bc.newHeadBlock(now)
 }
 
 func (bc *blockController) Next() (bucket.Reporter, error) {
-	b := bc.Current().(*block)
-	reporter, err := bc.create(
-		bc.blockSize.NextTime(b.Start))
-	if errors.Is(err, ErrEndOfSegment) {
-		return nil, bucket.ErrNoMoreBucket
-	}
+	c, err := bc.Current()
 	if err != nil {
 		return nil, err
 	}
-	return reporter, err
+	b := c.(*block)
+
+	return bc.newHeadBlock(bc.blockSize.NextTime(b.Start))
+}
+
+func (bc *blockController) newHeadBlock(now time.Time) (*block, error) {
+	b, err := bc.create(now)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
 	event := bc.l.Info()
 	if prev != nil {
 		event.Stringer("prev", prev)
-		bc.blockQueue.Push(BlockID{
+		b := prev.(*block)
+		ctx, cancel := context.WithTimeout(context.Background(), defaultEnqueueTimeout)
+		defer cancel()
+		if err := bc.blockQueue.Push(ctx, BlockID{
 			SegID:   bc.segID,
-			BlockID: prev.(*block).blockID,
-		})
+			BlockID: b.blockID,
+		}, nil); err != nil {
+			bc.l.Debug().Err(err).Msg("failed to push a expired head block to the queue")
+			ctxClosing, cancelClosing := context.WithTimeout(context.Background(), defaultEnqueueTimeout)
+			defer cancelClosing()
+			b.close(ctxClosing)
+		}
 	}
 	if next != nil {
 		event.Stringer("next", next)
@@ -239,7 +265,7 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
+func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
 	bb := bc.search(func(b *block) bool {
 		return b.Overlapping(timeRange)
 	})
@@ -248,7 +274,7 @@ func (bc *blockController) span(timeRange timestamp.TimeRange) ([]BlockDelegate,
 	}
 	dd := make([]BlockDelegate, len(bb))
 	for i, b := range bb {
-		d, err := b.delegate()
+		d, err := b.delegate(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -257,10 +283,10 @@ func (bc *blockController) span(timeRange timestamp.TimeRange) ([]BlockDelegate,
 	return dd, nil
 }
 
-func (bc *blockController) get(blockID uint16) (BlockDelegate, error) {
+func (bc *blockController) get(ctx context.Context, blockID uint16) (BlockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
-		return b.delegate()
+		return b.delegate(ctx)
 	}
 	return nil, nil
 }
@@ -300,14 +326,14 @@ func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
 	return bb
 }
 
-func (bc *blockController) closeBlock(blockID uint16) {
+func (bc *blockController) closeBlock(ctx context.Context, blockID uint16) error {
 	bc.RLock()
-	defer bc.RUnlock()
 	b := bc.getBlock(blockID)
+	bc.RUnlock()
 	if b == nil {
-		return
+		return nil
 	}
-	b.close()
+	return b.close(ctx)
 }
 
 func (bc *blockController) startTime(suffix string) (time.Time, error) {
@@ -327,29 +353,16 @@ func (bc *blockController) startTime(suffix string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) open(createIfEmpty bool) error {
-	err := WalkDir(
+func (bc *blockController) open() error {
+	return WalkDir(
 		bc.location,
-		segPathPrefix,
+		blockPathPrefix,
 		func(suffix, absolutePath string) error {
 			bc.Lock()
 			defer bc.Unlock()
 			_, err := bc.load(suffix, absolutePath)
 			return err
 		})
-	if err != nil {
-		return err
-	}
-	if !createIfEmpty {
-		return nil
-	}
-	if bc.Current() == nil {
-		_, err := bc.create(bc.clock.Now())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (bc *blockController) create(startTime time.Time) (*block, error) {
@@ -357,22 +370,39 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 		startTime = bc.segTimeRange.Start
 	}
 	if !startTime.Before(bc.segTimeRange.End) {
-		return nil, ErrEndOfSegment
+		return nil, bucket.ErrNoMoreBucket
 	}
 	bc.Lock()
 	defer bc.Unlock()
 	suffix := bc.Format(startTime)
+	for _, b := range bc.lst {
+		if b.suffix == suffix {
+			return b, nil
+		}
+	}
 	segPath, err := mkdir(blockTemplate, bc.location, suffix)
 	if err != nil {
 		return nil, err
 	}
-	return bc.load(suffix, segPath)
+	b, err := bc.load(suffix, segPath)
+	if err != nil {
+		return nil, err
+	}
+	err = b.open()
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (bc *blockController) load(suffix, path string) (b *block, err error) {
 	starTime, err := bc.startTime(suffix)
 	if err != nil {
 		return nil, err
+	}
+	endTime := bc.blockSize.NextTime(starTime)
+	if endTime.After(bc.segTimeRange.End) {
+		endTime = bc.segTimeRange.End
 	}
 	if b, err = newBlock(
 		common.SetPosition(bc.segCtx, func(p common.Position) common.Position {
@@ -382,7 +412,7 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 		blockOpts{
 			segID:     bc.segID,
 			path:      path,
-			startTime: starTime,
+			timeRange: timestamp.NewSectionTimeRange(starTime, endTime),
 			suffix:    suffix,
 			blockSize: bc.blockSize,
 			queue:     bc.blockQueue,
@@ -400,17 +430,18 @@ func (bc *blockController) sortLst() {
 	})
 }
 
-func (bc *blockController) close() {
+func (bc *blockController) close(ctx context.Context) (err error) {
 	for _, s := range bc.lst {
-		s.stopThenClose()
+		err = multierr.Append(err, s.stopThenClose(ctx))
 	}
+	return err
 }
 
-func (bc *blockController) remove(deadline time.Time) (err error) {
+func (bc *blockController) remove(ctx context.Context, deadline time.Time) (err error) {
 	for _, b := range bc.blocks() {
 		if b.End.Before(deadline) {
 			bc.Lock()
-			if errDel := b.delete(); errDel != nil {
+			if errDel := b.delete(ctx); errDel != nil {
 				err = multierr.Append(err, errDel)
 			} else {
 				b.queue.Remove(BlockID{

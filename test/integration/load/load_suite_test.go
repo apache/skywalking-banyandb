@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_query_test
+package integration_load_test
 
 import (
 	"testing"
@@ -27,20 +27,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	cases_measure "github.com/apache/skywalking-banyandb/test/cases/measure"
-	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	cases_topn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
-func TestIntegrationQuery(t *testing.T) {
+func TestIntegrationLoad(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite")
+	RunSpecs(t, "Integration Load Suite", Label("integration", "slow"))
 }
 
 var (
@@ -52,7 +47,7 @@ var (
 var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: flags.LogLevel,
+		Level: "warn",
 	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()
@@ -61,18 +56,26 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	Expect(err).NotTo(HaveOccurred())
-	ns := timestamp.NowMilli().UnixNano()
-	now = time.Unix(0, ns-ns%int64(time.Minute))
-	interval := 500 * time.Millisecond
-	// stream
-	cases_stream_data.Write(conn, "data.json", now, interval)
-	// measure
-	interval = time.Minute
-	cases_measure_data.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
-	cases_measure_data.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
-	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(10*time.Second), interval)
-	cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
+	days := 7
+	hours := 24
+	minutes := 60
+	interval := 10 * time.Second
+	c := time.Now()
+	for i := 0; i < days; i++ {
+		date := c.Add(-time.Hour * time.Duration((days-i)*24))
+		for h := 0; h < hours; h++ {
+			hour := date.Add(time.Hour * time.Duration(h))
+			start := time.Now()
+			for j := 0; j < minutes; j++ {
+				n := hour.Add(time.Minute * time.Duration(j))
+				ns := n.UnixNano()
+				now = time.Unix(0, ns-ns%int64(time.Minute))
+				// stream
+				cases_stream_data.Write(conn, "data.json", now, interval)
+			}
+			GinkgoWriter.Printf("written stream in %s took %s \n", hour, time.Since(start))
+		}
+	}
 	Expect(conn.Close()).To(Succeed())
 	return []byte(addr)
 }, func(address []byte) {
@@ -83,14 +86,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpclib.WithBlock(),
 	)
 	cases_stream.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		BaseTime:   now,
-	}
-	cases_measure.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		BaseTime:   now,
-	}
-	cases_topn.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}

@@ -44,7 +44,8 @@ var _ = Describe("IndexRuleBindingSchema Operation", func() {
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
+		createGroup := func() string {
+			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: group1
 catalog: CATALOG_STREAM
@@ -59,24 +60,31 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("group group1 is created"))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "create", "-a", addr, "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
+		createIndexRuleBinding := func() string {
+			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
   group: group1
 subject:
   catalog: CATALOG_STREAM
   name: stream1`))
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("indexRuleBinding group1.name1 is created"))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createIndexRuleBinding).Should(ContainSubstring("indexRuleBinding group1.name1 is created"))
 	})
 
 	It("get indexRuleBinding schema", func() {

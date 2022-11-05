@@ -34,8 +34,9 @@ import (
 )
 
 const (
-	defaultBlockQueueSize = 1 << 4
-	defaultKVMemorySize   = 1 << 20
+	defaultBlockQueueSize    = 4
+	defaultMaxBlockQueueSize = 64
+	defaultKVMemorySize      = 1 << 20
 )
 
 var _ Shard = (*shard)(nil)
@@ -54,7 +55,7 @@ type shard struct {
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
-	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize int,
+	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize, maxOpenedBlockSize int,
 ) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
@@ -70,7 +71,7 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		p.Shard = strconv.Itoa(int(id))
 		return p
 	})
-	sc, err := newSegmentController(shardCtx, path, segmentSize, blockSize, openedBlockSize, l)
+	sc, err := newSegmentController(shardCtx, path, segmentSize, blockSize, openedBlockSize, maxOpenedBlockSize, l)
 	if err != nil {
 		return nil, errors.Wrapf(err, "create the segment controller of the shard %d", int(id))
 	}
@@ -164,8 +165,9 @@ func (s *shard) State() (shardState ShardState) {
 func (s *shard) Close() error {
 	s.retentionController.stop()
 	s.segmentManageStrategy.Close()
-	s.segmentController.close()
-	err := s.seriesDatabase.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := multierr.Combine(s.segmentController.close(ctx), s.seriesDatabase.Close())
 	close(s.stopCh)
 	return err
 }
@@ -236,7 +238,7 @@ type segmentController struct {
 }
 
 func newSegmentController(shardCtx context.Context, location string, segmentSize, blockSize IntervalRule,
-	openedBlockSize int, l *logger.Logger,
+	openedBlockSize, maxOpenedBlockSize int, l *logger.Logger,
 ) (*segmentController, error) {
 	clock, _ := timestamp.GetClock(shardCtx)
 	sc := &segmentController{
@@ -248,16 +250,21 @@ func newSegmentController(shardCtx context.Context, location string, segmentSize
 		clock:       clock,
 	}
 	var err error
-	sc.blockQueue, err = bucket.NewQueue(openedBlockSize, func(id interface{}) {
-		bsID := id.(BlockID)
-		seg := sc.get(bsID.SegID)
-		if seg == nil {
-			l.Warn().Uint16("segID", bsID.SegID).Msg("segment is absent")
-			return
-		}
-		l.Info().Uint16("blockID", bsID.BlockID).Uint16("segID", bsID.SegID).Msg("closing the block")
-		seg.closeBlock(bsID.BlockID)
-	})
+	sc.blockQueue, err = bucket.NewQueue(
+		l.Named("block-queue"),
+		openedBlockSize,
+		maxOpenedBlockSize,
+		clock,
+		func(ctx context.Context, id interface{}) error {
+			bsID := id.(BlockID)
+			seg := sc.get(bsID.SegID)
+			if seg == nil {
+				l.Warn().Int("segID", parseSuffix(bsID.SegID)).Msg("segment is absent")
+				return nil
+			}
+			l.Info().Uint16("blockID", bsID.BlockID).Int("segID", parseSuffix(bsID.SegID)).Msg("closing the block")
+			return seg.closeBlock(ctx, bsID.BlockID)
+		})
 	return sc, err
 }
 
@@ -293,24 +300,30 @@ func (sc *segmentController) segments() (ss []*segment) {
 	return r
 }
 
-func (sc *segmentController) Current() bucket.Reporter {
-	sc.RLock()
-	defer sc.RUnlock()
+func (sc *segmentController) Current() (bucket.Reporter, error) {
 	now := sc.clock.Now()
-	for _, s := range sc.lst {
-		if s.suffix == sc.Format(now) {
-			return s
+	ns := uint64(now.UnixNano())
+	if b := func() bucket.Reporter {
+		sc.RLock()
+		defer sc.RUnlock()
+		for _, s := range sc.lst {
+			if s.Contains(ns) {
+				return s
+			}
 		}
+		return nil
+	}(); b != nil {
+		return b, nil
 	}
-	// return the latest segment before now
-	if len(sc.lst) > 0 {
-		return sc.lst[len(sc.lst)-1]
-	}
-	return nil
+	return sc.create(sc.Format(now), true)
 }
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
-	seg := sc.Current().(*segment)
+	c, err := sc.Current()
+	if err != nil {
+		return nil, err
+	}
+	seg := c.(*segment)
 	reporter, err := sc.create(sc.Format(
 		sc.segmentSize.NextTime(seg.Start)), true)
 	if errors.Is(err, ErrEndOfSegment) {
@@ -351,7 +364,7 @@ func (sc *segmentController) Parse(value string) (time.Time, error) {
 }
 
 func (sc *segmentController) open() error {
-	err := WalkDir(
+	return WalkDir(
 		sc.location,
 		segPathPrefix,
 		func(suffix, absolutePath string) error {
@@ -363,21 +376,16 @@ func (sc *segmentController) open() error {
 			}
 			return err
 		})
-	if err != nil {
-		return err
-	}
-	if sc.Current() == nil {
-		_, err = sc.create(sc.Format(sc.clock.Now()), true)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (sc *segmentController) create(suffix string, createBlockIfEmpty bool) (*segment, error) {
 	sc.Lock()
 	defer sc.Unlock()
+	for _, s := range sc.lst {
+		if s.suffix == suffix {
+			return s, nil
+		}
+	}
 	segPath, err := mkdir(segTemplate, sc.location, suffix)
 	if err != nil {
 		return nil, err
@@ -408,14 +416,14 @@ func (sc *segmentController) load(suffix, path string, createBlockIfEmpty bool) 
 	return seg, nil
 }
 
-func (sc *segmentController) remove(deadline time.Time) (err error) {
+func (sc *segmentController) remove(ctx context.Context, deadline time.Time) (err error) {
 	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
 		if s.End.Before(deadline) || s.Contains(uint64(deadline.UnixNano())) {
-			err = multierr.Append(err, s.blockController.remove(deadline))
+			err = multierr.Append(err, s.blockController.remove(ctx, deadline))
 			if s.End.Before(deadline) {
 				sc.Lock()
-				if errDel := s.delete(); errDel != nil {
+				if errDel := s.delete(ctx); errDel != nil {
 					err = multierr.Append(err, errDel)
 				} else {
 					sc.removeSeg(s.id)
@@ -436,8 +444,10 @@ func (sc *segmentController) removeSeg(segID uint16) {
 	}
 }
 
-func (sc *segmentController) close() {
+func (sc *segmentController) close(ctx context.Context) (err error) {
 	for _, s := range sc.lst {
-		s.close()
+		err = multierr.Append(err, s.close(ctx))
 	}
+	err = multierr.Append(err, sc.blockQueue.Close())
+	return err
 }

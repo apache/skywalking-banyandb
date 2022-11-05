@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var serviceName = index.FieldKey{
@@ -173,7 +174,7 @@ func TestStore_Iterator(t *testing.T) {
 func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	tempDir, deferFunc = test.Space(t)
 	return tempDir, deferFunc

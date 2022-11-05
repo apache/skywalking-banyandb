@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestEntity(t *testing.T) {
@@ -355,7 +356,7 @@ func Test_SeriesDatabase_Get(t *testing.T) {
 	tester := assert.New(t)
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -376,7 +377,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 	tester := assert.New(t)
 	tester.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	dir, deferFunc := test.Space(require.New(t))
 	defer deferFunc()

@@ -19,6 +19,7 @@ package measure
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"go.uber.org/multierr"
@@ -132,7 +133,14 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 			b.Filter(i.filter)
 		})
 	}
-	iters, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	iters, closers, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	if len(closers) > 0 {
+		defer func(closers []io.Closer) {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+		}(closers)
+	}
 	if innerErr != nil {
 		return nil, innerErr
 	}

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -106,8 +107,16 @@ type BlockID struct {
 	BlockID uint16
 }
 
+func (b BlockID) String() string {
+	return fmt.Sprintf("BlockID-%d-%d", parseSuffix(b.SegID), parseSuffix(b.BlockID))
+}
+
 func GenerateInternalID(unit IntervalUnit, suffix int) uint16 {
 	return uint16(unit)<<12 | ((uint16(suffix) << 4) >> 4)
+}
+
+func parseSuffix(id uint16) int {
+	return int((id << 12) >> 12)
 }
 
 type BlockState struct {
@@ -174,6 +183,9 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if opts.TTL.Num == 0 {
 		return nil, errors.Wrap(ErrOpenDatabase, "ttl is absent")
 	}
+	if opts.SegmentInterval.EstimatedDuration() > 24*time.Hour {
+		return nil, errors.Wrap(ErrOpenDatabase, "segment interval should not be greater than 24 hours")
+	}
 	db := &database{
 		location:    opts.Location,
 		shardNum:    opts.ShardNum,
@@ -207,7 +219,7 @@ func createDatabase(ctx context.Context, db *database, startID int) (Database, e
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
 		so, errNewShard := OpenShard(ctx, common.ShardID(i),
-			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize)
+			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize, defaultMaxBlockQueueSize)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -239,6 +251,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 			db.blockSize,
 			db.ttl,
 			defaultBlockQueueSize,
+			defaultMaxBlockQueueSize,
 		)
 		if errOpenShard != nil {
 			return errOpenShard

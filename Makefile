@@ -65,7 +65,12 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 include scripts/build/ginkgo.mk
 
 test-ci: $(GINKGO) ## Run the unit tests in CI
-	$(GINKGO) -v --race --cover --covermode atomic --coverprofile=coverage.out ./... 
+	$(GINKGO) --race \
+	  -ldflags \
+	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=warn" \
+	  --cover --covermode atomic --coverprofile=coverage.out \
+	  --label-filter !slow \
+	  ./... 
 
 ##@ Code quality targets
 

@@ -38,10 +38,6 @@ import (
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
-const (
-	RFC3339 = "2006-01-02T15:04:05Z07:00"
-)
-
 var _ = Describe("Stream Schema Operation", func() {
 	var addr string
 	var deferFunc func()
@@ -54,7 +50,8 @@ var _ = Describe("Stream Schema Operation", func() {
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
+		createGroup := func() string {
+			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: group1
 catalog: CATALOG_STREAM
@@ -69,13 +66,17 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("group group1 is created"))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"stream", "create", "-a", addr, "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
+		createStream := func() string {
+			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
   group: group1
@@ -84,11 +85,14 @@ tagFamilies:
     tags: 
       - name: trace_id
         type: TAG_TYPE_STRING`))
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("stream group1.name1 is created"))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createStream).Should(ContainSubstring("stream group1.name1 is created"))
 	})
 
 	It("get stream schema", func() {
@@ -180,9 +184,9 @@ var _ = Describe("Stream Data Query", func() {
 	var interval time.Duration
 	BeforeEach(func() {
 		now = timestamp.NowMilli()
-		nowStr = now.Format(RFC3339)
+		nowStr = now.Format(time.RFC3339)
 		interval = 500 * time.Millisecond
-		endStr = now.Add(1 * time.Hour).Format(RFC3339)
+		endStr = now.Add(1 * time.Hour).Format(time.RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
 		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
 		addr = "http://" + addr

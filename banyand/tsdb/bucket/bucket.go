@@ -24,7 +24,7 @@ import (
 )
 
 type Controller interface {
-	Current() Reporter
+	Current() (Reporter, error)
 	Next() (Reporter, error)
 	OnMove(prev, next Reporter)
 }
@@ -41,6 +41,8 @@ type Reporter interface {
 	Stop()
 	String() string
 }
+
+var _ Reporter = (*timeBasedReporter)(nil)
 
 type timeBasedReporter struct {
 	timestamp.TimeRange
