@@ -12,7 +12,7 @@ You can also find [examples](../crud/) of how to interact with BanyanDB using [b
 
 The hierarchy that data is organized into **streams**, **measures** and **properties** in groups.
 
-![Structure of BanyanDB](../assets/structure.png)
+![Structure of BanyanDB](https://skywalking.apache.org/doc-graph/banyandb/v0.2.0/structure.png)
 
 ### Measures
 
@@ -219,7 +219,7 @@ There are several Key-Value pairs in a property, named `Tags`. You could add, up
 
 An `IndexRule` indicates which tags are indexed. An `IndexRuleBinding` binds an index rule to the target resources or the `subject`. There might be several rule bindings to a single resource, but their effective time range could NOT overlap.
 
-![Index binding](../assets/index-binding.png)
+![Index binding](https://skywalking.apache.org/doc-graph/banyandb/v0.2.0/index-binding.png)
 
 ```yaml
 metadata:
