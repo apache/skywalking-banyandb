@@ -22,9 +22,9 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 ### Client manager
 
 - [x] gRPC server
-- [ ] HTTP server (v0.2.0)
+- [x] HTTP server
 
-### Distributed manager
+### Distributed manager (v1.0.0)
 
 - [ ] Sharding
 - [ ] Replication and consistency model
@@ -40,39 +40,39 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [x] Stream data processor
 - [x] Measure data processor
 - [x] Property data processor
-- [ ] TopNAggregation processor (v0.2.0)
+- [x] TopNAggregation processor
 - [x] Index processor
-- [ ] TTL (v0.2.0)
-- [ ] Cold data processor (v0.2.0)
-- [ ] WAL
+- [x] TTL
+- [x] Cold data processor
+- [ ] WAL (v0.3.0)
 
 ### Query processor
 
 - [x] Stream query processor
 - [x] Measure query processor
 - [x] Index reader
-- [ ] Streaming pipeline processor(OR and nested querying) (v0.2.0)
+- [x] Streaming pipeline processor(OR and nested querying)
 - [ ] Parallel executor
 - [ ] Cost-based optimizer
 
 ### Verification
 
 - [x] E2E with OAP and simulated data
-- [ ] E2E with showcases, agents and OAP (v0.2.0)
-- [ ] Space utilization rate (v0.2.0)
-- [ ] Leading and trailing zero (v0.2.0)
-- [ ] Stability (v0.2.0)
-- [ ] Crash recovery
+- [ ] E2E with showcases, agents and OAP (v0.3.0)
+- [x] Space utilization rate
+- [ ] Leading and trailing zero (v0.4.0)
+- [ ] Stability (v0.3.0)
+- [ ] Crash recovery (v0.3.0)
 - [ ] Performance
 
 ### Tools
 
-- [ ] Command-line (v0.2.0)
-- [ ] Webapp (v0.2.0)
+- [x] Command-line
+- [ ] Webapp (v0.4.0)
 
 ## Contributing
 
-For developers who want to contribute to this project, see [Contribution Guide](CONTRIBUTING.md)
+For developers who want to contribute to this project, see the [Contribution Guide](CONTRIBUTING.md)](CONTRIBUTING.md)
 
 ## License
 

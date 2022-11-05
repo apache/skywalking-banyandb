@@ -35,10 +35,15 @@ binary(){
     trap "rm -rf ${tmpdir}" EXIT
     pushd ${tmpdir}
     tar -xvf ${SOURCE_FILE}
+    make generate
     make release
     bindir=./build
+    mkdir -p ${bindir}/bin
     # Copy relevant files
-    cp -Rfv ./banyand/build ${bindir}
+    for module in "banyand" "bydbctl"
+    do
+        cp -Rfv ./${module}/build/bin/* ${bindir}/bin
+    done
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
     cp -Rfv ./dist/* ${bindir}
