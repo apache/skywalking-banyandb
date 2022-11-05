@@ -22,8 +22,10 @@ catalog:
     path: "/installation"
   - name: "Clients"
     path: "/clients"
-  - name: "Schema"
-    path: "/schema"
+  - name: "Concept"
+    catalog:
+      - name: "Data Model"
+        path: "/concept/data-model"
   - name: "CRUD Operations"
     catalog:
       - name: "Measure"
