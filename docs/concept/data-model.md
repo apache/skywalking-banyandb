@@ -106,7 +106,7 @@ counters_number: 10000
 lru_size: 10
 ```
 
-`endpoint_cpm_minute_top_bottom` is watching the data ingesting of `endpoint_cpm_minute` to generate top 1000 and bottom 1000 entity cardinalities respectively. If you want to only calculate Top 1000 or Bottom 1000, the `field_value_sort` could be `DESC` or `ASC`.
+`endpoint_cpm_minute_top_bottom` is watching the data ingesting of the source measure `endpoint_cpm_minute` to generate both top 1000 and bottom 1000 entity cardinalities. If only Top 1000 or Bottom 1000 is needed, the `field_value_sort` could be `DESC` or `ASC` respectively.
 
 * SORT_DESC: Top-N. In a series of `1,2,3...1000`. Top10's result is `1000,999...991`.
 * SORT_ASC: Bottom-N. In a series of `1,2,3...1000`. Bottom10's result is `1,2...10`.
