@@ -44,16 +44,16 @@ Users who want to build a binary from sources have to set up:
 * Go 1.19
 * Node 16.15
 * Git >= 2.30
-* Linux, MacOS or Windows+WSL2
+* Linux, macOS or Windows+WSL2
 * GNU make
 
 ### Windows
 
-BanyanDB is built on Linux and MacOS that introduced several platform-specific characters to the building system. Therefore, we highly recommend you to use [WSL2+Ubuntu](https://ubuntu.com/wsl) to execute tasks of the Makefile.
+BanyanDB is built on Linux and macOS that introduced several platform-specific characters to the building system. Therefore, we highly recommend you use [WSL2+Ubuntu](https://ubuntu.com/wsl) to execute tasks of the Makefile.
 
 #### End of line sequence
 
-BanyanDB ALWAYS use `LF`(`\n`) as the line endings, even on a Windows. So we need your development tool and IDEs to generate new files with `LF` as its end of lines.
+BanyanDB ALWAYS uses `LF`(`\n`) as the line endings, even on Windows. So we need your development tool and IDEs to generate new files with `LF` as its end of lines.
 
 ## Building and Testing
 
@@ -75,7 +75,7 @@ Finally, run `make build` in the source directory, which will build the default 
 make build
 ```
 
-Please refer to [installation](./docs/installation.md) for more details.
+Please refer to the [installation](./docs/installation.md) for more details.
 
 Test your changes before submitting them by
 
@@ -91,7 +91,7 @@ We have some rules for the code style and please lint your codes locally before 
 make lint
 ```
 
-If you found some errors in the output of the above command, try `make format` to fix some obvious style issues. As for the complicated errors, please correct them manually.
+If you found some errors in the output of the above command, try to `make format` to fix some obvious style issues. As for the complicated errors, please correct them manually.
 
 ## Update licenses
 
