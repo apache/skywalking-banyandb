@@ -24,8 +24,9 @@ Users who want to build a binary from sources have to set up:
 To issue the below command to get a basic binary.
 
 ```shell
+$ make generate
 $ make build
-chmod +x build/bin/banyand-server
+$ chmod +x banyand/build/bin/banyand-server
 Done building banyand server
 ```
 
