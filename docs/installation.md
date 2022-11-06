@@ -35,18 +35,18 @@ $ make generate
 $ make build
 ...
 --- banyand: all ---
-make[1]: Entering directory '/home/gao/go/src/github.com/apache/skywalking-banyandb/banyand'
+make[1]: Entering directory '<path_to_project_root>/banyand'
 ...
 chmod +x build/bin/banyand-server
 Done building banyand server
-make[1]: Leaving directory '/home/gao/go/src/github.com/apache/skywalking-banyandb/banyand'
+make[1]: Leaving directory '<path_to_project_root>/banyand'
 ...
 --- bydbctl: all ---
-make[1]: Entering directory '/home/gao/go/src/github.com/apache/skywalking-banyandb/bydbctl'
+make[1]: Entering directory '<path_to_project_root>/bydbctl'
 ...
 chmod +x build/bin/bydbctl
 Done building bydbctl
-make[1]: Leaving directory '/home/gao/go/src/github.com/apache/skywalking-banyandb/bydbctl'
+make[1]: Leaving directory '<path_to_project_root>/bydbctl'
 ```
 
 The build system provides a series of binary options as well.
