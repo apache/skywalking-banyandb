@@ -252,7 +252,6 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 }
 
 func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
-	// TODO: return correct blocks
 	result := make([]BlockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		dd, err := s.blockController.span(ctx, timeRange)
