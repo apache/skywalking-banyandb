@@ -117,8 +117,3 @@ func (m *schema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
 		Spec:     spec,
 	}
 }
-
-func (m *schema) TraceIDFieldName() string {
-	// We don't have traceID for measure
-	panic("implement me")
-}
