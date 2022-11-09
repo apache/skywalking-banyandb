@@ -29,7 +29,8 @@ jobs:
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
-      - uses: actions/cache@v3
+      - name: Cache Go Modules
+        uses: actions/cache@v3
         id: cache-go
         with:
           path: |
@@ -38,13 +39,14 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-      - uses: actions/cache@v3
+      - name: Cache Tools
+        uses: actions/cache@v3
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-check-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
-            ${{ runner.os }}-tool-
+            ${{ runner.os }}-check-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
@@ -73,7 +75,8 @@ jobs:
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
-      - uses: actions/cache@v3
+      - name: Cache Go Modules
+        uses: actions/cache@v3
         id: cache-go
         with:
           path: |
@@ -82,13 +85,14 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-      - uses: actions/cache@v3
+      - name: Cache Tools
+        uses: actions/cache@v3
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
-            ${{ runner.os }}-tool-
+            ${{ runner.os }}-build-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
@@ -118,7 +122,8 @@ jobs:
         run: sudo timedatectl set-timezone ${{ matrix.tz }}
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
-      - uses: actions/cache@v3
+      - name: Cache Go Modules
+        uses: actions/cache@v3
         id: cache-go
         with:
           path: |
@@ -127,13 +132,14 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-      - uses: actions/cache@v3
+      - name: Cache tools
+        uses: actions/cache@v3
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
-            ${{ runner.os }}-tool-
+            ${{ runner.os }}-test-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
