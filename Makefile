@@ -25,6 +25,8 @@ include $(mk_dir).env
 export
 endif
 
+include scripts/build/version.mk
+
 PROJECTS := ui banyand bydbctl
 
 ##@ Build targets

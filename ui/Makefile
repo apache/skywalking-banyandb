@@ -19,6 +19,7 @@
 NAME := ui
 DIST_INDEX := dist/index.html
 
+include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
@@ -36,6 +37,9 @@ all: build
 
 .PHONY: generate
 generate: install
+generate: $(DIST_INDEX)
+
+$(DIST_INDEX):
 	@echo "Building $(NAME)"
 	npm run build
 	@echo "Done building $(NAME)"

@@ -38,6 +38,13 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
@@ -75,6 +82,13 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
@@ -113,6 +127,13 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-tool-${{ hashFiles('scripts/build/version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
