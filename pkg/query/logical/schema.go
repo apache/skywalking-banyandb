@@ -36,7 +36,6 @@ type Schema interface {
 	ProjFields(refs ...*FieldRef) Schema
 	Equal(Schema) bool
 	ShardNumber() uint32
-	TraceIDFieldName() string
 }
 
 type TagSpec struct {

@@ -355,7 +355,6 @@ func incrementLastByte(key string) string {
 func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
 	cfg := embed.NewConfig()
 	cfg.LogLevel = config.loggerLevel
-	// TODO: allow user to set path
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
 	cURL, _ := url.Parse(config.listenerClientURL)
 	pURL, _ := url.Parse(config.listenerPeerURL)
