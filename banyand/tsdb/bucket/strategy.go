@@ -26,6 +26,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -42,7 +43,8 @@ type Strategy struct {
 	current      atomic.Value
 	currentRatio uint64
 	logger       *logger.Logger
-	stopCh       chan struct{}
+
+	closer *run.Closer
 }
 
 type StrategyOptions func(*Strategy)
@@ -71,7 +73,7 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 	strategy := &Strategy{
 		ctrl:   ctrl,
 		ratio:  0.8,
-		stopCh: make(chan struct{}),
+		closer: run.NewCloser(1),
 	}
 	for _, opt := range options {
 		opt(strategy)
@@ -82,18 +84,36 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 	if strategy.logger == nil {
 		strategy.logger = logger.GetLogger("bucket-strategy")
 	}
-	c, err := ctrl.Current()
-	if err != nil {
+	if err := strategy.resetCurrent(); err != nil {
 		return nil, err
 	}
-	strategy.current.Store(c)
 	return strategy, nil
+}
+
+func (s *Strategy) resetCurrent() error {
+	c, err := s.ctrl.Current()
+	if err != nil {
+		return err
+	}
+	s.current.Store(c)
+	return nil
 }
 
 func (s *Strategy) Run() {
 	go func(s *Strategy) {
+		defer s.closer.Done()
 		for {
-			c := s.current.Load().(Reporter).Report()
+			c, err := s.current.Load().(Reporter).Report()
+			if errors.Is(err, ErrReporterClosed) {
+				return
+			}
+			if err != nil {
+				s.logger.Error().Err(err).Msg("failed to get reporter")
+				if err := s.resetCurrent(); err != nil {
+					panic(err)
+				}
+				continue
+			}
 			if !s.observe(c) {
 				return
 			}
@@ -138,12 +158,12 @@ func (s *Strategy) observe(c Channel) bool {
 				}
 				return moreBucket
 			}
-		case <-s.stopCh:
+		case <-s.closer.CloseNotify():
 			return false
 		}
 	}
 }
 
 func (s *Strategy) Close() {
-	close(s.stopCh)
+	s.closer.CloseThenWait()
 }

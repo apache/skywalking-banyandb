@@ -20,7 +20,6 @@ package tsdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"sort"
 	"strconv"
@@ -50,6 +49,7 @@ type segment struct {
 	bucket.Reporter
 	blockController     *blockController
 	blockManageStrategy *bucket.Strategy
+	closeOnce           sync.Once
 }
 
 func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
@@ -111,21 +111,23 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 	return s, nil
 }
 
-func (s *segment) close(ctx context.Context) error {
-	if err := s.blockController.close(ctx); err != nil {
-		return err
-	}
-	if s.globalIndex != nil {
-		if err := s.globalIndex.Close(); err != nil {
-			return err
+func (s *segment) close(ctx context.Context) (err error) {
+	s.closeOnce.Do(func() {
+		if err = s.blockController.close(ctx); err != nil {
+			return
 		}
-	}
-	if s.blockManageStrategy != nil {
-		s.blockManageStrategy.Close()
-	}
-	if s.Reporter != nil {
-		s.Stop()
-	}
+		if s.globalIndex != nil {
+			if err = s.globalIndex.Close(); err != nil {
+				return
+			}
+		}
+		if s.blockManageStrategy != nil {
+			s.blockManageStrategy.Close()
+		}
+		if s.Reporter != nil {
+			s.Stop()
+		}
+	})
 	return nil
 }
 
@@ -140,8 +142,8 @@ func (s *segment) delete(ctx context.Context) error {
 	return os.RemoveAll(s.path)
 }
 
-func (s segment) String() string {
-	return fmt.Sprintf("SegID-%d", parseSuffix(s.id))
+func (s *segment) String() string {
+	return "SegID-" + s.suffix
 }
 
 func (s *segment) Stats() observability.Statistics {
@@ -431,8 +433,10 @@ func (bc *blockController) sortLst() {
 }
 
 func (bc *blockController) close(ctx context.Context) (err error) {
+	bc.Lock()
+	defer bc.Unlock()
 	for _, s := range bc.lst {
-		err = multierr.Append(err, s.stopThenClose(ctx))
+		err = multierr.Append(err, s.close(ctx))
 	}
 	return err
 }

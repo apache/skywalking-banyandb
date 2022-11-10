@@ -133,7 +133,7 @@ type reporter struct {
 	step     int
 }
 
-func (r *reporter) Report() bucket.Channel {
+func (r *reporter) Report() (bucket.Channel, error) {
 	ch := make(bucket.Channel, r.capacity)
 	go func() {
 		var volume int
@@ -146,7 +146,7 @@ func (r *reporter) Report() bucket.Channel {
 		}
 		close(ch)
 	}()
-	return ch
+	return ch, nil
 }
 
 func (r *reporter) Stop() {

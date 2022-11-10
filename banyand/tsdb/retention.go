@@ -19,22 +19,21 @@ package tsdb
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type retentionController struct {
 	segment   *segmentController
 	scheduler cron.Schedule
-	stopped   bool
-	stopMux   sync.Mutex
-	stopCh    chan struct{}
 	duration  time.Duration
-	l         *logger.Logger
+
+	closer *run.Closer
+	l      *logger.Logger
 }
 
 func newRetentionController(segment *segmentController, ttl IntervalRule) (*retentionController, error) {
@@ -56,22 +55,18 @@ func newRetentionController(segment *segmentController, ttl IntervalRule) (*rete
 	return &retentionController{
 		segment:   segment,
 		scheduler: scheduler,
-		stopCh:    make(chan struct{}),
 		l:         segment.l.Named("retention-controller"),
 		duration:  ttl.EstimatedDuration(),
+		closer:    run.NewCloser(1),
 	}, nil
 }
 
 func (rc *retentionController) start() {
-	rc.stopMux.Lock()
-	if rc.stopped {
-		return
-	}
-	rc.stopMux.Unlock()
 	go rc.run()
 }
 
 func (rc *retentionController) run() {
+	defer rc.closer.Done()
 	rc.l.Info().Msg("start")
 	now := rc.segment.clock.Now()
 	for {
@@ -85,7 +80,7 @@ func (rc *retentionController) run() {
 				rc.l.Error().Err(err)
 			}
 			cancel()
-		case <-rc.stopCh:
+		case <-rc.closer.CloseNotify():
 			timer.Stop()
 			rc.l.Info().Msg("stop")
 			return
@@ -94,11 +89,5 @@ func (rc *retentionController) run() {
 }
 
 func (rc *retentionController) stop() {
-	rc.stopMux.Lock()
-	defer rc.stopMux.Unlock()
-	if rc.stopped {
-		return
-	}
-	rc.stopped = true
-	close(rc.stopCh)
+	rc.closer.CloseThenWait()
 }

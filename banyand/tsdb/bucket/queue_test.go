@@ -19,6 +19,7 @@ package bucket_test
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -47,6 +49,7 @@ func entryID(id uint16) queueEntryID {
 }
 
 var _ = Describe("Queue", func() {
+	var lock sync.Mutex
 	var evictLst []queueEntryID
 	var l bucket.Queue
 	var clock timestamp.MockClock
@@ -60,6 +63,8 @@ var _ = Describe("Queue", func() {
 		clock.Set(time.Date(1970, 0o1, 0o1, 0, 0, 0, 0, time.Local))
 		var err error
 		l, err = bucket.NewQueue(logger.GetLogger("test"), 128, 192, clock, func(_ context.Context, id interface{}) error {
+			lock.Lock()
+			defer lock.Unlock()
 			evictLst = append(evictLst, id.(queueEntryID))
 			return nil
 		})
@@ -126,8 +131,12 @@ var _ = Describe("Queue", func() {
 		Expect(enRecentSize).To(Equal(192))
 		Expect(l.Len()).To(Equal(128))
 		Expect(len(evictLst)).To(Equal(0))
-		clock.Add(time.Minute)
-		GinkgoWriter.Printf("evicted size:%d \n", len(evictLst))
-		Expect(len(evictLst)).To(BeNumerically(">", 1))
+		Eventually(func() int {
+			clock.Add(time.Minute)
+			clock.TriggerTimer()
+			lock.Lock()
+			defer lock.Unlock()
+			return len(evictLst)
+		}).WithTimeout(flags.EventuallyTimeout).Should(BeNumerically(">", 1))
 	})
 })

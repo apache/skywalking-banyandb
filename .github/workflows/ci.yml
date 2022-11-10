@@ -161,17 +161,9 @@ jobs:
         run: make test-ci
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
-  dependency-review:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 'Checkout Repository'
-        uses: actions/checkout@v3
-      - name: 'Dependency Review'
-        uses: actions/dependency-review-action@v2
   result:
     name: Continuous Integration
     runs-on: ubuntu-20.04
-    needs: [check, build, test, dependency-review]
+    needs: [check, build, test]
     steps:
       - run: echo 'success'
-  
