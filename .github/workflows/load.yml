@@ -20,6 +20,9 @@ on:
   schedule:
     - cron: '0 20 * * *'
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+
 jobs:
   test:
     name: Load several days data
