@@ -30,6 +30,9 @@ target
 # Test binary, build with `go test -c`
 *.test
 
+# Ginkgo test report
+*.report
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
@@ -47,3 +50,6 @@ target
 # mock files
 *mock.go
 *mock_test.go
+
+# snky cache
+.dccache

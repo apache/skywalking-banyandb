@@ -72,13 +72,12 @@ type block struct {
 	invertedIndex index.Store
 	lsmIndex      index.Store
 	closableLst   []io.Closer
+	clock         timestamp.Clock
 	timestamp.TimeRange
 	bucket.Reporter
 	segID          uint16
 	blockID        uint16
 	encodingMethod EncodingMethod
-	flushCh        chan struct{}
-	stopCh         chan struct{}
 }
 
 type blockOpts struct {
@@ -104,7 +103,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		l:         logger.Fetch(ctx, "block"),
 		TimeRange: opts.timeRange,
 		Reporter:  bucket.NewTimeBasedReporter(opts.timeRange, clock),
-		flushCh:   make(chan struct{}, 1),
+		clock:     clock,
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},
 		deleted:   &atomic.Bool{},
@@ -154,9 +153,6 @@ func (b *block) open() (err error) {
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
 		kv.TSSWithMemTableSize(b.memSize),
-		kv.TSSWithFlushCallback(func() {
-			b.flushCh <- struct{}{}
-		}),
 	); err != nil {
 		return err
 	}
@@ -174,20 +170,9 @@ func (b *block) open() (err error) {
 	}); err != nil {
 		return err
 	}
+	b.Reporter = bucket.NewTimeBasedReporter(b.TimeRange, b.clock)
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
-	stopCh := make(chan struct{})
-	b.stopCh = stopCh
-	go func() {
-		for {
-			select {
-			case <-b.flushCh:
-				b.flush()
-			case <-stopCh:
-				return
-			}
-		}
-	}()
 	b.closed.Store(false)
 	return nil
 }
@@ -268,45 +253,28 @@ func (b *block) waitDone(stopped *atomic.Bool) <-chan struct{} {
 	return ch
 }
 
-func (b *block) flush() {
-	for i := 0; i < 10; i++ {
-		err := b.invertedIndex.Flush()
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Second)
-		b.l.Warn().Err(err).Int("retried", i).Msg("failed to flush inverted index")
-	}
-}
-
 func (b *block) close(ctx context.Context) (err error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.closed.Load() {
 		return nil
 	}
-	b.closed.Store(true)
 	stopWaiting := &atomic.Bool{}
 	ch := b.waitDone(stopWaiting)
 	select {
 	case <-ctx.Done():
-		b.closed.Store(false)
 		stopWaiting.Store(true)
 		return errors.Wrapf(ErrBlockClosingInterrupted, "block:%s", b)
 	case <-ch:
 	}
-	for _, closer := range b.closableLst {
-		err = multierr.Append(err, closer.Close())
-	}
-	close(b.stopCh)
-	return err
-}
-
-func (b *block) stopThenClose(ctx context.Context) error {
+	b.closed.Store(true)
 	if b.Reporter != nil {
 		b.Stop()
 	}
-	return b.close(ctx)
+	for _, closer := range b.closableLst {
+		err = multierr.Append(err, closer.Close())
+	}
+	return err
 }
 
 func (b *block) delete(ctx context.Context) error {
@@ -314,9 +282,6 @@ func (b *block) delete(ctx context.Context) error {
 		return nil
 	}
 	b.deleted.Store(true)
-	if b.Reporter != nil {
-		b.Stop()
-	}
 	b.close(ctx)
 	return os.RemoveAll(b.path)
 }
@@ -326,7 +291,7 @@ func (b *block) Closed() bool {
 }
 
 func (b *block) String() string {
-	return fmt.Sprintf("BlockID-%d-%d", parseSuffix(b.segID), parseSuffix(b.blockID))
+	return fmt.Sprintf("BlockID-%d-%s", parseSuffix(b.segID), b.suffix)
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {

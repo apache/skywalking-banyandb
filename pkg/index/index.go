@@ -166,8 +166,6 @@ type Store interface {
 	io.Closer
 	Writer
 	Searcher
-	// Flush flushed memory data to disk
-	Flush() error
 }
 
 type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)

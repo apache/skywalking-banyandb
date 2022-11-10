@@ -52,13 +52,14 @@ func init() {
 
 func (s *shard) runStat() {
 	go func() {
+		defer s.closer.Done()
 		ticker := time.NewTicker(statInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				s.stat()
-			case <-s.stopCh:
+			case <-s.closer.CloseNotify():
 				return
 			}
 		}
