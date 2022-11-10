@@ -69,4 +69,4 @@ jobs:
       - name: Generate mocks
         run: make generate
       - name: Test integration and banyand
-        run: TEST_CI_OPTS="--repeat 4 --label-filter \\(integration&&!slow\\)||banyand" make test-ci # run tests 4+1 rounds
+        run: TEST_CI_OPTS="--repeat 4 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand" make test-ci # run tests 4+1 rounds
