@@ -310,12 +310,7 @@ func (bc *blockController) blocks() []*block {
 }
 
 func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
-	snapshotLst := func() []*block {
-		bc.RLock()
-		defer bc.RUnlock()
-		return bc.lst
-	}
-	lst := snapshotLst()
+	lst := bc.blocks()
 	last := len(lst) - 1
 	for i := range lst {
 		b := lst[last-i]

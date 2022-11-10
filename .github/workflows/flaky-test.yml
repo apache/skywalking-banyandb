@@ -28,4 +28,5 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     with:
-      options: --repeat 4 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand
+      options: --repeat 9 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand
+      timeout-minutes: 40

@@ -22,11 +22,15 @@ on:
       options:
         required: false
         type: string
+      timeout-minutes:
+        required: true
+        type: number
 
 jobs:
   test:
     name: Test
     runs-on: ubuntu-20.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
       matrix:
         tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]

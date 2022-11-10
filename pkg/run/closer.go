@@ -20,13 +20,13 @@ package run
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 )
 
 // Closer can close a goroutine then wait for it to stop.
 type Closer struct {
 	waiting sync.WaitGroup
-	closed  *atomic.Bool
+	lock    sync.RWMutex
+	closed  bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -36,20 +36,19 @@ type Closer struct {
 func NewCloser(initial int) *Closer {
 	c := &Closer{}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.closed = &atomic.Bool{}
 	c.waiting.Add(initial)
 	return c
 }
 
 // AddRunning adds a running task.
-func (c *Closer) AddRunning() {
+func (c *Closer) AddRunning() bool {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if c.closed {
+		return false
+	}
 	c.waiting.Add(1)
-}
-
-// Close sends a signal to the CloseNotify.
-func (c *Closer) Close() {
-	c.closed.Store(true)
-	c.cancel()
+	return true
 }
 
 // CloseNotify receives a signal from Close.
@@ -62,18 +61,18 @@ func (c *Closer) Done() {
 	c.waiting.Done()
 }
 
-// Wait waits until all tasks are done.
-func (c *Closer) Wait() {
-	c.waiting.Wait()
-}
-
-// CloseThenWait calls Close(), then Wait().
+// CloseThenWait closes all tasks then waits till they are done.
 func (c *Closer) CloseThenWait() {
-	c.Close()
-	c.Wait()
+	c.cancel()
+	c.lock.Lock()
+	c.closed = true
+	c.lock.Unlock()
+	c.waiting.Wait()
 }
 
 // Closed returns whether the Closer is closed
 func (c *Closer) Closed() bool {
-	return c.closed.Load()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.closed
 }

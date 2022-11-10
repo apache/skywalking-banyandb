@@ -76,9 +76,12 @@ func (tr *timeBasedReporter) Report() (Channel, error) {
 		interval = 100 * time.Millisecond
 	}
 	go func() {
-		tr.closer.AddRunning()
-		defer tr.closer.Done()
 		defer close(ch)
+		if tr.closer.AddRunning() {
+			defer tr.closer.Done()
+		} else {
+			return
+		}
 		ticker := tr.clock.Ticker(interval)
 		defer ticker.Stop()
 		for {
