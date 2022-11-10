@@ -18,10 +18,14 @@
 package bucket
 
 import (
+	"errors"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+var ErrReporterClosed = errors.New("reporter is closed")
 
 type Controller interface {
 	Current() (Reporter, error)
@@ -37,7 +41,7 @@ type Status struct {
 type Channel chan Status
 
 type Reporter interface {
-	Report() Channel
+	Report() (Channel, error)
 	Stop()
 	String() string
 }
@@ -46,28 +50,34 @@ var _ Reporter = (*timeBasedReporter)(nil)
 
 type timeBasedReporter struct {
 	timestamp.TimeRange
-	reporterStopCh chan struct{}
-	clock          timestamp.Clock
+	clock  timestamp.Clock
+	closer *run.Closer
 }
 
 func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) Reporter {
 	if timeRange.End.Before(clock.Now()) {
 		return nil
 	}
-	return &timeBasedReporter{
-		TimeRange:      timeRange,
-		reporterStopCh: make(chan struct{}),
-		clock:          clock,
+	t := &timeBasedReporter{
+		TimeRange: timeRange,
+		clock:     clock,
+		closer:    run.NewCloser(0),
 	}
+	return t
 }
 
-func (tr *timeBasedReporter) Report() Channel {
+func (tr *timeBasedReporter) Report() (Channel, error) {
+	if tr.closer.Closed() {
+		return nil, ErrReporterClosed
+	}
 	ch := make(Channel, 1)
 	interval := tr.Duration() >> 4
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
 	}
 	go func() {
+		tr.closer.AddRunning()
+		defer tr.closer.Done()
 		defer close(ch)
 		ticker := tr.clock.Ticker(interval)
 		defer ticker.Stop()
@@ -82,14 +92,14 @@ func (tr *timeBasedReporter) Report() Channel {
 				if status.Volume >= status.Capacity {
 					return
 				}
-			case <-tr.reporterStopCh:
+			case <-tr.closer.CloseNotify():
 				return
 			}
 		}
 	}()
-	return ch
+	return ch, nil
 }
 
 func (tr *timeBasedReporter) Stop() {
-	close(tr.reporterStopCh)
+	tr.closer.CloseThenWait()
 }

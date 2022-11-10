@@ -28,6 +28,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -66,7 +67,7 @@ type lruQueue struct {
 	recentEvict simplelru.LRUCache
 	lock        sync.RWMutex
 
-	stopCh chan struct{}
+	closer *run.Closer
 }
 
 func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Clock, evictFn EvictFn) (Queue, error) {
@@ -98,7 +99,7 @@ func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Cloc
 		evictSize:   evictSize,
 		evictFn:     evictFn,
 		l:           logger,
-		stopCh:      make(chan struct{}),
+		closer:      run.NewCloser(1),
 	}
 	parser := cron.NewParser(cron.Second)
 	// every 60 seconds to clean up recentEvict
@@ -107,6 +108,7 @@ func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Cloc
 		return nil, err
 	}
 	go func() {
+		defer c.closer.Done()
 		now := clock.Now()
 		for {
 			next := scheduler.Next(now)
@@ -133,7 +135,7 @@ func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Cloc
 					cancel()
 					c.lock.Unlock()
 				}
-			case <-c.stopCh:
+			case <-c.closer.CloseNotify():
 				c.l.Info().Msg("stop")
 				timer.Stop()
 				return
@@ -281,6 +283,6 @@ func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache) err
 }
 
 func (q *lruQueue) Close() error {
-	close(q.stopCh)
+	q.closer.CloseThenWait()
 	return nil
 }

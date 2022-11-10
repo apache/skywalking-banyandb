@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -51,7 +52,9 @@ type shard struct {
 	segmentController     *segmentController
 	segmentManageStrategy *bucket.Strategy
 	retentionController   *retentionController
-	stopCh                chan struct{}
+
+	closeOnce sync.Once
+	closer    *run.Closer
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
@@ -79,7 +82,7 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		id:                id,
 		segmentController: sc,
 		l:                 l,
-		stopCh:            make(chan struct{}),
+		closer:            run.NewCloser(1),
 	}
 	err = s.segmentController.open()
 	if err != nil {
@@ -162,13 +165,15 @@ func (s *shard) State() (shardState ShardState) {
 	return shardState
 }
 
-func (s *shard) Close() error {
-	s.retentionController.stop()
-	s.segmentManageStrategy.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err := multierr.Combine(s.segmentController.close(ctx), s.seriesDatabase.Close())
-	close(s.stopCh)
+func (s *shard) Close() (err error) {
+	s.closeOnce.Do(func() {
+		s.closer.CloseThenWait()
+		s.retentionController.stop()
+		s.segmentManageStrategy.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = multierr.Combine(s.segmentController.close(ctx), s.seriesDatabase.Close())
+	})
 	return err
 }
 
@@ -445,6 +450,8 @@ func (sc *segmentController) removeSeg(segID uint16) {
 }
 
 func (sc *segmentController) close(ctx context.Context) (err error) {
+	sc.Lock()
+	defer sc.Unlock()
 	for _, s := range sc.lst {
 		err = multierr.Append(err, s.close(ctx))
 	}
