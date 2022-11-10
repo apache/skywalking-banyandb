@@ -143,10 +143,19 @@ func (b *block) options(ctx context.Context) {
 	}
 }
 
-func (b *block) open() (err error) {
-	if b.deleted.Load() {
+func (b *block) openSafely() (err error) {
+	if b.deleted.Load() || !b.Closed() {
 		return nil
 	}
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if !b.Closed() {
+		return
+	}
+	return b.open()
+}
+
+func (b *block) open() (err error) {
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
@@ -194,7 +203,7 @@ func (b *block) delegate(ctx context.Context) (BlockDelegate, error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if err := b.queue.Push(ctx, blockID, func() error {
-		if !b.Closed() {
+		if b.deleted.Load() || !b.Closed() {
 			return nil
 		}
 		return b.open()

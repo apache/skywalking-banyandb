@@ -196,10 +196,8 @@ func (bc *blockController) Current() (bucket.Reporter, error) {
 		}
 		return nil
 	}(); b != nil {
-		if b.Closed() {
-			if err := b.open(); err != nil {
-				return nil, err
-			}
+		if err := b.openSafely(); err != nil {
+			return nil, err
 		}
 		return b, nil
 	}
@@ -390,7 +388,7 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = b.open()
+	err = b.openSafely()
 	if err != nil {
 		return nil, err
 	}
