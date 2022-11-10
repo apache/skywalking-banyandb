@@ -285,6 +285,8 @@ var _ = Describe("Shard", func() {
 				if clock.TriggerTimer() {
 					GinkgoWriter.Println("01/03 01:00 has been triggered")
 				}
+				// Trigger block queue cleanup job to remove evitable blocks
+				clock.Add(1 * time.Minute)
 				return shard.State().OpenBlocks
 			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{

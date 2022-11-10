@@ -20,7 +20,7 @@ MOCKGEN := $(tool_bin)/mockgen
 $(MOCKGEN):
 	@echo "Install mock generate tool..."
 	@mkdir -p $(tool_bin)
-	@GOBIN=$(tool_bin) go install github.com/golang/mock/mockgen@v1.6.0
+	@GOBIN=$(tool_bin) go install github.com/golang/mock/mockgen@$(MOCKGEN_VERSION)
 
 .PHONY: generate
 generate: $(MOCKGEN)

@@ -24,6 +24,7 @@ on:
 
 env:
   HUB: ghcr.io/apache
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
   push-banyandb-image:
@@ -38,16 +39,37 @@ jobs:
     env:
       TAG: ${{ github.sha }}
     steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v3
+      - name: Cache Go Modules
+        uses: actions/cache@v3
+        id: cache-go
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Cache Tools
+        uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-build-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
       - name: Install Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
-          go-version: 1.19
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v2
+          go-version-file: 'go.mod'
       - name: Update dependencies 
+        if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate codes
         run: make generate
