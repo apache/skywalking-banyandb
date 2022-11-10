@@ -17,6 +17,7 @@
 name: Flaky Test
 
 on:
+  pull_request:
   schedule:
     - cron: '50 * * * *'
 
