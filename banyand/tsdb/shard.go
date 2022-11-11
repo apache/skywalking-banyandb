@@ -161,7 +161,7 @@ func (s *shard) State() (shardState ShardState) {
 		}
 		return x.SegID < y.SegID
 	})
-	s.l.Debug().Interface("", shardState).Msg("state")
+	s.l.Debug().Interface("", shardState).Msg("shard state")
 	return shardState
 }
 
@@ -425,6 +425,7 @@ func (sc *segmentController) remove(ctx context.Context, deadline time.Time) (er
 	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
 		if s.End.Before(deadline) || s.Contains(uint64(deadline.UnixNano())) {
+			sc.l.Debug().Stringer("segment", s).Msg("start to remove data in a segment")
 			err = multierr.Append(err, s.blockController.remove(ctx, deadline))
 			if s.End.Before(deadline) {
 				sc.Lock()
@@ -456,5 +457,6 @@ func (sc *segmentController) close(ctx context.Context) (err error) {
 		err = multierr.Append(err, s.close(ctx))
 	}
 	err = multierr.Append(err, sc.blockQueue.Close())
+	sc.lst = sc.lst[:0]
 	return err
 }

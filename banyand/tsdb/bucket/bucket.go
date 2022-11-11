@@ -46,7 +46,24 @@ type Reporter interface {
 	String() string
 }
 
-var _ Reporter = (*timeBasedReporter)(nil)
+var (
+	_             Reporter = (*dummyReporter)(nil)
+	_             Reporter = (*timeBasedReporter)(nil)
+	DummyReporter          = &dummyReporter{}
+)
+
+type dummyReporter struct{}
+
+func (*dummyReporter) Report() (Channel, error) {
+	return nil, ErrReporterClosed
+}
+
+func (*dummyReporter) Stop() {
+}
+
+func (*dummyReporter) String() string {
+	return "dummy-reporter"
+}
 
 type timeBasedReporter struct {
 	timestamp.TimeRange
@@ -56,7 +73,7 @@ type timeBasedReporter struct {
 
 func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) Reporter {
 	if timeRange.End.Before(clock.Now()) {
-		return nil
+		return DummyReporter
 	}
 	t := &timeBasedReporter{
 		TimeRange: timeRange,

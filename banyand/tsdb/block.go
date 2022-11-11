@@ -283,6 +283,10 @@ func (b *block) close(ctx context.Context) (err error) {
 	for _, closer := range b.closableLst {
 		err = multierr.Append(err, closer.Close())
 	}
+	b.queue.Remove(BlockID{
+		BlockID: b.blockID,
+		SegID:   b.segID,
+	})
 	return err
 }
 

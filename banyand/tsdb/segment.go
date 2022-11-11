@@ -383,8 +383,7 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = b.openSafely()
-	if err != nil {
+	if err = b.openSafely(); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -431,20 +430,18 @@ func (bc *blockController) close(ctx context.Context) (err error) {
 	for _, s := range bc.lst {
 		err = multierr.Append(err, s.close(ctx))
 	}
+	bc.lst = bc.lst[:0]
 	return err
 }
 
 func (bc *blockController) remove(ctx context.Context, deadline time.Time) (err error) {
 	for _, b := range bc.blocks() {
 		if b.End.Before(deadline) {
+			bc.l.Debug().Stringer("block", b).Msg("start to remove data in a block")
 			bc.Lock()
 			if errDel := b.delete(ctx); errDel != nil {
 				err = multierr.Append(err, errDel)
 			} else {
-				b.queue.Remove(BlockID{
-					BlockID: b.blockID,
-					SegID:   b.segID,
-				})
 				bc.removeBlock(b.blockID)
 			}
 			bc.Unlock()
