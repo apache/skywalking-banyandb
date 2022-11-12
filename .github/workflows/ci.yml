@@ -117,7 +117,7 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     with:
-      options: --label-filter \\!slow
+      options: --fail-fast --label-filter \\!slow
       
   result:
     name: Continuous Integration

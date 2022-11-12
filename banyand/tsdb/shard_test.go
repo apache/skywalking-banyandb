@@ -444,27 +444,24 @@ var _ = Describe("Shard", func() {
 			By("01/01 00:00 1st block is opened")
 			t1 := clock.Now()
 			By("01/01 11:00 2nd block is opened")
-			forward(11, "BlockID-19700101-00-1", "SegID-19700101-1")
+			forward(11, "BlockID-19700101-00-1", "SegID-19700101-1", "retention")
 			t2 := clock.Now().Add(1 * time.Hour)
 			By("01/01 13:00 moves to the 2nd block")
-			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1")
+			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1", "retention")
 			stopped("BlockID-19700101-00-1")
-			started("BlockID-19700101-12-1")
+			started("BlockID-19700101-12-1", "retention")
 			By("01/01 23:00 3rd block is opened")
-			forward(10, "BlockID-19700101-12-1", "SegID-19700101-1")
+			forward(10, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
 			t3 := clock.Now().Add(1 * time.Hour)
 			By("01/02 01:00 moves to 3rd block")
 			forward(2, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
 			stopped("BlockID-19700101-12-1", "SegID-19700101-1")
-			started("BlockID-19700102-00-1", "SegID-19700102-1")
+			started("BlockID-19700102-00-1", "SegID-19700102-1", "retention")
 			By("01/02 11:00 4th block is opened")
-			forward(10, "BlockID-19700102-00-1", "SegID-19700102-1")
+			forward(10, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
 			t4 := clock.Now().Add(1 * time.Hour)
 
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/02 13:00 has been triggered")
-				}
 				return shard.State().Blocks
 			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
@@ -497,16 +494,16 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 			By("01/02 13:00 moves to 4th block")
-			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1")
+			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
 			stopped("BlockID-19700102-00-1")
-			started("BlockID-19700102-12-1")
+			started("BlockID-19700102-12-1", "retention")
 			By("01/02 23:00 5th block is opened")
-			forward(10, "BlockID-19700102-12-1", "SegID-19700102-1")
+			forward(10, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
 			t5 := clock.Now().Add(1 * time.Hour)
 			By("01/03 01:00 close 1st block by adding 5th block")
 			forward(2, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
 			stopped("BlockID-19700102-12-1", "SegID-19700102-1")
-			started("BlockID-19700103-00-1", "SegID-19700103-1")
+			started("BlockID-19700103-00-1", "SegID-19700103-1", "retention")
 			Eventually(func() []tsdb.BlockState {
 				started("retention")
 				return shard.State().Blocks
