@@ -61,13 +61,6 @@ var _ = Describe("Shard", func() {
 				}, flags.EventuallyTimeout).Should(BeTrue())
 			}
 		}
-		stopped := func(tasks ...string) {
-			for _, task := range tasks {
-				Eventually(func() bool {
-					return shard.TriggerSchedule(task)
-				}, flags.EventuallyTimeout).Should(BeFalse())
-			}
-		}
 		forward := func(hours int, tasks ...string) {
 			for i := 0; i < hours; i++ {
 				clock.Add(1 * time.Hour)
@@ -136,7 +129,6 @@ var _ = Describe("Shard", func() {
 			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{}))
 			By("01/01 13:00 moves to the 2nd block")
 			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1")
-			stopped("BlockID-19700101-00-1")
 			started("BlockID-19700101-12-1")
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
@@ -176,7 +168,6 @@ var _ = Describe("Shard", func() {
 			}))
 			By("01/02 01:00 moves to 3rd block")
 			forward(2, "BlockID-19700101-12-1", "SegID-19700101-1")
-			stopped("BlockID-19700101-12-1", "SegID-19700101-1")
 			started("BlockID-19700102-00-1", "SegID-19700102-1")
 			Eventually(func() []tsdb.BlockID {
 				if clock.TriggerTimer() {
@@ -233,7 +224,6 @@ var _ = Describe("Shard", func() {
 			}))
 			By("01/02 13:00 moves to 4th block")
 			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1")
-			stopped("BlockID-19700102-00-1")
 			started("BlockID-19700102-12-1")
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
@@ -295,7 +285,6 @@ var _ = Describe("Shard", func() {
 			}))
 			By("01/03 01:00 close 1st block by adding 5th block")
 			forward(2, "BlockID-19700102-12-1", "SegID-19700102-1")
-			stopped("BlockID-19700102-12-1", "SegID-19700102-1")
 			started("BlockID-19700103-00-1", "SegID-19700103-1")
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
@@ -448,14 +437,12 @@ var _ = Describe("Shard", func() {
 			t2 := clock.Now().Add(1 * time.Hour)
 			By("01/01 13:00 moves to the 2nd block")
 			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1", "retention")
-			stopped("BlockID-19700101-00-1")
 			started("BlockID-19700101-12-1", "retention")
 			By("01/01 23:00 3rd block is opened")
 			forward(10, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
 			t3 := clock.Now().Add(1 * time.Hour)
 			By("01/02 01:00 moves to 3rd block")
 			forward(2, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
-			stopped("BlockID-19700101-12-1", "SegID-19700101-1")
 			started("BlockID-19700102-00-1", "SegID-19700102-1", "retention")
 			By("01/02 11:00 4th block is opened")
 			forward(10, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
@@ -495,14 +482,12 @@ var _ = Describe("Shard", func() {
 			}))
 			By("01/02 13:00 moves to 4th block")
 			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
-			stopped("BlockID-19700102-00-1")
 			started("BlockID-19700102-12-1", "retention")
 			By("01/02 23:00 5th block is opened")
 			forward(10, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
 			t5 := clock.Now().Add(1 * time.Hour)
 			By("01/03 01:00 close 1st block by adding 5th block")
 			forward(2, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
-			stopped("BlockID-19700102-12-1", "SegID-19700102-1")
 			started("BlockID-19700103-00-1", "SegID-19700103-1", "retention")
 			Eventually(func() []tsdb.BlockState {
 				started("retention")

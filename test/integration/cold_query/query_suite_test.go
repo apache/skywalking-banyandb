@@ -23,9 +23,10 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -44,7 +45,7 @@ func TestIntegrationColdQuery(t *testing.T) {
 }
 
 var (
-	connection *grpclib.ClientConn
+	connection *grpc.ClientConn
 	now        time.Time
 	deferFunc  func()
 )
@@ -56,10 +57,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()
-	conn, err := grpclib.Dial(
-		addr,
-		grpclib.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	Eventually(
+		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+		flags.EventuallyTimeout).Should(Succeed())
+	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
@@ -75,11 +76,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpclib.Dial(
-		string(address),
-		grpclib.WithTransportCredentials(insecure.NewCredentials()),
-		grpclib.WithBlock(),
-	)
+	connection, err = grpchelper.Conn(string(address), 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesStream.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,

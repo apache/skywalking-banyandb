@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -61,7 +63,7 @@ func SendWrites(ts TestCase) (*z.Closer, error) {
 		l.Err(err).Msg("unmarshal template")
 		return nil, err
 	}
-	conn, err := grpchelper.Conn(ts.Addr, 1*time.Second)
+	conn, err := grpchelper.Conn(ts.Addr, 1*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}

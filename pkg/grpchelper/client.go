@@ -22,7 +22,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -31,11 +30,11 @@ import (
 
 var l = logger.GetLogger()
 
-func Conn(addr string, connTimeout time.Duration) (*grpc.ClientConn, error) {
-	opts := []grpc.DialOption{
+func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	defaultOpts := []grpc.DialOption{
 		grpc.WithBlock(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+	opts = append(opts, defaultOpts...)
 
 	connStart := time.Now()
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), connTimeout)
