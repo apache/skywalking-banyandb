@@ -21,6 +21,7 @@ import (
 	"errors"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -32,9 +33,9 @@ var (
 	l                   = logger.GetLogger()
 )
 
-func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration) func() error {
+func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
 	return func() error {
-		conn, err := grpchelper.Conn(addr, connTimeout)
+		conn, err := grpchelper.Conn(addr, connTimeout, opts...)
 		if err != nil {
 			return err
 		}
