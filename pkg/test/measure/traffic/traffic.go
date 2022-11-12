@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/z"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -46,7 +48,7 @@ type TestCase struct {
 }
 
 func SendWrites(ts TestCase) (*z.Closer, error) {
-	conn, err := grpchelper.Conn(ts.Addr, 1*time.Second)
+	conn, err := grpchelper.Conn(ts.Addr, 1*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}

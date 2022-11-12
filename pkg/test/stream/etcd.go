@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -101,7 +103,7 @@ func RandomTempDir() string {
 var rpcTimeout = 10 * time.Second
 
 func RegisterForNew(addr string) error {
-	conn, err := grpchelper.Conn(addr, 1*time.Second)
+	conn, err := grpchelper.Conn(addr, 1*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}
