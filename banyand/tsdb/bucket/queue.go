@@ -64,7 +64,6 @@ type lruQueue struct {
 	frequent    simplelru.LRUCache
 	recentEvict simplelru.LRUCache
 	lock        sync.RWMutex
-	lockOwner   string
 }
 
 func NewQueue(l *logger.Logger, size int, maxSize int, scheduler *timestamp.Scheduler, evictFn EvictFn) (Queue, error) {
@@ -261,11 +260,7 @@ func (q *lruQueue) cleanEvict(now time.Time, l *logger.Logger) bool {
 
 func (q *lruQueue) remove() bool {
 	q.lock.Lock()
-	defer func() {
-		q.lockOwner = ""
-		q.lock.Unlock()
-	}()
-	q.lockOwner = "clean"
+	defer q.lock.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := q.removeOldest(ctx, q.recentEvict); err != nil {

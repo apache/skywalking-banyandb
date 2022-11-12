@@ -34,8 +34,12 @@ var (
 	ErrTaskDuplicated  = errors.New("the task is duplicated")
 )
 
+// SchedulerAction is an executable when a trigger is fired
+// now is the trigger time, logger has a context indicating the task's identity
 type SchedulerAction func(now time.Time, logger *logger.Logger) bool
 
+// Scheduler maintains a registry of tasks and their duty cycle.
+// It also provides a Trigger method to fire a task that is scheduled by a MockClock.
 type Scheduler struct {
 	sync.RWMutex
 	clock  Clock
@@ -46,6 +50,7 @@ type Scheduler struct {
 	closed bool
 }
 
+// NewScheduler returns an instance of Scheduler
 func NewScheduler(parent *logger.Logger, clock Clock) *Scheduler {
 	var isMock bool
 	if _, ok := clock.(MockClock); ok {
@@ -59,6 +64,8 @@ func NewScheduler(parent *logger.Logger, clock Clock) *Scheduler {
 	}
 }
 
+// Register adds the given task's SchedulerAction to the Scheduler,
+// and associate the given schedule expression
 func (s *Scheduler) Register(name string, options cron.ParseOption, expr string, action SchedulerAction) error {
 	s.Lock()
 	defer s.Unlock()
@@ -93,6 +100,9 @@ func (s *Scheduler) Register(name string, options cron.ParseOption, expr string,
 	return nil
 }
 
+// Trigger fire a task that is scheduled by a MockTime.
+// A real clock-based task will ignore this trigger, and return false.
+// If the task's name is unknown, it returns false.
 func (s *Scheduler) Trigger(name string) bool {
 	if !s.isMock {
 		return false
@@ -110,12 +120,14 @@ func (s *Scheduler) Trigger(name string) bool {
 	return true
 }
 
+// Closed returns whether the Scheduler is closed
 func (s *Scheduler) Closed() bool {
 	s.RLock()
 	defer s.RUnlock()
 	return s.closed
 }
 
+// Close the Scheduler and shut down all registered tasks
 func (s *Scheduler) Close() {
 	s.Lock()
 	defer s.Unlock()

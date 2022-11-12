@@ -17,7 +17,6 @@
 name: Flaky Test
 
 on:
-  pull_request:
   schedule:
     - cron: '50 * * * *'
 
@@ -28,5 +27,5 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     with:
-      options: --repeat 9 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand
+      options: --repeat 49 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand
       timeout-minutes: 40
