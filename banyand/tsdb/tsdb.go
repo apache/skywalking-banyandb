@@ -80,6 +80,8 @@ type Shard interface {
 	Series() SeriesDatabase
 	Index() IndexDatabase
 	State() ShardState
+	// Only works with MockClock
+	TriggerSchedule(task string) bool
 }
 
 var _ Database = (*database)(nil)
@@ -116,7 +118,7 @@ func GenerateInternalID(unit IntervalUnit, suffix int) uint16 {
 }
 
 func parseSuffix(id uint16) int {
-	return int((id << 12) >> 12)
+	return int((id << 4) >> 4)
 }
 
 type BlockState struct {

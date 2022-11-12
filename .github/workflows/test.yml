@@ -14,19 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Continuous Integration
+name: Reusable Test
 
 on:
-  schedule:
-    - cron: '0 20 * * *'
-
-env:
-  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+  workflow_call:
+    inputs:
+      options:
+        required: false
+        type: string
+      timeout-minutes:
+        required: false
+        type: number
+        default: 30
 
 jobs:
   test:
-    name: Load several days data
+    name: Test
     runs-on: ubuntu-20.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
       matrix:
         tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
@@ -35,7 +40,8 @@ jobs:
         run: sudo timedatectl set-timezone ${{ matrix.tz }}
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
-      - uses: actions/cache@v3
+      - name: Cache Go Modules
+        uses: actions/cache@v3
         id: cache-go
         with:
           path: |
@@ -44,6 +50,14 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - name: Cache tools
+        uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-test-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 16.15
@@ -58,5 +72,7 @@ jobs:
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate mocks
         run: make generate
-      - name: Test
-        run: TEST_EXTRA_OPTS="--label-filter slow" make -C test test
+      - name: Test integration and banyand
+        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3

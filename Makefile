@@ -29,6 +29,8 @@ include scripts/build/version.mk
 
 PROJECTS := ui banyand bydbctl
 
+TEST_CI_OPTS ?=
+
 ##@ Build targets
 
 clean: TARGET=clean
@@ -69,9 +71,8 @@ include scripts/build/ginkgo.mk
 test-ci: $(GINKGO) ## Run the unit tests in CI
 	$(GINKGO) --race \
 	  -ldflags \
-	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=warn" \
-	  --cover --covermode atomic --coverprofile=coverage.out \
-	  --label-filter !slow \
+	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=info" \
+	  $(TEST_CI_OPTS) \
 	  ./... 
 
 ##@ Code quality targets

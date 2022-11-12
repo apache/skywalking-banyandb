@@ -38,8 +38,11 @@ func TestOpenDatabase(t *testing.T) {
 	tester := assert.New(t)
 	req := require.New(t)
 	tempDir, deferFunc := test.Space(req)
-	openDatabase(context.Background(), req, tempDir)
-	defer deferFunc()
+	db := openDatabase(context.Background(), req, tempDir)
+	defer func() {
+		req.NoError(db.Close())
+		deferFunc()
+	}()
 	verifyDatabaseStructure(tester, tempDir, time.Now())
 }
 

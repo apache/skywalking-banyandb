@@ -24,19 +24,17 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type retentionController struct {
-	segment   *segmentController
-	scheduler cron.Schedule
-	duration  time.Duration
+type retentionTask struct {
+	segment *segmentController
 
-	closer *run.Closer
-	l      *logger.Logger
+	option   cron.ParseOption
+	expr     string
+	duration time.Duration
 }
 
-func newRetentionController(segment *segmentController, ttl IntervalRule) (*retentionController, error) {
+func newRetentionTask(segment *segmentController, ttl IntervalRule) *retentionTask {
 	var expr string
 	switch ttl.Unit {
 	case HOUR:
@@ -45,49 +43,20 @@ func newRetentionController(segment *segmentController, ttl IntervalRule) (*rete
 	case DAY:
 		// Every day on 00:05
 		expr = "5 0"
-
 	}
-	parser := cron.NewParser(cron.Minute | cron.Hour)
-	scheduler, err := parser.Parse(expr)
-	if err != nil {
-		return nil, err
-	}
-	return &retentionController{
-		segment:   segment,
-		scheduler: scheduler,
-		l:         segment.l.Named("retention-controller"),
-		duration:  ttl.EstimatedDuration(),
-		closer:    run.NewCloser(1),
-	}, nil
-}
-
-func (rc *retentionController) start() {
-	go rc.run()
-}
-
-func (rc *retentionController) run() {
-	defer rc.closer.Done()
-	rc.l.Info().Msg("start")
-	now := rc.segment.clock.Now()
-	for {
-		next := rc.scheduler.Next(now)
-		timer := rc.segment.clock.Timer(next.Sub(now))
-		select {
-		case now = <-timer.C:
-			rc.l.Info().Time("now", now).Msg("wake")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			if err := rc.segment.remove(ctx, now.Add(-rc.duration)); err != nil {
-				rc.l.Error().Err(err)
-			}
-			cancel()
-		case <-rc.closer.CloseNotify():
-			timer.Stop()
-			rc.l.Info().Msg("stop")
-			return
-		}
+	return &retentionTask{
+		segment:  segment,
+		option:   cron.Minute | cron.Hour,
+		expr:     expr,
+		duration: ttl.EstimatedDuration(),
 	}
 }
 
-func (rc *retentionController) stop() {
-	rc.closer.CloseThenWait()
+func (rc *retentionTask) run(now time.Time, l *logger.Logger) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := rc.segment.remove(ctx, now.Add(-rc.duration)); err != nil {
+		l.Error().Err(err)
+	}
+	return true
 }

@@ -56,6 +56,10 @@ func (sd *ScopedShard) Index() IndexDatabase {
 	return sd.delegated.Index()
 }
 
+func (sd *ScopedShard) TriggerSchedule(task string) bool {
+	return sd.delegated.TriggerSchedule(task)
+}
+
 func (sd *ScopedShard) State() ShardState {
 	return sd.delegated.State()
 }

@@ -53,6 +53,7 @@ var _ = Describe("Queue", func() {
 	var evictLst []queueEntryID
 	var l bucket.Queue
 	var clock timestamp.MockClock
+	var scheduler *timestamp.Scheduler
 	BeforeEach(func() {
 		goods := gleak.Goroutines()
 		DeferCleanup(func() {
@@ -61,8 +62,9 @@ var _ = Describe("Queue", func() {
 		evictLst = make([]queueEntryID, 0)
 		clock = timestamp.NewMockClock()
 		clock.Set(time.Date(1970, 0o1, 0o1, 0, 0, 0, 0, time.Local))
+		scheduler = timestamp.NewScheduler(logger.GetLogger("queue-test"), clock)
 		var err error
-		l, err = bucket.NewQueue(logger.GetLogger("test"), 128, 192, clock, func(_ context.Context, id interface{}) error {
+		l, err = bucket.NewQueue(logger.GetLogger("test"), 128, 192, scheduler, func(_ context.Context, id interface{}) error {
 			lock.Lock()
 			defer lock.Unlock()
 			evictLst = append(evictLst, id.(queueEntryID))
@@ -70,8 +72,8 @@ var _ = Describe("Queue", func() {
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		DeferCleanup(func() {
+			scheduler.Close()
 			evictLst = evictLst[:0]
-			Expect(l.Close()).To(Succeed())
 		})
 	})
 	It("pushes to recent", func() {
@@ -121,7 +123,6 @@ var _ = Describe("Queue", func() {
 
 	It("cleans up evict queue", func() {
 		enRecentSize := 0
-
 		for i := 0; i < 192; i++ {
 			Expect(l.Push(context.Background(), entryID(uint16(i)), func() error {
 				enRecentSize++
@@ -131,9 +132,11 @@ var _ = Describe("Queue", func() {
 		Expect(enRecentSize).To(Equal(192))
 		Expect(l.Len()).To(Equal(128))
 		Expect(len(evictLst)).To(Equal(0))
+		clock.Add(time.Minute)
+		if !scheduler.Trigger(bucket.QueueName) {
+			Fail("trigger fails")
+		}
 		Eventually(func() int {
-			clock.Add(time.Minute)
-			clock.TriggerTimer()
 			lock.Lock()
 			defer lock.Unlock()
 			return len(evictLst)

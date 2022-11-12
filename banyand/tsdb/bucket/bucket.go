@@ -19,9 +19,13 @@ package bucket
 
 import (
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/robfig/cron/v3"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -41,33 +45,58 @@ type Status struct {
 type Channel chan Status
 
 type Reporter interface {
+	// TODO: refactor Report to return a status. It's too complicated to return a channel
 	Report() (Channel, error)
-	Stop()
 	String() string
 }
 
-var _ Reporter = (*timeBasedReporter)(nil)
+var (
+	_             Reporter = (*dummyReporter)(nil)
+	_             Reporter = (*timeBasedReporter)(nil)
+	DummyReporter          = &dummyReporter{}
+)
+
+type dummyReporter struct{}
+
+func (*dummyReporter) Report() (Channel, error) {
+	return nil, ErrReporterClosed
+}
+
+func (*dummyReporter) Stop() {
+}
+
+func (*dummyReporter) String() string {
+	return "dummy-reporter"
+}
 
 type timeBasedReporter struct {
 	timestamp.TimeRange
-	clock  timestamp.Clock
-	closer *run.Closer
+	name      string
+	scheduler *timestamp.Scheduler
+	count     *atomic.Uint32
+	clock     timestamp.Clock
 }
 
-func NewTimeBasedReporter(timeRange timestamp.TimeRange, clock timestamp.Clock) Reporter {
+func NewTimeBasedReporter(name string, timeRange timestamp.TimeRange, clock timestamp.Clock, scheduler *timestamp.Scheduler) Reporter {
 	if timeRange.End.Before(clock.Now()) {
-		return nil
+		return DummyReporter
 	}
 	t := &timeBasedReporter{
 		TimeRange: timeRange,
+		scheduler: scheduler,
 		clock:     clock,
-		closer:    run.NewCloser(0),
+		name:      name,
+		count:     &atomic.Uint32{},
 	}
 	return t
 }
 
 func (tr *timeBasedReporter) Report() (Channel, error) {
-	if tr.closer.Closed() {
+	if tr.scheduler.Closed() {
+		return nil, ErrReporterClosed
+	}
+	now := tr.clock.Now()
+	if now.After(tr.End) {
 		return nil, ErrReporterClosed
 	}
 	ch := make(Channel, 1)
@@ -75,31 +104,40 @@ func (tr *timeBasedReporter) Report() (Channel, error) {
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
 	}
-	go func() {
-		tr.closer.AddRunning()
-		defer tr.closer.Done()
-		defer close(ch)
-		ticker := tr.clock.Ticker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				status := Status{
-					Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
-					Volume:   int(tr.clock.Now().UnixNano() - tr.Start.UnixNano()),
-				}
-				ch <- status
-				if status.Volume >= status.Capacity {
-					return
-				}
-			case <-tr.closer.CloseNotify():
-				return
+	ms := interval / time.Millisecond
+	if err := tr.scheduler.Register(
+		fmt.Sprintf("%s-%d", tr.name, tr.count.Add(1)),
+		cron.Descriptor,
+		fmt.Sprintf("@every %dms", ms),
+		func(now time.Time, l *logger.Logger) bool {
+			status := Status{
+				Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
+				Volume:   int(now.UnixNano() - tr.Start.UnixNano()),
 			}
+			l.Debug().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reporting a status")
+			select {
+			case ch <- status:
+			default:
+				// TODO: this's too complicated, we should not use the channel anymore.
+				if status.Volume >= status.Capacity {
+					l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("the end status must be reported")
+					ch <- status
+				} else {
+					l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("ignore a status")
+				}
+			}
+			l.Info().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reported a status")
+			if status.Volume < status.Capacity {
+				return true
+			}
+			close(ch)
+			return false
+		}); err != nil {
+		close(ch)
+		if errors.Is(err, timestamp.ErrSchedulerClosed) {
+			return nil, ErrReporterClosed
 		}
-	}()
+		return nil, err
+	}
 	return ch, nil
-}
-
-func (tr *timeBasedReporter) Stop() {
-	tr.closer.CloseThenWait()
 }

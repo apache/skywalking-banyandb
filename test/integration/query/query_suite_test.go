@@ -40,7 +40,7 @@ import (
 
 func TestIntegrationQuery(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite")
+	RunSpecs(t, "Integration Query Suite", Label("integration"))
 }
 
 var (

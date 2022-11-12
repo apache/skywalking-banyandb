@@ -28,7 +28,7 @@ import (
 
 func TestTsdb(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Tsdb Suite")
+	RunSpecs(t, "Tsdb Suite", Label("banyand"))
 }
 
 var _ = BeforeSuite(func() {
