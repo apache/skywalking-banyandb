@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -38,7 +36,6 @@ type (
 )
 
 type Queue interface {
-	io.Closer
 	Touch(id fmt.Stringer) bool
 	Push(ctx context.Context, id fmt.Stringer, fn OnAddRecentFn) error
 	Remove(id fmt.Stringer)
@@ -48,6 +45,7 @@ type Queue interface {
 }
 
 const (
+	QueueName          = "block-queue-cleanup"
 	DefaultRecentRatio = 0.25
 
 	defaultEvictBatchSize = 10
@@ -66,11 +64,10 @@ type lruQueue struct {
 	frequent    simplelru.LRUCache
 	recentEvict simplelru.LRUCache
 	lock        sync.RWMutex
-
-	closer *run.Closer
+	lockOwner   string
 }
 
-func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Clock, evictFn EvictFn) (Queue, error) {
+func NewQueue(l *logger.Logger, size int, maxSize int, scheduler *timestamp.Scheduler, evictFn EvictFn) (Queue, error) {
 	if size <= 0 {
 		return nil, ErrInvalidSize
 	}
@@ -98,50 +95,11 @@ func NewQueue(logger *logger.Logger, size int, maxSize int, clock timestamp.Cloc
 		recentEvict: recentEvict,
 		evictSize:   evictSize,
 		evictFn:     evictFn,
-		l:           logger,
-		closer:      run.NewCloser(1),
+		l:           l,
 	}
-	parser := cron.NewParser(cron.Second)
-	// every 60 seconds to clean up recentEvict
-	scheduler, err := parser.Parse("59")
-	if err != nil {
+	if err := scheduler.Register(QueueName, cron.Descriptor, "@every 1m", c.cleanEvict); err != nil {
 		return nil, err
 	}
-	go func() {
-		defer c.closer.Done()
-		now := clock.Now()
-		for {
-			next := scheduler.Next(now)
-			timer := clock.Timer(next.Sub(now))
-			select {
-			case now = <-timer.C:
-				c.l.Info().Time("now", now).Msg("wakes")
-				var evictLen int
-				c.lock.RLock()
-				evictLen = c.recentEvict.Len()
-				c.lock.RUnlock()
-				if evictLen < 1 {
-					continue
-				}
-				for i := 0; i < defaultEvictBatchSize; i++ {
-					c.lock.Lock()
-					if evictLen < 1 {
-						continue
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					if err := c.removeOldest(ctx, c.recentEvict); err != nil {
-						c.l.Error().Err(err).Msg("failed to remove oldest blocks")
-					}
-					cancel()
-					c.lock.Unlock()
-				}
-			case <-c.closer.CloseNotify():
-				c.l.Info().Msg("stop")
-				timer.Stop()
-				return
-			}
-		}
-	}()
 	return c, nil
 }
 
@@ -239,6 +197,12 @@ func (q *lruQueue) All() []interface{} {
 	return all
 }
 
+func (q *lruQueue) evictLen() int {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	return q.recentEvict.Len()
+}
+
 func (q *lruQueue) ensureSpace(ctx context.Context, recentEvict bool) error {
 	recentLen := q.recent.Len()
 	freqLen := q.frequent.Len()
@@ -282,7 +246,33 @@ func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache) err
 	return nil
 }
 
-func (q *lruQueue) Close() error {
-	q.closer.CloseThenWait()
-	return nil
+func (q *lruQueue) cleanEvict(now time.Time, l *logger.Logger) bool {
+	l.Debug().Time("now", now).Msg("block queue wakes")
+	if q.evictLen() < 1 {
+		return true
+	}
+	for i := 0; i < defaultEvictBatchSize; i++ {
+		if q.remove() {
+			break
+		}
+	}
+	return true
+}
+
+func (q *lruQueue) remove() bool {
+	q.lock.Lock()
+	defer func() {
+		q.lockOwner = ""
+		q.lock.Unlock()
+	}()
+	q.lockOwner = "clean"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := q.removeOldest(ctx, q.recentEvict); err != nil {
+		q.l.Error().Err(err).Msg("failed to remove oldest blocks")
+	}
+	if q.recentEvict.Len() < 1 {
+		return true
+	}
+	return false
 }

@@ -23,8 +23,9 @@ on:
         required: false
         type: string
       timeout-minutes:
-        required: true
+        required: false
         type: number
+        default: 30
 
 jobs:
   test:
@@ -72,4 +73,6 @@ jobs:
       - name: Generate mocks
         run: make generate
       - name: Test integration and banyand
-        run: TEST_CI_OPTS="${{ inputs.options }}" make test-ci
+        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3

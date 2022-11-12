@@ -71,7 +71,7 @@ include scripts/build/ginkgo.mk
 test-ci: $(GINKGO) ## Run the unit tests in CI
 	$(GINKGO) --race \
 	  -ldflags \
-	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=debug" \
+	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=info" \
 	  $(TEST_CI_OPTS) \
 	  ./... 
 

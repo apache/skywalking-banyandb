@@ -148,6 +148,7 @@ func (s *Strategy) observe(c Channel) bool {
 				} else if err != nil {
 					s.logger.Err(err).Msg("failed to create the next bucket")
 				} else {
+					s.logger.Info().Stringer("next", n).Msg("created the next bucket")
 					next = n
 				}
 			}

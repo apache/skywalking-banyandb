@@ -77,16 +77,19 @@ type block struct {
 	bucket.Reporter
 	segID          uint16
 	blockID        uint16
+	segSuffix      string
 	encodingMethod EncodingMethod
 }
 
 type blockOpts struct {
 	segID     uint16
+	segSuffix string
 	blockSize IntervalRule
 	timeRange timestamp.TimeRange
 	suffix    string
 	path      string
 	queue     bucket.Queue
+	scheduler *timestamp.Scheduler
 }
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
@@ -98,17 +101,19 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	clock, _ := timestamp.GetClock(ctx)
 	b = &block{
 		segID:     opts.segID,
+		segSuffix: opts.segSuffix,
+		suffix:    opts.suffix,
 		blockID:   id,
 		path:      opts.path,
-		l:         logger.Fetch(ctx, "block"),
 		TimeRange: opts.timeRange,
-		Reporter:  bucket.NewTimeBasedReporter(opts.timeRange, clock),
 		clock:     clock,
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},
 		deleted:   &atomic.Bool{},
 		queue:     opts.queue,
 	}
+	b.l = logger.Fetch(ctx, b.String())
+	b.Reporter = bucket.NewTimeBasedReporter(b.String(), opts.timeRange, clock, opts.scheduler)
 	b.closed.Store(true)
 	b.options(ctx)
 	position := ctx.Value(common.PositionKey)
@@ -179,7 +184,6 @@ func (b *block) open() (err error) {
 	}); err != nil {
 		return err
 	}
-	b.Reporter = bucket.NewTimeBasedReporter(b.TimeRange, b.clock)
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
 	b.closed.Store(false)
@@ -277,16 +281,9 @@ func (b *block) close(ctx context.Context) (err error) {
 	case <-ch:
 	}
 	b.closed.Store(true)
-	if b.Reporter != nil {
-		b.Stop()
-	}
 	for _, closer := range b.closableLst {
 		err = multierr.Append(err, closer.Close())
 	}
-	b.queue.Remove(BlockID{
-		BlockID: b.blockID,
-		SegID:   b.segID,
-	})
 	return err
 }
 
@@ -304,7 +301,7 @@ func (b *block) Closed() bool {
 }
 
 func (b *block) String() string {
-	return fmt.Sprintf("BlockID-%d-%s", parseSuffix(b.segID), b.suffix)
+	return fmt.Sprintf("BlockID-%s-%s", b.segSuffix, b.suffix)
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {
