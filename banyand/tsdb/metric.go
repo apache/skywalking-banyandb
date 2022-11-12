@@ -26,8 +26,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const statInterval = 5 * time.Second
-
 var (
 	mtBytes    *prometheus.GaugeVec
 	maxMtBytes *prometheus.GaugeVec

@@ -23,9 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/robfig/cron/v3"
 )
 
 var ErrReporterClosed = errors.New("reporter is closed")
@@ -44,7 +45,7 @@ type Status struct {
 type Channel chan Status
 
 type Reporter interface {
-	//TODO: refactor Report to return a status. It's too complicated to return a channel
+	// TODO: refactor Report to return a status. It's too complicated to return a channel
 	Report() (Channel, error)
 	String() string
 }
@@ -104,36 +105,39 @@ func (tr *timeBasedReporter) Report() (Channel, error) {
 		interval = 100 * time.Millisecond
 	}
 	ms := interval / time.Millisecond
-	if err := tr.scheduler.Register(fmt.Sprintf("%s-%d", tr.name, tr.count.Add(1)), cron.Descriptor, fmt.Sprintf("@every %dms", ms), func(now time.Time, l *logger.Logger) bool {
-		status := Status{
-			Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
-			Volume:   int(now.UnixNano() - tr.Start.UnixNano()),
-		}
-		l.Debug().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reporting a status")
-		select {
-		case ch <- status:
-		default:
-			// TODO: this's too complicated, we should not use the channel anymore.
-			if status.Volume >= status.Capacity {
-				l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("the end status must be reported")
-				ch <- status
-			} else {
-				l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("ignore a status")
+	if err := tr.scheduler.Register(
+		fmt.Sprintf("%s-%d", tr.name, tr.count.Add(1)),
+		cron.Descriptor,
+		fmt.Sprintf("@every %dms", ms),
+		func(now time.Time, l *logger.Logger) bool {
+			status := Status{
+				Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
+				Volume:   int(now.UnixNano() - tr.Start.UnixNano()),
 			}
-		}
-		l.Info().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reported a status")
-		if status.Volume < status.Capacity {
-			return true
-		}
-		close(ch)
-		return false
-	}); err != nil {
+			l.Debug().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reporting a status")
+			select {
+			case ch <- status:
+			default:
+				// TODO: this's too complicated, we should not use the channel anymore.
+				if status.Volume >= status.Capacity {
+					l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("the end status must be reported")
+					ch <- status
+				} else {
+					l.Warn().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("ignore a status")
+				}
+			}
+			l.Info().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reported a status")
+			if status.Volume < status.Capacity {
+				return true
+			}
+			close(ch)
+			return false
+		}); err != nil {
 		close(ch)
 		if errors.Is(err, timestamp.ErrSchedulerClosed) {
 			return nil, ErrReporterClosed
-		} else {
-			return nil, err
 		}
+		return nil, err
 	}
 	return ch, nil
 }

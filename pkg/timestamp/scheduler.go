@@ -21,11 +21,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/benbjohnson/clock"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -56,7 +57,6 @@ func NewScheduler(parent *logger.Logger, clock Clock) *Scheduler {
 		clock:  clock,
 		tasks:  make(map[string]*task),
 	}
-
 }
 
 func (s *Scheduler) Register(name string, options cron.ParseOption, expr string, action SchedulerAction) error {
