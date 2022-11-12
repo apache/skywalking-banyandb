@@ -32,6 +32,10 @@ type local struct {
 	repo  discovery.ServiceRepo
 }
 
+func (l *local) Close() {
+	l.local.Close()
+}
+
 func (l *local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
 	return l.local.Subscribe(topic, listener)
 }

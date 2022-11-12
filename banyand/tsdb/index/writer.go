@@ -121,6 +121,7 @@ func (s *Writer) Write(value Message) {
 }
 
 func (s *Writer) Close() error {
+	close(s.ch)
 	return nil
 }
 

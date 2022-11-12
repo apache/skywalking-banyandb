@@ -530,6 +530,7 @@ func (g *group) close() (err error) {
 	for _, s := range g.schemaMap {
 		err = multierr.Append(err, s.Close())
 	}
+
 	g.mapMutex.RUnlock()
 	return multierr.Append(err, g.SupplyTSDB().Close())
 }

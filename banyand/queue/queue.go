@@ -30,6 +30,7 @@ type Queue interface {
 	run.Unit
 	bus.Subscriber
 	bus.Publisher
+	Close()
 }
 
 func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {

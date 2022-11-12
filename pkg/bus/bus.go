@@ -223,3 +223,11 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 	}(listener, ch)
 	return nil
 }
+
+func (b *Bus) Close() {
+	for _, chs := range b.topics {
+		for _, ch := range chs {
+			close(ch)
+		}
+	}
+}
