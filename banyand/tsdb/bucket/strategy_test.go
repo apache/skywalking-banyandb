@@ -149,9 +149,6 @@ func (r *reporter) Report() (bucket.Channel, error) {
 	return ch, nil
 }
 
-func (r *reporter) Stop() {
-}
-
 func (r *reporter) String() string {
 	return "default"
 }

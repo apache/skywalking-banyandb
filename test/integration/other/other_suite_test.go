@@ -29,7 +29,7 @@ import (
 
 func TestIntegrationOther(t *testing.T) {
 	gm.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Integration Other Suite")
+	g.RunSpecs(t, "Integration Other Suite", g.Label("integration"))
 }
 
 var _ = g.BeforeSuite(func() {
