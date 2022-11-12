@@ -17,8 +17,7 @@
 name: OAP-E2E
 
 on:
-  # TODO:// uncomment once the new APIs are supported by OAP
-  # pull_request:
+  pull_request:
   schedule:
     - cron: '0 18 * * *'
 
