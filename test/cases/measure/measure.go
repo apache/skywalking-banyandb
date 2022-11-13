@@ -24,6 +24,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
@@ -34,7 +35,7 @@ var (
 	verify        = func(args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			measureTestData.VerifyFn(innerGm, SharedContext, args)
-		}).Should(gm.Succeed())
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}
 )
 

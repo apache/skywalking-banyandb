@@ -32,6 +32,7 @@ import (
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measure_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -44,7 +45,7 @@ var _ = Describe("Measure Schema Operation", func() {
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating measure schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -73,7 +74,7 @@ resource_opts:
 				}
 			})
 		}
-		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
+		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"measure", "create", "-a", addr, "-f", "-"})
 		createMeasure := func() string {
 			rootCmd.SetIn(strings.NewReader(`
@@ -87,7 +88,7 @@ metadata:
 				}
 			})
 		}
-		Eventually(createMeasure).Should(ContainSubstring("measure group1.name1 is created"))
+		Eventually(createMeasure, flags.EventuallyTimeout).Should(ContainSubstring("measure group1.name1 is created"))
 	})
 
 	It("get measure schema", func() {
@@ -182,7 +183,7 @@ var _ = Describe("Measure Data Query", func() {
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
@@ -214,7 +215,7 @@ tagProjection:
 				Expect(err).NotTo(HaveOccurred())
 			})
 		}
-		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
 			GinkgoWriter.Println(out)
@@ -222,7 +223,7 @@ tagProjection:
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)
-		}).Should(Equal(6))
+		}, flags.EventuallyTimeout).Should(Equal(6))
 	})
 
 	DescribeTable("query measure data with time range flags", func(timeArgs ...string) {
@@ -253,14 +254,14 @@ tagProjection:
 				Expect(err).NotTo(HaveOccurred())
 			})
 		}
-		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
 			resp := new(measure_v1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)
-		}).Should(Equal(6))
+		}, flags.EventuallyTimeout).Should(Equal(6))
 	},
 		Entry("relative start", "--start", "-30m"),
 		Entry("relative end", "--end", "0m"),

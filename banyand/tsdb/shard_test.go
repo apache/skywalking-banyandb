@@ -52,7 +52,7 @@ var _ = Describe("Shard", func() {
 			GinkgoWriter.Printf("shard state:%+v \n", shard.State())
 			shard.Close()
 			deferFn()
-			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 		started := func(tasks ...string) {
 			for _, task := range tasks {
@@ -517,7 +517,7 @@ var _ = Describe("Shard", func() {
 			}))
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
-			}).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
@@ -549,6 +549,7 @@ var _ = Describe("Shard", func() {
 				3,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			started("BlockID-19700101-01-1", "SegID-19700101-1", "retention")
 			By("01/01 00:01 1st block is opened")
 			t1 := clock.Now()
 			Eventually(func() []tsdb.BlockState {
@@ -562,9 +563,12 @@ var _ = Describe("Shard", func() {
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
 			}))
-			By("01/01 11:00 2nd block is opened")
-			forward(10, "BlockID-19700101-01-1", "SegID-19700101-1")
-			t2 := clock.Now().Add(2 * time.Hour)
+			By("01/01 12:00 2nd block is opened")
+			forward(11, "BlockID-19700101-01-1", "SegID-19700101-1")
+			t2 := clock.Now().Add(1 * time.Hour)
+			By("01/01 14:00 moves to the 2nd block")
+			forward(2, "BlockID-19700101-01-1", "SegID-19700101-1")
+			started("BlockID-19700101-13-1")
 			Eventually(func() []tsdb.BlockState {
 				return shard.State().Blocks
 			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
@@ -584,9 +588,6 @@ var _ = Describe("Shard", func() {
 					TimeRange: timestamp.NewTimeRangeDuration(t2, 11*time.Hour, true, false),
 				},
 			}))
-			Eventually(func() []tsdb.BlockID {
-				return shard.State().OpenBlocks
-			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{}))
 		})
 	})
 })

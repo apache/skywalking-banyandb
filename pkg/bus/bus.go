@@ -159,6 +159,10 @@ type Event struct {
 }
 
 func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
+	if !b.closer.AddRunning() {
+		return nil, nil
+	}
+	defer b.closer.Done()
 	if topic.ID == "" {
 		return nil, ErrTopicEmpty
 	}
