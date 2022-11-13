@@ -52,7 +52,7 @@ var _ = Describe("Shard", func() {
 			GinkgoWriter.Printf("shard state:%+v \n", shard.State())
 			shard.Close()
 			deferFn()
-			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 		started := func(tasks ...string) {
 			for _, task := range tasks {
@@ -517,7 +517,7 @@ var _ = Describe("Shard", func() {
 			}))
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
-			}).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),

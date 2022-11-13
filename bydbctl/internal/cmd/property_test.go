@@ -19,7 +19,6 @@ package cmd_test
 
 import (
 	"strings"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/ginkgo/v2"
@@ -30,6 +29,7 @@ import (
 
 	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
@@ -76,7 +76,7 @@ tags:
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}

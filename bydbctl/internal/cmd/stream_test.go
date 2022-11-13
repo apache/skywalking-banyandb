@@ -32,6 +32,7 @@ import (
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -44,7 +45,7 @@ var _ = Describe("Stream Schema Operation", func() {
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating stream schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -73,7 +74,7 @@ resource_opts:
 				}
 			})
 		}
-		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
+		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"stream", "create", "-a", addr, "-f", "-"})
 		createStream := func() string {
 			rootCmd.SetIn(strings.NewReader(`
@@ -92,7 +93,7 @@ tagFamilies:
 				}
 			})
 		}
-		Eventually(createStream).Should(ContainSubstring("stream group1.name1 is created"))
+		Eventually(createStream, flags.EventuallyTimeout).Should(ContainSubstring("stream group1.name1 is created"))
 	})
 
 	It("get stream schema", func() {
@@ -188,7 +189,7 @@ var _ = Describe("Stream Data Query", func() {
 		interval = 500 * time.Millisecond
 		endStr = now.Add(1 * time.Hour).Format(time.RFC3339)
 		grpcAddr, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
@@ -221,14 +222,14 @@ projection:
 				Expect(err).NotTo(HaveOccurred())
 			})
 		}
-		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
 			resp := new(stream_v1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.Elements)
-		}).Should(Equal(5))
+		}, flags.EventuallyTimeout).Should(Equal(5))
 	})
 
 	DescribeTable("query stream data with time range flags", func(timeArgs ...string) {
@@ -259,14 +260,14 @@ projection:
 				Expect(err).NotTo(HaveOccurred())
 			})
 		}
-		Eventually(issue).ShouldNot(ContainSubstring("code:"))
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
 			resp := new(stream_v1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.Elements)
-		}).Should(Equal(5))
+		}, flags.EventuallyTimeout).Should(Equal(5))
 	},
 		Entry("relative start", "--start", "-30m"),
 		Entry("relative end", "--end", "0m"),

@@ -26,6 +26,7 @@ import (
 	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	stream_test_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
@@ -36,14 +37,14 @@ var (
 	verify        = func(innerGm gm.Gomega, args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			stream_test_data.VerifyFn(innerGm, SharedContext, args)
-		})
+		}, flags.EventuallyTimeout)
 	}
 )
 
 var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
-	}).Should(gm.Succeed())
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),

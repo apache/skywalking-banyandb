@@ -24,13 +24,14 @@ import (
 	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var _ = Describe("Strategy", func() {
 	BeforeEach(func() {
 		goods := gleak.Goroutines()
 		DeferCleanup(func() {
-			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 	})
 	Context("Applying the strategy", func() {
@@ -41,7 +42,7 @@ var _ = Describe("Strategy", func() {
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
 			strategy.Run()
-			Eventually(ctrl.isFull).Should(BeTrue())
+			Eventually(ctrl.isFull, flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("never reaches the limit", func() {
 			ctrl := newController(1, 0, 10)
@@ -57,7 +58,7 @@ var _ = Describe("Strategy", func() {
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
 			strategy.Run()
-			Eventually(ctrl.isFull).Should(BeTrue())
+			Eventually(ctrl.isFull, flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("'s first step exceeds the limit", func() {
 			ctrl := newController(2, 15, 10)
@@ -65,7 +66,7 @@ var _ = Describe("Strategy", func() {
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
 			strategy.Run()
-			Eventually(ctrl.isFull).Should(BeTrue())
+			Eventually(ctrl.isFull, flags.EventuallyTimeout).Should(BeTrue())
 		})
 		AfterEach(func() {
 			if strategy != nil {
