@@ -62,6 +62,6 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 				Connection: conn,
 				BaseTime:   baseTime,
 			}, helpers.Args{Input: "all", Want: "update", Duration: 1 * time.Hour})
-		})
+		}, flags.EventuallyTimeout)
 	})
 })

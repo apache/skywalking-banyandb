@@ -19,7 +19,6 @@ package stream
 
 import (
 	"context"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,6 +28,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var _ = Describe("Metadata", func() {
@@ -51,7 +51,7 @@ var _ = Describe("Metadata", func() {
 			Eventually(func() bool {
 				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the group", func() {
 			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
@@ -61,7 +61,7 @@ var _ = Describe("Metadata", func() {
 			Eventually(func() bool {
 				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeFalse())
 		})
 
 		It("should add shards", func() {
@@ -80,7 +80,7 @@ var _ = Describe("Metadata", func() {
 					return false
 				}
 				return group.GetSchema().GetResourceOpts().GetShardNum() == 4
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 	})
 
@@ -92,7 +92,7 @@ var _ = Describe("Metadata", func() {
 					Group: "default",
 				})
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the stream", func() {
 			svcs.repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
@@ -108,7 +108,7 @@ var _ = Describe("Metadata", func() {
 					Group: "default",
 				})
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeFalse())
 		})
 
 		Context("Update a stream", func() {
@@ -143,7 +143,7 @@ var _ = Describe("Metadata", func() {
 					}
 
 					return len(val.schema.GetEntity().TagNames) == entitySize
-				}).WithTimeout(10 * time.Second).Should(BeTrue())
+				}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 			})
 		})
 	})
