@@ -29,7 +29,8 @@ var (
 
 type local struct {
 	local *bus.Bus
-	repo  discovery.ServiceRepo
+        repo  discovery.ServiceRepo
+        stopCh chan struct{}
 }
 
 func (l *local) Close() {
