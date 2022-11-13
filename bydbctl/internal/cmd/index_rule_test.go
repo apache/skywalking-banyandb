@@ -19,7 +19,6 @@ package cmd_test
 
 import (
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -28,6 +27,7 @@ import (
 
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
@@ -38,7 +38,7 @@ var _ = Describe("IndexRuleSchema Operation", func() {
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.SetUp()
-		Eventually(helpers.HTTPHealthCheck(addr), 10*time.Second).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating indexRule schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -67,7 +67,7 @@ resource_opts:
 				}
 			})
 		}
-		Eventually(createGroup).Should(ContainSubstring("group group1 is created"))
+		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"indexRule", "create", "-a", addr, "-f", "-"})
 		createIndexRule := func() string {
 			rootCmd.SetIn(strings.NewReader(`
@@ -81,7 +81,7 @@ metadata:
 				}
 			})
 		}
-		Eventually(createIndexRule).Should(ContainSubstring("indexRule group1.name1 is created"))
+		Eventually(createIndexRule, flags.EventuallyTimeout).Should(ContainSubstring("indexRule group1.name1 is created"))
 	})
 
 	It("get indexRule schema", func() {

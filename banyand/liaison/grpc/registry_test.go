@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
@@ -52,7 +52,7 @@ var _ = Describe("Registry", func() {
 		addr := "localhost:17912"
 		Eventually(
 			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
-			flags.EventuallyTimeout).Should(Succeed())
+			testflags.EventuallyTimeout).Should(Succeed())
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
@@ -195,7 +195,7 @@ func setupForRegistry() func() {
 	)
 	Eventually(
 		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
-		20*time.Second).Should(Succeed())
+		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()
 		metaDeferFunc()

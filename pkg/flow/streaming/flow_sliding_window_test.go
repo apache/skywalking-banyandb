@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var _ flow.AggregationOp = (*intSumAggregator)(nil)
@@ -99,7 +100,7 @@ var _ = Describe("Sliding Window", func() {
 		It("Should not trigger", func() {
 			Eventually(func(g Gomega) {
 				g.Expect(snk.Value()).Should(BeEmpty())
-			}).WithTimeout(10 * time.Second).Should(Succeed())
+			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
 		})
 	})
 
@@ -115,7 +116,7 @@ var _ = Describe("Sliding Window", func() {
 		It("Should not trigger", func() {
 			Eventually(func(g Gomega) {
 				g.Expect(snk.Value()).Should(BeEmpty())
-			}).WithTimeout(10 * time.Second).Should(Succeed())
+			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
 		})
 	})
 
@@ -131,7 +132,7 @@ var _ = Describe("Sliding Window", func() {
 		It("Should trigger once due to the expiry", func() {
 			Eventually(func(g Gomega) {
 				g.Expect(snk.Value()).Should(HaveLen(1))
-			}).WithTimeout(10 * time.Second).Should(Succeed())
+			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
 		})
 	})
 })

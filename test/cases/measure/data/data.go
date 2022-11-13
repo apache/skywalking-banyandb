@@ -36,6 +36,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -125,5 +126,5 @@ func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()
 		return err
-	}).Should(gm.Equal(io.EOF))
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
