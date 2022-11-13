@@ -14,17 +14,6 @@
 # limitations under the License.
 
 {{- contains . }}
-- taskid: {{ notEmpty .taskid }}
-  serviceid: {{ b64enc "sqrt" }}.1
-  servicename: sqrt
-  processlabels:
-    {{- contains .processlabels }}
-    - e2e-label1
-    - e2e-label2
-    {{- end }}
-  taskstarttime: {{ gt .taskstarttime 0 }}
-  triggertype: FIXED_TIME
-  fixedtriggerduration: 60
-  targettype: ON_CPU
-  createtime: {{ gt .createtime 0 }}
-{{- end }}
+- id: {{ b64enc "e2e-service-consumer" }}.1_{{ b64enc "POST:/users" }}
+  name: POST:/users
+{{- end}}
