@@ -142,7 +142,6 @@ func (s *service) Serve() run.StopNotify {
 
 func (s *service) GracefulStop() {
 	s.schemaRepo.Close()
-	s.pipeline.Close()
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}

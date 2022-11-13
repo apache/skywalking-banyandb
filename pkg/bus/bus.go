@@ -22,6 +22,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"go.uber.org/multierr"
 )
 
@@ -92,11 +93,13 @@ func BiTopic(ID string) Topic {
 type Bus struct {
 	topics map[Topic][]Channel
 	mutex  sync.RWMutex
+	closer *run.Closer
 }
 
 func NewBus() *Bus {
 	b := new(Bus)
 	b.topics = make(map[Topic][]Channel)
+	b.closer = run.NewCloser(0)
 	return b
 }
 
@@ -175,9 +178,13 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 	for _, each := range cc {
 		for _, m := range message {
 			go func(ch Channel, message Message) {
-				ch <- Event{
+				select {
+				case <-b.closer.CloseNotify():
+					return
+				case ch <- Event{
 					m: message,
 					f: f,
+				}:
 				}
 			}(each, m)
 		}
