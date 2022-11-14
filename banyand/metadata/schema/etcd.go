@@ -83,6 +83,7 @@ func (eh *eventHandler) InterestOf(kind Kind) bool {
 
 type etcdSchemaRegistry struct {
 	server   *embed.Etcd
+	client   *clientv3.Client
 	kv       clientv3.KV
 	handlers []*eventHandler
 	mux      sync.RWMutex
@@ -144,7 +145,7 @@ func (e *etcdSchemaRegistry) StoppingNotify() <-chan struct{} {
 
 func (e *etcdSchemaRegistry) Close() error {
 	e.server.Close()
-	return nil
+	return e.client.Close()
 }
 
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
@@ -173,6 +174,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	reg := &etcdSchemaRegistry{
 		server: e,
 		kv:     kvClient,
+		client: client,
 	}
 	return reg, nil
 }

@@ -23,6 +23,8 @@ import (
 	"sync"
 
 	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // Payload represents a simple data
@@ -92,11 +94,13 @@ func BiTopic(ID string) Topic {
 type Bus struct {
 	topics map[Topic][]Channel
 	mutex  sync.RWMutex
+	closer *run.Closer
 }
 
 func NewBus() *Bus {
 	b := new(Bus)
 	b.topics = make(map[Topic][]Channel)
+	b.closer = run.NewCloser(0)
 	return b
 }
 
@@ -175,9 +179,17 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 	for _, each := range cc {
 		for _, m := range message {
 			go func(ch Channel, message Message) {
-				ch <- Event{
+				if !b.closer.AddRunning() {
+					return
+				}
+				defer b.closer.Done()
+				select {
+				case <-b.closer.CloseNotify():
+					return
+				case ch <- Event{
 					m: message,
 					f: f,
+				}:
 				}
 			}(each, m)
 		}
@@ -222,4 +234,13 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 		}
 	}(listener, ch)
 	return nil
+}
+
+func (b *Bus) Close() {
+	b.closer.CloseThenWait()
+	for _, chs := range b.topics {
+		for _, ch := range chs {
+			close(ch)
+		}
+	}
 }

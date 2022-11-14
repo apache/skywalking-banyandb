@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -33,13 +34,16 @@ import (
 var _ = Describe("Metadata", func() {
 	var svcs *services
 	var deferFn func()
+	var goods []gleak.Goroutine
 
 	BeforeEach(func() {
+		goods = gleak.Goroutines()
 		svcs, deferFn = setUp()
 	})
 
 	AfterEach(func() {
 		deferFn()
+		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 	})
 
 	Context("Manage group", func() {

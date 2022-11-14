@@ -20,6 +20,7 @@ package queue
 import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -28,8 +29,22 @@ var (
 )
 
 type local struct {
-	local *bus.Bus
-	repo  discovery.ServiceRepo
+	local  *bus.Bus
+	repo   discovery.ServiceRepo
+	stopCh chan struct{}
+}
+
+// GracefulStop implements Queue
+func (l *local) GracefulStop() {
+	l.local.Close()
+	if l.stopCh != nil {
+		close(l.stopCh)
+	}
+}
+
+// Serve implements Queue
+func (l *local) Serve() run.StopNotify {
+	return l.stopCh
 }
 
 func (l *local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
