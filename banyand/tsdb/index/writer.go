@@ -118,11 +118,11 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 }
 
 func (s *Writer) Write(value Message) {
-	if !s.closer.AddRunning() {
-		return
-	}
-	defer s.closer.Done()
 	go func(m Message) {
+		if !s.closer.AddRunning() {
+			return
+		}
+		defer s.closer.Done()
 		select {
 		case <-s.closer.CloseNotify():
 			return
