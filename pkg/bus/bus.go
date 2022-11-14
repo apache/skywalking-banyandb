@@ -159,10 +159,6 @@ type Event struct {
 }
 
 func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
-	if !b.closer.AddRunning() {
-		return nil, nil
-	}
-	defer b.closer.Done()
 	if topic.ID == "" {
 		return nil, ErrTopicEmpty
 	}
@@ -182,6 +178,10 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 	for _, each := range cc {
 		for _, m := range message {
 			go func(ch Channel, message Message) {
+				if !b.closer.AddRunning() {
+					return
+				}
+				defer b.closer.Done()
 				select {
 				case <-b.closer.CloseNotify():
 					return
