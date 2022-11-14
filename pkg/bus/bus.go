@@ -22,8 +22,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // Payload represents a simple data
