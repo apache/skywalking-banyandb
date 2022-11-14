@@ -236,6 +236,7 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 }
 
 func (b *Bus) Close() {
+	b.closer.CloseThenWait()
 	for _, chs := range b.topics {
 		for _, ch := range chs {
 			close(ch)
