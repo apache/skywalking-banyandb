@@ -80,8 +80,6 @@ type TimeSeriesWriter interface {
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
 	Get(key []byte, ts uint64) ([]byte, error)
-	// GetAll values with an identical key
-	GetAll(key []byte) ([][]byte, error)
 }
 
 // TimeSeriesStore is time series storage

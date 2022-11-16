@@ -88,7 +88,7 @@ func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
 func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
 	familyRawBytes, err := item.Family(tsdb.Hash([]byte(family)))
 	if err != nil {
-		return nil, errors.Wrapf(err, "parse family %s", family)
+		return nil, errors.Wrapf(err, "stream %s.%s parse family %s", s.name, s.group, family)
 	}
 	tagFamily := &modelv1.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)

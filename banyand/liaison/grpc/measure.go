@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -31,6 +32,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -46,6 +48,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		return nil
 	}
+	sampled := ms.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
 		writeRequest, err := measure.Recv()
 		if err == io.EOF {
@@ -55,7 +58,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return err
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
-			ms.log.Error().Err(errTime).Msg("the data point time is invalid")
+			sampled.Error().Err(errTime).RawJSON("written", logger.Proto(writeRequest)).Msg("the data point time is invalid")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -63,7 +66,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
-			ms.log.Error().Err(err).Msg("failed to navigate to the write target")
+			sampled.Error().Err(err).Msg("failed to navigate to the write target")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -76,7 +79,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		})
 		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			ms.log.Error().Err(errWritePub).Msg("failed to send a message")
+			sampled.Error().Err(errWritePub).Msg("failed to send a message")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}

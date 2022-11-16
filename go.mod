@@ -54,7 +54,6 @@ require (
 	github.com/blevesearch/vellum v1.0.7 // indirect
 	github.com/blugelabs/bluge_segment_api v0.2.0 // indirect
 	github.com/blugelabs/ice v1.0.0 // indirect
-	github.com/blugelabs/ice/v2 v2.0.1 // indirect
 	github.com/caio/go-tdigest v3.1.0+incompatible // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
@@ -132,5 +131,8 @@ require (
 
 replace (
 	github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97
+	github.com/blugelabs/bluge => github.com/zinclabs/bluge v1.1.5
+	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
+	github.com/blugelabs/ice => github.com/zinclabs/ice v1.1.3
 	github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20220817114744-b3711444d876
 )

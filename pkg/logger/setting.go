@@ -50,7 +50,7 @@ func (rl *rootLogger) setDefault() {
 		defer atomic.StoreUint32(&rl.done, 1)
 		var err error
 		rl.l, err = getLogger(Logging{
-			Env:   "dev",
+			Env:   "prod",
 			Level: "debug",
 		})
 		if err != nil {
@@ -114,7 +114,7 @@ func getLogger(cfg Logging) (*Logger, error) {
 		}
 		w = io.Writer(cw)
 	default:
-		w = os.Stderr
+		w = os.Stdout
 	}
 	l := zerolog.New(w).Level(lvl).With().Timestamp().Logger()
 	return &Logger{module: "root", Logger: &l}, nil

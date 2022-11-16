@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -46,6 +47,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		return nil
 	}
+	sampled := s.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
 		writeEntity, err := stream.Recv()
 		if err == io.EOF {
@@ -55,7 +57,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			return err
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
-			s.log.Error().Err(errTime).Msg("the element time is invalid")
+			sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -63,7 +65,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
-			s.log.Error().Err(err).Msg("failed to navigate to the write target")
+			sampled.Error().Err(err).Msg("failed to navigate to the write target")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -76,7 +78,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		})
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
-			s.log.Error().Err(errWritePub).Msg("failed to send a message")
+			sampled.Error().Err(errWritePub).Msg("failed to send a message")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}

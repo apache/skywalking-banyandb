@@ -158,7 +158,7 @@ func (sr *schemaRepo) Watcher() {
 					if !more {
 						return
 					}
-					sr.l.Info().Interface("event", evt).Msg("received an event")
+					sr.l.Debug().Interface("event", evt).Msg("received an event")
 					for i := 0; i < 10; i++ {
 						var err error
 						switch evt.Typ {
@@ -365,7 +365,7 @@ func (sr *schemaRepo) Close() {
 	for _, g := range sr.data {
 		err := g.close()
 		if err != nil {
-			sr.l.Err(err).Stringer("group", g.GetSchema().Metadata).Msg("closing")
+			sr.l.Err(err).RawJSON("group", logger.Proto(g.GetSchema().Metadata)).Msg("closing")
 		}
 	}
 }

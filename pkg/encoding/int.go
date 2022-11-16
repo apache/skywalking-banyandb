@@ -74,10 +74,10 @@ func (b *intEncoderPoolDelegator) Put(encoder SeriesEncoder) {
 }
 
 type intDecoderPoolDelegator struct {
-	name string
 	pool *sync.Pool
-	size int
 	fn   ParseInterval
+	name string
+	size int
 }
 
 func NewIntDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
@@ -216,7 +216,7 @@ func (i intDecoder) Get(ts uint64) ([]byte, error) {
 			return iter.Val(), nil
 		}
 	}
-	return nil, nil
+	return zeroBytes, nil
 }
 
 func (i intDecoder) Iterator() SeriesIterator {
@@ -231,8 +231,9 @@ func (i intDecoder) Iterator() SeriesIterator {
 }
 
 var (
-	_    SeriesIterator = (*intIterator)(nil)
-	zero                = convert.BytesToUint64(convert.Int64ToBytes(0))
+	_         SeriesIterator = (*intIterator)(nil)
+	zeroBytes                = convert.Int64ToBytes(0)
+	Zero                     = convert.BytesToUint64(zeroBytes)
 )
 
 type intIterator struct {
@@ -265,7 +266,7 @@ func (i *intIterator) Next() bool {
 			i.currVal = i.values.Value()
 		}
 	} else {
-		i.currVal = zero
+		i.currVal = Zero
 	}
 	i.currTime = i.startTime + uint64(i.interval*i.index)
 	i.index++
