@@ -14,6 +14,44 @@ The hierarchy that data is organized into **streams**, **measures** and **proper
 
 ![Structure of BanyanDB](https://skywalking.apache.org/doc-graph/banyandb/v0.2.0/structure.png)
 
+### Groups
+
+`Group` does not provide a mechanism for isolating groups of resources within a single banyand-server but is the minimal unit to manage physical structures. Each group contains a set of options, like retention policy, shard number, etc. Several shards distribute in a group.
+
+```yaml
+metadata:
+  name: others
+```
+
+or
+
+```yaml
+metadata:
+  name: sw_metric
+catalog: CATALOG_MEASURE
+resource_opts:
+  shard_num: 2
+  block_interval:
+    unit: UNIT_HOUR
+    num: 2
+  segment_interval:
+    unit: UNIT_DAY
+    num: 1
+  ttl:
+    unit: UNIT_DAY
+    num: 7
+```
+
+The group creates two shards to store data points. Every day, it would create a segment that will generate a block every 2 hours. The available units are `HOUR` and `DAY`. The data in this group will keep 7 days.
+
+Every other resource should belong to a group. The `catalog` indicates which kind of data model the group contains.
+
+* `UNSPECIFIED`: `Property` or other data models.
+* `MEASURE`: [`Measure`](#streams).
+* `STREAM`: [`Stream`](#measures).
+
+[Group Registration Operations](api-reference.md#groupregistryservice)
+
 ### Measures
 
 BanyanDB lets you define a measure as follows:
@@ -153,44 +191,6 @@ tags:
 You could Create, Read, Update and Drop a property, and update or drop several tags instead of the entire property.
 
 [Property Operations](../api-reference.md#propertyservice)
-
-### Groups
-
-`Group` does not provide a mechanism for isolating groups of resources within a single banyand-server but is the minimal unit to manage physical structures. Each group contains a set of options, like retention policy, shard number, etc. Several shards distribute in a group.
-
-```yaml
-metadata:
-  name: others
-```
-
-or
-
-```yaml
-metadata:
-  name: sw_metric
-catalog: CATALOG_MEASURE
-resource_opts:
-  shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
-  segment_interval:
-    unit: UNIT_DAY
-    num: 1
-  ttl:
-    unit: UNIT_DAY
-    num: 7
-```
-
-The group creates two shards to store data points. Every day, it would create a segment that will generate a block every 2 hours. The available units are `HOUR` and `DAY`. The data in this group will keep 7 days.
-
-Every other resource should belong to a group. The `catalog` indicates which kind of data model the group contains.
-
-* `UNSPECIFIED`: `Property` or other data models.
-* `MEASURE`: [`Measure`](#streams).
-* `STREAM`: [`Stream`](#measures).
-
-[Group Registration Operations](api-reference.md#groupregistryservice)
 
 ## Data Models
 
