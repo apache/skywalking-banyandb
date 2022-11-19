@@ -19,6 +19,7 @@ package v1
 
 import (
 	"bytes"
+	"encoding/hex"
 	"time"
 
 	"github.com/pkg/errors"
@@ -31,11 +32,14 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 )
 
 type ID string
 
 const fieldFlagLength = 9
+
+var zeroFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: int64(encoding.Zero)}}}
 
 var (
 	strDelimiter = []byte("\n")
@@ -45,7 +49,7 @@ var (
 	ErrUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
 	ErrNullValue                   = errors.New("the tag value is null")
 	ErrMalformedElement            = errors.New("element is malformed")
-	ErrMalformedFieldFlag          = errors.New("field flag is malformed")
+	ErrMalformedField              = errors.New("field is malformed")
 )
 
 func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
@@ -364,16 +368,23 @@ func EncodeFamily(familySpec *databasev1.TagFamilySpec, family *modelv1.TagFamil
 	return proto.Marshal(data)
 }
 
-func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) *modelv1.FieldValue {
+func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) (*modelv1.FieldValue, error) {
 	switch fieldSpec.GetFieldType() {
 	case databasev1.FieldType_FIELD_TYPE_STRING:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: string(fieldValue)}}}, nil
 	case databasev1.FieldType_FIELD_TYPE_INT:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}
+		if len(fieldValue) == 0 {
+			return zeroFieldValue, nil
+		}
+		if len(fieldValue) != 8 {
+			return nil, errors.WithMessagef(ErrMalformedField, "the length of encoded field value(int64) %s is %d, less than 8",
+				hex.EncodeToString(fieldValue), len(fieldValue))
+		}
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}, nil
 	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}, nil
 	}
-	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}, nil
 }
 
 func EncoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) []byte {
@@ -387,7 +398,7 @@ func EncoderFieldFlag(fieldSpec *databasev1.FieldSpec, interval time.Duration) [
 
 func DecodeFieldFlag(key []byte) (*databasev1.FieldSpec, time.Duration, error) {
 	if len(key) < fieldFlagLength {
-		return nil, 0, ErrMalformedFieldFlag
+		return nil, 0, errors.WithMessagef(ErrMalformedField, "flag %s is invalid", hex.EncodeToString(key))
 	}
 	b := key[len(key)-9:]
 	return &databasev1.FieldSpec{

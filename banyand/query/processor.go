@@ -72,7 +72,8 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	p.log.Debug().Stringer("criteria", queryCriteria).Msg("received a query request")
+	queryJSON := logger.Proto(queryCriteria)
+	p.log.Debug().RawJSON("criteria", queryJSON).Msg("received a query request")
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.streamService.Stream(meta)
@@ -103,6 +104,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	entities, err := plan.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
+		p.log.Error().Err(err).RawJSON("req", queryJSON).Msg("fail to execute the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
 		return
 	}
@@ -124,7 +126,8 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	p.log.Debug().Msg("received a query event")
+	queryJSON := logger.Proto(queryCriteria)
+	p.log.Info().RawJSON("req", queryJSON).Msg("received a query event")
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.measureService.Measure(meta)
@@ -160,7 +163,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	defer func() {
 		if err = mIterator.Close(); err != nil {
-			p.queryService.log.Error().Err(err).Msg("fail to close the query plan")
+			p.queryService.log.Error().Err(err).RawJSON("req", queryJSON).Msg("fail to close the query plan")
 		}
 	}()
 	result := make([]*measurev1.DataPoint, 0)

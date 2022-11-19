@@ -116,7 +116,7 @@ func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
 func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
 	familyRawBytes, err := item.Family(familyIdentity(family, pbv1.TagFlag))
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "measure %s.%s parse family %s", s.name, s.group, family)
 	}
 	tagFamily := &modelv1.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)
@@ -159,7 +159,10 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 	if err != nil {
 		return nil, err
 	}
-	fieldValue := pbv1.DecodeFieldValue(bytes, fieldSpec)
+	fieldValue, err := pbv1.DecodeFieldValue(bytes, fieldSpec)
+	if err != nil {
+		return nil, err
+	}
 	return &measurev1.DataPoint_Field{
 		Name:  name,
 		Value: fieldValue,

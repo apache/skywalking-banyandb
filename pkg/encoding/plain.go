@@ -237,7 +237,7 @@ func (t *plainDecoder) Get(ts uint64) ([]byte, error) {
 	}
 	slot := getTSSlot(t.ts, i)
 	if parseTS(slot) != ts {
-		return nil, fmt.Errorf("%d doesn't exist", ts)
+		return nil, fmt.Errorf("%d is wrong", ts)
 	}
 	return getVal(t.val, parseOffset(slot))
 }

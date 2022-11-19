@@ -96,7 +96,7 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 			key = key | local
 		case databasev1.IndexRule_LOCATION_GLOBAL:
 			if !w.enableGlobalIndex {
-				w.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
+				w.l.Warn().RawJSON("index-rule", logger.Proto(ruleIndex.Rule)).Msg("global index is disabled")
 				continue
 			}
 			key = key | global

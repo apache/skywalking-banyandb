@@ -74,7 +74,7 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		familyName := refs[0].Tag.GetFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "parse projection")
 		}
 		if len(refs) > len(parsedTagFamily.Tags) {
 			return nil, errors.Wrapf(ErrInvalidData,

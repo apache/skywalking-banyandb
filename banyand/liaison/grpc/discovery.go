@@ -88,7 +88,7 @@ func (s *shardRepo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	s.setShardNum(e)
-	s.log.Info().
+	s.log.Debug().
 		Str("action", databasev1.Action_name[int32(e.Action)]).
 		Uint64("shardID", e.Shard.Id).
 		Msg("received a shard e")
@@ -136,7 +136,7 @@ func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	id := getID(e.GetSubject())
-	s.log.Info().
+	s.log.Debug().
 		Str("action", databasev1.Action_name[int32(e.Action)]).
 		Interface("subject", id).
 		Msg("received an entity event")

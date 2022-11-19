@@ -28,10 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var (
-	ErrServiceUnhealthy = errors.New("service is unhealthy")
-	l                   = logger.GetLogger()
-)
+var ErrServiceUnhealthy = errors.New("service is unhealthy")
 
 func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
 	return func() error {
@@ -50,11 +47,12 @@ func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duratio
 		}); err != nil {
 			return err
 		}
+		l := logger.GetLogger()
 		if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 			l.Warn().Str("responded_status", resp.GetStatus().String()).Msg("service unhealthy")
 			return ErrServiceUnhealthy
 		}
-		l.Info().Stringer("status", resp.GetStatus()).Msg("connected")
+		l.Debug().Stringer("status", resp.GetStatus()).Msg("connected")
 		return nil
 	}
 }
