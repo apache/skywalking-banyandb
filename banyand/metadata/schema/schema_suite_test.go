@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestSchema(t *testing.T) {
@@ -35,6 +36,6 @@ func TestSchema(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).To(Succeed())
 })

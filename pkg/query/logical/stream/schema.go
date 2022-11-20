@@ -44,11 +44,6 @@ func (s *schema) EntityList() []string {
 	return s.common.EntityList
 }
 
-func (s *schema) TraceIDFieldName() string {
-	// TODO: how to extract trace_id?
-	return "trace_id"
-}
-
 // IndexDefined checks whether the field given is indexed
 func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	return s.common.IndexDefined(tagName)

@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/testcases"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestStore_MatchTerm(t *testing.T) {
@@ -63,7 +64,7 @@ func TestStore_Iterator(t *testing.T) {
 func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	tempDir, deferFunc = test.Space(t)
 	return tempDir, deferFunc

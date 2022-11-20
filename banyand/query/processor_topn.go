@@ -57,7 +57,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid requested sort direction")
 		return
 	}
-	t.log.Info().Msg("received a topN query event")
+	t.log.Debug().Msg("received a topN query event")
 	topNMetadata := request.GetMetadata()
 	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
 	if err != nil {
@@ -182,7 +182,10 @@ func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2,
 	if err != nil {
 		return nil, err
 	}
-	fieldValue := pbv1.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
+	fieldValue, err := pbv1.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
+	if err != nil {
+		return nil, err
+	}
 	return &streaming.Tuple2{
 		// GroupValues
 		V1: tagFamily.GetTags()[1].GetStr().GetValue(),
@@ -196,7 +199,9 @@ func familyIdentity(name string, flag []byte) []byte {
 }
 
 func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.TopNRequest) ([]tsdb.Iterator, error) {
-	seriesSpan, err := series.Span(timestamp.NewInclusiveTimeRange(
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seriesSpan, err := series.Span(ctx, timestamp.NewInclusiveTimeRange(
 		request.GetTimeRange().GetBegin().AsTime(),
 		request.GetTimeRange().GetEnd().AsTime()),
 	)

@@ -21,6 +21,7 @@ IMG_NAME := skywalking-bydbctl
 
 BUILD_DIR ?= build/bin
 
+include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 

@@ -204,11 +204,6 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-// Flush flushed memory data to disk
-func (s *store) Flush() error {
-	return nil
-}
-
 type blugeMatchIterator struct {
 	delegated search.DocumentMatchIterator
 	fieldKey  string

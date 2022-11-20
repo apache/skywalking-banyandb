@@ -22,20 +22,18 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var l = logger.GetLogger()
-
-func Conn(addr string, connTimeout time.Duration) (*grpc.ClientConn, error) {
-	opts := []grpc.DialOption{
+func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	defaultOpts := []grpc.DialOption{
 		grpc.WithBlock(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+	opts = append(opts, defaultOpts...)
+	l := logger.GetLogger("grpc-helper")
 
 	connStart := time.Now()
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), connTimeout)
@@ -50,7 +48,7 @@ func Conn(addr string, connTimeout time.Duration) (*grpc.ClientConn, error) {
 		return nil, err
 	}
 	connDuration := time.Since(connStart)
-	l.Info().Dur("conn", connDuration).Msg("time elapsed")
+	l.Debug().Dur("conn", connDuration).Msg("time elapsed")
 	return conn, nil
 }
 
@@ -59,6 +57,7 @@ func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx conte
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer rpcCancel()
 	rpcCtx = metadata.NewOutgoingContext(rpcCtx, make(metadata.MD))
+	l := logger.GetLogger("grpc-helper")
 
 	err := fn(rpcCtx)
 	if err != nil {
@@ -72,6 +71,6 @@ func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx conte
 		return err
 	}
 	rpcDuration := time.Since(rpcStart)
-	l.Info().Dur("rpc", rpcDuration).Msg("time elapsed")
+	l.Debug().Dur("rpc", rpcDuration).Msg("time elapsed")
 	return nil
 }

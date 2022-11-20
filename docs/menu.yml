@@ -22,10 +22,14 @@ catalog:
     path: "/installation"
   - name: "Clients"
     path: "/clients"
-  - name: "Schema"
-    path: "/schema"
+  - name: "Concept"
+    catalog:
+      - name: "Data Model"
+        path: "/concept/data-model"
   - name: "CRUD Operations"
     catalog:
+      - name: "Group"
+        path: "/crud/group"
       - name: "Measure"
         catalog:
           - name: "Schema" 
@@ -38,8 +42,6 @@ catalog:
             path: "/crud/stream/schema"
           - name: "Query" 
             path: "/crud/stream/query"
-      - name: "Group"
-        path: "/crud/group"
       - name: "IndexRule"
         path: "/crud/index_rule"
       - name: "IndexRuleBinding"

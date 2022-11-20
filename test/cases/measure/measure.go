@@ -24,6 +24,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
@@ -34,7 +35,7 @@ var (
 	verify        = func(args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			measureTestData.VerifyFn(innerGm, SharedContext, args)
-		}).Should(gm.Succeed())
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}
 )
 
@@ -55,4 +56,5 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("filter by entity id and service id", helpers.Args{Input: "entity_service", Want: "entity", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("without field", helpers.Args{Input: "no_field", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("invalid logical expression", helpers.Args{Input: "err_invalid_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
+	g.Entry("linked or expressions", helpers.Args{Input: "linked_or", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 )

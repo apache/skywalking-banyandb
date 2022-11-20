@@ -30,15 +30,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func TestOpenDatabase(t *testing.T) {
 	tester := assert.New(t)
 	req := require.New(t)
 	tempDir, deferFunc := test.Space(req)
-	openDatabase(req, tempDir)
-	defer deferFunc()
-	verifyDatabaseStructure(tester, tempDir)
+	db := openDatabase(context.Background(), req, tempDir)
+	defer func() {
+		req.NoError(db.Close())
+		deferFunc()
+	}()
+	verifyDatabaseStructure(tester, tempDir, time.Now())
 }
 
 func TestReOpenDatabase(t *testing.T) {
@@ -46,32 +51,63 @@ func TestReOpenDatabase(t *testing.T) {
 	req := require.New(t)
 	tempDir, deferFunc := test.Space(req)
 	defer deferFunc()
-	db := openDatabase(req, tempDir)
+	db := openDatabase(context.Background(), req, tempDir)
 	req.NoError(db.Close())
-	verifyDatabaseStructure(tester, tempDir)
-	db = openDatabase(req, tempDir)
+	verifyDatabaseStructure(tester, tempDir, time.Now())
+	db = openDatabase(context.Background(), req, tempDir)
 	req.NoError(db.Close())
-	verifyDatabaseStructure(tester, tempDir)
+	verifyDatabaseStructure(tester, tempDir, time.Now())
 }
 
-func verifyDatabaseStructure(tester *assert.Assertions, tempDir string) {
+func TestReOpenDatabaseNextBlock(t *testing.T) {
+	tester := assert.New(t)
+	req := require.New(t)
+	tempDir, deferFunc := test.Space(req)
+	defer deferFunc()
+	clock := timestamp.NewMockClock()
+	clock.Set(time.Date(1970, 0o1, 0o1, 0, 0, 0, 0, time.Local))
+	db := openDatabase(timestamp.SetClock(context.Background(), clock), req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir, clock.Now())
+	clock.Add(5 * time.Hour)
+	db = openDatabase(timestamp.SetClock(context.Background(), clock), req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir, clock.Now())
+}
+
+func TestReOpenDatabaseNextDay(t *testing.T) {
+	tester := assert.New(t)
+	req := require.New(t)
+	tempDir, deferFunc := test.Space(req)
+	defer deferFunc()
+	clock := timestamp.NewMockClock()
+	clock.Set(time.Date(1970, 0o1, 0o1, 0, 0, 0, 0, time.Local))
+	db := openDatabase(timestamp.SetClock(context.Background(), clock), req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir, clock.Now())
+	clock.Add(26 * time.Hour)
+	db = openDatabase(timestamp.SetClock(context.Background(), clock), req, tempDir)
+	req.NoError(db.Close())
+	verifyDatabaseStructure(tester, tempDir, clock.Now())
+}
+
+func verifyDatabaseStructure(tester *assert.Assertions, tempDir string, now time.Time) {
 	shardPath := fmt.Sprintf(shardTemplate, tempDir, 0)
 	validateDirectory(tester, shardPath)
 	seriesPath := fmt.Sprintf(seriesTemplate, shardPath)
 	validateDirectory(tester, seriesPath)
-	now := time.Now()
 	segPath := fmt.Sprintf(segTemplate, shardPath, now.Format(segDayFormat))
 	validateDirectory(tester, segPath)
 	validateDirectory(tester, fmt.Sprintf(blockTemplate, segPath, now.Format(blockHourFormat)))
 }
 
-func openDatabase(t *require.Assertions, path string) (db Database) {
+func openDatabase(ctx context.Context, t *require.Assertions, path string) (db Database) {
 	t.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	}))
 	db, err := OpenDatabase(
-		context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")),
+		context.WithValue(ctx, logger.ContextKey, logger.GetLogger("test")),
 		DatabaseOpts{
 			Location: path,
 			ShardNum: 1,

@@ -25,7 +25,11 @@ include $(mk_dir).env
 export
 endif
 
+include scripts/build/version.mk
+
 PROJECTS := ui banyand bydbctl
+
+TEST_CI_OPTS ?=
 
 ##@ Build targets
 
@@ -65,7 +69,11 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 include scripts/build/ginkgo.mk
 
 test-ci: $(GINKGO) ## Run the unit tests in CI
-	$(GINKGO) -v --race --cover --covermode atomic --coverprofile=coverage.out ./... 
+	$(GINKGO) --race \
+	  -ldflags \
+	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=info" \
+	  $(TEST_CI_OPTS) \
+	  ./... 
 
 ##@ Code quality targets
 

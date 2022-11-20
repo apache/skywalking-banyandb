@@ -26,6 +26,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -42,7 +43,8 @@ type Strategy struct {
 	current      atomic.Value
 	currentRatio uint64
 	logger       *logger.Logger
-	stopCh       chan struct{}
+
+	closer *run.Closer
 }
 
 type StrategyOptions func(*Strategy)
@@ -71,7 +73,7 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 	strategy := &Strategy{
 		ctrl:   ctrl,
 		ratio:  0.8,
-		stopCh: make(chan struct{}),
+		closer: run.NewCloser(1),
 	}
 	for _, opt := range options {
 		opt(strategy)
@@ -82,17 +84,36 @@ func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error)
 	if strategy.logger == nil {
 		strategy.logger = logger.GetLogger("bucket-strategy")
 	}
+	if err := strategy.resetCurrent(); err != nil {
+		return nil, err
+	}
 	return strategy, nil
 }
 
-func (s *Strategy) Run() {
-	for s.current.Load() == nil {
-		s.current.Store(s.ctrl.Current())
+func (s *Strategy) resetCurrent() error {
+	c, err := s.ctrl.Current()
+	if err != nil {
+		return err
 	}
-	go func(s *Strategy) {
-		for {
+	s.current.Store(c)
+	return nil
+}
 
-			c := s.current.Load().(Reporter).Report()
+func (s *Strategy) Run() {
+	go func(s *Strategy) {
+		defer s.closer.Done()
+		for {
+			c, err := s.current.Load().(Reporter).Report()
+			if errors.Is(err, ErrReporterClosed) {
+				return
+			}
+			if err != nil {
+				s.logger.Error().Err(err).Msg("failed to get reporter")
+				if err := s.resetCurrent(); err != nil {
+					panic(err)
+				}
+				continue
+			}
 			if !s.observe(c) {
 				return
 			}
@@ -110,23 +131,25 @@ func (s *Strategy) String() string {
 }
 
 func (s *Strategy) observe(c Channel) bool {
-	var err error
 	var next Reporter
 	moreBucket := true
 	for {
 		select {
 		case status, more := <-c:
 			if !more {
-				return true
+				return moreBucket
 			}
 			ratio := Ratio(status.Volume) / Ratio(status.Capacity)
 			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
 			if ratio >= s.ratio && next == nil && moreBucket {
-				next, err = s.ctrl.Next()
+				n, err := s.ctrl.Next()
 				if errors.Is(err, ErrNoMoreBucket) {
 					moreBucket = false
 				} else if err != nil {
 					s.logger.Err(err).Msg("failed to create the next bucket")
+				} else {
+					s.logger.Info().Stringer("next", n).Msg("created the next bucket")
+					next = n
 				}
 			}
 			if ratio >= 1.0 {
@@ -134,14 +157,14 @@ func (s *Strategy) observe(c Channel) bool {
 				if next != nil {
 					s.current.Store(next)
 				}
-				return true
+				return moreBucket
 			}
-		case <-s.stopCh:
+		case <-s.closer.CloseNotify():
 			return false
 		}
 	}
 }
 
 func (s *Strategy) Close() {
-	close(s.stopCh)
+	s.closer.CloseThenWait()
 }

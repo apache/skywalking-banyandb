@@ -19,6 +19,8 @@ package measure
 
 import (
 	"bytes"
+	"context"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -75,7 +77,9 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if err != nil {
 		return err
 	}
-	wp, err := series.Create(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wp, err := series.Create(ctx, t)
 	if err != nil {
 		if wp != nil {
 			_ = wp.Close()

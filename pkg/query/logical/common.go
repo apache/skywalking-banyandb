@@ -19,6 +19,9 @@ package logical
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -71,7 +74,7 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		familyName := refs[0].Tag.GetFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "parse projection")
 		}
 		if len(refs) > len(parsedTagFamily.Tags) {
 			return nil, errors.Wrapf(ErrInvalidData,
@@ -101,16 +104,15 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // This method is used by the underlying tableScan and localIndexScan plans.
 func ExecuteForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 	builders ...SeekerBuilder,
-) ([]tsdb.Iterator, error) {
+) ([]tsdb.Iterator, []io.Closer, error) {
 	var itersInShard []tsdb.Iterator
+	var closers []io.Closer
 	for _, seriesFound := range series {
 		itersInSeries, err := func() ([]tsdb.Iterator, error) {
-			sp, errInner := seriesFound.Span(timeRange)
-			defer func(sp tsdb.SeriesSpan) {
-				if sp != nil {
-					_ = sp.Close()
-				}
-			}(sp)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			sp, errInner := seriesFound.Span(ctx, timeRange)
+			closers = append(closers, sp)
 			if errInner != nil {
 				return nil, errInner
 			}
@@ -129,16 +131,16 @@ func ExecuteForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 			return iters, nil
 		}()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(itersInSeries) > 0 {
 			itersInShard = append(itersInShard, itersInSeries...)
 		}
 	}
-	return itersInShard, nil
+	return itersInShard, closers, nil
 }
 
-var DefaultLimit uint32 = 100
+var DefaultLimit uint32 = 20
 
 type Tag struct {
 	familyName, name string

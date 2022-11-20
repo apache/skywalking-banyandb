@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type IndexDatabase interface {
@@ -97,7 +96,6 @@ type indexWriterBuilder struct {
 	scope        Entry
 	segCtrl      *segmentController
 	ts           time.Time
-	seg          *segment
 	globalItemID *GlobalItemID
 }
 
@@ -108,11 +106,6 @@ func (i *indexWriterBuilder) Scope(scope Entry) IndexWriterBuilder {
 
 func (i *indexWriterBuilder) Time(ts time.Time) IndexWriterBuilder {
 	i.ts = ts
-	segs := i.segCtrl.span(timestamp.NewTimeRangeDuration(ts, 0, true, false))
-	if len(segs) != 1 {
-		return i
-	}
-	i.seg = segs[0]
 	return i
 }
 
@@ -122,15 +115,16 @@ func (i *indexWriterBuilder) GlobalItemID(itemID GlobalItemID) IndexWriterBuilde
 }
 
 func (i *indexWriterBuilder) Build() (IndexWriter, error) {
-	if i.seg == nil {
-		return nil, errors.WithStack(ErrNoTime)
+	seg, err := i.segCtrl.create(i.segCtrl.Format(i.ts), false)
+	if err != nil {
+		return nil, err
 	}
 	if i.globalItemID == nil {
 		return nil, errors.WithStack(ErrNoVal)
 	}
 	return &indexWriter{
 		scope:  i.scope,
-		seg:    i.seg,
+		seg:    seg,
 		ts:     i.ts,
 		itemID: i.globalItemID,
 	}, nil

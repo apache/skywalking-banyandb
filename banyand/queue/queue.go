@@ -30,11 +30,13 @@ type Queue interface {
 	run.Unit
 	bus.Subscriber
 	bus.Publisher
+	run.Service
 }
 
 func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {
 	return &local{
-		repo:  repo,
-		local: bus.NewBus(),
+		repo:   repo,
+		local:  bus.NewBus(),
+		stopCh: make(chan struct{}),
 	}, nil
 }

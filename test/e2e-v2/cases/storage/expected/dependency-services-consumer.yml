@@ -15,12 +15,16 @@
 
 nodes:
 {{- contains .nodes }}
-- id: {{ b64enc "e2e-service-provider"}}.1
-  name: e2e-service-provider
-  type: Tomcat
-  isreal: true
+- id: {{ b64enc "User"}}.0
+  name: User
+  type: USER
+  isreal: false
 - id: {{ b64enc "e2e-service-consumer"}}.1
   name: e2e-service-consumer
+  type: Tomcat
+  isreal: true
+- id: {{ b64enc "e2e-service-provider"}}.1
+  name: e2e-service-provider
   type: Tomcat
   isreal: true
 {{- end }}
@@ -33,5 +37,12 @@ calls:
   id: {{ b64enc "e2e-service-consumer"}}.1-{{ b64enc "e2e-service-provider"}}.1
   detectpoints:
     - CLIENT
+    - SERVER
+- source: {{ b64enc "User" }}.0
+  sourcecomponents: []
+  target: {{ b64enc "e2e-service-consumer"}}.1
+  targetcomponents: []
+  id: {{ b64enc "User" }}.0-{{ b64enc "e2e-service-consumer"}}.1
+  detectpoints:
     - SERVER
 {{- end }}

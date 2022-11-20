@@ -19,7 +19,6 @@ package measure_test
 
 import (
 	"context"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var _ = Describe("Metadata", func() {
@@ -48,7 +48,7 @@ var _ = Describe("Metadata", func() {
 			Eventually(func() bool {
 				_, ok := svcs.measure.LoadGroup("sw_metric")
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the group", func() {
 			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
@@ -58,7 +58,7 @@ var _ = Describe("Metadata", func() {
 			Eventually(func() bool {
 				_, ok := svcs.measure.LoadGroup("sw_metric")
 				return ok
-			}).WithTimeout(10 * time.Second).Should(BeFalse())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeFalse())
 		})
 
 		It("should add shards", func() {
@@ -77,7 +77,7 @@ var _ = Describe("Metadata", func() {
 					return false
 				}
 				return group.GetSchema().GetResourceOpts().GetShardNum() == 4
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 	})
 
@@ -89,7 +89,7 @@ var _ = Describe("Metadata", func() {
 					Group: "sw_metric",
 				})
 				return err == nil
-			}).WithTimeout(10 * time.Second).Should(BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the measure", func() {
 			svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
@@ -105,7 +105,7 @@ var _ = Describe("Metadata", func() {
 					Group: "sw_metric",
 				})
 				return err
-			}).WithTimeout(30 * time.Second).Should(MatchError(measure.ErrMeasureNotExist))
+			}).WithTimeout(flags.EventuallyTimeout).Should(MatchError(measure.ErrMeasureNotExist))
 		})
 
 		Context("Update a measure", func() {
@@ -140,7 +140,7 @@ var _ = Describe("Metadata", func() {
 					}
 
 					return len(val.GetSchema().GetEntity().TagNames) == entitySize
-				}).WithTimeout(10 * time.Second).Should(BeTrue())
+				}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 			})
 		})
 	})

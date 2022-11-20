@@ -24,16 +24,17 @@ import (
 	gm "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestIntegrationOther(t *testing.T) {
 	gm.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Integration Other Suite")
+	g.RunSpecs(t, "Integration Other Suite", g.Label("integration"))
 }
 
 var _ = g.BeforeSuite(func() {
 	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).To(gm.Succeed())
 })

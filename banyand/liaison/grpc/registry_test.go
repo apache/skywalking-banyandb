@@ -34,7 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
@@ -47,8 +49,12 @@ var _ = Describe("Registry", func() {
 	}
 	BeforeEach(func() {
 		gracefulStop = setupForRegistry()
+		addr := "localhost:17912"
+		Eventually(
+			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			testflags.EventuallyTimeout).Should(Succeed())
 		var err error
-		conn, err = grpclib.Dial("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
 	It("manages the stream", func() {
@@ -187,7 +193,9 @@ func setupForRegistry() func() {
 		preloadStreamSvc,
 		tcp,
 	)
-	Eventually(helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second), 20*time.Second).Should(Succeed())
+	Eventually(
+		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()
 		metaDeferFunc()

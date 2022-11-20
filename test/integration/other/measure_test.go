@@ -22,9 +22,11 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -35,16 +37,15 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 	var deferFn func()
 	var baseTime time.Time
 	var interval time.Duration
-	var conn *grpclib.ClientConn
+	var conn *grpc.ClientConn
 
 	g.BeforeEach(func() {
 		var addr string
 		addr, _, deferFn = setup.SetUp()
+		gm.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			flags.EventuallyTimeout).Should(gm.Succeed())
 		var err error
-		conn, err = grpclib.Dial(
-			addr,
-			grpclib.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		baseTime = timestamp.NowMilli()
 		interval = 500 * time.Millisecond
@@ -61,6 +62,6 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 				Connection: conn,
 				BaseTime:   baseTime,
 			}, helpers.Args{Input: "all", Want: "update", Duration: 1 * time.Hour})
-		})
+		}, flags.EventuallyTimeout)
 	})
 })

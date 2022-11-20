@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+include ../../build/version.mk
 include ../../build/base.mk
 include ../../build/lint.mk
 include ../../build/generate_go.mk

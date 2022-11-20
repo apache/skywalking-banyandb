@@ -28,6 +28,7 @@ Then, below command will create a new property:
 ```shell
 $ bydbctl property apply -f - <<EOF
 metadata:
+  container:
     group: sw
     name: ui_template
   id: General-Service

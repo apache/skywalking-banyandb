@@ -23,9 +23,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
-
-const statInterval = 5 * time.Second
 
 var (
 	mtBytes    *prometheus.GaugeVec
@@ -50,22 +49,7 @@ func init() {
 	)
 }
 
-func (s *shard) runStat() {
-	go func() {
-		ticker := time.NewTicker(statInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				s.stat()
-			case <-s.stopCh:
-				return
-			}
-		}
-	}()
-}
-
-func (s *shard) stat() {
+func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			s.l.Warn().Interface("r", r).Msg("recovered")
@@ -100,6 +84,7 @@ func (s *shard) stat() {
 		s.curry(mtBytes).WithLabelValues(name).Set(float64(bs.MemBytes))
 		s.curry(maxMtBytes).WithLabelValues(name).Set(float64(bs.MaxMemBytes))
 	}
+	return true
 }
 
 func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {

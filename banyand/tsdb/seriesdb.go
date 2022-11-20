@@ -24,6 +24,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -147,9 +148,9 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(timeRange timestamp.TimeRange) ([]BlockDelegate, error)
-	create(timeRange timestamp.TimeRange) (BlockDelegate, error)
-	block(id GlobalItemID) (BlockDelegate, error)
+	span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error)
+	create(ctx context.Context, ts time.Time) (BlockDelegate, error)
+	block(ctx context.Context, id GlobalItemID) (BlockDelegate, error)
 }
 
 var (
@@ -188,12 +189,12 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	return newSeries(s.context(), id, s), nil
 }
 
-func (s *seriesDB) block(id GlobalItemID) (BlockDelegate, error) {
+func (s *seriesDB) block(ctx context.Context, id GlobalItemID) (BlockDelegate, error) {
 	seg := s.segCtrl.get(id.segID)
 	if seg == nil {
 		return nil, nil
 	}
-	return seg.blockController.get(id.blockID)
+	return seg.blockController.get(ctx, id.blockID)
 }
 
 func (s *seriesDB) shardID() common.ShardID {
@@ -250,11 +251,10 @@ func (s *seriesDB) List(path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
-	// TODO: return correct blocks
+func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
 	result := make([]BlockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
-		dd, err := s.blockController.span(timeRange)
+		dd, err := s.blockController.span(ctx, timeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -266,13 +266,14 @@ func (s *seriesDB) span(timeRange timestamp.TimeRange) ([]BlockDelegate, error) 
 	return result, nil
 }
 
-func (s *seriesDB) create(timeRange timestamp.TimeRange) (BlockDelegate, error) {
+func (s *seriesDB) create(ctx context.Context, ts time.Time) (BlockDelegate, error) {
 	s.Lock()
 	defer s.Unlock()
+	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
 	ss := s.segCtrl.span(timeRange)
 	if len(ss) > 0 {
 		s := ss[0]
-		dd, err := s.blockController.span(timeRange)
+		dd, err := s.blockController.span(ctx, timeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +284,7 @@ func (s *seriesDB) create(timeRange timestamp.TimeRange) (BlockDelegate, error) 
 		if err != nil {
 			return nil, err
 		}
-		return block.delegate()
+		return block.delegate(ctx)
 	}
 	seg, err := s.segCtrl.create(s.segCtrl.Format(timeRange.Start), false)
 	if err != nil {
@@ -293,7 +294,7 @@ func (s *seriesDB) create(timeRange timestamp.TimeRange) (BlockDelegate, error) 
 	if err != nil {
 		return nil, err
 	}
-	return block.delegate()
+	return block.delegate(ctx)
 }
 
 func (s *seriesDB) context() context.Context {

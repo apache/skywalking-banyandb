@@ -18,24 +18,22 @@ package tsdb_test
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
-
-var defaultEventuallyTimeout = 30 * time.Second
 
 func TestTsdb(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Tsdb Suite")
+	RunSpecs(t, "Tsdb Suite", Label("banyand"))
 }
 
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).Should(Succeed())
 })

@@ -15,26 +15,42 @@
 # specific language governing permissions and limitations
 # under the License.
 
-{{- contains .}}
-- id: {{ b64enc "e2e-service-provider" }}.1_{{ b64enc "provider1" }}
-  name: {{ notEmpty .name }}
-  attributes:
-  {{- contains .attributes }}
-  - name: OS Name
-    value: Linux
-  - name: hostname
-    value: {{ notEmpty .value }}
-  - name: Process No.
-    value: "1"
-  - name: Start Time
-    value: {{ notEmpty .value }}
-  - name: JVM Arguments
-    value: '{{ notEmpty .value }}'
-  - name: Jar Dependencies
-    value: '{{ notEmpty .value }}'
-  - name: ipv4s
-    value: {{ notEmpty .value }}
-  {{- end}}
-  language: JAVA
-  instanceuuid: {{ b64enc "e2e-service-provider" }}.1_{{ b64enc "provider1" }}
-{{- end}}
+metadata:
+  name: "service_cpm_minute"
+  group: "sw_metric"
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["id", "entity_id"]
+fieldProjection:
+  names: ["total", "value"]
+criteria:
+  le:
+    op: "LOGICAL_OP_OR"
+    left:
+      condition:
+        name: "id"
+        op: "BINARY_OP_EQ"
+        value:
+          id:
+            value: "4"
+    right:
+      le:
+        op: "LOGICAL_OP_OR"
+        left:
+          condition:
+            name: "id"
+            op: "BINARY_OP_EQ"
+            value:
+              id:
+                value: "5"
+        right:
+          le:
+            op: "LOGICAL_OP_OR"
+            left:
+              condition:
+                name: "id"
+                op: "BINARY_OP_EQ"
+                value:
+                  id:
+                    value: "unknown"

@@ -19,31 +19,34 @@ package integration_other_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
 var _ = Describe("Property application", func() {
 	var deferFn func()
-	var conn *grpclib.ClientConn
+	var conn *grpc.ClientConn
 	var client property_v1.PropertyServiceClient
 
 	BeforeEach(func() {
 		var addr string
 		addr, _, deferFn = setup.SetUp()
+		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			flags.EventuallyTimeout).Should(Succeed())
 		var err error
-		conn, err = grpclib.Dial(
-			addr,
-			grpclib.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		client = property_v1.NewPropertyServiceClient(conn)
 	})
@@ -95,7 +98,7 @@ var _ = Describe("Property application", func() {
 
 var _ = Describe("Property application", func() {
 	var deferFn func()
-	var conn *grpclib.ClientConn
+	var conn *grpc.ClientConn
 	var client property_v1.PropertyServiceClient
 	var md *property_v1.Metadata
 
@@ -103,10 +106,7 @@ var _ = Describe("Property application", func() {
 		var addr string
 		addr, _, deferFn = setup.SetUp()
 		var err error
-		conn, err = grpclib.Dial(
-			addr,
-			grpclib.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		client = property_v1.NewPropertyServiceClient(conn)
 		md = &property_v1.Metadata{

@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	flowTest "github.com/apache/skywalking-banyandb/pkg/test/flow"
 )
 
@@ -83,7 +84,7 @@ var _ = Describe("Streaming", func() {
 						flow.NewStreamRecordWithoutTS(6),
 						flow.NewStreamRecordWithoutTS(8),
 					}))
-				}).Should(Succeed())
+				}, flags.EventuallyTimeout).Should(Succeed())
 			})
 		})
 	})
@@ -125,7 +126,7 @@ var _ = Describe("Streaming", func() {
 						flow.NewStreamRecordWithoutTS(16),
 						flow.NewStreamRecordWithoutTS(18),
 					}))
-				}).Should(Succeed())
+				}, flags.EventuallyTimeout).Should(Succeed())
 			})
 		})
 	})
@@ -179,7 +180,7 @@ var _ = Describe("Streaming", func() {
 						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600)}, 6000)},
 						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700)}, 4000)},
 					}))
-				}).WithTimeout(10 * time.Second).Should(Succeed())
+				}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
 			})
 		})
 	})
@@ -233,7 +234,7 @@ var _ = Describe("Streaming", func() {
 						{int64(9900), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9900)}, 2000)},
 						{int64(9800), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800)}, 3000)},
 					}))
-				}).WithTimeout(10 * time.Second).Should(Succeed())
+				}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
 			})
 		})
 	})

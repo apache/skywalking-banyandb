@@ -23,10 +23,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -39,11 +41,11 @@ import (
 
 func TestIntegrationQuery(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite")
+	RunSpecs(t, "Integration Query Suite", Label("integration"))
 }
 
 var (
-	connection *grpclib.ClientConn
+	connection *grpc.ClientConn
 	now        time.Time
 	deferFunc  func()
 )
@@ -51,14 +53,13 @@ var (
 var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: "warn",
+		Level: flags.LogLevel,
 	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.SetUp()
-	conn, err := grpclib.Dial(
-		addr,
-		grpclib.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+		flags.EventuallyTimeout).Should(Succeed())
+	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
@@ -76,11 +77,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpclib.Dial(
-		string(address),
-		grpclib.WithTransportCredentials(insecure.NewCredentials()),
-		grpclib.WithBlock(),
-	)
+	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	cases_stream.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,

@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package main generates system load
+// Package main is the entry point of the process for EBPF profiling
 package main
 
 import (

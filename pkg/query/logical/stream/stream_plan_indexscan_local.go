@@ -19,6 +19,7 @@ package stream
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -77,7 +78,14 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 			b.Filter(i.filter)
 		})
 	}
-	iters, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	iters, closers, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	if len(closers) > 0 {
+		defer func(closers []io.Closer) {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+		}(closers)
+	}
 	if innerErr != nil {
 		return nil, innerErr
 	}

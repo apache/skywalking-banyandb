@@ -23,6 +23,7 @@ DEBUG_BINARIES := $(SERVER)-debug
 
 IMG_NAME := skywalking-banyandb
 
+include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 include ../scripts/build/build.mk

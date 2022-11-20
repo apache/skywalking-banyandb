@@ -29,6 +29,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -106,7 +108,7 @@ func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T)
 var rpcTimeout = 10 * time.Second
 
 func RegisterForNew(addr string, metricNum int) error {
-	conn, err := grpchelper.Conn(addr, 1*time.Second)
+	conn, err := grpchelper.Conn(addr, 1*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}

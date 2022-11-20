@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func HTTPHealthCheck(addr string) func() error {
@@ -34,13 +36,13 @@ func HTTPHealthCheck(addr string) func() error {
 			time.Sleep(1 * time.Second)
 			return err
 		}
-
+		l := logger.GetLogger("http-health")
 		if resp.StatusCode() != 200 {
 			l.Warn().Str("responded_status", resp.Status()).Msg("service unhealthy")
 			time.Sleep(1 * time.Second)
 			return ErrServiceUnhealthy
 		}
-		l.Info().Stringer("response", resp).Msg("connected")
+		l.Debug().Stringer("response", resp).Msg("connected")
 		time.Sleep(500 * time.Millisecond)
 		return nil
 	}

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
@@ -49,7 +50,10 @@ const (
 	componentSecondLSMIdx      = "lsm"
 
 	defaultMainMemorySize = 8 << 20
+	defaultEnqueueTimeout = 500 * time.Millisecond
 )
+
+var ErrBlockClosingInterrupted = errors.New("interrupt to close the block")
 
 type block struct {
 	path       string
@@ -68,22 +72,24 @@ type block struct {
 	invertedIndex index.Store
 	lsmIndex      index.Store
 	closableLst   []io.Closer
+	clock         timestamp.Clock
 	timestamp.TimeRange
 	bucket.Reporter
 	segID          uint16
 	blockID        uint16
+	segSuffix      string
 	encodingMethod EncodingMethod
-	flushCh        chan struct{}
-	stopCh         chan struct{}
 }
 
 type blockOpts struct {
 	segID     uint16
+	segSuffix string
 	blockSize IntervalRule
-	startTime time.Time
+	timeRange timestamp.TimeRange
 	suffix    string
 	path      string
 	queue     bucket.Queue
+	scheduler *timestamp.Scheduler
 }
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
@@ -92,28 +98,30 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		return nil, err
 	}
 	id := GenerateInternalID(opts.blockSize.Unit, suffixInteger)
-	timeRange := timestamp.NewTimeRange(opts.startTime, opts.blockSize.NextTime(opts.startTime), true, false)
 	clock, _ := timestamp.GetClock(ctx)
 	b = &block{
 		segID:     opts.segID,
+		segSuffix: opts.segSuffix,
+		suffix:    opts.suffix,
 		blockID:   id,
 		path:      opts.path,
-		l:         logger.Fetch(ctx, "block"),
-		TimeRange: timeRange,
-		Reporter:  bucket.NewTimeBasedReporter(timeRange, clock),
-		flushCh:   make(chan struct{}, 1),
+		TimeRange: opts.timeRange,
+		clock:     clock,
 		ref:       &atomic.Int32{},
 		closed:    &atomic.Bool{},
 		deleted:   &atomic.Bool{},
 		queue:     opts.queue,
 	}
+	b.l = logger.Fetch(ctx, b.String())
+	b.Reporter = bucket.NewTimeBasedReporter(b.String(), opts.timeRange, clock, opts.scheduler)
+	b.closed.Store(true)
 	b.options(ctx)
 	position := ctx.Value(common.PositionKey)
 	if position != nil {
 		b.position = position.(common.Position)
 	}
 
-	return b, b.open()
+	return b, nil
 }
 
 func (b *block) options(ctx context.Context) {
@@ -140,19 +148,25 @@ func (b *block) options(ctx context.Context) {
 	}
 }
 
-func (b *block) open() (err error) {
-	if b.deleted.Load() {
+func (b *block) openSafely() (err error) {
+	if b.deleted.Load() || !b.Closed() {
 		return nil
 	}
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if !b.Closed() {
+		return
+	}
+	return b.open()
+}
+
+func (b *block) open() (err error) {
 	if b.store, err = kv.OpenTimeSeriesStore(
 		0,
 		path.Join(b.path, componentMain),
 		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
 		kv.TSSWithLogger(b.l.Named(componentMain)),
 		kv.TSSWithMemTableSize(b.memSize),
-		kv.TSSWithFlushCallback(func() {
-			b.flushCh <- struct{}{}
-		}),
 	); err != nil {
 		return err
 	}
@@ -172,40 +186,32 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
-	stopCh := make(chan struct{})
-	b.stopCh = stopCh
-	go func() {
-		for {
-			select {
-			case <-b.flushCh:
-				b.flush()
-			case <-stopCh:
-				return
-			}
-		}
-	}()
 	b.closed.Store(false)
 	return nil
 }
 
-func (b *block) delegate() (BlockDelegate, error) {
+func (b *block) delegate(ctx context.Context) (BlockDelegate, error) {
 	if b.deleted.Load() {
-		return nil, errors.WithMessagef(ErrBlockAbsent, "block %d is deleted", b.blockID)
+		return nil, errors.WithMessagef(ErrBlockAbsent, "block %s is deleted", b)
+	}
+	blockID := BlockID{
+		BlockID: b.blockID,
+		SegID:   b.segID,
 	}
 	if b.incRef() {
+		b.queue.Touch(blockID)
 		return &bDelegate{
 			delegate: b,
 		}, nil
 	}
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	b.queue.Push(BlockID{
-		BlockID: b.blockID,
-		SegID:   b.segID,
-	})
-	// TODO: remove the block which fails to open from the queue
-	err := b.open()
-	if err != nil {
+	if err := b.queue.Push(ctx, blockID, func() error {
+		if b.deleted.Load() || !b.Closed() {
+			return nil
+		}
+		return b.open()
+	}); err != nil {
 		b.l.Error().Err(err).Stringer("block", b).Msg("fail to open block")
 		return nil, err
 	}
@@ -241,57 +247,52 @@ loop:
 	goto loop
 }
 
-func (b *block) waitDone() {
-loop:
-	if b.ref.Load() < 1 {
-		b.ref.Store(0)
-		return
-	}
-	runtime.Gosched()
-	goto loop
-}
-
-func (b *block) flush() {
-	for i := 0; i < 10; i++ {
-		err := b.invertedIndex.Flush()
-		if err == nil {
-			break
+func (b *block) waitDone(stopped *atomic.Bool) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+	loop:
+		if b.ref.Load() < 1 {
+			b.ref.Store(0)
+			close(ch)
+			return
 		}
-		time.Sleep(time.Second)
-		b.l.Warn().Err(err).Int("retried", i).Msg("failed to flush inverted index")
-	}
+		if stopped.Load() {
+			close(ch)
+			return
+		}
+		runtime.Gosched()
+		goto loop
+	}()
+	return ch
 }
 
-func (b *block) close() {
+func (b *block) close(ctx context.Context) (err error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.closed.Load() {
-		return
+		return nil
+	}
+	stopWaiting := &atomic.Bool{}
+	ch := b.waitDone(stopWaiting)
+	select {
+	case <-ctx.Done():
+		stopWaiting.Store(true)
+		return errors.Wrapf(ErrBlockClosingInterrupted, "block:%s", b)
+	case <-ch:
 	}
 	b.closed.Store(true)
-	b.waitDone()
 	for _, closer := range b.closableLst {
-		_ = closer.Close()
+		err = multierr.Append(err, closer.Close())
 	}
-	close(b.stopCh)
+	return err
 }
 
-func (b *block) stopThenClose() {
-	if b.Reporter != nil {
-		b.Stop()
-	}
-	b.close()
-}
-
-func (b *block) delete() error {
+func (b *block) delete(ctx context.Context) error {
 	if b.deleted.Load() {
 		return nil
 	}
 	b.deleted.Store(true)
-	if b.Reporter != nil {
-		b.Stop()
-	}
-	b.close()
+	b.close(ctx)
 	return os.RemoveAll(b.path)
 }
 
@@ -300,7 +301,7 @@ func (b *block) Closed() bool {
 }
 
 func (b *block) String() string {
-	return fmt.Sprintf("BlockID-%d-%d", b.segID, b.blockID)
+	return fmt.Sprintf("BlockID-%s-%s", b.segSuffix, b.suffix)
 }
 
 func (b *block) stats() (names []string, stats []observability.Statistics) {

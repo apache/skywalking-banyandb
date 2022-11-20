@@ -18,7 +18,7 @@
 package tsdb
 
 import (
-	"sync"
+	"context"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -26,17 +26,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type retentionController struct {
-	segment   *segmentController
-	scheduler cron.Schedule
-	stopped   bool
-	stopMux   sync.Mutex
-	stopCh    chan struct{}
-	duration  time.Duration
-	l         *logger.Logger
+type retentionTask struct {
+	segment *segmentController
+
+	option   cron.ParseOption
+	expr     string
+	duration time.Duration
 }
 
-func newRetentionController(segment *segmentController, ttl IntervalRule) (*retentionController, error) {
+func newRetentionTask(segment *segmentController, ttl IntervalRule) *retentionTask {
 	var expr string
 	switch ttl.Unit {
 	case HOUR:
@@ -45,60 +43,20 @@ func newRetentionController(segment *segmentController, ttl IntervalRule) (*rete
 	case DAY:
 		// Every day on 00:05
 		expr = "5 0"
-
 	}
-	parser := cron.NewParser(cron.Minute | cron.Hour)
-	scheduler, err := parser.Parse(expr)
-	if err != nil {
-		return nil, err
-	}
-	return &retentionController{
-		segment:   segment,
-		scheduler: scheduler,
-		stopCh:    make(chan struct{}),
-		l:         segment.l.Named("retention-controller"),
-		duration:  ttl.EstimatedDuration(),
-	}, nil
-}
-
-func (rc *retentionController) start() {
-	rc.stopMux.Lock()
-	if rc.stopped {
-		return
-	}
-	rc.stopMux.Unlock()
-	go rc.run()
-}
-
-func (rc *retentionController) run() {
-	rc.l.Info().Msg("start")
-	now := rc.segment.clock.Now()
-	for {
-		next := rc.scheduler.Next(now)
-		timer := rc.segment.clock.Timer(next.Sub(now))
-		for {
-			select {
-			case now = <-timer.C:
-				rc.l.Info().Time("now", now).Msg("wake")
-				if err := rc.segment.remove(now.Add(-rc.duration)); err != nil {
-					rc.l.Error().Err(err)
-				}
-			case <-rc.stopCh:
-				timer.Stop()
-				rc.l.Info().Msg("stop")
-				return
-			}
-			break
-		}
+	return &retentionTask{
+		segment:  segment,
+		option:   cron.Minute | cron.Hour,
+		expr:     expr,
+		duration: ttl.EstimatedDuration(),
 	}
 }
 
-func (rc *retentionController) stop() {
-	rc.stopMux.Lock()
-	defer rc.stopMux.Unlock()
-	if rc.stopped {
-		return
+func (rc *retentionTask) run(now time.Time, l *logger.Logger) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := rc.segment.remove(ctx, now.Add(-rc.duration)); err != nil {
+		l.Error().Err(err)
 	}
-	rc.stopped = true
-	close(rc.stopCh)
+	return true
 }

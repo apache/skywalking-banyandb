@@ -22,7 +22,7 @@ include $(mk_dir)lint-bin.mk
 
 REVIVE := $(tool_bin)/revive
 $(REVIVE):
-	@GOBIN=$(tool_bin) go install github.com/mgechev/revive@latest
+	@GOBIN=$(tool_bin) go install github.com/mgechev/revive@$(REVIVE_VERSION)
 
 .PHONY: lint
 lint: $(LINTER) $(REVIVE) ## Run all linters

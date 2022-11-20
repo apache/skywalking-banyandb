@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -51,8 +52,23 @@ var _ = Describe("Shard", func() {
 			GinkgoWriter.Printf("shard state:%+v \n", shard.State())
 			shard.Close()
 			deferFn()
-			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
+		started := func(tasks ...string) {
+			for _, task := range tasks {
+				Eventually(func() bool {
+					return shard.TriggerSchedule(task)
+				}, flags.EventuallyTimeout).Should(BeTrue())
+			}
+		}
+		forward := func(hours int, tasks ...string) {
+			for i := 0; i < hours; i++ {
+				clock.Add(1 * time.Hour)
+				for _, task := range tasks {
+					shard.TriggerSchedule(task)
+				}
+			}
+		}
 		It("generates several segments and blocks", func() {
 			By("open 4 blocks")
 			var err error
@@ -70,13 +86,15 @@ var _ = Describe("Shard", func() {
 					Num:  7,
 				},
 				2,
+				3,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			started("BlockID-19700101-00-1", "SegID-19700101-1")
 			By("01/01 00:00 1st block is opened")
 			t1 := clock.Now()
 			Eventually(func() []tsdb.BlockState {
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -85,15 +103,12 @@ var _ = Describe("Shard", func() {
 					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
 				},
 			}))
-			By("01/01 10:00 2nd block is opened")
-			clock.Add(10 * time.Hour)
-			t2 := clock.Now().Add(2 * time.Hour)
+			By("01/01 11:00 2nd block is opened")
+			forward(11, "BlockID-19700101-00-1", "SegID-19700101-1")
+			t2 := clock.Now().Add(1 * time.Hour)
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/01 10:00 has been triggered")
-				}
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -111,29 +126,24 @@ var _ = Describe("Shard", func() {
 			}))
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{}))
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{}))
 			By("01/01 13:00 moves to the 2nd block")
-			clock.Add(3 * time.Hour)
+			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1")
+			started("BlockID-19700101-12-1")
 			Eventually(func() []tsdb.BlockID {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/01 13:00 has been triggered")
-				}
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 			}))
-			By("01/01 22:00 3rd block is opened")
-			clock.Add(9 * time.Hour)
-			t3 := clock.Now().Add(2 * time.Hour)
+			By("01/01 23:00 3rd block is opened")
+			forward(10, "BlockID-19700101-12-1", "SegID-19700101-1")
+			t3 := clock.Now().Add(1 * time.Hour)
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/01 22:00 has been triggered")
-				}
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -157,13 +167,14 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 			By("01/02 01:00 moves to 3rd block")
-			clock.Add(3 * time.Hour)
+			forward(2, "BlockID-19700101-12-1", "SegID-19700101-1")
+			started("BlockID-19700102-00-1", "SegID-19700102-1")
 			Eventually(func() []tsdb.BlockID {
 				if clock.TriggerTimer() {
 					GinkgoWriter.Println("01/02 01:00 has been triggered")
 				}
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
@@ -173,15 +184,15 @@ var _ = Describe("Shard", func() {
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
 				},
 			}))
-			By("01/02 10:00 4th block is opened")
-			clock.Add(9 * time.Hour)
-			t4 := clock.Now().Add(2 * time.Hour)
+			By("01/02 11:00 4th block is opened")
+			forward(10, "BlockID-19700102-00-1", "SegID-19700102-1")
+			t4 := clock.Now().Add(1 * time.Hour)
 			Eventually(func() []tsdb.BlockState {
 				if clock.TriggerTimer() {
 					GinkgoWriter.Println("01/02 10:00 has been triggered")
 				}
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -212,13 +223,11 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 			By("01/02 13:00 moves to 4th block")
-			clock.Add(3 * time.Hour)
+			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1")
+			started("BlockID-19700102-12-1")
 			Eventually(func() []tsdb.BlockID {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/02 13:00 has been triggered")
-				}
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
@@ -232,15 +241,12 @@ var _ = Describe("Shard", func() {
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 			}))
-			By("01/02 22:00 5th block is opened")
-			clock.Add(9 * time.Hour)
-			t5 := clock.Now().Add(2 * time.Hour)
+			By("01/02 23:00 5th block is opened")
+			forward(10, "BlockID-19700102-12-1", "SegID-19700102-1")
+			t5 := clock.Now().Add(1 * time.Hour)
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/02 22:00 has been triggered")
-				}
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -278,13 +284,11 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 			By("01/03 01:00 close 1st block by adding 5th block")
-			clock.Add(3 * time.Hour)
+			forward(2, "BlockID-19700102-12-1", "SegID-19700102-1")
+			started("BlockID-19700103-00-1", "SegID-19700103-1")
 			Eventually(func() []tsdb.BlockID {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/03 01:00 has been triggered")
-				}
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
@@ -300,7 +304,7 @@ var _ = Describe("Shard", func() {
 			}))
 			Eventually(func() []tsdb.BlockState {
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -342,7 +346,7 @@ var _ = Describe("Shard", func() {
 			series, err := shard.Series().GetByID(common.SeriesID(11))
 			Expect(err).NotTo(HaveOccurred())
 			t1Range := timestamp.NewInclusiveTimeRangeDuration(t1, 1*time.Hour)
-			span, err := series.Span(t1Range)
+			span, err := series.Span(context.Background(), t1Range)
 			Expect(err).NotTo(HaveOccurred())
 			defer span.Close()
 			writer, err := span.WriterBuilder().Family([]byte("test"), []byte("test")).Time(t1Range.End).Build()
@@ -351,14 +355,14 @@ var _ = Describe("Shard", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
-					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
-					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
+					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 				},
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
@@ -367,7 +371,7 @@ var _ = Describe("Shard", func() {
 			}))
 			Eventually(func() []tsdb.BlockState {
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -381,6 +385,7 @@ var _ = Describe("Shard", func() {
 						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t2, 12*time.Hour, true, false),
+					Closed:    true,
 				},
 				{
 					ID: tsdb.BlockID{
@@ -388,7 +393,6 @@ var _ = Describe("Shard", func() {
 						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t3, 12*time.Hour, true, false),
-					Closed:    true,
 				},
 				{
 					ID: tsdb.BlockID{
@@ -422,36 +426,31 @@ var _ = Describe("Shard", func() {
 					Num:  1,
 				},
 				10,
+				15,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			By("open 4 blocks")
-			t1 := clock.Now()
+			started("BlockID-19700101-00-1", "SegID-19700101-1", "retention")
 			By("01/01 00:00 1st block is opened")
-			clock.Add(2 * time.Minute)
-			By("01/01 00:05 retention")
-			clock.Add(3 * time.Minute)
-			By("01/01 10:00 2nd block is opened")
-			clock.Add(9*time.Hour + 55*time.Minute)
-			t2 := clock.Now().Add(2 * time.Hour)
+			t1 := clock.Now()
+			By("01/01 11:00 2nd block is opened")
+			forward(11, "BlockID-19700101-00-1", "SegID-19700101-1", "retention")
+			t2 := clock.Now().Add(1 * time.Hour)
 			By("01/01 13:00 moves to the 2nd block")
-			clock.Add(3 * time.Hour)
-			By("01/01 22:00 3rd block is opened")
-			clock.Add(9 * time.Hour)
-			t3 := clock.Now().Add(2 * time.Hour)
-			By("01/02 00:02 moves to 3rd block")
-			clock.Add(2*time.Hour + 2*time.Minute)
-			By("01/02 00:05 retention")
-			clock.Add(3 * time.Minute)
-			By("01/02 10:00 4th block is opened")
-			clock.Add(9*time.Hour + 55*time.Minute)
-			t4 := clock.Now().Add(2 * time.Hour)
+			forward(2, "BlockID-19700101-00-1", "SegID-19700101-1", "retention")
+			started("BlockID-19700101-12-1", "retention")
+			By("01/01 23:00 3rd block is opened")
+			forward(10, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
+			t3 := clock.Now().Add(1 * time.Hour)
+			By("01/02 01:00 moves to 3rd block")
+			forward(2, "BlockID-19700101-12-1", "SegID-19700101-1", "retention")
+			started("BlockID-19700102-00-1", "SegID-19700102-1", "retention")
+			By("01/02 11:00 4th block is opened")
+			forward(10, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
+			t4 := clock.Now().Add(1 * time.Hour)
 
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/02 13:00 has been triggered")
-				}
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
@@ -482,22 +481,18 @@ var _ = Describe("Shard", func() {
 				},
 			}))
 			By("01/02 13:00 moves to 4th block")
-			clock.Add(3 * time.Hour)
-			By("01/02 22:00 5th block is opened")
-			clock.Add(9 * time.Hour)
-			t5 := clock.Now().Add(2 * time.Hour)
-			By("01/03 00:02 move to 5th block")
-			clock.Add(2*time.Hour + 2*time.Minute)
-			By("01/03 00:05 retention: remove segment and blocks on 01/01")
-			clock.Add(3 * time.Minute)
-			clock.Add(9*time.Hour + 55*time.Minute)
-			t6 := clock.Now().Add(2 * time.Hour)
+			forward(2, "BlockID-19700102-00-1", "SegID-19700102-1", "retention")
+			started("BlockID-19700102-12-1", "retention")
+			By("01/02 23:00 5th block is opened")
+			forward(10, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
+			t5 := clock.Now().Add(1 * time.Hour)
+			By("01/03 01:00 close 1st block by adding 5th block")
+			forward(2, "BlockID-19700102-12-1", "SegID-19700102-1", "retention")
+			started("BlockID-19700103-00-1", "SegID-19700103-1", "retention")
 			Eventually(func() []tsdb.BlockState {
-				if clock.TriggerTimer() {
-					GinkgoWriter.Println("01/03 01:00 has been triggered")
-				}
+				started("retention")
 				return shard.State().Blocks
-			}, defaultEventuallyTimeout).Should(Equal([]tsdb.BlockState{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
 				{
 					ID: tsdb.BlockID{
 						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
@@ -519,17 +514,10 @@ var _ = Describe("Shard", func() {
 					},
 					TimeRange: timestamp.NewTimeRangeDuration(t5, 12*time.Hour, true, false),
 				},
-				{
-					ID: tsdb.BlockID{
-						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700103),
-						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
-					},
-					TimeRange: timestamp.NewTimeRangeDuration(t6, 12*time.Hour, true, false),
-				},
 			}))
 			Eventually(func() []tsdb.BlockID {
 				return shard.State().OpenBlocks
-			}).Should(Equal([]tsdb.BlockID{
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockID{
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o0),
@@ -537,6 +525,67 @@ var _ = Describe("Shard", func() {
 				{
 					SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700102),
 					BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 12),
+				},
+			}))
+		})
+		It("creates arbitrary blocks", func() {
+			clock.Set(time.Date(1970, 0o1, 0o1, 1, 0, 0, 0, time.Local))
+			By("open 1 block")
+			var err error
+			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  1,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.HOUR,
+					Num:  12,
+				},
+				tsdb.IntervalRule{
+					Unit: tsdb.DAY,
+					Num:  7,
+				},
+				2,
+				3,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			started("BlockID-19700101-01-1", "SegID-19700101-1", "retention")
+			By("01/01 00:01 1st block is opened")
+			t1 := clock.Now()
+			Eventually(func() []tsdb.BlockState {
+				return shard.State().Blocks
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o1),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
+				},
+			}))
+			By("01/01 12:00 2nd block is opened")
+			forward(11, "BlockID-19700101-01-1", "SegID-19700101-1")
+			t2 := clock.Now().Add(1 * time.Hour)
+			By("01/01 14:00 moves to the 2nd block")
+			forward(2, "BlockID-19700101-01-1", "SegID-19700101-1")
+			started("BlockID-19700101-13-1")
+			Eventually(func() []tsdb.BlockState {
+				return shard.State().Blocks
+			}, flags.EventuallyTimeout).Should(Equal([]tsdb.BlockState{
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 0o1),
+					},
+					TimeRange: timestamp.NewTimeRangeDuration(t1, 12*time.Hour, true, false),
+				},
+				{
+					ID: tsdb.BlockID{
+						SegID:   tsdb.GenerateInternalID(tsdb.DAY, 19700101),
+						BlockID: tsdb.GenerateInternalID(tsdb.HOUR, 13),
+					},
+					// The last block only takes 11 hours to align the segment's size
+					TimeRange: timestamp.NewTimeRangeDuration(t2, 11*time.Hour, true, false),
 				},
 			}))
 		})

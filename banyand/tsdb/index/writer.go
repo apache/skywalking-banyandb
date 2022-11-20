@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type CallbackFn func()
@@ -72,6 +73,7 @@ type Writer struct {
 	enableGlobalIndex bool
 	ch                chan Message
 	invertRuleIndex   map[byte][]*partition.IndexRuleLocator
+	closer            *run.Closer
 }
 
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
@@ -94,7 +96,7 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 			key = key | local
 		case databasev1.IndexRule_LOCATION_GLOBAL:
 			if !w.enableGlobalIndex {
-				w.l.Warn().Stringer("index-rule", ruleIndex.Rule).Msg("global index is disabled")
+				w.l.Warn().RawJSON("index-rule", logger.Proto(ruleIndex.Rule)).Msg("global index is disabled")
 				continue
 			}
 			key = key | global
@@ -111,16 +113,27 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	}
 	w.ch = make(chan Message)
 	w.bootIndexGenerator()
+	w.closer = run.NewCloser(0)
 	return w
 }
 
 func (s *Writer) Write(value Message) {
 	go func(m Message) {
-		s.ch <- m
+		if !s.closer.AddRunning() {
+			return
+		}
+		defer s.closer.Done()
+		select {
+		case <-s.closer.CloseNotify():
+			return
+		case s.ch <- m:
+		}
 	}(value)
 }
 
 func (s *Writer) Close() error {
+	s.closer.CloseThenWait()
+	close(s.ch)
 	return nil
 }
 
