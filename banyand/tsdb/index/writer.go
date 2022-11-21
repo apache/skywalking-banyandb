@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type CallbackFn func()
@@ -43,7 +42,6 @@ type Message struct {
 	Value       Value
 	LocalWriter tsdb.Writer
 	BlockCloser io.Closer
-	Cb          CallbackFn
 }
 
 type Value struct {
@@ -71,9 +69,7 @@ type Writer struct {
 	db                tsdb.Supplier
 	shardNum          uint32
 	enableGlobalIndex bool
-	ch                chan Message
 	invertRuleIndex   map[byte][]*partition.IndexRuleLocator
-	closer            *run.Closer
 }
 
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
@@ -93,66 +89,40 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 		var key byte
 		switch rule.GetLocation() {
 		case databasev1.IndexRule_LOCATION_SERIES:
-			key = key | local
+			key |= local
 		case databasev1.IndexRule_LOCATION_GLOBAL:
 			if !w.enableGlobalIndex {
 				w.l.Warn().RawJSON("index-rule", logger.Proto(ruleIndex.Rule)).Msg("global index is disabled")
 				continue
 			}
-			key = key | global
+			key |= global
 		}
 		switch rule.Type {
 		case databasev1.IndexRule_TYPE_INVERTED:
-			key = key | inverted
+			key |= inverted
 		case databasev1.IndexRule_TYPE_TREE:
-			key = key | tree
+			key |= tree
 		}
 		rules := w.invertRuleIndex[key]
 		rules = append(rules, ruleIndex)
 		w.invertRuleIndex[key] = rules
 	}
-	w.ch = make(chan Message)
-	w.bootIndexGenerator()
-	w.closer = run.NewCloser(0)
 	return w
 }
 
-func (s *Writer) Write(value Message) {
-	go func(m Message) {
-		if !s.closer.AddRunning() {
-			return
-		}
-		defer s.closer.Done()
-		select {
-		case <-s.closer.CloseNotify():
-			return
-		case s.ch <- m:
-		}
-	}(value)
+func (s *Writer) Write(m Message) {
+	err := multierr.Combine(
+		s.writeLocalIndex(m.LocalWriter, m.Value),
+		s.writeGlobalIndex(m.Scope, m.LocalWriter.ItemID(), m.Value),
+		m.BlockCloser.Close(),
+	)
+	if err != nil {
+		s.l.Error().Err(err).Msg("encounter some errors when generating indices")
+	}
 }
 
 func (s *Writer) Close() error {
-	s.closer.CloseThenWait()
-	close(s.ch)
 	return nil
-}
-
-func (s *Writer) bootIndexGenerator() {
-	go func() {
-		for m := range s.ch {
-			err := multierr.Combine(
-				s.writeLocalIndex(m.LocalWriter, m.Value),
-				s.writeGlobalIndex(m.Scope, m.LocalWriter.ItemID(), m.Value),
-				m.BlockCloser.Close(),
-			)
-			if err != nil {
-				s.l.Error().Err(err).Msg("encounter some errors when generating indices")
-			}
-			if m.Cb != nil {
-				m.Cb()
-			}
-		}
-	}()
 }
 
 // TODO: should listen to pipeline in a distributed cluster

@@ -65,6 +65,7 @@ func TestStore_Match(t *testing.T) {
 		Key:  serviceName,
 		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
 	}}, common.ItemID(3)))
+	s.(*store).flush()
 
 	tests := []struct {
 		matches []string
@@ -152,6 +153,7 @@ func TestStore_MatchTerm(t *testing.T) {
 	}()
 	tester.NoError(err)
 	testcases.SetUp(tester, s)
+	s.(*store).flush()
 	testcases.RunServiceName(t, s)
 }
 
@@ -168,6 +170,7 @@ func TestStore_Iterator(t *testing.T) {
 	}()
 	tester.NoError(err)
 	data := testcases.SetUpDuration(tester, s)
+	s.(*store).flush()
 	testcases.RunDuration(t, data, s)
 }
 

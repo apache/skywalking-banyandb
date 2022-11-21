@@ -44,7 +44,6 @@ type Query interface {
 
 type Measure interface {
 	io.Closer
-	Write(value *measurev1.DataPointValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
