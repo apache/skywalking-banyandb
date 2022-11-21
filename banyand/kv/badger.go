@@ -48,6 +48,25 @@ type badgerTSS struct {
 	badger.TSet
 }
 
+func (b *badgerTSS) Context(key []byte, ts uint64, n int) (pre Iterator, next Iterator) {
+	preOpts := badger.DefaultIteratorOptions
+	preOpts.PrefetchSize = n
+	preOpts.PrefetchValues = false
+	preOpts.Prefix = key
+	preOpts.Reverse = false
+	nextOpts := badger.DefaultIteratorOptions
+	nextOpts.PrefetchSize = n
+	nextOpts.PrefetchValues = false
+	nextOpts.Prefix = key
+	nextOpts.Reverse = true
+	seekKey := y.KeyWithTs(key, ts)
+	preIter := b.db.NewIterator(preOpts)
+	preIter.Seek(seekKey)
+	nextIter := b.db.NewIterator(nextOpts)
+	nextIter.Seek(seekKey)
+	return &iterator{delegated: preIter}, &iterator{delegated: nextIter, reverse: true}
+}
+
 func (b *badgerTSS) Stats() (s observability.Statistics) {
 	return badgerStats(b.db)
 }
@@ -188,6 +207,10 @@ func (i *iterator) Seek(key []byte) {
 
 func (i *iterator) Key() []byte {
 	return y.ParseKey(i.delegated.Key())
+}
+
+func (i *iterator) RawKey() []byte {
+	return i.delegated.Key()
 }
 
 func (i *iterator) Val() []byte {

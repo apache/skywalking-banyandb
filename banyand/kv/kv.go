@@ -80,6 +80,7 @@ type TimeSeriesWriter interface {
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
 	Get(key []byte, ts uint64) ([]byte, error)
+	Context(key []byte, ts uint64, n int) (pre, next Iterator)
 }
 
 // TimeSeriesStore is time series storage
@@ -140,6 +141,7 @@ type Iterator interface {
 	Rewind()
 	Seek(key []byte)
 	Key() []byte
+	RawKey() []byte
 	Val() []byte
 	Valid() bool
 	Close() error
