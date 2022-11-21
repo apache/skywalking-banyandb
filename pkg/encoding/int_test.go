@@ -28,8 +28,10 @@ import (
 
 func TestNewIntEncoderAndDecoder(t *testing.T) {
 	type tsData struct {
-		ts   []uint64
-		data []int64
+		ts    []uint64
+		data  []int64
+		start uint64
+		end   uint64
 	}
 	tests := []struct {
 		name string
@@ -39,45 +41,53 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 		{
 			name: "golden path",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
 				data: []int64{7, 8, 7, 9},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
-				data: []int64{7, 8, 7, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 8, 7, 9},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 		{
 			name: "more than the size",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute), uint64(1 * time.Minute)},
 				data: []int64{7, 8, 7, 9, 6},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
-				data: []int64{7, 8, 7, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 8, 7, 9},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 		{
 			name: "less than the size",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute)},
+				ts:   []uint64{uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(time.Minute)},
 				data: []int64{7, 8, 7},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute)},
-				data: []int64{7, 8, 7},
+				ts:    []uint64{uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(time.Minute)},
+				data:  []int64{7, 8, 7},
+				start: uint64(time.Minute),
+				end:   uint64(3 * time.Minute),
 			},
 		},
 		{
 			name: "empty slot in the middle",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(time.Minute)},
 				data: []int64{7, 9},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
-				data: []int64{7, 0, 0, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 0, 0, 9},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 	}
@@ -93,36 +103,49 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			at := assert.New(t)
 			encoder := encoderPool.Get(key)
+			defer encoderPool.Put(encoder)
 			decoder := decoderPool.Get(key)
+			defer decoderPool.Put(decoder)
 			encoder.Reset(key)
+			isFull := false
 			for i, v := range tt.args.ts {
 				encoder.Append(v, convert.Int64ToBytes(tt.args.data[i]))
 				if encoder.IsFull() {
+					isFull = true
 					break
 				}
 			}
 			bb, err := encoder.Encode()
 			at.NoError(err)
+
+			at.Equal(tt.want.start, encoder.StartTime())
 			at.NoError(decoder.Decode(key, bb))
-			at.True(decoder.IsFull())
-			iter := decoder.Iterator()
-			for i, t := range tt.want.ts {
-				at.True(iter.Next())
+			start, end := decoder.Range()
+			at.Equal(tt.want.start, start)
+			at.Equal(tt.want.end, end)
+			if isFull {
+				at.True(decoder.IsFull())
+			}
+			i := 0
+			for iter := decoder.Iterator(); iter.Next(); i++ {
 				at.NoError(iter.Error())
 				at.Equal(tt.want.ts[i], iter.Time())
 				at.Equal(tt.want.data[i], convert.BytesToInt64(iter.Val()))
-				v, err := decoder.Get(t)
+				v, err := decoder.Get(iter.Time())
 				at.NoError(err)
 				at.Equal(tt.want.data[i], convert.BytesToInt64(v))
 			}
+			at.Equal(len(tt.want.ts), i)
 		})
 	}
 }
 
 func TestNewIntDecoderGet(t *testing.T) {
 	type tsData struct {
-		ts   []uint64
-		data []int64
+		ts    []uint64
+		data  []int64
+		start uint64
+		end   uint64
 	}
 	tests := []struct {
 		name string
@@ -132,45 +155,53 @@ func TestNewIntDecoderGet(t *testing.T) {
 		{
 			name: "golden path",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
 				data: []int64{7, 8, 7, 9},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
-				data: []int64{7, 8, 7, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 8, 7, 9},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 		{
 			name: "more than the size",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute), uint64(1 * time.Minute)},
 				data: []int64{7, 8, 7, 9, 6},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute), uint64(5 * time.Minute)},
-				data: []int64{7, 8, 7, 9, 0},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute), 0},
+				data:  []int64{7, 8, 7, 9, 0},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 		{
 			name: "less than the size",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute)},
+				ts:   []uint64{uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(time.Minute)},
 				data: []int64{7, 8, 7},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute)},
-				data: []int64{7, 8, 7},
+				ts:    []uint64{uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(time.Minute)},
+				data:  []int64{7, 8, 7},
+				start: uint64(time.Minute),
+				end:   uint64(3 * time.Minute),
 			},
 		},
 		{
 			name: "empty slot in the middle",
 			args: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(4 * time.Minute)},
+				ts:   []uint64{uint64(4 * time.Minute), uint64(time.Minute)},
 				data: []int64{7, 9},
 			},
 			want: tsData{
-				ts:   []uint64{uint64(time.Minute), uint64(2 * time.Minute), uint64(3 * time.Minute), uint64(4 * time.Minute)},
-				data: []int64{7, 0, 0, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 0, 0, 9},
+				start: uint64(time.Minute),
+				end:   uint64(4 * time.Minute),
 			},
 		},
 	}
@@ -186,18 +217,29 @@ func TestNewIntDecoderGet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			at := assert.New(t)
 			encoder := encoderPool.Get(key)
+			defer encoderPool.Put(encoder)
 			decoder := decoderPool.Get(key)
+			defer decoderPool.Put(decoder)
 			encoder.Reset(key)
+			isFull := false
 			for i, v := range tt.args.ts {
 				encoder.Append(v, convert.Int64ToBytes(tt.args.data[i]))
 				if encoder.IsFull() {
+					isFull = true
 					break
 				}
 			}
 			bb, err := encoder.Encode()
 			at.NoError(err)
+
+			at.Equal(tt.want.start, encoder.StartTime())
 			at.NoError(decoder.Decode(key, bb))
-			at.True(decoder.IsFull())
+			start, end := decoder.Range()
+			at.Equal(tt.want.start, start)
+			at.Equal(tt.want.end, end)
+			if isFull {
+				at.True(decoder.IsFull())
+			}
 			for i, t := range tt.want.ts {
 				v, err := decoder.Get(t)
 				at.NoError(err)

@@ -266,6 +266,10 @@ func (di *delegateIterator) Key() []byte {
 	return di.delegated.Key()
 }
 
+func (di *delegateIterator) RawKey() []byte {
+	return di.delegated.RawKey()
+}
+
 func (di *delegateIterator) Field() Field {
 	return di.curField
 }
