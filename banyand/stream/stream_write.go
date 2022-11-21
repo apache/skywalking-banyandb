@@ -51,24 +51,7 @@ func init() {
 	)
 }
 
-func (s *stream) Write(value *streamv1.ElementValue) error {
-	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)
-	if err != nil {
-		return err
-	}
-	waitCh := make(chan struct{})
-	err = s.write(shardID, tsdb.HashEntity(entity), value, func() {
-		close(waitCh)
-	})
-	if err != nil {
-		close(waitCh)
-		return err
-	}
-	<-waitCh
-	return nil
-}
-
-func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv1.ElementValue, cb index.CallbackFn) error {
+func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv1.ElementValue) error {
 	tp := value.GetTimestamp().AsTime()
 	if err := timestamp.Check(tp); err != nil {
 		return errors.WithMessage(err, "writing stream")
@@ -142,7 +125,6 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 			Timestamp:   value.GetTimestamp().AsTime(),
 		},
 		BlockCloser: wp,
-		Cb:          cb,
 	}
 	s.indexWriter.Write(m)
 	return err
@@ -172,7 +154,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find stream definition")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement(), nil)
+	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement())
 	if err != nil {
 		w.l.Error().Err(err).Msg("fail to write entity")
 	}
