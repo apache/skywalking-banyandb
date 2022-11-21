@@ -153,7 +153,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 		projectionTagsRefs:   i.projectionTagsRefs,
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
-	if len(iters) == 1 || i.groupByEntity {
+	if i.groupByEntity {
 		return newSeriesMIterator(iters, transformContext), nil
 	}
 	c := logical.CreateComparator(i.Sort)
