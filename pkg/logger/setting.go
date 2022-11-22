@@ -26,8 +26,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 )
+
+const rootName = "ROOT"
 
 var root = rootLogger{}
 
@@ -77,21 +80,33 @@ func GetLogger(scope ...string) *Logger {
 	if len(scope) < 1 {
 		return root.l
 	}
-	module := strings.Join(scope, ".")
-	subLogger := root.l.Logger.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+	l := root.l
+	for _, v := range scope {
+		l = l.Named(v)
+	}
+	return l
 }
 
 // Init initializes a rs/zerolog logger from user config
 func Init(cfg Logging) (err error) {
-	if err != root.set(cfg) {
-		return err
-	}
-	return nil
+	return root.set(cfg)
 }
 
 // getLogger initializes a root logger
 func getLogger(cfg Logging) (*Logger, error) {
+	modules := make(map[string]zerolog.Level)
+	if len(cfg.Modules) > 0 {
+		if len(cfg.Modules) != len(cfg.Levels) {
+			return nil, fmt.Errorf("modules %v don't match levels %v", cfg.Modules, cfg.Levels)
+		}
+		for i, v := range cfg.Modules {
+			lvl, err := zerolog.ParseLevel(cfg.Levels[i])
+			if err != nil {
+				return nil, errors.WithMessagef(err, "unknown module level %s", v)
+			}
+			modules[strings.ToUpper(v)] = lvl
+		}
+	}
 	lvl, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
@@ -117,5 +132,5 @@ func getLogger(cfg Logging) (*Logger, error) {
 		w = os.Stdout
 	}
 	l := zerolog.New(w).Level(lvl).With().Timestamp().Logger()
-	return &Logger{module: "root", Logger: &l}, nil
+	return &Logger{module: rootName, Logger: &l, modules: modules}, nil
 }

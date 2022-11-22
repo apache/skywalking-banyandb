@@ -85,7 +85,7 @@ func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, sh
 		Term: t.expr.Bytes()[0],
 	})
 	if err != nil || len(itemIDs) < 1 {
-		return elementsInShard, nil
+		return nil, err
 	}
 	for _, itemID := range itemIDs {
 		segShard, err := ec.Shard(itemID.ShardID)

@@ -9,6 +9,6 @@
 	],
 	"type": "TYPE_INVERTED",
 	"location": "LOCATION_SERIES",
-  "analyzer": "ANALYZER_SIMPLE",
+	"analyzer": "ANALYZER_SIMPLE",
 	"updated_at": "2021-04-15T01:30:15.01Z"
 }

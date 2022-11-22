@@ -40,6 +40,10 @@ type FieldKey struct {
 	Analyzer    databasev1.IndexRule_Analyzer
 }
 
+func (f FieldKey) MarshalIndexRule() string {
+	return string(convert.Uint32ToBytes(f.IndexRuleID))
+}
+
 func (f FieldKey) Marshal() []byte {
 	return bytes.Join([][]byte{
 		f.SeriesID.Marshal(),

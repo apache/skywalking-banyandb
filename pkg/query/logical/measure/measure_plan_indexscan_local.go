@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -29,6 +30,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -83,6 +85,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		entities:             uis.entities,
 		groupByEntity:        uis.groupByEntity,
 		OrderBy:              orderBySubPlan,
+		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 	}, nil
 }
 
@@ -98,6 +101,7 @@ type localIndexScan struct {
 	projectionFieldsRefs []*logical.FieldRef
 	entities             []tsdb.Entity
 	groupByEntity        bool
+	l                    *logger.Logger
 }
 
 func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
@@ -108,7 +112,11 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 			return nil, err
 		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(tsdb.NewPath(e))
+			sl, err := shard.Series().List(context.WithValue(
+				context.Background(),
+				logger.ContextKey,
+				i.l,
+			), tsdb.NewPath(e))
 			if err != nil {
 				return nil, err
 			}
@@ -133,7 +141,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 			b.Filter(i.filter)
 		})
 	}
-	iters, closers, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	iters, closers, innerErr := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
 	if len(closers) > 0 {
 		defer func(closers []io.Closer) {
 			for _, c := range closers {
@@ -162,9 +170,9 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 }
 
 func (i *localIndexScan) String() string {
-	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s",
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...))
+		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.OrderBy)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {

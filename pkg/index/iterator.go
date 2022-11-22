@@ -290,10 +290,11 @@ func (di *delegateIterator) Valid() bool {
 		return false
 	}
 	if !bytes.Equal(di.curField.Key.Marshal(), di.fieldKeyBytes) {
-		di.l.Debug().
-			Uint64("series_id", uint64(di.fieldKey.SeriesID)).
-			Uint32("index_rule_id", di.fieldKey.IndexRuleID).
-			Msg("reached the limitation of the field(series_id+index_rule_id)")
+		if e := di.l.Debug(); e.Enabled() {
+			e.Uint64("series_id", uint64(di.fieldKey.SeriesID)).
+				Uint32("index_rule_id", di.fieldKey.IndexRuleID).
+				Msg("reached the limitation of the field(series_id+index_rule_id)")
+		}
 		di.Close()
 		return false
 	}

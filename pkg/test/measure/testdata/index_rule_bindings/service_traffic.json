@@ -4,7 +4,8 @@
     "group": "sw_metric"
   },
   "rules": [
-    "service_id"
+    "service_id",
+    "layer"
   ],
   "subject":{
     "catalog": "CATALOG_MEASURE",

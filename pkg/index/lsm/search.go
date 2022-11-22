@@ -85,7 +85,12 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 					break
 				}
 				itemID := convert.BytesToUint64(delegated.Val())
-				s.l.Debug().Uint64("item_id", itemID).Msg("add item id")
+				if e := s.l.Debug(); e.Enabled() {
+					e.Uint64("series_id", uint64(fieldKey.SeriesID)).
+						Uint64("index_rule_id", uint64(fieldKey.IndexRuleID)).
+						Uint64("item_id", itemID).
+						Msg("fetched item from the index")
+				}
 				pv.Value.Insert(common.ItemID(itemID))
 			}
 			return pv, nil

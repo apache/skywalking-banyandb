@@ -40,8 +40,8 @@ var (
 
 type GlobalItemID struct {
 	ShardID  common.ShardID
-	segID    uint16
-	blockID  uint16
+	segID    SectionID
+	blockID  SectionID
 	SeriesID common.SeriesID
 	ID       common.ItemID
 }
@@ -49,24 +49,22 @@ type GlobalItemID struct {
 func (i *GlobalItemID) Marshal() []byte {
 	return bytes.Join([][]byte{
 		convert.Uint32ToBytes(uint32(i.ShardID)),
-		convert.Uint16ToBytes(i.segID),
-		convert.Uint16ToBytes(i.blockID),
+		sectionIDToBytes(i.segID),
+		sectionIDToBytes(i.blockID),
 		convert.Uint64ToBytes(uint64(i.SeriesID)),
 		convert.Uint64ToBytes(uint64(i.ID)),
 	}, nil)
 }
 
 func (i *GlobalItemID) UnMarshal(data []byte) error {
-	if len(data) != 4+2+2+8+8 {
+	if len(data) != 4+4+4+8+8 {
 		return ErrItemIDMalformed
 	}
 	var offset int
 	i.ShardID = common.ShardID(convert.BytesToUint32(data[offset : offset+4]))
 	offset += 4
-	i.segID = convert.BytesToUint16(data[offset : offset+2])
-	offset += 2
-	i.blockID = convert.BytesToUint16(data[offset : offset+2])
-	offset += 2
+	i.segID, offset = readSectionID(data, offset)
+	i.blockID, offset = readSectionID(data, offset)
 	i.SeriesID = common.SeriesID(convert.BytesToUint64(data[offset : offset+8]))
 	offset += 8
 	i.ID = common.ItemID(convert.BytesToUint64(data[offset:]))
@@ -78,6 +76,7 @@ type Series interface {
 	Span(ctx context.Context, timeRange timestamp.TimeRange) (SeriesSpan, error)
 	Create(ctx context.Context, t time.Time) (SeriesSpan, error)
 	Get(ctx context.Context, id GlobalItemID) (Item, io.Closer, error)
+	String() string
 }
 
 type SeriesSpan interface {
@@ -89,10 +88,11 @@ type SeriesSpan interface {
 var _ Series = (*series)(nil)
 
 type series struct {
-	id      common.SeriesID
-	blockDB blockDatabase
-	shardID common.ShardID
-	l       *logger.Logger
+	id        common.SeriesID
+	idLiteral string
+	blockDB   blockDatabase
+	shardID   common.ShardID
+	l         *logger.Logger
 }
 
 func (s *series) Get(ctx context.Context, id GlobalItemID) (Item, io.Closer, error) {
@@ -115,6 +115,10 @@ func (s *series) ID() common.SeriesID {
 	return s.id
 }
 
+func (s *series) String() string {
+	return s.idLiteral
+}
+
 func (s *series) Span(ctx context.Context, timeRange timestamp.TimeRange) (SeriesSpan, error) {
 	blocks, err := s.blockDB.span(ctx, timeRange)
 	if err != nil {
@@ -123,10 +127,15 @@ func (s *series) Span(ctx context.Context, timeRange timestamp.TimeRange) (Serie
 	if len(blocks) < 1 {
 		return nil, ErrEmptySeriesSpan
 	}
-	s.l.Debug().
-		Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
-		Msg("select series span")
-	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), timeRange, blocks, s.id, s.shardID), nil
+	l := logger.FetchOrDefault(ctx, "series", s.l)
+	if e := l.Debug(); e.Enabled() {
+		e.Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
+			Uint64("series_id", uint64(s.id)).
+			Str("series", s.idLiteral).
+			Msg("select series span")
+	}
+	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, l), timeRange, blocks,
+		s.id, s.idLiteral, s.shardID), nil
 }
 
 func (s *series) Create(ctx context.Context, t time.Time) (SeriesSpan, error) {
@@ -136,27 +145,36 @@ func (s *series) Create(ctx context.Context, t time.Time) (SeriesSpan, error) {
 		return nil, err
 	}
 	if len(blocks) > 0 {
-		s.l.Debug().
-			Time("time", t).
-			Msg("load a series span")
-		return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks, s.id, s.shardID), nil
+		if e := s.l.Debug(); e.Enabled() {
+			e.Time("time", t).
+				Uint64("series_id", uint64(s.id)).
+				Str("series", s.idLiteral).
+				Msg("load a series span")
+		}
+		return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks,
+			s.id, s.idLiteral, s.shardID), nil
 	}
 	b, err := s.blockDB.create(ctx, t)
 	if err != nil {
 		return nil, err
 	}
 	blocks = append(blocks, b)
-	s.l.Debug().
-		Time("time", t).
-		Msg("create a series span")
-	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks, s.id, s.shardID), nil
+	if e := s.l.Debug(); e.Enabled() {
+		e.Time("time", t).
+			Uint64("series_id", uint64(s.id)).
+			Str("series", s.idLiteral).
+			Msg("create a series span")
+	}
+	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks,
+		s.id, s.idLiteral, s.shardID), nil
 }
 
-func newSeries(ctx context.Context, id common.SeriesID, blockDB blockDatabase) *series {
+func newSeries(ctx context.Context, id common.SeriesID, idLiteral string, blockDB blockDatabase) *series {
 	s := &series{
-		id:      id,
-		blockDB: blockDB,
-		shardID: blockDB.shardID(),
+		id:        id,
+		idLiteral: idLiteral,
+		blockDB:   blockDB,
+		shardID:   blockDB.shardID(),
 	}
 	parentLogger := ctx.Value(logger.ContextKey)
 	if pl, ok := parentLogger.(*logger.Logger); ok {
@@ -172,6 +190,7 @@ var _ SeriesSpan = (*seriesSpan)(nil)
 type seriesSpan struct {
 	blocks    []BlockDelegate
 	seriesID  common.SeriesID
+	series    string
 	shardID   common.ShardID
 	timeRange timestamp.TimeRange
 	l         *logger.Logger
@@ -192,10 +211,11 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []BlockDelegate, id common.SeriesID, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []BlockDelegate, id common.SeriesID, series string, shardID common.ShardID) *seriesSpan {
 	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,
+		series:    series,
 		shardID:   shardID,
 		timeRange: timeRange,
 	}

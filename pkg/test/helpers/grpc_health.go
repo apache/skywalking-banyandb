@@ -52,7 +52,9 @@ func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duratio
 			l.Warn().Str("responded_status", resp.GetStatus().String()).Msg("service unhealthy")
 			return ErrServiceUnhealthy
 		}
-		l.Debug().Stringer("status", resp.GetStatus()).Msg("connected")
+		if e := l.Debug(); e.Enabled() {
+			e.Stringer("status", resp.GetStatus()).Msg("connected")
+		}
 		return nil
 	}
 }

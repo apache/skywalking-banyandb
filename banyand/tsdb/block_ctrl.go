@@ -19,6 +19,7 @@ package tsdb
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -34,7 +35,7 @@ import (
 type blockController struct {
 	sync.RWMutex
 	segCtx       context.Context
-	segID        uint16
+	segID        SectionID
 	segSuffix    string
 	location     string
 	segTimeRange timestamp.TimeRange
@@ -47,7 +48,7 @@ type blockController struct {
 	l *logger.Logger
 }
 
-func newBlockController(segCtx context.Context, segID uint16, segSuffix, location string, segTimeRange timestamp.TimeRange,
+func newBlockController(segCtx context.Context, segID SectionID, segSuffix, location string, segTimeRange timestamp.TimeRange,
 	blockSize IntervalRule, l *logger.Logger, blockQueue bucket.Queue, scheduler *timestamp.Scheduler,
 ) *blockController {
 	clock, _ := timestamp.GetClock(segCtx)
@@ -66,7 +67,7 @@ func newBlockController(segCtx context.Context, segID uint16, segSuffix, locatio
 }
 
 func (bc *blockController) Current() (bucket.Reporter, error) {
-	now := bc.clock.Now()
+	now := bc.Standard(bc.clock.Now())
 	ns := uint64(now.UnixNano())
 	if b := func() *block {
 		bc.RLock()
@@ -115,7 +116,7 @@ func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
 			SegID:   bc.segID,
 			BlockID: b.blockID,
 		}, nil); err != nil {
-			bc.l.Debug().Err(err).Msg("failed to push a expired head block to the queue")
+			bc.l.Error().Err(err).Msg("failed to push a expired head block to the queue")
 			ctxClosing, cancelClosing := context.WithTimeout(context.Background(), defaultEnqueueTimeout)
 			defer cancelClosing()
 			b.close(ctxClosing)
@@ -127,12 +128,22 @@ func (bc *blockController) OnMove(prev bucket.Reporter, next bucket.Reporter) {
 	event.Msg("move to the next block")
 }
 
+func (bc *blockController) Standard(t time.Time) time.Time {
+	switch bc.blockSize.Unit {
+	case HOUR:
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+	case DAY:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+	panic("invalid interval unit")
+}
+
 func (bc *blockController) Format(tm time.Time) string {
 	switch bc.blockSize.Unit {
 	case HOUR:
-		return tm.Format(blockHourFormat)
+		return tm.Format(hourFormat)
 	case DAY:
-		return tm.Format(blockDayFormat)
+		return tm.Format(dayFormat)
 	}
 	panic("invalid interval unit")
 }
@@ -140,9 +151,9 @@ func (bc *blockController) Format(tm time.Time) string {
 func (bc *blockController) Parse(value string) (time.Time, error) {
 	switch bc.blockSize.Unit {
 	case HOUR:
-		return time.ParseInLocation(blockHourFormat, value, time.Local)
+		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
-		return time.ParseInLocation(blockDayFormat, value, time.Local)
+		return time.ParseInLocation(dayFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
 }
@@ -165,7 +176,7 @@ func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRan
 	return dd, nil
 }
 
-func (bc *blockController) get(ctx context.Context, blockID uint16) (BlockDelegate, error) {
+func (bc *blockController) get(ctx context.Context, blockID SectionID) (BlockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
 		return b.delegate(ctx)
@@ -173,7 +184,7 @@ func (bc *blockController) get(ctx context.Context, blockID uint16) (BlockDelega
 	return nil, nil
 }
 
-func (bc *blockController) getBlock(blockID uint16) *block {
+func (bc *blockController) getBlock(blockID SectionID) *block {
 	bb := bc.search(func(b *block) bool {
 		return b.blockID == blockID
 	})
@@ -203,7 +214,7 @@ func (bc *blockController) search(matcher func(*block) bool) (bb []*block) {
 	return bb
 }
 
-func (bc *blockController) closeBlock(ctx context.Context, blockID uint16) error {
+func (bc *blockController) closeBlock(ctx context.Context, blockID SectionID) error {
 	bc.RLock()
 	b := bc.getBlock(blockID)
 	bc.RUnlock()
@@ -213,55 +224,49 @@ func (bc *blockController) closeBlock(ctx context.Context, blockID uint16) error
 	return b.close(ctx)
 }
 
-func (bc *blockController) startTime(suffix string) (time.Time, error) {
-	t, err := bc.Parse(suffix)
-	if err != nil {
-		return time.Time{}, err
-	}
-	startTime := bc.segTimeRange.Start
-	switch bc.blockSize.Unit {
-	case HOUR:
-		return time.Date(startTime.Year(), startTime.Month(),
-			startTime.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
-	case DAY:
-		return time.Date(startTime.Year(), startTime.Month(),
-			t.Day(), t.Hour(), 0, 0, 0, startTime.Location()), nil
-	}
-	panic("invalid interval unit")
-}
-
 func (bc *blockController) open() error {
-	return WalkDir(
-		bc.location,
-		blockPathPrefix,
-		func(suffix, absolutePath string) error {
-			bc.Lock()
-			defer bc.Unlock()
-			_, err := bc.load(suffix, absolutePath)
-			return err
-		})
+	bc.Lock()
+	defer bc.Unlock()
+	return loadSections(bc.location, bc, bc.blockSize, func(start, end time.Time) error {
+		_, err := bc.load(start, end, bc.location)
+		return err
+	})
 }
 
-func (bc *blockController) create(startTime time.Time) (*block, error) {
-	if startTime.Before(bc.segTimeRange.Start) {
-		startTime = bc.segTimeRange.Start
+func (bc *blockController) create(start time.Time) (*block, error) {
+	start = bc.Standard(start)
+	if start.Before(bc.segTimeRange.Start) {
+		start = bc.segTimeRange.Start
 	}
-	if !startTime.Before(bc.segTimeRange.End) {
+	if !start.Before(bc.segTimeRange.End) {
 		return nil, bucket.ErrNoMoreBucket
 	}
 	bc.Lock()
 	defer bc.Unlock()
-	suffix := bc.Format(startTime)
-	for _, b := range bc.lst {
-		if b.suffix == suffix {
-			return b, nil
+	var next *block
+	for _, s := range bc.lst {
+		if s.Start.Equal(start) {
+			return s, nil
+		}
+		if next == nil && s.Start.After(start) {
+			next = s
 		}
 	}
-	segPath, err := mkdir(blockTemplate, bc.location, suffix)
+	stdEnd := bc.blockSize.NextTime(start)
+	var end time.Time
+	if next != nil && next.Start.Before(stdEnd) {
+		end = next.Start
+	} else {
+		end = stdEnd
+	}
+	if end.After(bc.segTimeRange.End) {
+		end = bc.segTimeRange.End
+	}
+	_, err := mkdir(blockTemplate, bc.location, bc.Format(start))
 	if err != nil {
 		return nil, err
 	}
-	b, err := bc.load(suffix, segPath)
+	b, err := bc.load(start, end, bc.location)
 	if err != nil {
 		return nil, err
 	}
@@ -271,15 +276,8 @@ func (bc *blockController) create(startTime time.Time) (*block, error) {
 	return b, nil
 }
 
-func (bc *blockController) load(suffix, path string) (b *block, err error) {
-	starTime, err := bc.startTime(suffix)
-	if err != nil {
-		return nil, err
-	}
-	endTime := bc.blockSize.NextTime(starTime)
-	if endTime.After(bc.segTimeRange.End) {
-		endTime = bc.segTimeRange.End
-	}
+func (bc *blockController) load(startTime, endTime time.Time, root string) (b *block, err error) {
+	suffix := bc.Format(startTime)
 	if b, err = newBlock(
 		common.SetPosition(bc.segCtx, func(p common.Position) common.Position {
 			p.Block = suffix
@@ -288,8 +286,8 @@ func (bc *blockController) load(suffix, path string) (b *block, err error) {
 		blockOpts{
 			segID:     bc.segID,
 			segSuffix: bc.segSuffix,
-			path:      path,
-			timeRange: timestamp.NewSectionTimeRange(starTime, endTime),
+			path:      fmt.Sprintf(blockTemplate, root, suffix),
+			timeRange: timestamp.NewSectionTimeRange(startTime, endTime),
 			suffix:    suffix,
 			blockSize: bc.blockSize,
 			queue:     bc.blockQueue,
@@ -321,7 +319,9 @@ func (bc *blockController) close(ctx context.Context) (err error) {
 func (bc *blockController) remove(ctx context.Context, deadline time.Time) (err error) {
 	for _, b := range bc.blocks() {
 		if b.End.Before(deadline) {
-			bc.l.Debug().Stringer("block", b).Msg("start to remove data in a block")
+			if e := bc.l.Debug(); e.Enabled() {
+				e.Stringer("block", b).Msg("start to remove data in a block")
+			}
 			bc.Lock()
 			if errDel := b.delete(ctx); errDel != nil {
 				err = multierr.Append(err, errDel)
@@ -338,7 +338,7 @@ func (bc *blockController) remove(ctx context.Context, deadline time.Time) (err 
 	return err
 }
 
-func (bc *blockController) removeBlock(blockID uint16) {
+func (bc *blockController) removeBlock(blockID SectionID) {
 	for i, b := range bc.lst {
 		if b.blockID == blockID {
 			bc.lst = append(bc.lst[:i], bc.lst[i+1:]...)

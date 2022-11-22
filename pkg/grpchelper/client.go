@@ -48,7 +48,9 @@ func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grp
 		return nil, err
 	}
 	connDuration := time.Since(connStart)
-	l.Debug().Dur("conn", connDuration).Msg("time elapsed")
+	if e := l.Debug(); e.Enabled() {
+		e.Dur("conn", connDuration).Msg("time elapsed")
+	}
 	return conn, nil
 }
 
@@ -71,6 +73,8 @@ func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx conte
 		return err
 	}
 	rpcDuration := time.Since(rpcStart)
-	l.Debug().Dur("rpc", rpcDuration).Msg("time elapsed")
+	if e := l.Debug(); e.Enabled() {
+		e.Dur("rpc", rpcDuration).Msg("time elapsed")
+	}
 	return nil
 }

@@ -241,7 +241,7 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 	if tag.GetInt() != nil {
 		existInt = true
 	}
-	fv, err := pbv1.ParseIndexFieldValue(tag)
+	fv, err := pbv1.ParseTagValue(tag)
 	if errors.Is(err, pbv1.ErrNullValue) {
 		return nil, existInt, nil
 	}

@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 

@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -57,7 +58,9 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid requested sort direction")
 		return
 	}
-	t.log.Debug().Msg("received a topN query event")
+	if e := t.log.Debug(); e.Enabled() {
+		e.Stringer("req", request).Msg("received a topN query event")
+	}
 	topNMetadata := request.GetMetadata()
 	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
 	if err != nil {
@@ -96,7 +99,11 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for _, shard := range shards {
 		// TODO: support condition
-		sl, innerErr := shard.Series().List(tsdb.NewPath(entity))
+		sl, innerErr := shard.Series().List(context.WithValue(
+			context.Background(),
+			logger.ContextKey,
+			t.log,
+		), tsdb.NewPath(entity))
 		if innerErr != nil {
 			t.log.Error().Err(innerErr).
 				Str("topN", topNMetadata.GetName()).
@@ -110,6 +117,9 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 					Str("topN", topNMetadata.GetName()).
 					Msg("fail to scan series")
 				return
+			}
+			if len(iters) < 1 {
+				continue
 			}
 			for _, iter := range iters {
 				for iter.Next() {
@@ -205,14 +215,17 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 		request.GetTimeRange().GetBegin().AsTime(),
 		request.GetTimeRange().GetEnd().AsTime()),
 	)
+	if err != nil {
+		if errors.Is(err, tsdb.ErrEmptySeriesSpan) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	defer func(seriesSpan tsdb.SeriesSpan) {
 		if seriesSpan != nil {
 			_ = seriesSpan.Close()
 		}
 	}(seriesSpan)
-	if err != nil {
-		return nil, err
-	}
 	seeker, err := seriesSpan.SeekerBuilder().OrderByTime(modelv1.Sort_SORT_ASC).Build()
 	if err != nil {
 		return nil, err

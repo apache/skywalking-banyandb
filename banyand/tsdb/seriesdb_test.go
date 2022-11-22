@@ -312,6 +312,31 @@ func TestNewPath(t *testing.T) {
 				offset: 24,
 			},
 		},
+		{
+			name: "prepend a scope to any",
+			entity: Entity{
+				AnyEntry,
+			},
+			scope: Entry("segment"),
+			want: Path{
+				prefix: bytes.Join([][]byte{
+					Hash([]byte("segment")),
+				}, nil),
+				seekKey: bytes.Join([][]byte{
+					Hash([]byte("segment")),
+					zeroIntBytes,
+				}, nil),
+				template: bytes.Join([][]byte{
+					Hash([]byte("segment")),
+					zeroIntBytes,
+				}, nil),
+				mask: bytes.Join([][]byte{
+					maxIntBytes,
+					zeroIntBytes,
+				}, nil),
+				offset: 8,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -324,7 +349,7 @@ func TestNewPath(t *testing.T) {
 	}
 }
 
-func Test_SeriesDatabase_Get(t *testing.T) {
+func Test_SeriesDatabase_Get_GetByID(t *testing.T) {
 	tests := []struct {
 		name     string
 		entities []Entity
@@ -365,9 +390,20 @@ func Test_SeriesDatabase_Get(t *testing.T) {
 			s, err := newSeriesDataBase(context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test")), 0, dir, nil)
 			tester.NoError(err)
 			for _, entity := range tt.entities {
-				series, err := s.Get(entity)
+				evv := toEntityValues(entity)
+				series, err := s.Get(HashEntity(entity), evv)
 				tester.NoError(err)
 				tester.Greater(uint(series.ID()), uint(0))
+				literal := series.String()
+				if literal != "" {
+					tester.Equal(evv.String(), literal)
+				}
+				series, err = s.GetByID(series.ID())
+				tester.NoError(err)
+				literal = series.String()
+				if literal != "" {
+					tester.Equal(evv.String(), literal)
+				}
 			}
 		})
 	}
@@ -456,7 +492,7 @@ func Test_SeriesDatabase_List(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			series, err := s.List(tt.path)
+			series, err := s.List(context.Background(), tt.path)
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -512,15 +548,26 @@ func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {
 	}
 	for _, d := range data {
 		d.id = common.SeriesID(convert.BytesToUint64(Hash(HashEntity(d.entity))))
-		series, err := db.Get(d.entity)
+		series, err := db.Get(HashEntity(d.entity), toEntityValues(d.entity))
 		t.NoError(err)
 		t.Greater(uint(series.ID()), uint(0))
 	}
 	return data
 }
 
+func toEntityValues(entity Entity) (result EntityValues) {
+	for i, e := range entity {
+		if len(e) == 8 && i == len(entity)-1 {
+			result = append(result, Int64Value(int64(convert.BytesToUint64(e))))
+		} else {
+			result = append(result, StrValue(string(e)))
+		}
+	}
+	return
+}
+
 func newMockSeries(id common.SeriesID, blockDB *seriesDB) *series {
-	return newSeries(context.TODO(), id, blockDB)
+	return newSeries(context.TODO(), id, "", blockDB)
 }
 
 func transform(list SeriesList) (seriesIDs []common.SeriesID) {

@@ -51,8 +51,8 @@ var (
 	ErrMalformedField              = errors.New("field is malformed")
 )
 
-func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
-	fv, err := ParseIndexFieldValue(tagValue)
+func MarshalTagValue(tagValue *modelv1.TagValue) ([]byte, error) {
+	fv, err := ParseTagValue(tagValue)
 	if err != nil {
 		return nil, err
 	}
@@ -63,47 +63,47 @@ func MarshalIndexFieldValue(tagValue *modelv1.TagValue) ([]byte, error) {
 	return fv.marshalArr(), nil
 }
 
-type FieldValue struct {
+type TagValue struct {
 	value    []byte
 	arr      [][]byte
 	splitter []byte
 }
 
-func newValue(value []byte) FieldValue {
-	return FieldValue{
+func newValue(value []byte) TagValue {
+	return TagValue{
 		value: value,
 	}
 }
 
-func newValueWithSplitter(splitter []byte) *FieldValue {
-	return &FieldValue{
+func newValueWithSplitter(splitter []byte) *TagValue {
+	return &TagValue{
 		splitter: splitter,
 	}
 }
 
-func appendValue(fv *FieldValue, value []byte) *FieldValue {
+func appendValue(fv *TagValue, value []byte) *TagValue {
 	if fv == nil {
-		fv = &FieldValue{}
+		fv = &TagValue{}
 	}
 	fv.arr = append(fv.arr, value)
 	return fv
 }
 
-func (fv FieldValue) GetValue() []byte {
+func (fv TagValue) GetValue() []byte {
 	if len(fv.value) < 1 {
 		return nil
 	}
 	return fv.value
 }
 
-func (fv FieldValue) GetArr() [][]byte {
+func (fv TagValue) GetArr() [][]byte {
 	if len(fv.arr) < 1 {
 		return nil
 	}
 	return fv.arr
 }
 
-func (fv *FieldValue) marshalArr() []byte {
+func (fv *TagValue) marshalArr() []byte {
 	switch len(fv.arr) {
 	case 0:
 		return nil
@@ -126,10 +126,10 @@ func (fv *FieldValue) marshalArr() []byte {
 	return buf.Bytes()
 }
 
-func ParseIndexFieldValue(tagValue *modelv1.TagValue) (FieldValue, error) {
+func ParseTagValue(tagValue *modelv1.TagValue) (TagValue, error) {
 	switch x := tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Null:
-		return FieldValue{}, ErrNullValue
+		return TagValue{}, ErrNullValue
 	case *modelv1.TagValue_Str:
 		return newValue([]byte(x.Str.GetValue())), nil
 	case *modelv1.TagValue_Int:
@@ -141,7 +141,7 @@ func ParseIndexFieldValue(tagValue *modelv1.TagValue) (FieldValue, error) {
 		}
 		return *fv, nil
 	case *modelv1.TagValue_IntArray:
-		var fv *FieldValue
+		var fv *TagValue
 		for _, i := range x.IntArray.GetValue() {
 			fv = appendValue(fv, convert.Int64ToBytes(i))
 		}
@@ -151,7 +151,7 @@ func ParseIndexFieldValue(tagValue *modelv1.TagValue) (FieldValue, error) {
 	case *modelv1.TagValue_Id:
 		return newValue([]byte(x.Id.GetValue())), nil
 	}
-	return FieldValue{}, ErrUnsupportedTagForIndexField
+	return TagValue{}, ErrUnsupportedTagForIndexField
 }
 
 type StreamWriteRequestBuilder struct {

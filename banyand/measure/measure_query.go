@@ -116,6 +116,7 @@ func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFam
 	fid := familyIdentity(family, pbv1.TagFlag)
 	familyRawBytes, err := item.Family(fid)
 	if err != nil {
+		item.PrintContext(s.l.Named("tag-family"), fid, 10)
 		return nil, errors.Wrapf(err, "measure %s.%s parse family %s", s.name, s.group, family)
 	}
 	if len(familyRawBytes) < 1 {
@@ -161,7 +162,8 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 	fid := familyIdentity(name, pbv1.EncoderFieldFlag(fieldSpec, s.interval))
 	bytes, err := item.Family(fid)
 	if err != nil {
-		return nil, err
+		item.PrintContext(s.l.Named("field"), fid, 10)
+		return nil, errors.Wrapf(err, "measure %s.%s parse field %s", s.name, s.group, name)
 	}
 	if len(bytes) < 1 {
 		item.PrintContext(s.l.Named("field"), fid, 10)

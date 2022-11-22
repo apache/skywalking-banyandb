@@ -50,5 +50,6 @@ message WriteResponse {}
 message InternalWriteRequest {
   uint32 shard_id = 1;
   bytes series_hash = 2;
-  WriteRequest request = 3;
+  repeated model.v1.TagValue entity_values = 3;
+  WriteRequest request = 4;
 }

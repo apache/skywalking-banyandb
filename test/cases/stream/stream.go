@@ -37,7 +37,7 @@ var (
 	verify        = func(innerGm gm.Gomega, args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			stream_test_data.VerifyFn(innerGm, SharedContext, args)
-		}, flags.EventuallyTimeout)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}
 )
 
