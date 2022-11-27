@@ -197,15 +197,15 @@ initData()
 <template>
     <div>
         <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe
+            element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" max-height=700 stripe border
             :data="data.tableData" highlight-current-row tooltip-effect="dark" @selection-change="handleSelectionChange"
-            border empty-text="No data yet">
+            empty-text="No data yet">
             <el-table-column type="selection" width="55">
             </el-table-column>
-            <el-table-column type="index" label="number" width="80">
+            <el-table-column type="index" label="number" width="90">
             </el-table-column>
             <el-table-column v-for="item in data.tableTags" sortable :sort-change="sortChange" :key="item.name"
-                :label="item.name" :prop="item.name">
+                :label="item.name" :prop="item.name" show-overflow-tooltip>
             </el-table-column>
         </el-table>
 

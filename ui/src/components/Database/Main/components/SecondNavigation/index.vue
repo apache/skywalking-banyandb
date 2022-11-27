@@ -99,7 +99,7 @@ function openDesign() { }
 </script>
 
 <template>
-    <div class="flex second-nav-contain align-item-center">
+    <div class="flex second-nav-contain align-item-center justify-center">
         <div style="width: 130px;">
             <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
                 <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
