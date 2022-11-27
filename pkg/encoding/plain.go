@@ -202,6 +202,9 @@ func (t *plainDecoder) Len() int {
 }
 
 func (t *plainDecoder) Decode(_, rawData []byte) (err error) {
+	if len(rawData) < 2 {
+		return ErrInvalidValue
+	}
 	var data []byte
 	size := binary.LittleEndian.Uint16(rawData[len(rawData)-2:])
 	if data, err = zstdDecoder.DecodeAll(rawData[:len(rawData)-2], make([]byte, 0, size)); err != nil {
@@ -240,6 +243,12 @@ func (t *plainDecoder) Get(ts uint64) ([]byte, error) {
 		return nil, fmt.Errorf("%d is wrong", ts)
 	}
 	return getVal(t.val, parseOffset(slot))
+}
+
+func (t *plainDecoder) Range() (start, end uint64) {
+	startSlot := getTSSlot(t.ts, int(t.num)-1)
+	endSlot := getTSSlot(t.ts, 0)
+	return parseTS(startSlot), parseTS(endSlot)
 }
 
 func (t *plainDecoder) Iterator() SeriesIterator {

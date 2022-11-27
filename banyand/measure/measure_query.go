@@ -44,7 +44,6 @@ type Query interface {
 
 type Measure interface {
 	io.Closer
-	Write(value *measurev1.DataPointValue) error
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
@@ -114,9 +113,13 @@ func (s *measure) Shard(id common.ShardID) (tsdb.Shard, error) {
 }
 
 func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
-	familyRawBytes, err := item.Family(familyIdentity(family, pbv1.TagFlag))
+	fid := familyIdentity(family, pbv1.TagFlag)
+	familyRawBytes, err := item.Family(fid)
 	if err != nil {
 		return nil, errors.Wrapf(err, "measure %s.%s parse family %s", s.name, s.group, family)
+	}
+	if len(familyRawBytes) < 1 {
+		item.PrintContext(s.l.Named("tag-family"), fid, 10)
 	}
 	tagFamily := &modelv1.TagFamilyForWrite{}
 	err = proto.Unmarshal(familyRawBytes, tagFamily)
@@ -155,9 +158,13 @@ func (s *measure) ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_
 			break
 		}
 	}
-	bytes, err := item.Family(familyIdentity(name, pbv1.EncoderFieldFlag(fieldSpec, s.interval)))
+	fid := familyIdentity(name, pbv1.EncoderFieldFlag(fieldSpec, s.interval))
+	bytes, err := item.Family(fid)
 	if err != nil {
 		return nil, err
+	}
+	if len(bytes) < 1 {
+		item.PrintContext(s.l.Named("field"), fid, 10)
 	}
 	fieldValue, err := pbv1.DecodeFieldValue(bytes, fieldSpec)
 	if err != nil {

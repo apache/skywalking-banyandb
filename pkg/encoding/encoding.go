@@ -79,6 +79,8 @@ type SeriesDecoder interface {
 	Get(ts uint64) ([]byte, error)
 	// Iterator returns a SeriesIterator
 	Iterator() SeriesIterator
+	// Range returns the start and end time of this series
+	Range() (start, end uint64)
 }
 
 // SeriesIterator iterates time series data
