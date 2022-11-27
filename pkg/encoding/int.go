@@ -138,8 +138,10 @@ func (ie *intEncoder) Append(ts uint64, value []byte) {
 	if ie.startTime == 0 {
 		ie.startTime = ts
 		ie.prevTime = ts
+	} else if ie.startTime > ts {
+		ie.startTime = ts
 	}
-	gap := int(ts) - int(ie.prevTime)
+	gap := int(ie.prevTime) - int(ts)
 	if gap < 0 {
 		return
 	}
@@ -166,13 +168,15 @@ func (ie *intEncoder) Reset(key []byte) {
 	ie.interval = ie.fn(key)
 	ie.startTime = 0
 	ie.prevTime = 0
+	ie.num = 0
+	ie.values = NewXOREncoder(ie.bw)
 }
 
 func (ie *intEncoder) Encode() ([]byte, error) {
 	ie.bw.Flush()
 	buffWriter := buffer.NewBufferWriter(ie.buff)
 	buffWriter.PutUint64(ie.startTime)
-	buffWriter.PutUint16(uint16(ie.size))
+	buffWriter.PutUint16(uint16(ie.num))
 	bb := buffWriter.Bytes()
 	encodedSize.WithLabelValues(ie.name, "int").Add(float64(len(bb)))
 	return bb, nil
@@ -195,6 +199,9 @@ type intDecoder struct {
 }
 
 func (i *intDecoder) Decode(key, data []byte) error {
+	if len(data) < 10 {
+		return ErrInvalidValue
+	}
 	i.interval = i.fn(key)
 	i.startTime = binary.LittleEndian.Uint64(data[len(data)-10 : len(data)-2])
 	i.num = int(binary.LittleEndian.Uint16(data[len(data)-2:]))
@@ -219,29 +226,33 @@ func (i intDecoder) Get(ts uint64) ([]byte, error) {
 	return zeroBytes, nil
 }
 
+func (i intDecoder) Range() (start, end uint64) {
+	return i.startTime, i.startTime + uint64(i.num-1)*uint64(i.interval)
+}
+
 func (i intDecoder) Iterator() SeriesIterator {
 	br := bit.NewReader(bytes.NewReader(i.area))
 	return &intIterator{
-		startTime: i.startTime,
-		interval:  int(i.interval),
-		br:        br,
-		values:    NewXORDecoder(br),
-		size:      i.size,
+		endTime:  i.startTime + uint64(i.num*int(i.interval)),
+		interval: int(i.interval),
+		br:       br,
+		values:   NewXORDecoder(br),
+		size:     i.num,
 	}
 }
 
 var (
 	_         SeriesIterator = (*intIterator)(nil)
-	zeroBytes                = convert.Int64ToBytes(0)
-	Zero                     = convert.BytesToUint64(zeroBytes)
+	zeroBytes                = convert.Uint64ToBytes(zero)
+	zero                     = convert.BytesToUint64(convert.Int64ToBytes(0))
 )
 
 type intIterator struct {
-	startTime uint64
-	interval  int
-	size      int
-	br        *bit.Reader
-	values    *XORDecoder
+	endTime  uint64
+	interval int
+	size     int
+	br       *bit.Reader
+	values   *XORDecoder
 
 	currVal  uint64
 	currTime uint64
@@ -266,10 +277,10 @@ func (i *intIterator) Next() bool {
 			i.currVal = i.values.Value()
 		}
 	} else {
-		i.currVal = Zero
+		i.currVal = zero
 	}
-	i.currTime = i.startTime + uint64(i.interval*i.index)
 	i.index++
+	i.currTime = i.endTime - uint64(i.interval*i.index)
 	return true
 }
 

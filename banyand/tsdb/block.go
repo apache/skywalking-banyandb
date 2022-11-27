@@ -322,6 +322,7 @@ type BlockDelegate interface {
 	writeLSMIndex(fields []index.Field, id common.ItemID) error
 	writeInvertedIndex(fields []index.Field, id common.ItemID) error
 	dataReader() kv.TimeSeriesReader
+	decoderPool() encoding.SeriesDecoderPool
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
 	primaryIndexReader() index.FieldIterable
@@ -334,6 +335,10 @@ var _ BlockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block
+}
+
+func (d *bDelegate) decoderPool() encoding.SeriesDecoderPool {
+	return d.delegate.encodingMethod.DecoderPool
 }
 
 func (d *bDelegate) dataReader() kv.TimeSeriesReader {

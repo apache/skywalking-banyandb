@@ -23,6 +23,7 @@ import (
 	"errors"
 	"log"
 	"math"
+	"time"
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/analysis"
@@ -40,9 +41,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const docID = "_id"
+const (
+	docID     = "_id"
+	batchSize = 1024
+)
 
 var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
 
@@ -61,8 +66,20 @@ type StoreOpts struct {
 	Logger *logger.Logger
 }
 
+type doc struct {
+	fields []index.Field
+	itemID common.ItemID
+}
+
+type flushEvent struct {
+	onComplete chan struct{}
+}
+
 type store struct {
 	writer *bluge.Writer
+	ch     chan any
+	closer *run.Closer
+	l      *logger.Logger
 }
 
 func NewStore(opts StoreOpts) (index.Store, error) {
@@ -73,9 +90,14 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store{
+	s := &store{
 		writer: w,
-	}, nil
+		l:      opts.Logger,
+		ch:     make(chan any, batchSize),
+		closer: run.NewCloser(1),
+	}
+	s.run()
+	return s, nil
 }
 
 func (s *store) Stats() observability.Statistics {
@@ -83,19 +105,23 @@ func (s *store) Stats() observability.Statistics {
 }
 
 func (s *store) Close() error {
+	s.closer.CloseThenWait()
 	return s.writer.Close()
 }
 
 func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
-	doc := bluge.NewDocument(string(convert.Uint64ToBytes(uint64(itemID))))
-	for _, f := range fields {
-		field := bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable()
-		if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-			field.WithAnalyzer(analyzers[f.Key.Analyzer])
-		}
-		doc.AddField(field)
+	if !s.closer.AddRunning() {
+		return nil
 	}
-	return s.writer.Insert(doc)
+	defer s.closer.Done()
+	select {
+	case <-s.closer.CloseNotify():
+	case s.ch <- doc{
+		fields: fields,
+		itemID: itemID,
+	}:
+	}
+	return nil
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (iter index.FieldIterator, err error) {
@@ -202,6 +228,71 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	err = multierr.Append(err, iter.Close())
 	return
+}
+
+func (s *store) run() {
+	go func() {
+		defer s.closer.Done()
+		size := 0
+		batch := bluge.NewBatch()
+		flush := func() {
+			if size < 1 {
+				return
+			}
+			if err := s.writer.Batch(batch); err != nil {
+				s.l.Error().Err(err).Msg("write to the inverted index")
+			}
+			batch.Reset()
+			size = 0
+		}
+		for {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-s.closer.CloseNotify():
+				return
+			case event, more := <-s.ch:
+				if !more {
+					return
+				}
+				switch d := event.(type) {
+				case flushEvent:
+					flush()
+					close(d.onComplete)
+				case doc:
+					doc := bluge.NewDocument(string(convert.Uint64ToBytes(uint64(d.itemID))))
+					for _, f := range d.fields {
+						field := bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable()
+						if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+							field.WithAnalyzer(analyzers[f.Key.Analyzer])
+						}
+						doc.AddField(field)
+					}
+					size++
+					if size >= batchSize {
+						flush()
+					} else {
+						batch.Insert(doc)
+					}
+				}
+
+			case <-timer.C:
+				flush()
+			}
+		}
+	}()
+}
+
+func (s *store) flush() {
+	if !s.closer.AddRunning() {
+		return
+	}
+	defer s.closer.Done()
+	onComplete := make(chan struct{})
+	select {
+	case <-s.closer.CloseNotify():
+	case s.ch <- flushEvent{onComplete: onComplete}:
+	}
+	<-onComplete
 }
 
 type blugeMatchIterator struct {

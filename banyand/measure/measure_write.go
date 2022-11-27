@@ -38,25 +38,7 @@ import (
 
 var ErrMalformedElement = errors.New("element is malformed")
 
-// Write is for testing
-func (s *measure) Write(value *measurev1.DataPointValue) error {
-	entity, shardID, err := s.entityLocator.Locate(s.name, value.GetTagFamilies(), s.shardNum)
-	if err != nil {
-		return err
-	}
-	waitCh := make(chan struct{})
-	err = s.write(shardID, tsdb.HashEntity(entity), value, func() {
-		close(waitCh)
-	})
-	if err != nil {
-		close(waitCh)
-		return err
-	}
-	<-waitCh
-	return nil
-}
-
-func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue, cb index.CallbackFn) error {
+func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue) error {
 	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
@@ -141,7 +123,6 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			Timestamp:   value.GetTimestamp().AsTime(),
 		},
 		BlockCloser: wp,
-		Cb:          cb,
 	}
 	s.indexWriter.Write(m)
 	s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
@@ -175,7 +156,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find measure definition")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetDataPoint(), nil)
+	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetDataPoint())
 	if err != nil {
 		w.l.Error().Err(err).Msg("fail to write entity")
 	}
