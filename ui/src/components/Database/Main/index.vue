@@ -48,11 +48,12 @@ function closeDetail() {
     <div class="flex" style="height:100%; width:100%;">
         <div :style="data.showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
             <el-card style="max-height: 97.5%;">
-                <div style="width: 100%; height: 40px;">
+                <div style="width: 100%; height: 30px;">
                     <tag-navigation-component></tag-navigation-component>
                 </div>
+                <el-divider border-style="dashed" />
                 <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
-                <second-navigation-component @openDetail="openDetail" :showDrawer="data.showDrawer" style="width: 100%">
+                <second-navigation-component @openDetail="openDetail" :showDrawer="data.showDrawer" style="width: 100%; margin-top: 10px;">
                 </second-navigation-component>
                 <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
             </el-card>

@@ -1,0 +1,131 @@
+@use './custom.scss' as *;
+
+/* ====================
+       button
+=======================*/
+.el-button.nav-button {
+    height: 25px;
+    border-radius: 1px;
+    line-height: 28px;
+    font-size: 12px;
+    margin: 0;
+
+    &:hover {
+        color: var(--color-main) !important;
+        background-color: var(--color-main-background) !important;
+        border: 1px solid var(--color-main) !important;
+    }
+}
+
+.el-button--primary {
+    background-color: var(--color-main) !important;
+    border: 1px solid var(--color-main) !important;
+}
+
+.el-button.is-disabled.nav-button {
+    &:hover {
+        color: #a8abb2 !important;
+        background-color: white !important;
+        border: 1px solid #e4e7ed !important;
+    }
+}
+
+/* =============
+      el-tag
+===============*/
+.el-tag {
+    border-radius: 1px !important;
+    justify-content: space-between !important;
+}
+
+.el-tag--plain {
+    color: var(--color-main) !important;
+    border: 1px solid var(--color-main) !important;
+
+    .el-icon.el-tag__close {
+        color: var(--color-main) !important;
+        margin-right: 5px;
+        font-size: 15px !important;
+
+        &:hover {
+            width: 15px;
+            height: 15px;
+            color: white !important;
+            background-color: var(--color-main) !important;
+        }
+    }
+}
+
+.el-tag--dark {
+    color: white !important;
+    background-color: var(--color-main) !important;
+    border: 1px solid var(--color-main) !important;
+
+    .el-icon.el-tag__close {
+        margin-right: 5px;
+        font-size: 15px !important;
+
+        &:hover {
+            width: 15px;
+            height: 15px;
+            color: white !important;
+            background-color: var(--color-main-background) !important;
+        }
+    }
+}
+
+.el-tag--large {
+    height: 25px !important;
+    font-size: 12px !important;
+    line-height: 25px !important;
+    padding: 0px !important;
+    --el-icon-size: 20px !important;
+}
+
+.el-tag__content {
+    margin-left: 10px;
+    height: 100%;
+    width: 65%;
+}
+
+/* =================
+      el-select
+==================== */
+.el-select {
+    height: 25px !important;
+    border-radius: 1px !important;
+    --el-select-input-focus-border-color: var(--color-main) !important;
+    --el-select-border-color-hover: var(--color-main) !important;
+}
+
+
+/* ==================
+      el-input
+====================*/
+.el-input {
+    height: 25px !important;
+    --el-input-border-radius: 1px !important;
+    --el-input-focus-border-color: var(--color-main) !important;
+    --el-input-clear-hover-color: var(--color-main) !important;
+    .el-input__inner {
+        height: 25px !important;
+    }
+}
+
+/* ================
+      el-date-editor
+=====================*/
+.el-date-editor {
+    height: 25px !important;
+    border-radius: 1px !important;
+    .el-range-input {
+        height: 21px !important;
+    }
+}
+
+/* ================
+      el-divider
+=====================*/
+.el-divider {
+    margin: 15px 0 15px 0 !important;
+}

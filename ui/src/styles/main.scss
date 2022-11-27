@@ -17,7 +17,7 @@
  * under the License.
  */
 
-@import './custom.scss';
+ @use './custom.scss' as *;
 
 /* ==================
      flex layout
