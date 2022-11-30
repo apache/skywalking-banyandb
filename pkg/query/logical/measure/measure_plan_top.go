@@ -18,6 +18,8 @@
 package measure
 
 import (
+	"fmt"
+
 	"github.com/pkg/errors"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -76,7 +78,7 @@ type top struct {
 }
 
 func (g *top) String() string {
-	return g.topNStream.String()
+	return fmt.Sprintf("%s top %s", g.Input, g.topNStream.String())
 }
 
 func (g *top) Children() []logical.Plan {

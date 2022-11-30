@@ -35,7 +35,7 @@ import (
 var ErrEndOfSegment = errors.New("reached the end of the segment")
 
 type segment struct {
-	id     uint16
+	id     SectionID
 	path   string
 	suffix string
 
@@ -48,7 +48,7 @@ type segment struct {
 	closeOnce           sync.Once
 }
 
-func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
+func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
 	segmentSize, blockSize IntervalRule, blockQueue bucket.Queue, scheduler *timestamp.Scheduler,
 ) (s *segment, err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
@@ -56,7 +56,7 @@ func openSegment(ctx context.Context, startTime time.Time, path, suffix string,
 		return nil, err
 	}
 	id := GenerateInternalID(segmentSize.Unit, suffixInteger)
-	timeRange := timestamp.NewSectionTimeRange(startTime, segmentSize.NextTime(startTime))
+	timeRange := timestamp.NewSectionTimeRange(startTime, endTime)
 	s = &segment{
 		id:        id,
 		path:      path,
@@ -124,7 +124,7 @@ func (s *segment) close(ctx context.Context) (err error) {
 	return nil
 }
 
-func (s *segment) closeBlock(ctx context.Context, id uint16) error {
+func (s *segment) closeBlock(ctx context.Context, id SectionID) error {
 	return s.blockController.closeBlock(ctx, id)
 }
 

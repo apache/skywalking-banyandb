@@ -91,7 +91,8 @@ type aggregationPlan struct {
 }
 
 func (g *aggregationPlan) String() string {
-	return fmt.Sprintf("aggregation: aggregation{type=%d,field=%s}",
+	return fmt.Sprintf("%s aggregation: aggregation{type=%d,field=%s}",
+		g.Input,
 		g.aggrType,
 		g.aggregationFieldRef.Field.Name)
 }

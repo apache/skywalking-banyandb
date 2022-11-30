@@ -234,3 +234,37 @@ func (ir IntervalRule) EstimatedDuration() time.Duration {
 	}
 	panic("invalid interval unit")
 }
+
+type parser interface {
+	Parse(value string) (time.Time, error)
+}
+
+func loadSections(root string, parser parser, intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
+	var startTimeLst []time.Time
+	if err := WalkDir(
+		root,
+		segPathPrefix,
+		func(suffix string) error {
+			startTime, err := parser.Parse(suffix)
+			if err != nil {
+				return err
+			}
+			startTimeLst = append(startTimeLst, startTime)
+			return nil
+		}); err != nil {
+		return err
+	}
+	sort.Slice(startTimeLst, func(i, j int) bool { return i < j })
+	for i, start := range startTimeLst {
+		var end time.Time
+		if i < len(startTimeLst)-1 {
+			end = startTimeLst[i+1]
+		} else {
+			end = intervalRule.NextTime(start)
+		}
+		if err := loadFn(start, end); err != nil {
+			return err
+		}
+	}
+	return nil
+}

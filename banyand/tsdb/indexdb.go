@@ -115,7 +115,7 @@ func (i *indexWriterBuilder) GlobalItemID(itemID GlobalItemID) IndexWriterBuilde
 }
 
 func (i *indexWriterBuilder) Build() (IndexWriter, error) {
-	seg, err := i.segCtrl.create(i.segCtrl.Format(i.ts), false)
+	seg, err := i.segCtrl.create(i.ts, false)
 	if err != nil {
 		return nil, err
 	}

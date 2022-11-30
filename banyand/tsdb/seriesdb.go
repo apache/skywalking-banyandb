@@ -20,25 +20,33 @@ package tsdb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
-	maxIntBytes  = convert.Uint64ToBytes(math.MaxUint64)
-	zeroIntBytes = convert.Uint64ToBytes(0)
+	entityPrefix    = []byte("entity_")
+	entityPrefixLen = len(entityPrefix)
+	seriesPrefix    = []byte("series_")
+	maxIntBytes     = convert.Uint64ToBytes(math.MaxUint64)
+	zeroIntBytes    = convert.Uint64ToBytes(0)
 )
 
 var AnyEntry = Entry(nil)
@@ -73,6 +81,83 @@ func NewEntity(len int) Entity {
 		e[i] = AnyEntry
 	}
 	return e
+}
+
+type EntityValue *modelv1.TagValue
+
+func EntityValueToEntry(ev EntityValue) (Entry, error) {
+	return pbv1.MarshalTagValue(ev)
+}
+
+type EntityValues []EntityValue
+
+func (evs EntityValues) Prepend(scope EntityValue) EntityValues {
+	return append(EntityValues{scope}, evs...)
+}
+
+func (evs EntityValues) Encode() (result []*modelv1.TagValue) {
+	for _, v := range evs {
+		result = append(result, v)
+	}
+	return
+}
+
+func (evs EntityValues) ToEntity() (result Entity, err error) {
+	for _, v := range evs {
+		entry, errMarshal := EntityValueToEntry(v)
+		if errMarshal != nil {
+			return nil, err
+		}
+		result = append(result, entry)
+	}
+	return
+}
+
+func (evs EntityValues) String() string {
+	var strBuilder strings.Builder
+	vv := evs.Encode()
+	for i := 0; i < len(vv); i++ {
+		strBuilder.WriteString(vv[i].String())
+		if i < len(vv)-1 {
+			strBuilder.WriteString(".")
+		}
+	}
+	return strBuilder.String()
+}
+
+func DecodeEntityValues(tvv []*modelv1.TagValue) (result EntityValues) {
+	for _, tv := range tvv {
+		result = append(result, tv)
+	}
+	return
+}
+
+func StrValue(v string) EntityValue {
+	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
+}
+
+func Int64Value(v int64) EntityValue {
+	return &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}}
+}
+
+func MarshalEntityValues(evs EntityValues) ([]byte, error) {
+	data := &modelv1.TagFamilyForWrite{}
+	for _, v := range evs {
+		data.Tags = append(data.Tags, v)
+	}
+	return proto.Marshal(data)
+}
+
+func UnmarshalEntityValues(evs []byte) (result EntityValues, err error) {
+	data := &modelv1.TagFamilyForWrite{}
+	result = make(EntityValues, len(data.Tags))
+	if err = proto.Unmarshal(evs, data); err != nil {
+		return nil, err
+	}
+	for _, tv := range data.Tags {
+		result = append(result, tv)
+	}
+	return
 }
 
 type Path struct {
@@ -124,26 +209,26 @@ func (p *Path) extractPrefix() {
 
 func (p Path) Prepend(entry Entry) Path {
 	e := Hash(entry)
-	prependFunc := func(src []byte, entry []byte) []byte {
-		dst := make([]byte, len(src)+len(entry))
-		copy(dst, entry)
-		copy(dst[len(entry):], src)
-		return dst
-	}
-	p.template = prependFunc(p.template, e)
+	p.template = prepend(p.template, e)
 	p.offset += len(e)
 	p.extractPrefix()
-	p.mask = prependFunc(p.mask, maxIntBytes)
+	p.mask = prepend(p.mask, maxIntBytes)
 	return p
+}
+
+func prepend(src []byte, entry []byte) []byte {
+	dst := make([]byte, len(src)+len(entry))
+	copy(dst, entry)
+	copy(dst[len(entry):], src)
+	return dst
 }
 
 type SeriesDatabase interface {
 	observability.Observable
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
-	Get(entity Entity) (Series, error)
-	GetByHashKey(key []byte) (Series, error)
-	List(path Path) (SeriesList, error)
+	Get(key []byte, entityValues EntityValues) (Series, error)
+	List(ctx context.Context, path Path) (SeriesList, error)
 }
 
 type blockDatabase interface {
@@ -167,26 +252,25 @@ type seriesDB struct {
 	sID            common.ShardID
 }
 
-func (s *seriesDB) GetByHashKey(key []byte) (Series, error) {
-	seriesID, err := s.seriesMetadata.Get(key)
-	if err != nil && err != kv.ErrKeyNotFound {
-		return nil, err
-	}
-	if err == nil {
-		return newSeries(s.context(), bytesToSeriesID(seriesID), s), nil
-	}
-	s.Lock()
-	defer s.Unlock()
-	seriesID = Hash(key)
-	err = s.seriesMetadata.Put(key, seriesID)
-	if err != nil {
-		return nil, err
-	}
-	return newSeries(s.context(), bytesToSeriesID(seriesID), s), nil
-}
-
 func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
-	return newSeries(s.context(), id, s), nil
+	var series string
+	if e := s.l.Debug(); e.Enabled() {
+		var buf bytes.Buffer
+		buf.Write(seriesPrefix)
+		buf.Write(id.Marshal())
+		data, err := s.seriesMetadata.Get(buf.Bytes())
+		if err != nil {
+			e.Err(err).Msg("failed to get series id's literal")
+			return newSeries(s.context(), id, "unknown", s), nil
+		}
+		entityValues, err := UnmarshalEntityValues(data)
+		if err != nil {
+			e.Err(err).Msg("malformed series id's literal")
+			return newSeries(s.context(), id, "malformed", s), nil
+		}
+		series = entityValues.String()
+	}
+	return newSeries(s.context(), id, series, s), nil
 }
 
 func (s *seriesDB) block(ctx context.Context, id GlobalItemID) (BlockDelegate, error) {
@@ -194,6 +278,7 @@ func (s *seriesDB) block(ctx context.Context, id GlobalItemID) (BlockDelegate, e
 	if seg == nil {
 		return nil, nil
 	}
+
 	return seg.blockController.get(ctx, id.blockID)
 }
 
@@ -201,47 +286,122 @@ func (s *seriesDB) shardID() common.ShardID {
 	return s.sID
 }
 
-func (s *seriesDB) Get(entity Entity) (Series, error) {
-	key := HashEntity(entity)
-	return s.GetByHashKey(key)
+func (s *seriesDB) Get(key []byte, entityValues EntityValues) (Series, error) {
+	entityKey := prepend(key, entityPrefix)
+	data, err := s.seriesMetadata.Get(entityKey)
+	if errors.Is(err, kv.ErrKeyNotFound) {
+		s.Lock()
+		defer s.Unlock()
+		seriesID := bytesToSeriesID(Hash(key))
+		encodedData, entityValuesBytes, errDecode := encode(seriesID, entityValues)
+		if errDecode != nil {
+			return nil, errDecode
+		}
+		errDecode = s.seriesMetadata.Put(entityKey, encodedData)
+		if errDecode != nil {
+			return nil, errDecode
+		}
+
+		var series string
+		if e := s.l.Debug(); e.Enabled() {
+			// TODO: store following info when the debug is enabled
+			errDecode = s.seriesMetadata.Put(prepend(seriesID.Marshal(), seriesPrefix), entityValuesBytes)
+			if errDecode != nil {
+				return nil, errDecode
+			}
+			series = entityValues.String()
+			e.Str("series", series).
+				Uint64("series_id", uint64(seriesID)).
+				Msg("create a new series")
+		}
+		return newSeries(s.context(), seriesID, series, s), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	seriesID, entityValues, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return newSeries(s.context(), seriesID, entityValues.String(), s), nil
 }
 
-func (s *seriesDB) List(path Path) (SeriesList, error) {
+func encode(seriesID common.SeriesID, evv EntityValues) ([]byte, []byte, error) {
+	data, err := MarshalEntityValues(evv)
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	buf.Write(convert.Uint64ToBytes(uint64(seriesID)))
+	buf.Write(data)
+	return buf.Bytes(), data, nil
+}
+
+func decode(value []byte) (common.SeriesID, EntityValues, error) {
+	seriesID := convert.BytesToUint64(value[:8])
+	entityValues, err := UnmarshalEntityValues(value[8:])
+	if err != nil {
+		return 0, nil, err
+	}
+	return common.SeriesID(seriesID), entityValues, nil
+}
+
+func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
+	prefix := prepend(path.prefix, entityPrefix)
+	l := logger.FetchOrDefault(ctx, "series_database", s.l)
 	if path.isFull {
-		id, err := s.seriesMetadata.Get(path.prefix)
+		data, err := s.seriesMetadata.Get(prefix)
 		if err != nil && err != kv.ErrKeyNotFound {
 			return nil, err
 		}
 		if err == nil {
-			seriesID := bytesToSeriesID(id)
-			s.l.Debug().
-				Hex("path", path.prefix).
-				Uint64("series_id", uint64(seriesID)).
-				Msg("got a series with a full path")
-			return []Series{newSeries(s.context(), seriesID, s)}, nil
+			seriesID, entityValue, err := decode(data)
+			if err != nil {
+				return nil, err
+			}
+			var series string
+			if e := l.Debug(); e.Enabled() {
+				series = entityValue.String()
+				e.Int("prefix_len", path.offset/8).
+					Str("series", series).
+					Uint64("series_id", uint64(seriesID)).
+					Msg("got a series with a full path")
+			}
+			return []Series{newSeries(s.context(), seriesID, series, s)}, nil
 		}
-		s.l.Debug().Hex("path", path.prefix).Msg("doesn't get any series")
+		if e := l.Debug(); e.Enabled() {
+			e.Hex("path", path.prefix).Msg("doesn't get any series")
+		}
 		return nil, nil
 	}
 	result := make([]Series, 0)
 	var err error
-	errScan := s.seriesMetadata.Scan(path.prefix, path.seekKey, kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+	errScan := s.seriesMetadata.Scan(prefix, prepend(path.seekKey, entityPrefix), kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+		key = key[entityPrefixLen:]
 		comparableKey := make([]byte, len(key))
 		for i, b := range key {
 			comparableKey[i] = path.mask[i] & b
 		}
 		if bytes.Equal(path.template, comparableKey) {
-			id, errGetVal := getVal()
+			data, errGetVal := getVal()
 			if errGetVal != nil {
 				err = multierr.Append(err, errGetVal)
 				return nil
 			}
-			seriesID := bytesToSeriesID(id)
-			s.l.Debug().
-				Hex("path", path.prefix).
-				Uint64("series_id", uint64(seriesID)).
-				Msg("got a series")
-			result = append(result, newSeries(s.context(), seriesID, s))
+			seriesID, entityValue, errDecode := decode(data)
+			if errDecode != nil {
+				err = multierr.Append(err, errDecode)
+				return nil
+			}
+			series := entityValue.String()
+			if e := l.Debug(); e.Enabled() {
+				e.Int("prefix_len", path.offset/8).
+					Str("series", series).
+					Uint64("series_id", uint64(seriesID)).
+					Msg("match a series")
+			}
+			result = append(result, newSeries(s.context(), seriesID, series, s))
 		}
 		return nil
 	})
@@ -286,7 +446,7 @@ func (s *seriesDB) create(ctx context.Context, ts time.Time) (BlockDelegate, err
 		}
 		return block.delegate(ctx)
 	}
-	seg, err := s.segCtrl.create(s.segCtrl.Format(timeRange.Start), false)
+	seg, err := s.segCtrl.create(timeRange.Start, false)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +500,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 
 // HashEntity runs hash function (e.g. with xxhash algorithm) on each segment of the Entity,
 // and concatenates all uint64 in byte array. So the return length of the byte array will be
-// 8 (every uint64 has 8 bytes) * length of the input entity.
+// 8 (every uint64 has 8 bytes) * length of the input
 func HashEntity(entity Entity) []byte {
 	result := make([]byte, 0, len(entity)*8)
 	for _, entry := range entity {

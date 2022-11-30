@@ -25,12 +25,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -48,10 +48,8 @@ const (
 	blockTemplate       = rootPrefix + blockPathPrefix + "-%s"
 	globalIndexTemplate = rootPrefix + "index"
 
-	segHourFormat   = "2006010215"
-	segDayFormat    = "20060102"
-	blockHourFormat = "15"
-	blockDayFormat  = "0102"
+	hourFormat = "2006010215"
+	dayFormat  = "20060102"
 
 	dirPerm = 0o700
 )
@@ -104,21 +102,33 @@ type EncodingMethod struct {
 	DecoderPool encoding.SeriesDecoderPool
 }
 
-type BlockID struct {
-	SegID   uint16
-	BlockID uint16
-}
+type (
+	SectionID uint32
+	BlockID   struct {
+		SegID   SectionID
+		BlockID SectionID
+	}
+)
 
 func (b BlockID) String() string {
 	return fmt.Sprintf("BlockID-%d-%d", parseSuffix(b.SegID), parseSuffix(b.BlockID))
 }
 
-func GenerateInternalID(unit IntervalUnit, suffix int) uint16 {
-	return uint16(unit)<<12 | ((uint16(suffix) << 4) >> 4)
+func GenerateInternalID(unit IntervalUnit, suffix int) SectionID {
+	return SectionID(unit)<<31 | ((SectionID(suffix) << 1) >> 1)
 }
 
-func parseSuffix(id uint16) int {
-	return int((id << 4) >> 4)
+func parseSuffix(id SectionID) int {
+	return int((id << 1) >> 1)
+}
+
+func sectionIDToBytes(id SectionID) []byte {
+	return convert.Uint32ToBytes(uint32(id))
+}
+
+func readSectionID(data []byte, offset int) (SectionID, int) {
+	end := offset + 4
+	return SectionID(convert.BytesToUint32(data[offset:end])), end
 }
 
 type BlockState struct {
@@ -185,9 +195,6 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if opts.TTL.Num == 0 {
 		return nil, errors.Wrap(ErrOpenDatabase, "ttl is absent")
 	}
-	if opts.SegmentInterval.EstimatedDuration() > 24*time.Hour {
-		return nil, errors.Wrap(ErrOpenDatabase, "segment interval should not be greater than 24 hours")
-	}
 	db := &database{
 		location:    opts.Location,
 		shardNum:    opts.ShardNum,
@@ -236,7 +243,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	// TODO: open the manifest file
 	db.Lock()
 	defer db.Unlock()
-	err := WalkDir(db.location, shardPathPrefix, func(suffix, _ string) error {
+	err := WalkDir(db.location, shardPathPrefix, func(suffix string) error {
 		shardID, err := strconv.Atoi(suffix)
 		if err != nil {
 			return err
@@ -276,7 +283,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	return db, nil
 }
 
-type WalkFn func(suffix, absolutePath string) error
+type WalkFn func(suffix string) error
 
 func WalkDir(root, prefix string, walkFn WalkFn) error {
 	files, err := os.ReadDir(root)
@@ -288,7 +295,7 @@ func WalkDir(root, prefix string, walkFn WalkFn) error {
 			continue
 		}
 		segs := strings.Split(f.Name(), "-")
-		errWalk := walkFn(segs[len(segs)-1], fmt.Sprintf(rootPrefix, root)+f.Name())
+		errWalk := walkFn(segs[len(segs)-1])
 		if errWalk != nil {
 			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
 		}

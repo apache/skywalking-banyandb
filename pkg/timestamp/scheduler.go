@@ -163,11 +163,15 @@ func (t *task) run() {
 	for {
 		next := t.schedule.Next(now)
 		d := next.Sub(now)
-		t.l.Debug().Time("now", now).Time("next", next).Dur("dur", d).Msg("schedule to")
+		if e := t.l.Debug(); e.Enabled() {
+			e.Time("now", now).Time("next", next).Dur("dur", d).Msg("schedule to")
+		}
 		timer := t.clock.Timer(d)
 		select {
 		case now = <-timer.C:
-			t.l.Debug().Time("now", now).Msg("wake")
+			if e := t.l.Debug(); e.Enabled() {
+				e.Time("now", now).Msg("wake")
+			}
 			if !t.action(now, t.l) {
 				t.l.Info().Msg("action stops the task")
 				return

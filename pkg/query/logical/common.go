@@ -27,6 +27,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -102,7 +103,7 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
 // This method is used by the underlying tableScan and localIndexScan plans.
-func ExecuteForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
+func ExecuteForShard(l *logger.Logger, series tsdb.SeriesList, timeRange timestamp.TimeRange,
 	builders ...SeekerBuilder,
 ) ([]tsdb.Iterator, []io.Closer, error) {
 	var itersInShard []tsdb.Iterator
@@ -111,11 +112,14 @@ func ExecuteForShard(series tsdb.SeriesList, timeRange timestamp.TimeRange,
 		itersInSeries, err := func() ([]tsdb.Iterator, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			sp, errInner := seriesFound.Span(ctx, timeRange)
-			closers = append(closers, sp)
+			sp, errInner := seriesFound.Span(context.WithValue(ctx, logger.ContextKey, l), timeRange)
 			if errInner != nil {
+				if errors.Is(errInner, tsdb.ErrEmptySeriesSpan) {
+					return nil, nil
+				}
 				return nil, errInner
 			}
+			closers = append(closers, sp)
 			b := sp.SeekerBuilder()
 			for _, builder := range builders {
 				builder(b)

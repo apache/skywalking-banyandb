@@ -20,7 +20,6 @@ package inverted
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log"
 	"math"
 	"time"
@@ -45,8 +44,9 @@ import (
 )
 
 const (
-	docID     = "_id"
-	batchSize = 1024
+	docID         = "_id"
+	batchSize     = 1024
+	seriesIDField = "series_id"
 )
 
 var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
@@ -110,6 +110,9 @@ func (s *store) Close() error {
 }
 
 func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
+	if len(fields) < 1 {
+		return nil
+	}
 	if !s.closer.AddRunning() {
 		return nil
 	}
@@ -134,14 +137,17 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if err != nil {
 		return nil, err
 	}
-	fk := fieldKey.MarshalToStr()
-	query := bluge.NewTermRangeInclusiveQuery(
-		string(termRange.Lower),
-		string(termRange.Upper),
-		termRange.IncludesLower,
-		termRange.IncludesUpper,
-	).
-		SetField(fk)
+	fk := fieldKey.MarshalIndexRule()
+	query := bluge.NewBooleanQuery()
+	query.
+		AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField)).
+		AddMust(bluge.NewTermRangeInclusiveQuery(
+			string(termRange.Lower),
+			string(termRange.Upper),
+			termRange.IncludesLower,
+			termRange.IncludesUpper,
+		).
+			SetField(fk))
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
@@ -163,8 +169,11 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	fk := field.Key.MarshalToStr()
-	query := bluge.NewTermQuery(string(field.Term)).SetField(fk)
+	fk := field.Key.MarshalIndexRule()
+	query := bluge.NewBooleanQuery()
+	query.
+		AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).SetField(seriesIDField)).
+		AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk))
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err
@@ -186,23 +195,15 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	fk := fieldKey.MarshalToStr()
-	var query bluge.Query
-	getMatchQuery := func(match string) bluge.Query {
-		q := bluge.NewMatchQuery(match).SetField(fk)
+	fk := fieldKey.MarshalIndexRule()
+	query := bluge.NewBooleanQuery()
+	query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+	for _, m := range matches {
+		q := bluge.NewMatchQuery(m).SetField(fk)
 		if fieldKey.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 			q.SetAnalyzer(analyzers[fieldKey.Analyzer])
 		}
-		return q
-	}
-	if len(matches) == 1 {
-		query = getMatchQuery(matches[0])
-	} else {
-		bq := bluge.NewBooleanQuery()
-		for _, m := range matches {
-			bq.AddMust(getMatchQuery(m))
-		}
-		query = bq
+		query.AddMust(q)
 	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -245,8 +246,10 @@ func (s *store) run() {
 			batch.Reset()
 			size = 0
 		}
+		var docIDBuffer bytes.Buffer
 		for {
 			timer := time.NewTimer(time.Second)
+			docIDBuffer.Reset()
 			select {
 			case <-s.closer.CloseNotify():
 				return
@@ -259,9 +262,15 @@ func (s *store) run() {
 					flush()
 					close(d.onComplete)
 				case doc:
-					doc := bluge.NewDocument(string(convert.Uint64ToBytes(uint64(d.itemID))))
+					// TODO: generate a segment directly.
+					fk := d.fields[0].Key
+					docIDBuffer.Write(fk.SeriesID.Marshal())
+					docIDBuffer.Write(convert.Uint64ToBytes(uint64(d.itemID)))
+					doc := bluge.NewDocument(docIDBuffer.String())
+
 					for _, f := range d.fields {
-						field := bluge.NewKeywordFieldBytes(f.Key.MarshalToStr(), f.Term).StoreValue().Sortable()
+						doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, f.Key.SeriesID.Marshal()))
+						field := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).StoreValue().Sortable()
 						if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 							field.WithAnalyzer(analyzers[f.Key.Analyzer])
 						}
@@ -271,7 +280,7 @@ func (s *store) run() {
 					if size >= batchSize {
 						flush()
 					} else {
-						batch.Insert(doc)
+						batch.Update(doc.ID(), doc)
 					}
 				}
 
@@ -345,7 +354,8 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	var term []byte
 	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
 		if field == docID {
-			id := convert.BytesToUint64(value)
+			// value = seriesID(8bytes)+itemID(8bytes)
+			id := convert.BytesToUint64(value[8:])
 			itemID = common.ItemID(id)
 			i++
 		}
@@ -356,8 +366,9 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		return i < 2
 	})
 	if i != 2 {
-		bmi.err = errors.New("less fields")
-		return false
+		// ignore invalid data
+		// TODO: add metric to cumulate ignored docs
+		return true
 	}
 	if bmi.err != nil {
 		return false

@@ -75,14 +75,14 @@ type block struct {
 	clock         timestamp.Clock
 	timestamp.TimeRange
 	bucket.Reporter
-	segID          uint16
-	blockID        uint16
+	segID          SectionID
+	blockID        SectionID
 	segSuffix      string
 	encodingMethod EncodingMethod
 }
 
 type blockOpts struct {
-	segID     uint16
+	segID     SectionID
 	segSuffix string
 	blockSize IntervalRule
 	timeRange timestamp.TimeRange
@@ -326,7 +326,7 @@ type BlockDelegate interface {
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
 	primaryIndexReader() index.FieldIterable
-	identity() (segID uint16, blockID uint16)
+	identity() (segID SectionID, blockID SectionID)
 	startTime() time.Time
 	String() string
 }
@@ -361,7 +361,7 @@ func (d *bDelegate) startTime() time.Time {
 	return d.delegate.Start
 }
 
-func (d *bDelegate) identity() (segID uint16, blockID uint16) {
+func (d *bDelegate) identity() (segID SectionID, blockID SectionID) {
 	return d.delegate.segID, d.delegate.blockID
 }
 

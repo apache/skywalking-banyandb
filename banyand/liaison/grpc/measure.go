@@ -58,28 +58,32 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return err
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
-			sampled.Error().Err(errTime).RawJSON("written", logger.Proto(writeRequest)).Msg("the data point time is invalid")
+			sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
 			continue
 		}
-		entity, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
-			sampled.Error().Err(err).Msg("failed to navigate to the write target")
+			sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
 			continue
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &measurev1.InternalWriteRequest{
+		iwr := &measurev1.InternalWriteRequest{
 			Request:    writeRequest,
 			ShardId:    uint32(shardID),
 			SeriesHash: tsdb.HashEntity(entity),
-		})
+		}
+		if ms.log.Debug().Enabled() {
+			iwr.EntityValues = tagValues.Encode()
+		}
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			sampled.Error().Err(errWritePub).Msg("failed to send a message")
+			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -91,17 +95,22 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	}
 }
 
-func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
-	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
+var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
+
+func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+	if err := timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
 	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
 	msg, errFeat := feat.Get()
 	if errFeat != nil {
+		if errFeat == io.EOF {
+			return emptyMeasureQueryResponse, nil
+		}
 		return nil, errFeat
 	}
 	data := msg.Data()
@@ -111,7 +120,7 @@ func (ms *measureService) Query(_ context.Context, entityCriteria *measurev1.Que
 	case common.Error:
 		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return nil, ErrQueryMsg
+	return nil, nil
 }
 
 func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNRequest) (*measurev1.TopNResponse, error) {
@@ -135,5 +144,5 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	case common.Error:
 		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return nil, ErrQueryMsg
+	return nil, nil
 }

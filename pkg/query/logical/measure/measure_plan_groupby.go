@@ -85,7 +85,8 @@ func (g *groupBy) String() string {
 	} else {
 		method = "hash"
 	}
-	return fmt.Sprintf("GroupBy: groupBy=%s, method=%s",
+	return fmt.Sprintf("%s GroupBy: groupBy=%s, method=%s",
+		g.Input,
 		logical.FormatTagRefs(", ", g.groupByTagsRefs...), method)
 }
 

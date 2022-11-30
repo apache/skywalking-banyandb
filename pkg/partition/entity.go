@@ -47,36 +47,33 @@ func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.E
 	return locator
 }
 
-func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (tsdb.Entity, error) {
-	entity := make(tsdb.Entity, len(e)+1)
-	entity[0] = []byte(subject)
+func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (tsdb.Entity, tsdb.EntityValues, error) {
+	entityValues := make(tsdb.EntityValues, len(e)+1)
+	entityValues[0] = tsdb.StrValue(subject)
 	for i, index := range e {
 		tag, err := GetTagByOffset(value, index.FamilyOffset, index.TagOffset)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		entry, errMarshal := pbv1.MarshalIndexFieldValue(tag)
-		if errors.Is(errMarshal, pbv1.ErrNullValue) {
-			continue
-		}
-		if errMarshal != nil {
-			return nil, errMarshal
-		}
-		entity[i+1] = entry
+		entityValues[i+1] = tag
 	}
-	return entity, nil
+	entity, err := entityValues.ToEntity()
+	if err != nil {
+		return nil, nil, err
+	}
+	return entity, entityValues, nil
 }
 
-func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, common.ShardID, error) {
-	entity, err := e.Find(subject, value)
+func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
+	entity, tagValues, err := e.Find(subject, value)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	id, err := ShardID(entity.Marshal(), shardNum)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return entity, common.ShardID(id), nil
+	return entity, tagValues, common.ShardID(id), nil
 }
 
 func GetTagByOffset(value []*modelv1.TagFamilyForWrite, fIndex, tIndex int) (*modelv1.TagValue, error) {

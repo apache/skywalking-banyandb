@@ -59,7 +59,7 @@ func (l *limitPlan) Schema() logical.Schema {
 }
 
 func (l *limitPlan) String() string {
-	return fmt.Sprintf("Limit: %d, %d", l.offset, l.limit)
+	return fmt.Sprintf("%s Limit: %d, %d", l.Input.String(), l.offset, l.limit)
 }
 
 func (l *limitPlan) Children() []logical.Plan {

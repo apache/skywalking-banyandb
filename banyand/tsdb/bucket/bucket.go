@@ -114,7 +114,9 @@ func (tr *timeBasedReporter) Report() (Channel, error) {
 				Capacity: int(tr.End.UnixNano() - tr.Start.UnixNano()),
 				Volume:   int(now.UnixNano() - tr.Start.UnixNano()),
 			}
-			l.Debug().Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reporting a status")
+			if e := l.Debug(); e.Enabled() {
+				e.Int("volume", status.Volume).Int("capacity", status.Capacity).Int("progress%", status.Volume*100/status.Capacity).Msg("reporting a status")
+			}
 			select {
 			case ch <- status:
 			default:

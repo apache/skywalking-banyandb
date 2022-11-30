@@ -107,12 +107,16 @@ func (q *lruQueue) Touch(id fmt.Stringer) bool {
 	defer q.lock.Unlock()
 
 	if q.frequent.Contains(id) {
-		q.l.Debug().Stringer("id", id).Msg("get from frequent")
+		if e := q.l.Debug(); e.Enabled() {
+			e.Stringer("id", id).Msg("get from frequent")
+		}
 		return true
 	}
 
 	if q.recent.Contains(id) {
-		q.l.Debug().Stringer("id", id).Msg("promote from recent to frequent")
+		if e := q.l.Debug(); e.Enabled() {
+			e.Stringer("id", id).Msg("promote from recent to frequent")
+		}
 		q.recent.Remove(id)
 		q.frequent.Add(id, nil)
 		return true
@@ -125,20 +129,26 @@ func (q *lruQueue) Push(ctx context.Context, id fmt.Stringer, fn OnAddRecentFn) 
 	defer q.lock.Unlock()
 
 	if q.frequent.Contains(id) {
-		q.l.Debug().Stringer("id", id).Msg("push to frequent")
+		if e := q.l.Debug(); e.Enabled() {
+			e.Stringer("id", id).Msg("push to frequent")
+		}
 		q.frequent.Add(id, nil)
 		return nil
 	}
 
 	if q.recent.Contains(id) {
-		q.l.Debug().Stringer("id", id).Msg("promote from recent to frequent")
+		if e := q.l.Debug(); e.Enabled() {
+			e.Stringer("id", id).Msg("promote from recent to frequent")
+		}
 		q.recent.Remove(id)
 		q.frequent.Add(id, nil)
 		return nil
 	}
 
 	if q.recentEvict.Contains(id) {
-		q.l.Debug().Stringer("id", id).Msg("restore from recentEvict")
+		if e := q.l.Debug(); e.Enabled() {
+			e.Stringer("id", id).Msg("restore from recentEvict")
+		}
 		if err := q.ensureSpace(ctx, true); err != nil {
 			return err
 		}
@@ -246,7 +256,9 @@ func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache) err
 }
 
 func (q *lruQueue) cleanEvict(now time.Time, l *logger.Logger) bool {
-	l.Debug().Time("now", now).Msg("block queue wakes")
+	if e := l.Debug(); e.Enabled() {
+		e.Time("now", now).Msg("block queue wakes")
+	}
 	if q.evictLen() < 1 {
 		return true
 	}

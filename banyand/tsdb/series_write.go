@@ -92,7 +92,7 @@ var ErrDuplicatedFamily = errors.New("duplicated family")
 
 func (w *writerBuilder) Build() (Writer, error) {
 	if w.block == nil {
-		return nil, errors.WithStack(ErrNoTime)
+		return nil, errors.WithMessagef(ErrNoTime, "ts:%v", w.ts)
 	}
 	if len(w.values) < 1 {
 		return nil, errors.WithStack(ErrNoVal)

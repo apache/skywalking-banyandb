@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	moduleName = "query-processor"
+	moduleName = "query"
 )
 
 var (
@@ -72,8 +72,10 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	queryJSON := logger.Proto(queryCriteria)
-	p.log.Debug().RawJSON("criteria", queryJSON).Msg("received a query request")
+	sl := p.log.Named("stream", queryCriteria.Metadata.Group, queryCriteria.Metadata.Name)
+	if e := sl.Debug(); e.Enabled() {
+		e.RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
+	}
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.streamService.Stream(meta)
@@ -100,11 +102,13 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	p.log.Debug().Str("plan", plan.String()).Msg("query plan")
+	if e := sl.Debug(); e.Enabled() {
+		e.Str("plan", plan.String()).Msg("query plan")
+	}
 
 	entities, err := plan.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
-		p.log.Error().Err(err).RawJSON("req", queryJSON).Msg("fail to execute the query plan")
+		sl.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
 		return
 	}
@@ -126,8 +130,10 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	queryJSON := logger.Proto(queryCriteria)
-	p.log.Info().RawJSON("req", queryJSON).Msg("received a query event")
+	ml := p.log.Named("measure", queryCriteria.Metadata.Group, queryCriteria.Metadata.Name)
+	if e := ml.Debug(); e.Enabled() {
+		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
+	}
 
 	meta := queryCriteria.GetMetadata()
 	ec, err := p.measureService.Measure(meta)
@@ -154,16 +160,19 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	p.queryService.log.Debug().Str("plan", plan.String()).Msg("query plan")
+	if e := ml.Debug(); e.Enabled() {
+		e.Str("plan", plan.String()).Msg("query plan")
+	}
 
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
+		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
 		return
 	}
 	defer func() {
 		if err = mIterator.Close(); err != nil {
-			p.queryService.log.Error().Err(err).RawJSON("req", queryJSON).Msg("fail to close the query plan")
+			ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		}
 	}()
 	result := make([]*measurev1.DataPoint, 0)
@@ -172,6 +181,9 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		if len(current) > 0 {
 			result = append(result, current[0])
 		}
+	}
+	if e := ml.Debug(); e.Enabled() {
+		e.RawJSON("ret", logger.Proto(&measurev1.QueryResponse{DataPoints: result})).Msg("got a measure")
 	}
 	resp = bus.NewMessage(bus.MessageID(now), result)
 	return
