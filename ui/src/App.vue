@@ -93,6 +93,10 @@ const handleRightItem = (index) => {
 </template>
 
 <style lang="scss">
+@use './styles/elementPlus.scss' as *;
+</style>
+
+<style lang="scss">
 html,
 body {
   padding: 0;

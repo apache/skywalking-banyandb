@@ -100,13 +100,12 @@ function closeDetail() {
 
 <template>
     <div class="drawer-container flex column">
-        <div class="text-secondary-color text-tips text-start text-family detail-title">Details</div>
-        <div class="detail-content border-radius-little">
-            <div class="detail-content-container margin-all">
+        <el-card style="max-height: calc(100% - 30px); margin: 15px;">
+            <div class="detail-content-container">
                 <div class="detail-content-title flex justify-between">
                     <div class="text-main-color text-title text-family">
                         <span :title="fileData.metadata.name">
-                            {{fileData.metadata.name}}
+                            {{ fileData.metadata.name }}
                         </span>
                     </div>
                     <el-icon class="el-icon-close pointer detail-close icon" @click="closeDetail"
@@ -116,7 +115,7 @@ function closeDetail() {
                     </el-icon>
                 </div>
                 <div class="text-secondary-color text-tips text-start text-family margin-top-bottom-little">
-                    {{fileData.metadata.group}}</div>
+                    {{ fileData.metadata.group }}</div>
                 <div v-for="item in data.detailList" :key="item.key">
                     <detail-list-component :keyName="item.key" :value="item.value"></detail-list-component>
                 </div>
@@ -135,15 +134,14 @@ function closeDetail() {
 
                 <detail-table-component :tableData="tableData"></detail-table-component>
             </div>
-        </div>
+        </el-card>
     </div>
 </template>
 
 <style lang="scss" scoped>
 .drawer-container {
-    width: calc(100% - 20px);
-    height: calc(100% - 20px);
-    margin: 10px;
+    width: 100%;
+    height: 100%;
 
     .detail-title {
         width: 100%;

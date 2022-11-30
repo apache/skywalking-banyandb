@@ -99,43 +99,50 @@ function openDesign() { }
 </script>
 
 <template>
-    <div class="flex second-nav-contain justify-start align-item-center">
-        <div class="flex justify-start align-item-center" style="width: 10%">
+    <div class="flex second-nav-contain align-item-center justify-center">
+        <div style="width: 130px;">
             <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
                 <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
                 </el-option>
             </el-select>
         </div>
 
-        <div class="flex justify-between align-item-center" style="width: 89%; margin-left: 1%;" >
-            <div class="flex justify-start align-item-center" style="width: 35%">
-                <el-date-picker v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
-                    range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
-                </el-date-picker>
+        <div class="flex justify-between align-item-center" style="width: calc(100% - 130px);">
+            <div class="flex align-item-center" style="width: 50%;">
+                <div class="flex justify-start align-item-center set-margin-left" style="width: 270px;">
+                    <el-date-picker v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
+                        range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
+                    </el-date-picker>
+                </div>
+                <div class="flex justify-start align-item-center set-margin-left" style="width: 270px;">
+                    <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
+                        <template #append>
+                            <el-button :icon="Search" />
+                        </template>
+                    </el-input>
+                </div>
             </div>
-
-            <div class="flex justify-start align-item-center" style="width: 35%">
-                <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
-                    <template #append>
-                        <el-button :icon="Search" />
-                    </template>
-                </el-input>
-            </div>
-            <div class="flex justify-start align-item-center" style="width: 8%">
-                <el-button class="nav-button" @click="refresh" icon="el-icon-refresh-right" disabled>Refresh</el-button>
-            </div>
-            <div class="flex justify-start align-item-center" style="width: 8%">
-                <el-button class="nav-button" @click="openDetail">{{ showDrawer ? "Close Detail" : "Open Detail" }}
-                </el-button>
-            </div>
-            <div class="flex justify-start align-item-center" style="width: 8%">
-                <el-button class="nav-button" @click="openDesign" disabled>Open Design</el-button>
+            <div class="flex align-item-center justify-end" style="width:50%;">
+                <div>
+                    <el-button class="nav-button" @click="refresh" disabled>Refresh</el-button>
+                </div>
+                <div class="set-margin-left">
+                    <el-button class="nav-button" @click="openDesign" disabled>Open Design</el-button>
+                </div>
+                <div class="set-margin-left">
+                    <el-button class="nav-button" type="primary" @click="openDetail">
+                        {{ showDrawer ? "Close Detail" : "Open Detail" }}
+                    </el-button>
+                </div>
             </div>
         </div>
     </div>
 </template>
 
 <style lang="scss" scoped>
+.set-margin-left {
+    margin-left: 10px;
+}
 .nav-button {
     width: 100%;
     margin: 0;
@@ -143,7 +150,7 @@ function openDesign() { }
 
 .second-nav-contain {
     width: calc(100% - 20px) !important;
-    height: 50px;
+    height: 30px;
     padding: 0 10px 0 10px;
 
     .search-input {

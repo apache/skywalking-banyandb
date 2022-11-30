@@ -47,17 +47,18 @@ function closeDetail() {
 <template>
     <div class="flex" style="height:100%; width:100%;">
         <div :style="data.showDrawer ? 'width: calc(80% - 2px)' : 'width: calc(100% - 2px)'" style="height: 100%;">
-            <el-card style="max-height: 97.5%;">
-                <div style="width: 100%; height: 40px;">
+            <el-card style="max-height: calc(100% - 30px);">
+                <div style="width: 100%; height: 30px;">
                     <tag-navigation-component></tag-navigation-component>
                 </div>
+                <el-divider border-style="dashed" />
                 <!--top-navigation-component @handleNavigation="handleNavigation"></top-navigation-component-->
-                <second-navigation-component @openDetail="openDetail" :showDrawer="data.showDrawer" style="width: 100%">
+                <second-navigation-component @openDetail="openDetail" :showDrawer="data.showDrawer" style="width: 100%; margin-top: 10px;">
                 </second-navigation-component>
                 <data-table-component @drawerRight="drawerRight" class="margin-all-little"></data-table-component>
             </el-card>
         </div>
-        <div class="bd-top bd-left drawer-right" v-if="data.showDrawer">
+        <div class="bd-left drawer-right" v-if="data.showDrawer">
             <drawer-right-component :fileData="data.fileData" @closeDetail="closeDetail"></drawer-right-component>
         </div>
     </div>
@@ -65,7 +66,7 @@ function closeDetail() {
 
 <style lang="scss">
 .el-card {
-    margin: 10px;
+    margin: 15px;
     padding: 0;
     height: 100%;
 }
@@ -78,7 +79,7 @@ function closeDetail() {
     -webkit-animation: rtl-drawer-in .3s 1ms;
     animation: rtl-drawer-in .3s 1ms;
     width: 20%;
-    height: calc(100% - 5px);
+    height: 100%;
     background-color: var(--color-background);
 }
 </style>
