@@ -51,8 +51,8 @@ func init() {
 	)
 }
 
-func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *streamv1.ElementValue) error {
-	tp := value.GetTimestamp().AsTime()
+func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *streamv1.ElementValue) error {
+	tp := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(tp); err != nil {
 		return errors.WithMessage(err, "writing stream")
 	}
@@ -68,7 +68,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 	if err != nil {
 		return err
 	}
-	series, err := shard.Series().GetByHashKey(seriesHashKey)
+	series, err := shard.Series().Get(entity, entityValues)
 	if err != nil {
 		return err
 	}
@@ -101,15 +101,17 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		}
 		_, errWrite = writer.Write()
 		writtenBytes.WithLabelValues(s.group).Add(float64(size))
-		s.l.Debug().
-			Time("ts", t).
-			Int("ts_nano", t.Nanosecond()).
-			Interface("data", value).
-			Uint64("series_id", uint64(series.ID())).
-			Uint64("item_id", uint64(writer.ItemID().ID)).
-			Int("shard_id", int(shardID)).
-			Str("stream", sm.Metadata.GetName()).
-			Msg("write stream")
+		if e := s.l.Debug(); e.Enabled() {
+			e.Time("ts", t).
+				Int("ts_nano", t.Nanosecond()).
+				RawJSON("data", logger.Proto(value)).
+				Uint64("series_id", uint64(series.ID())).
+				Stringer("series", series).
+				Uint64("item_id", uint64(writer.ItemID().ID)).
+				Int("shard_id", int(shardID)).
+				Str("stream", sm.Metadata.GetName()).
+				Msg("write stream")
+		}
 		return writer, errWrite
 	}
 	writer, err := writeFn()
@@ -122,7 +124,7 @@ func (s *stream) write(shardID common.ShardID, seriesHashKey []byte, value *stre
 		LocalWriter: writer,
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
-			Timestamp:   value.GetTimestamp().AsTime(),
+			Timestamp:   t,
 		},
 		BlockCloser: wp,
 	}
@@ -154,9 +156,10 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find stream definition")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetElement())
+	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
+		tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())
 	if err != nil {
-		w.l.Error().Err(err).Msg("fail to write entity")
+		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
 	}
 	return
 }

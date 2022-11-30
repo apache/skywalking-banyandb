@@ -56,16 +56,16 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.entityRepo.log = log
 }
 
-func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (tsdb.Entity, common.ShardID, error) {
+func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
 	shardNum, existed := ds.shardRepo.shardNum(getID(&commonv1.Metadata{
 		Name: metadata.Group,
 	}))
 	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the shard num by: %v", metadata)
+		return nil, nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the shard num by: %v", metadata)
 	}
 	locator, existed := ds.entityRepo.getLocator(getID(metadata))
 	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the locator by: %v", metadata)
+		return nil, nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the locator by: %v", metadata)
 	}
 	return locator.Locate(metadata.Name, tagFamilies, shardNum)
 }
@@ -88,10 +88,13 @@ func (s *shardRepo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	s.setShardNum(e)
-	s.log.Debug().
-		Str("action", databasev1.Action_name[int32(e.Action)]).
-		Uint64("shardID", e.Shard.Id).
-		Msg("received a shard e")
+
+	if le := s.log.Debug(); le.Enabled() {
+		le.
+			Str("action", databasev1.Action_name[int32(e.Action)]).
+			Uint64("shardID", e.Shard.Id).
+			Msg("received a shard e")
+	}
 	return
 }
 
@@ -136,10 +139,12 @@ func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	id := getID(e.GetSubject())
-	s.log.Debug().
-		Str("action", databasev1.Action_name[int32(e.Action)]).
-		Interface("subject", id).
-		Msg("received an entity event")
+	if le := s.log.Debug(); le.Enabled() {
+		le.
+			Str("action", databasev1.Action_name[int32(e.Action)]).
+			Interface("subject", id).
+			Msg("received an entity event")
+	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	switch e.Action {

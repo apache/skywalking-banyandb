@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -38,7 +39,7 @@ import (
 
 var ErrMalformedElement = errors.New("element is malformed")
 
-func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *measurev1.DataPointValue) error {
+func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue) error {
 	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
@@ -55,7 +56,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 	if err != nil {
 		return err
 	}
-	series, err := shard.Series().GetByHashKey(seriesHashKey)
+	series, err := shard.Series().Get(entity, entityValues)
 	if err != nil {
 		return err
 	}
@@ -85,6 +86,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			fieldSpec := sm.GetFields()[fi]
 			fType, isNull := pbv1.FieldValueTypeConv(fieldValue)
 			if isNull {
+				s.l.Warn().RawJSON("written", logger.Proto(value)).Msg("ignore null field")
 				continue
 			}
 			if fType != fieldSpec.GetFieldType() {
@@ -92,6 +94,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			}
 			data := encodeFieldValue(fieldValue)
 			if data == nil {
+				s.l.Warn().RawJSON("written", logger.Proto(value)).Msg("ignore unknown field")
 				continue
 			}
 			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), pbv1.EncoderFieldFlag(fieldSpec, s.interval)), data)
@@ -101,14 +104,16 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
-		s.l.Debug().
-			Time("ts", t).
-			Int("ts_nano", t.Nanosecond()).
-			Interface("data", value).
-			Uint64("series_id", uint64(series.ID())).
-			Uint64("item_id", uint64(writer.ItemID().ID)).
-			Int("shard_id", int(shardID)).
-			Msg("write measure")
+		if e := s.l.Named(md.Group, md.Name).Debug(); e.Enabled() {
+			e.Time("ts", t).
+				Int("ts_nano", t.Nanosecond()).
+				RawJSON("data", logger.Proto(value)).
+				Uint64("series_id", uint64(series.ID())).
+				Stringer("series", series).
+				Uint64("item_id", uint64(writer.ItemID().ID)).
+				Int("shard_id", int(shardID)).
+				Msg("write measure")
+		}
 		return writer, errWrite
 	}
 	writer, err := writeFn()
@@ -120,7 +125,7 @@ func (s *measure) write(shardID common.ShardID, seriesHashKey []byte, value *mea
 		LocalWriter: writer,
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
-			Timestamp:   value.GetTimestamp().AsTime(),
+			Timestamp:   t,
 		},
 		BlockCloser: wp,
 	}
@@ -156,9 +161,10 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find measure definition")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.GetSeriesHash(), writeEvent.GetRequest().GetDataPoint())
+	err := stm.write(writeEvent.GetRequest().GetMetadata(), common.ShardID(writeEvent.GetShardId()),
+		writeEvent.SeriesHash, tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetDataPoint())
 	if err != nil {
-		w.l.Error().Err(err).Msg("fail to write entity")
+		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
 	}
 	return
 }

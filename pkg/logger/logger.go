@@ -34,24 +34,45 @@ type contextKey struct{}
 
 // Logging is the config info
 type Logging struct {
-	Env   string
-	Level string
+	Env     string
+	Level   string
+	Modules []string
+	Levels  []string
 }
 
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
 type Logger struct {
 	module string
 	*zerolog.Logger
+	modules map[string]zerolog.Level
 }
 
 func (l Logger) Module() string {
 	return l.module
 }
 
-func (l *Logger) Named(name string) *Logger {
-	module := strings.Join([]string{l.module, name}, ".")
-	subLogger := root.l.With().Str("module", module).Logger()
-	return &Logger{module: module, Logger: &subLogger}
+func (l *Logger) Named(name ...string) *Logger {
+	var mm []string
+	if l.module == rootName {
+		mm = name
+	} else {
+		mm = append([]string{l.module}, name...)
+	}
+	var moduleBuilder strings.Builder
+	var module string
+	level := l.GetLevel()
+	for i, m := range mm {
+		if i != 0 {
+			moduleBuilder.WriteString(".")
+		}
+		moduleBuilder.WriteString(strings.ToUpper(m))
+		module = moduleBuilder.String()
+		if ml, ok := l.modules[module]; ok {
+			level = ml
+		}
+	}
+	subLogger := root.l.With().Str("module", moduleBuilder.String()).Logger().Level(level)
+	return &Logger{module: module, modules: l.modules, Logger: &subLogger}
 }
 
 // Loggable indicates the implement supports logging
@@ -60,12 +81,18 @@ type Loggable interface {
 }
 
 func Fetch(ctx context.Context, name string) *Logger {
+	return FetchOrDefault(ctx, name, nil)
+}
+
+func FetchOrDefault(ctx context.Context, name string, defaultLogger *Logger) *Logger {
 	parentLogger := ctx.Value(ContextKey)
-	if parentLogger == nil {
+	if parentLogger != nil {
+		if pl, ok := parentLogger.(*Logger); ok {
+			return pl.Named(name)
+		}
+	}
+	if defaultLogger == nil {
 		return GetLogger(name)
 	}
-	if pl, ok := parentLogger.(*Logger); ok {
-		return pl.Named(name)
-	}
-	return GetLogger(name)
+	return defaultLogger
 }

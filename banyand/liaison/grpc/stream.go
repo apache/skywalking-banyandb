@@ -32,6 +32,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -63,22 +64,31 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			}
 			continue
 		}
-		entity, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
-			sampled.Error().Err(err).Msg("failed to navigate to the write target")
+			sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
 			continue
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
+		iwr := &streamv1.InternalWriteRequest{
 			Request:    writeEntity,
 			ShardId:    uint32(shardID),
 			SeriesHash: tsdb.HashEntity(entity),
+		}
+		if s.log.Debug().Enabled() {
+			iwr.EntityValues = tagValues.Encode()
+		}
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
+			Request:      writeEntity,
+			ShardId:      uint32(shardID),
+			SeriesHash:   tsdb.HashEntity(entity),
+			EntityValues: tagValues.Encode(),
 		})
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
-			sampled.Error().Err(errWritePub).Msg("failed to send a message")
+			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
 			if errResp := reply(); errResp != nil {
 				return errResp
 			}
@@ -90,17 +100,22 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	}
 }
 
-func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
-	timeRange := entityCriteria.GetTimeRange()
+var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
+
+func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
+	timeRange := req.GetTimeRange()
 	if timeRange == nil {
-		entityCriteria.TimeRange = timestamp.DefaultTimeRange
+		req.TimeRange = timestamp.DefaultTimeRange
 	}
-	if err := timestamp.CheckTimeRange(entityCriteria.GetTimeRange()); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", entityCriteria.GetTimeRange(), err)
+	if err := timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), entityCriteria)
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
+		if errQuery == io.EOF {
+			return emptyStreamQueryResponse, nil
+		}
 		return nil, errQuery
 	}
 	msg, errFeat := feat.Get()
@@ -114,5 +129,5 @@ func (s *streamService) Query(_ context.Context, entityCriteria *streamv1.QueryR
 	case common.Error:
 		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
 	}
-	return nil, ErrQueryMsg
+	return nil, nil
 }

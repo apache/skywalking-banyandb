@@ -158,7 +158,9 @@ func (sr *schemaRepo) Watcher() {
 					if !more {
 						return
 					}
-					sr.l.Debug().Interface("event", evt).Msg("received an event")
+					if e := sr.l.Debug(); e.Enabled() {
+						e.Interface("event", evt).Msg("received an event")
+					}
 					for i := 0; i < 10; i++ {
 						var err error
 						switch evt.Typ {

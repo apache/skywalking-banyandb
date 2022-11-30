@@ -164,10 +164,10 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 	for it.Seek(seekKey); it.Valid(); it.Next() {
 		k := y.ParseKey(it.Key())
 		if len(k) < len(seekKey) {
-			break
+			continue
 		}
 		if !bytes.Equal(prefix, k[0:len(prefix)]) {
-			break
+			continue
 		}
 		err := f(b.shardID, k, func() ([]byte, error) {
 			return y.Copy(it.Value().Value), nil

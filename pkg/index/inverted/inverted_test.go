@@ -35,11 +35,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var serviceName = index.FieldKey{
-	// http_method
-	IndexRuleID: 6,
-	Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
-}
+var (
+	serviceName = index.FieldKey{
+		// http_method
+		IndexRuleID: 6,
+		SeriesID:    common.SeriesID(0),
+		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+	}
+	serviceName1 = index.FieldKey{
+		// http_method
+		IndexRuleID: 6,
+		SeriesID:    common.SeriesID(1),
+		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+	}
+)
 
 func TestStore_Match(t *testing.T) {
 	tester := assert.New(t)
@@ -64,6 +73,19 @@ func TestStore_Match(t *testing.T) {
 	tester.NoError(s.Write([]index.Field{{
 		Key:  serviceName,
 		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
+	}}, common.ItemID(3)))
+	s.(*store).flush()
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.1"),
+	}}, common.ItemID(1)))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.2"),
+	}}, common.ItemID(2)))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.3"),
 	}}, common.ItemID(3)))
 	s.(*store).flush()
 

@@ -37,7 +37,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
@@ -134,10 +133,11 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
 	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
-	t.l.Debug().
-		Str("TopN", t.topNSchema.GetMetadata().GetName()).
-		Int("rankNums", len(tuples)).
-		Msg("Write a tuple")
+	if e := t.l.Debug(); e.Enabled() {
+		e.Str("TopN", t.topNSchema.GetMetadata().GetName()).
+			Int("rankNums", len(tuples)).
+			Msg("Write a tuple")
+	}
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
@@ -154,7 +154,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 			return errors.New("fail to extract tag values from topN result")
 		}
 	}
-	entity, shardID, err := t.locate(tagValues, rankNum)
+	entity, entityValues, shardID, err := t.locate(tagValues, rankNum)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	if err != nil {
 		return err
 	}
-	series, err := shard.Series().GetByHashKey(tsdb.HashEntity(entity))
+	series, err := shard.Series().Get(tsdb.HashEntity(entity), entityValues)
 	if err != nil {
 		return err
 	}
@@ -221,13 +221,15 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
-		t.l.Debug().
-			Time("ts", eventTime).
-			Int("ts_nano", eventTime.Nanosecond()).
-			Uint64("series_id", uint64(series.ID())).
-			Uint64("item_id", uint64(writer.ItemID().ID)).
-			Int("shard_id", int(shardID)).
-			Msg("write measure")
+		if e := t.l.Debug(); e.Enabled() {
+			e.Time("ts", eventTime).
+				Int("ts_nano", eventTime.Nanosecond()).
+				Uint64("series_id", uint64(series.ID())).
+				Stringer("series", series).
+				Uint64("item_id", uint64(writer.ItemID().ID)).
+				Int("shard_id", int(shardID)).
+				Msg("write measure")
+		}
 		return writer, errWrite
 	}
 	_, err = writeFn()
@@ -242,33 +244,33 @@ func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) tim
 	return time.UnixMilli(eventTimeMillis - eventTimeMillis%t.interval.Milliseconds())
 }
 
-func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, common.ShardID, error) {
+func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
 	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
-		return nil, 0, errors.New("no enough tag values for the entity")
+		return nil, nil, 0, errors.New("no enough tag values for the entity")
 	}
 	// entity prefix
 	// 1) source measure Name + topN aggregation Name
 	// 2) sort direction
 	// 3) rank number
-	entity := make(tsdb.Entity, 1+1+1+len(t.topNSchema.GetGroupByTagNames()))
+	entity := make(tsdb.EntityValues, 1+1+1+len(t.topNSchema.GetGroupByTagNames()))
 	// entity prefix
-	entity[0] = []byte(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
+	entity[0] = tsdb.StrValue(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
-	entity[1] = convert.Int64ToBytes(int64(t.sortDirection.Number()))
-	entity[2] = convert.Int64ToBytes(int64(rankNum))
+	entity[1] = tsdb.Int64Value(int64(t.sortDirection.Number()))
+	entity[2] = tsdb.Int64Value(int64(rankNum))
 	// measureID as sharding key
 	for idx, tagVal := range tagValues {
-		var innerErr error
-		entity[idx+3], innerErr = pbv1.MarshalIndexFieldValue(tagVal)
-		if innerErr != nil {
-			return nil, 0, innerErr
-		}
+		entity[idx+3] = tagVal
 	}
-	id, err := partition.ShardID(entity.Marshal(), t.shardNum)
+	e, err := entity.ToEntity()
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return entity, common.ShardID(id), nil
+	id, err := partition.ShardID(e.Marshal(), t.shardNum)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return e, entity, common.ShardID(id), nil
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {

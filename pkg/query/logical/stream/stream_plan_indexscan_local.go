@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -28,6 +29,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -43,6 +45,7 @@ type localIndexScan struct {
 	projectionTagRefs [][]*logical.TagRef
 	entities          []tsdb.Entity
 	filter            index.Filter
+	l                 *logger.Logger
 }
 
 func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
@@ -53,7 +56,11 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 			return nil, err
 		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(tsdb.NewPath(e))
+			sl, err := shard.Series().List(context.WithValue(
+				context.Background(),
+				logger.ContextKey,
+				i.l,
+			), tsdb.NewPath(e))
 			if err != nil {
 				return nil, err
 			}
@@ -78,7 +85,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 			b.Filter(i.filter)
 		})
 	}
-	iters, closers, innerErr := logical.ExecuteForShard(seriesList, i.timeRange, builders...)
+	iters, closers, innerErr := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
 	if len(closers) > 0 {
 		defer func(closers []io.Closer) {
 			for _, c := range closers {

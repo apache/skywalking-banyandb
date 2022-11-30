@@ -42,7 +42,9 @@ func HTTPHealthCheck(addr string) func() error {
 			time.Sleep(1 * time.Second)
 			return ErrServiceUnhealthy
 		}
-		l.Debug().Stringer("response", resp).Msg("connected")
+		if e := l.Debug(); e.Enabled() {
+			e.Stringer("response", resp).Msg("connected")
+		}
 		time.Sleep(500 * time.Millisecond)
 		return nil
 	}

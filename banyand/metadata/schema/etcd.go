@@ -144,8 +144,9 @@ func (e *etcdSchemaRegistry) StoppingNotify() <-chan struct{} {
 }
 
 func (e *etcdSchemaRegistry) Close() error {
+	_ = e.client.Close()
 	e.server.Close()
-	return e.client.Close()
+	return nil
 }
 
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {

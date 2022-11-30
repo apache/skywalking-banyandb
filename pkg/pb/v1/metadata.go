@@ -18,15 +18,9 @@
 package v1
 
 import (
-	"errors"
-
-	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
-
-var ErrInvalidUnit = errors.New("invalid interval rule's unit")
 
 func FindTagByName(families []*database_v1.TagFamilySpec, tagName string) (int, int, *database_v1.TagSpec) {
 	for fi, family := range families {
@@ -81,17 +75,4 @@ func ParseMaxModRevision(indexRules []*database_v1.IndexRule) (maxRevisionForIdx
 		}
 	}
 	return
-}
-
-func ToIntervalRule(ir *common_v1.IntervalRule) (result tsdb.IntervalRule, err error) {
-	switch ir.Unit {
-	case common_v1.IntervalRule_UNIT_DAY:
-		result.Unit = tsdb.DAY
-	case common_v1.IntervalRule_UNIT_HOUR:
-		result.Unit = tsdb.HOUR
-	default:
-		return result, ErrInvalidUnit
-	}
-	result.Num = int(ir.Num)
-	return result, err
 }

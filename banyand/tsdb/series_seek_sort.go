@@ -144,12 +144,14 @@ func (s *seekerBuilder) buildSeriesByTime() ([]Iterator, error) {
 			}
 		}
 	}
-	s.seriesSpan.l.Debug().
-		Str("order", modelv1.Sort_name[int32(s.order)]).
-		Times("blocks", bTimes).
-		Uint64("series_id", uint64(s.seriesSpan.seriesID)).
-		Int("shard_id", int(s.seriesSpan.shardID)).
-		Msg("seek series by time")
+	if e := s.seriesSpan.l.Debug(); e.Enabled() {
+		e.Str("order", modelv1.Sort_name[int32(s.order)]).
+			Times("blocks", bTimes).
+			Uint64("series_id", uint64(s.seriesSpan.seriesID)).
+			Str("series", s.seriesSpan.series).
+			Int("shard_id", int(s.seriesSpan.shardID)).
+			Msg("seek series by time")
+	}
 	return []Iterator{newMergedIterator(delegated)}, nil
 }
 
@@ -172,7 +174,6 @@ func (s *searcherIterator) Next() bool {
 			v := s.fieldIterator.Val()
 			s.cur = v.Value.Iterator()
 			s.curKey = v.Term
-			s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Hex("term", s.curKey).Msg("got a new field")
 		} else {
 			return false
 		}
@@ -181,11 +182,12 @@ func (s *searcherIterator) Next() bool {
 
 		for _, filter := range s.filters {
 			if !filter(s.Val()) {
-				s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("ignore the item")
 				return s.Next()
 			}
 		}
-		s.l.Trace().Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
+		if e := s.l.Debug(); e.Enabled() {
+			e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
+		}
 		return true
 	}
 	s.cur = nil

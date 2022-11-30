@@ -18,6 +18,8 @@
 package tsdb
 
 import (
+	"context"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 )
@@ -79,18 +81,14 @@ func (sdd *scopedSeriesDatabase) Close() error {
 	return nil
 }
 
-func (sdd *scopedSeriesDatabase) GetByHashKey(key []byte) (Series, error) {
-	return sdd.delegated.GetByHashKey(key)
+func (sdd *scopedSeriesDatabase) Get(key []byte, entityValues EntityValues) (Series, error) {
+	return sdd.delegated.Get(key, entityValues)
 }
 
 func (sdd *scopedSeriesDatabase) GetByID(id common.SeriesID) (Series, error) {
 	return sdd.delegated.GetByID(id)
 }
 
-func (sdd *scopedSeriesDatabase) Get(entity Entity) (Series, error) {
-	return sdd.delegated.Get(entity.Prepend(sdd.scope))
-}
-
-func (sdd *scopedSeriesDatabase) List(path Path) (SeriesList, error) {
-	return sdd.delegated.List(path.Prepend(sdd.scope))
+func (sdd *scopedSeriesDatabase) List(ctx context.Context, path Path) (SeriesList, error) {
+	return sdd.delegated.List(ctx, path.Prepend(sdd.scope))
 }

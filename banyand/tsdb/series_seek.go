@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3/y"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -143,49 +144,45 @@ func (i *item) PrintContext(l *logger.Logger, family []byte, n int) {
 	defer pre.Close()
 	defer next.Close()
 	j := 0
-	currentTS := uint64(i.itemID)
-
-	each := func(iter kv.Iterator) {
+	each := func(iter kv.Iterator, logEvent *zerolog.Event) *zerolog.Event {
 		if !bytes.Equal(key, iter.Key()) {
-			return
+			return logEvent
 		}
 		j++
 
-		ts := y.ParseTs(iter.RawKey())
-
-		logEvent := l.Info().Int("i", j).
+		logEvent = logEvent.Int("i", j).
 			Time("ts", time.Unix(0, int64(y.ParseTs(iter.RawKey()))))
+		locArr := zerolog.Arr()
+		rangeArr := zerolog.Arr()
+		decodedNumArr := zerolog.Arr()
 		if err := decoder.Decode(family, iter.Val()); err != nil {
-			logEvent = logEvent.Str("loc", "mem")
-			if ts == currentTS {
-				logEvent = logEvent.Bool("at", true)
-			}
+			locArr.Str("mem")
 		} else {
+			locArr.Str("table")
 			start, end := decoder.Range()
-			logEvent = logEvent.Time("start", time.Unix(0, int64(start))).
-				Time("end", time.Unix(0, int64(end))).Int("num", decoder.Len()).Str("loc", "table")
-			if start <= currentTS && currentTS <= end {
-				if dd, err := decoder.Get(currentTS); err == nil && len(dd) > 0 {
-					logEvent = logEvent.Bool("at", true)
-				}
-			}
+			rangeArr.Time(time.Unix(0, int64(start)))
+			rangeArr.Time(time.Unix(0, int64(end)))
+			decodedNumArr.Int(decoder.Len())
 		}
-		logEvent.Send()
+		logEvent = logEvent.Array("loc", locArr).Array("range", rangeArr).Array("decodedNum", decodedNumArr)
+		return logEvent
 	}
 
 	s := hex.EncodeToString(key)
 	if len(s) > 7 {
 		s = s[:7]
 	}
-	l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID))).Msg("print previous lines")
+	event := l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID)))
 	for ; pre.Valid() && j < n; pre.Next() {
-		each(pre)
+		event = each(pre, event)
 	}
+	event.Msg("print previous lines")
 	j = 0
-	l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID))).Msg("print next lines")
+	event = l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID)))
 	for ; next.Valid() && j < n; next.Next() {
-		each(next)
+		event = each(next, event)
 	}
+	event.Msg("print next lines")
 }
 
 func (i *item) Val() ([]byte, error) {
