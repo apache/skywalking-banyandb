@@ -52,7 +52,7 @@ func init() {
 }
 
 func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *streamv1.ElementValue) error {
-	tp := value.GetTimestamp().AsTime()
+	tp := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(tp); err != nil {
 		return errors.WithMessage(err, "writing stream")
 	}
@@ -124,7 +124,7 @@ func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.
 		LocalWriter: writer,
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
-			Timestamp:   value.GetTimestamp().AsTime(),
+			Timestamp:   t,
 		},
 		BlockCloser: wp,
 	}

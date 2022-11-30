@@ -125,7 +125,7 @@ func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []
 		LocalWriter: writer,
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
-			Timestamp:   value.GetTimestamp().AsTime(),
+			Timestamp:   t,
 		},
 		BlockCloser: wp,
 	}
