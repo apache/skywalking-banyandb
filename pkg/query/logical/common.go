@@ -157,7 +157,7 @@ func NewTag(family, name string) *Tag {
 	}
 }
 
-// NewTags create an array of Tag within a TagFamily
+// NewTags create an array of Tag within a TagFamily.
 func NewTags(family string, tagNames ...string) []*Tag {
 	tags := make([]*Tag, len(tagNames))
 	for i, name := range tagNames {
@@ -166,7 +166,7 @@ func NewTags(family string, tagNames ...string) []*Tag {
 	return tags
 }
 
-// GetCompoundName is only used for error message
+// GetCompoundName is only used for error message.
 func (t *Tag) GetCompoundName() string {
 	return t.familyName + ":" + t.name
 }

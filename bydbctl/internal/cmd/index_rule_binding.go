@@ -24,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -46,12 +46,12 @@ func newIndexRuleBindingCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.IndexRuleBinding)
+					s := new(databasev1.IndexRuleBinding)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.IndexRuleBindingRegistryServiceCreateRequest{
+					cr := &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
 						IndexRuleBinding: s,
 					}
 					b, err := protojson.Marshal(cr)
@@ -75,12 +75,12 @@ func newIndexRuleBindingCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.IndexRuleBinding)
+					s := new(databasev1.IndexRuleBinding)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.IndexRuleBindingRegistryServiceUpdateRequest{
+					cr := &databasev1.IndexRuleBindingRegistryServiceUpdateRequest{
 						IndexRuleBinding: s,
 					}
 					b, err := protojson.Marshal(cr)

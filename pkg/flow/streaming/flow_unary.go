@@ -46,16 +46,16 @@ func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
 var _ flow.Operator = (*unaryOperator)(nil)
 
 type unaryOperator struct {
+	op  flow.UnaryOperation[any]
+	in  chan flow.StreamRecord
+	out chan flow.StreamRecord
 	flow.ComponentState
-	op          flow.UnaryOperation[any]
-	in          chan flow.StreamRecord
-	out         chan flow.StreamRecord
 	parallelism uint
 }
 
 func (u *unaryOperator) Setup(ctx context.Context) error {
 	// run a background job as a consumer
-	go u.run()
+	go u.run(ctx)
 	return nil
 }
 
@@ -87,13 +87,13 @@ func (u *unaryOperator) Out() <-chan flow.StreamRecord {
 	return u.out
 }
 
-func (u *unaryOperator) run() {
+func (u *unaryOperator) run(ctx context.Context) {
 	semaphore := make(chan struct{}, u.parallelism)
 	for elem := range u.in {
 		semaphore <- struct{}{}
 		go func(r flow.StreamRecord) {
 			defer func() { <-semaphore }()
-			result := u.op.Apply(context.TODO(), r.Data())
+			result := u.op.Apply(ctx, r.Data())
 			switch val := result.(type) {
 			case nil:
 				return

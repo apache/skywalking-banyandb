@@ -88,11 +88,11 @@ type SeriesSpan interface {
 var _ Series = (*series)(nil)
 
 type series struct {
-	id        common.SeriesID
-	idLiteral string
 	blockDB   blockDatabase
-	shardID   common.ShardID
 	l         *logger.Logger
+	idLiteral string
+	id        common.SeriesID
+	shardID   common.ShardID
 }
 
 func (s *series) Get(ctx context.Context, id GlobalItemID) (Item, io.Closer, error) {
@@ -134,7 +134,7 @@ func (s *series) Span(ctx context.Context, timeRange timestamp.TimeRange) (Serie
 			Str("series", s.idLiteral).
 			Msg("select series span")
 	}
-	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, l), timeRange, blocks,
+	return newSeriesSpan(context.WithValue(ctx, logger.ContextKey, l), timeRange, blocks,
 		s.id, s.idLiteral, s.shardID), nil
 }
 
@@ -151,7 +151,7 @@ func (s *series) Create(ctx context.Context, t time.Time) (SeriesSpan, error) {
 				Str("series", s.idLiteral).
 				Msg("load a series span")
 		}
-		return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks,
+		return newSeriesSpan(context.WithValue(ctx, logger.ContextKey, s.l), tr, blocks,
 			s.id, s.idLiteral, s.shardID), nil
 	}
 	b, err := s.blockDB.create(ctx, t)
@@ -165,7 +165,7 @@ func (s *series) Create(ctx context.Context, t time.Time) (SeriesSpan, error) {
 			Str("series", s.idLiteral).
 			Msg("create a series span")
 	}
-	return newSeriesSpan(context.WithValue(context.Background(), logger.ContextKey, s.l), tr, blocks,
+	return newSeriesSpan(context.WithValue(ctx, logger.ContextKey, s.l), tr, blocks,
 		s.id, s.idLiteral, s.shardID), nil
 }
 
@@ -188,12 +188,12 @@ func newSeries(ctx context.Context, id common.SeriesID, idLiteral string, blockD
 var _ SeriesSpan = (*seriesSpan)(nil)
 
 type seriesSpan struct {
+	l         *logger.Logger
+	timeRange timestamp.TimeRange
+	series    string
 	blocks    []BlockDelegate
 	seriesID  common.SeriesID
-	series    string
 	shardID   common.ShardID
-	timeRange timestamp.TimeRange
-	l         *logger.Logger
 }
 
 func (s *seriesSpan) Close() (err error) {

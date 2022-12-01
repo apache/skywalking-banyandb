@@ -31,7 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// IndexFilter provides methods to find a specific index related objects and vice versa
+// IndexFilter provides methods to find a specific index related objects and vice versa.
 type IndexFilter interface {
 	// IndexRules fetches v1.IndexRule by subject defined in IndexRuleBinding
 	IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error)
@@ -171,7 +171,6 @@ func (s *service) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([
 			continue
 		}
 		result = append(result, r)
-
 	}
 	return result, indexRuleErr
 }
@@ -201,7 +200,7 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 
 		switch catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
-			stream, getErr := s.schemaRegistry.GetStream(context.TODO(), &commonv1.Metadata{
+			stream, getErr := s.schemaRegistry.GetStream(ctx, &commonv1.Metadata{
 				Name:  sub.GetName(),
 				Group: indexRule.GetMetadata().GetGroup(),
 			})
@@ -210,7 +209,7 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 			}
 			foundSubjects = append(foundSubjects, stream)
 		case commonv1.Catalog_CATALOG_MEASURE:
-			measure, getErr := s.schemaRegistry.GetMeasure(context.TODO(), &commonv1.Metadata{
+			measure, getErr := s.schemaRegistry.GetMeasure(ctx, &commonv1.Metadata{
 				Name:  sub.GetName(),
 				Group: indexRule.GetMetadata().GetGroup(),
 			})
@@ -218,6 +217,8 @@ func (s *service) Subjects(ctx context.Context, indexRule *databasev1.IndexRule,
 				subjectErr = multierr.Append(subjectErr, getErr)
 			}
 			foundSubjects = append(foundSubjects, measure)
+		default:
+			continue
 		}
 	}
 

@@ -159,6 +159,8 @@ func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
 		s.entitiesMap[id] = en
 	case databasev1.Action_ACTION_DELETE:
 		delete(s.entitiesMap, id)
+	case databasev1.Action_ACTION_UNSPECIFIED:
+		s.log.Warn().RawJSON("event", logger.Proto(e)).Msg("ignored unspecified event")
 	}
 	return
 }

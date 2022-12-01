@@ -61,9 +61,9 @@ type Group interface {
 }
 
 type MetadataEvent struct {
+	Metadata *commonv1.Metadata
 	Typ      EventType
 	Kind     EventKind
-	Metadata *commonv1.Metadata
 }
 
 type ResourceSchema interface {
@@ -105,18 +105,16 @@ type Repository interface {
 var _ Repository = (*schemaRepo)(nil)
 
 type schemaRepo struct {
-	sync.RWMutex
 	metadata         metadata.Repo
 	repo             discovery.ServiceRepo
-	l                *logger.Logger
 	resourceSupplier ResourceSupplier
+	l                *logger.Logger
+	data             map[string]*group
+	workerStopCh     chan struct{}
+	eventCh          chan MetadataEvent
 	shardTopic       bus.Topic
 	entityTopic      bus.Topic
-	data             map[string]*group
-
-	// stop channel for the inner worker
-	workerStopCh chan struct{}
-	eventCh      chan MetadataEvent
+	sync.RWMutex
 }
 
 func NewRepository(
@@ -375,15 +373,15 @@ func (sr *schemaRepo) Close() {
 var _ Group = (*group)(nil)
 
 type group struct {
-	groupSchema      atomic.Pointer[commonv1.Group]
-	l                *logger.Logger
 	resourceSupplier ResourceSupplier
 	repo             discovery.ServiceRepo
 	metadata         metadata.Repo
-	entityTopic      bus.Topic
 	db               atomic.Value
-	mapMutex         sync.RWMutex
+	groupSchema      atomic.Pointer[commonv1.Group]
+	l                *logger.Logger
 	schemaMap        map[string]Resource
+	entityTopic      bus.Topic
+	mapMutex         sync.RWMutex
 }
 
 func newGroup(

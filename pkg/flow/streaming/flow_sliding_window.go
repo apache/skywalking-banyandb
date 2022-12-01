@@ -71,30 +71,17 @@ func (s *windowedFlow) AllowedMaxWindows(windowCnt int) flow.WindowedFlow {
 }
 
 type TumblingTimeWindows struct {
-	// internal state of the sliding time window
-	flow.ComponentState
-	// errorHandler is the error handler and set by the streamingFlow
-	errorHandler func(error)
-	// For TumblingTimeWindows
-	// Unit: Milliseconds
-	windowSize int64
-	// windowCount is the maximum allowed windows kept in the memory
-	windowCount int
-
-	// thread-safe snapshots
-	snapshots *lru.Cache
-
-	currentWatermark int64
-	// guard timerHeap
-	timerMu   sync.Mutex
-	timerHeap *flow.DedupPriorityQueue
-
-	// aggregationFactory is the factory for creating aggregation operator
+	errorHandler       func(error)
+	snapshots          *lru.Cache
+	timerHeap          *flow.DedupPriorityQueue
 	aggregationFactory flow.AggregationOpFactory
-
-	// For api.Operator
-	in  chan flow.StreamRecord
-	out chan flow.StreamRecord
+	in                 chan flow.StreamRecord
+	out                chan flow.StreamRecord
+	flow.ComponentState
+	windowSize       int64
+	windowCount      int
+	currentWatermark int64
+	timerMu          sync.Mutex
 }
 
 func (s *TumblingTimeWindows) In() chan<- flow.StreamRecord {
@@ -223,7 +210,7 @@ func (s *TumblingTimeWindows) receive() {
 // it meets all the following conditions,
 // 1) the max timestamp is before the current watermark
 // 2) the LRU cache is full
-// 3) the LRU cache does not contain the window entry
+// 3) the LRU cache does not contain the window entry.
 func (s *TumblingTimeWindows) isWindowLate(w flow.Window) bool {
 	return w.MaxTimestamp() <= s.currentWatermark && s.snapshots.Len() >= s.windowCount && !s.snapshots.Contains(w)
 }
@@ -259,7 +246,7 @@ func (t timeWindow) MaxTimestamp() int64 {
 	return t.end - 1
 }
 
-// AssignWindows assigns windows according to the given timestamp
+// AssignWindows assigns windows according to the given timestamp.
 func (s *TumblingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
 	if timestamp > math.MinInt64 {
 		start := getWindowStart(timestamp, s.windowSize)
@@ -279,7 +266,7 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 	return timestamp - remainder
 }
 
-// eventTimeTriggerOnElement processes element(s) with EventTimeTrigger
+// eventTimeTriggerOnElement processes element(s) with EventTimeTrigger.
 func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) TriggerResult {
 	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
 		// if watermark is already past the window fire immediately
@@ -290,8 +277,8 @@ func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) TriggerRe
 }
 
 type triggerContext struct {
-	window     timeWindow
 	delegation *TumblingTimeWindows
+	window     timeWindow
 }
 
 func (ctx *triggerContext) GetCurrentWatermark() int64 {

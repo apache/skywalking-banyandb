@@ -63,13 +63,12 @@ type Seeker interface {
 var _ SeekerBuilder = (*seekerBuilder)(nil)
 
 type seekerBuilder struct {
-	seriesSpan *seriesSpan
-
 	predicator          index.Filter
-	order               modelv1.Sort
+	seriesSpan          *seriesSpan
 	indexRuleForSorting *databasev1.IndexRule
-	rangeOptsForSorting index.RangeOpts
 	l                   *logger.Logger
+	rangeOptsForSorting index.RangeOpts
+	order               modelv1.Sort
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
@@ -109,11 +108,11 @@ func newSeeker(series []Iterator) Seeker {
 var _ Item = (*item)(nil)
 
 type item struct {
-	itemID      common.ItemID
 	data        kv.TimeSeriesReader
-	seriesID    common.SeriesID
-	sortedField []byte
 	decoderPool encoding.SeriesDecoderPool
+	sortedField []byte
+	itemID      common.ItemID
+	seriesID    common.SeriesID
 }
 
 func (i *item) Time() uint64 {

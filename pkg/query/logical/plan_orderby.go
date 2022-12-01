@@ -31,8 +31,8 @@ import (
 )
 
 type UnresolvedOrderBy struct {
-	sort                modelv1.Sort
 	targetIndexRuleName string
+	sort                modelv1.Sort
 }
 
 func (u *UnresolvedOrderBy) Analyze(s Schema) (*OrderBy, error) {
@@ -67,13 +67,9 @@ func (u *UnresolvedOrderBy) Analyze(s Schema) (*OrderBy, error) {
 }
 
 type OrderBy struct {
-	// orderByIndex describes the indexRule used to sort the elements/
-	// It can be null since by default we may sort by created-time.
-	Index *databasev1.IndexRule
-	// while orderBySort describes the Sort direction
-	Sort modelv1.Sort
-	// TODO: support multiple tags. Currently only the first member will be used for sorting.
+	Index     *databasev1.IndexRule
 	fieldRefs []*TagRef
+	Sort      modelv1.Sort
 }
 
 func (o *OrderBy) Equal(other interface{}) bool {
@@ -114,7 +110,7 @@ func getRawTagValue(typedPair *modelv1.Tag) ([]byte, error) {
 }
 
 // SortedByIndex is used to test whether the given entities are sorted by the sortDirection
-// The given entities MUST satisfy both the positive check and the negative check for the reversed direction
+// The given entities MUST satisfy both the positive check and the negative check for the reversed direction.
 func SortedByIndex(elements []*streamv1.Element, tagFamilyIdx, tagIdx int, sortDirection modelv1.Sort) bool {
 	if modelv1.Sort_SORT_UNSPECIFIED == sortDirection {
 		sortDirection = modelv1.Sort_SORT_ASC

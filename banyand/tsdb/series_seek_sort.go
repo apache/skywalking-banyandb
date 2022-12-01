@@ -21,6 +21,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -34,7 +35,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var emptyFilters = make([]filterFn, 0)
+var (
+	ErrUnspecifiedIndexType = errors.New("Unspecified index type")
+	emptyFilters            = make([]filterFn, 0)
+)
 
 func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder {
 	s.indexRuleForSorting = indexRule
@@ -84,6 +88,8 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 			inner, err = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
 		case databasev1.IndexRule_TYPE_INVERTED:
 			inner, err = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
+		case databasev1.IndexRule_TYPE_UNSPECIFIED:
+			return nil, errors.WithMessagef(ErrUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
 		}
 		if err != nil {
 			return nil, err
@@ -159,13 +165,13 @@ var _ Iterator = (*searcherIterator)(nil)
 
 type searcherIterator struct {
 	fieldIterator index.FieldIterator
-	curKey        []byte
 	cur           posting.Iterator
 	data          kv.TimeSeriesReader
 	decoderPool   encoding.SeriesDecoderPool
-	seriesID      common.SeriesID
-	filters       []filterFn
 	l             *logger.Logger
+	curKey        []byte
+	filters       []filterFn
+	seriesID      common.SeriesID
 }
 
 func (s *searcherIterator) Next() bool {
@@ -179,7 +185,6 @@ func (s *searcherIterator) Next() bool {
 		}
 	}
 	if s.cur.Next() {
-
 		for _, filter := range s.filters {
 			if !filter(s.Val()) {
 				return s.Next()
@@ -225,8 +230,8 @@ var _ Iterator = (*mergedIterator)(nil)
 
 type mergedIterator struct {
 	curr      Iterator
-	index     int
 	delegated []Iterator
+	index     int
 }
 
 func (m *mergedIterator) Next() bool {

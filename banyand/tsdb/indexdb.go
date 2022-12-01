@@ -52,8 +52,8 @@ type IndexSeekBuilder interface{}
 var _ IndexDatabase = (*indexDB)(nil)
 
 type indexDB struct {
-	shardID common.ShardID
 	segCtrl *segmentController
+	shardID common.ShardID
 }
 
 func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
@@ -72,7 +72,7 @@ func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 			result = append(result, *id)
 			return nil
 		})
-		if err == kv.ErrKeyNotFound {
+		if errors.Is(err, kv.ErrKeyNotFound) {
 			return result, nil
 		}
 	}
@@ -83,20 +83,20 @@ func (i *indexDB) WriterBuilder() IndexWriterBuilder {
 	return newIndexWriterBuilder(i.segCtrl)
 }
 
-func newIndexDatabase(_ context.Context, id common.ShardID, segCtrl *segmentController) (IndexDatabase, error) {
+func newIndexDatabase(_ context.Context, id common.ShardID, segCtrl *segmentController) IndexDatabase {
 	return &indexDB{
 		shardID: id,
 		segCtrl: segCtrl,
-	}, nil
+	}
 }
 
 var _ IndexWriterBuilder = (*indexWriterBuilder)(nil)
 
 type indexWriterBuilder struct {
-	scope        Entry
-	segCtrl      *segmentController
 	ts           time.Time
+	segCtrl      *segmentController
 	globalItemID *GlobalItemID
+	scope        Entry
 }
 
 func (i *indexWriterBuilder) Scope(scope Entry) IndexWriterBuilder {
@@ -115,7 +115,7 @@ func (i *indexWriterBuilder) GlobalItemID(itemID GlobalItemID) IndexWriterBuilde
 }
 
 func (i *indexWriterBuilder) Build() (IndexWriter, error) {
-	seg, err := i.segCtrl.create(i.ts, false)
+	seg, err := i.segCtrl.create(i.ts)
 	if err != nil {
 		return nil, err
 	}
@@ -139,10 +139,10 @@ func newIndexWriterBuilder(segCtrl *segmentController) IndexWriterBuilder {
 var _ IndexWriter = (*indexWriter)(nil)
 
 type indexWriter struct {
-	scope  Entry
-	seg    *segment
 	ts     time.Time
+	seg    *segment
 	itemID *GlobalItemID
+	scope  Entry
 }
 
 func (i *indexWriter) WriteLSMIndex(fields []index.Field) (err error) {

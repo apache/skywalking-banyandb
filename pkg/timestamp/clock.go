@@ -64,7 +64,7 @@ func GetClock(ctx context.Context) (Clock, context.Context) {
 	return c.(Clock), ctx
 }
 
-// SetContext returns a sub context with the passed Clock
+// SetContext returns a sub context with the passed Clock.
 func SetClock(ctx context.Context, clock Clock) context.Context {
 	return context.WithValue(ctx, clockKey, clock)
 }

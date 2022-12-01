@@ -32,7 +32,7 @@ var (
 
 type contextKey struct{}
 
-// Logging is the config info
+// Logging is the config info.
 type Logging struct {
 	Env     string
 	Level   string
@@ -42,9 +42,9 @@ type Logging struct {
 
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
 type Logger struct {
-	module string
 	*zerolog.Logger
 	modules map[string]zerolog.Level
+	module  string
 }
 
 func (l Logger) Module() string {
@@ -75,7 +75,7 @@ func (l *Logger) Named(name ...string) *Logger {
 	return &Logger{module: module, modules: l.modules, Logger: &subLogger}
 }
 
-// Loggable indicates the implement supports logging
+// Loggable indicates the implement supports logging.
 type Loggable interface {
 	SetLogger(*Logger)
 }

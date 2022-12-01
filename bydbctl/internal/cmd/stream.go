@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/viper"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -51,12 +51,12 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Stream)
+					s := new(databasev1.Stream)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.StreamRegistryServiceCreateRequest{
+					cr := &databasev1.StreamRegistryServiceCreateRequest{
 						Stream: s,
 					}
 					b, err := protojson.Marshal(cr)
@@ -80,12 +80,12 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(database_v1.Stream)
+					s := new(databasev1.Stream)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.StreamRegistryServiceUpdateRequest{
+					cr := &databasev1.StreamRegistryServiceUpdateRequest{
 						Stream: s,
 					}
 					b, err := protojson.Marshal(cr)

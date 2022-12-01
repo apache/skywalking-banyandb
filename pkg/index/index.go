@@ -66,8 +66,8 @@ func (f FieldKey) Equal(other FieldKey) bool {
 }
 
 type Field struct {
-	Key  FieldKey
 	Term []byte
+	Key  FieldKey
 }
 
 func (f Field) Marshal() ([]byte, error) {
@@ -145,8 +145,8 @@ func (i *emptyIterator) Close() error {
 }
 
 type PostingValue struct {
-	Term  []byte
 	Value posting.List
+	Term  []byte
 }
 
 type Writer interface {

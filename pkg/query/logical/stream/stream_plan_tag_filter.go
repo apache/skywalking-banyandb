@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -36,12 +37,12 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
 
 type unresolvedTagFilter struct {
-	unresolvedOrderBy *logical.UnresolvedOrderBy
 	startTime         time.Time
 	endTime           time.Time
+	unresolvedOrderBy *logical.UnresolvedOrderBy
 	metadata          *commonv1.Metadata
-	projectionTags    [][]*logical.Tag
 	criteria          *modelv1.Criteria
+	projectionTags    [][]*logical.Tag
 }
 
 func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -57,7 +58,8 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	var err error
 	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity)
 	if err != nil {
-		if ge, ok := err.(*logical.GlobalIndexError); ok {
+		ge := &logical.GlobalIndexError{}
+		if errors.As(err, ge) {
 			ctx.globalConditions = append(ctx.globalConditions, ge.IndexRule, ge.Expr)
 		} else {
 			return nil, err

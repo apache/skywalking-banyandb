@@ -29,9 +29,9 @@ import (
 var _ flow.Source = (*sourceChan)(nil)
 
 type sourceChan struct {
-	flow.ComponentState
 	in  interface{}
 	out chan flow.StreamRecord
+	flow.ComponentState
 }
 
 func (s *sourceChan) Out() <-chan flow.StreamRecord {

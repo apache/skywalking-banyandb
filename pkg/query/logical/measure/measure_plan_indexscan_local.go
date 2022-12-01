@@ -41,13 +41,13 @@ var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 type unresolvedIndexScan struct {
 	startTime         time.Time
 	endTime           time.Time
-	metadata          *commonv1.Metadata
 	filter            index.Filter
+	metadata          *commonv1.Metadata
+	unresolvedOrderBy *logical.UnresolvedOrderBy
 	projectionTags    [][]*logical.Tag
 	projectionFields  []*logical.Field
 	entities          []tsdb.Entity
 	groupByEntity     bool
-	unresolvedOrderBy *logical.UnresolvedOrderBy
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -92,16 +92,16 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 var _ logical.Plan = (*localIndexScan)(nil)
 
 type localIndexScan struct {
+	schema logical.Schema
+	filter index.Filter
 	*logical.OrderBy
-	timeRange            timestamp.TimeRange
-	schema               logical.Schema
 	metadata             *commonv1.Metadata
-	filter               index.Filter
+	l                    *logger.Logger
+	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
 	entities             []tsdb.Entity
 	groupByEntity        bool
-	l                    *logger.Logger
 }
 
 func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
@@ -205,11 +205,10 @@ func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter
 var _ executor.MIterator = (*indexScanIterator)(nil)
 
 type indexScanIterator struct {
-	context transformContext
 	inner   logical.ItemIterator
-
-	current *measurev1.DataPoint
 	err     error
+	current *measurev1.DataPoint
+	context transformContext
 }
 
 func newIndexScanIterator(inner logical.ItemIterator, context transformContext) executor.MIterator {
@@ -245,12 +244,11 @@ func (ism *indexScanIterator) Close() error {
 var _ executor.MIterator = (*seriesIterator)(nil)
 
 type seriesIterator struct {
-	inner   []tsdb.Iterator
-	context transformContext
-
-	index   int
-	current []*measurev1.DataPoint
 	err     error
+	context transformContext
+	inner   []tsdb.Iterator
+	current []*measurev1.DataPoint
+	index   int
 }
 
 func newSeriesMIterator(inner []tsdb.Iterator, context transformContext) executor.MIterator {

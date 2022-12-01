@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package stream_test contains integration test cases of the stream
+// Package stream_test contains integration test cases of the stream.
 package stream_test
 
 import (
@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	// SharedContext is the parallel execution context
+	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
 	verify        = func(innerGm gm.Gomega, args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {

@@ -36,9 +36,9 @@ var serviceName = index.FieldKey{
 func RunServiceName(t *testing.T, store SimpleStore) {
 	tester := assert.New(t)
 	tests := []struct {
+		want    posting.List
 		name    string
 		arg     index.Field
-		want    posting.List
 		wantErr bool
 	}{
 		{

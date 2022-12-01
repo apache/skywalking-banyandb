@@ -39,19 +39,18 @@ const (
 )
 
 type measure struct {
-	name     string
-	group    string
-	shardNum uint32
-	l        *logger.Logger
-	schema   *databasev1.Measure
-	// maxObservedModRevision is the max observed revision of index rules in the spec
-	maxObservedModRevision int64
 	databaseSupplier       tsdb.Supplier
+	l                      *logger.Logger
+	schema                 *databasev1.Measure
+	indexWriter            *index.Writer
+	processorManager       *topNProcessorManager
+	name                   string
+	group                  string
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
-	indexWriter            *index.Writer
+	maxObservedModRevision int64
 	interval               time.Duration
-	processorManager       *topNProcessorManager
+	shardNum               uint32
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {

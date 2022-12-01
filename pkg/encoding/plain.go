@@ -42,8 +42,8 @@ var (
 )
 
 type plainEncoderPoolDelegator struct {
-	name string
 	pool *sync.Pool
+	name string
 	size int
 }
 
@@ -71,8 +71,8 @@ func (b *plainEncoderPoolDelegator) Put(encoder SeriesEncoder) {
 }
 
 type plainDecoderPoolDelegator struct {
-	name string
 	pool *sync.Pool
+	name string
 	size int
 }
 
@@ -105,15 +105,15 @@ var (
 	_              SeriesDecoder = (*plainDecoder)(nil)
 )
 
-// plainEncoder backport to reduced value
+// plainEncoder backport to reduced value.
 type plainEncoder struct {
-	name      string
 	tsBuff    *buffer.Writer
 	valBuff   *buffer.Writer
-	len       uint32
-	num       uint32
+	name      string
 	startTime uint64
 	valueSize int
+	len       uint32
+	num       uint32
 }
 
 func newPlainEncoder() interface{} {
@@ -181,13 +181,13 @@ func (t *plainEncoder) StartTime() uint64 {
 }
 
 const (
-	// TsLen equals ts(uint64) + data_offset(uint32)
-	TsLen = 8 + 4
+	// TSLen equals ts(uint64) + data_offset(uint32).
+	TSLen = 8 + 4
 )
 
 var ErrInvalidValue = errors.New("invalid encoded value")
 
-// plainDecoder decodes encoded time index
+// plainDecoder decodes encoded time index.
 type plainDecoder struct {
 	name      string
 	ts        []byte
@@ -264,7 +264,7 @@ func getVal(buf []byte, offset uint32) ([]byte, error) {
 }
 
 func getTSSlot(data []byte, index int) []byte {
-	return data[index*TsLen : (index+1)*TsLen]
+	return data[index*TSLen : (index+1)*TSLen]
 }
 
 func parseTS(tsSlot []byte) uint64 {

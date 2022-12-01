@@ -100,16 +100,16 @@ func Test_service_RulesBySubject(t *testing.T) {
 				t.Errorf("RulesBySubject() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			is.Equal(getIndexRule(s, tt.want...), got)
+			is.Equal(getIndexRule(ctx, s, tt.want...), got)
 		})
 	}
 }
 
-func getIndexRule(s Service, names ...string) []*databasev1.IndexRule {
+func getIndexRule(ctx context.Context, s Service, names ...string) []*databasev1.IndexRule {
 	ruleRepo := s.IndexRuleRegistry()
 	result := make([]*databasev1.IndexRule, 0, len(names))
 	for _, name := range names {
-		indexRule, _ := ruleRepo.GetIndexRule(context.TODO(), &commonv1.Metadata{
+		indexRule, _ := ruleRepo.GetIndexRule(ctx, &commonv1.Metadata{
 			Group: "default",
 			Name:  name,
 		})

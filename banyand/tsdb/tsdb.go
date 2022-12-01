@@ -85,16 +85,16 @@ type Shard interface {
 var _ Database = (*database)(nil)
 
 type DatabaseOpts struct {
-	Location           string
-	ShardNum           uint32
 	EncodingMethod     EncodingMethod
+	Location           string
 	SegmentInterval    IntervalRule
 	BlockInterval      IntervalRule
 	TTL                IntervalRule
 	BlockMemSize       int64
 	SeriesMemSize      int64
-	EnableGlobalIndex  bool
 	GlobalIndexMemSize int64
+	ShardNum           uint32
+	EnableGlobalIndex  bool
 }
 
 type EncodingMethod struct {
@@ -132,8 +132,8 @@ func readSectionID(data []byte, offset int) (SectionID, int) {
 }
 
 type BlockState struct {
-	ID        BlockID
 	TimeRange timestamp.TimeRange
+	ID        BlockID
 	Closed    bool
 }
 type ShardState struct {
@@ -145,13 +145,12 @@ type ShardState struct {
 type database struct {
 	logger      *logger.Logger
 	location    string
-	shardNum    uint32
+	sLst        []Shard
 	segmentSize IntervalRule
 	blockSize   IntervalRule
 	ttl         IntervalRule
-
-	sLst []Shard
 	sync.Mutex
+	shardNum uint32
 }
 
 func (d *database) Shards() []Shard {
@@ -278,7 +277,6 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 		if err != nil {
 			return nil, errors.WithMessage(err, "load the database failed")
 		}
-
 	}
 	return db, nil
 }

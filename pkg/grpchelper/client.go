@@ -18,6 +18,7 @@ package grpchelper
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"google.golang.org/grpc"
@@ -40,7 +41,7 @@ func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grp
 	defer dialCancel()
 	conn, err := grpc.DialContext(dialCtx, addr, opts...)
 	if err != nil {
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			l.Warn().Str("addr", addr).Dur("timeout", connTimeout).Msg("timeout: failed to connect service")
 		} else {
 			l.Warn().Str("addr", addr).Err(err).Msg("error: failed to connect service")

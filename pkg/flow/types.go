@@ -28,7 +28,7 @@ import (
 type Data []any
 
 // Flow is an abstraction of data flow for
-// both Streaming and Batch
+// both Streaming and Batch.
 type Flow interface {
 	io.Closer
 	// Filter is used to filter data.
@@ -87,8 +87,8 @@ type AggregationOpFactory func() AggregationOp
 // StreamRecord is a container wraps user data and timestamp.
 // It is the underlying transmission medium for the streaming processing.
 type StreamRecord struct {
-	ts   int64
 	data interface{}
+	ts   int64
 }
 
 func NewStreamRecord(data interface{}, ts int64) StreamRecord {

@@ -27,6 +27,7 @@ import (
 )
 
 type (
+	// SeriesID identit fdf.
 	SeriesID uint64
 	ShardID  uint32
 	ItemID   uint64

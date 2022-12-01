@@ -20,6 +20,7 @@ package traffic
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -88,12 +89,12 @@ func SendWrites(ts TestCase) (*z.Closer, error) {
 }
 
 type sender struct {
+	client     measurev1.MeasureService_WriteClient
 	svc        string
 	instance   string
 	succeed    uint64
 	sendFailed uint64
 	revFailed  uint64
-	client     measurev1.MeasureService_WriteClient
 	metricNum  int
 }
 
@@ -171,7 +172,7 @@ func (s *sender) write() {
 			return
 		}
 		_, err = s.client.Recv()
-		if err != nil && err != io.EOF {
+		if errors.Is(err, io.EOF) {
 			l.Error().Str("svc", s.svc).Str("instance", s.instance).Err(err).Msg("receiving failed")
 			s.revFailed++
 			return

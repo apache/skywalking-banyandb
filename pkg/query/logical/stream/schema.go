@@ -44,7 +44,7 @@ func (s *schema) EntityList() []string {
 	return s.common.EntityList
 }
 
-// IndexDefined checks whether the field given is indexed
+// IndexDefined checks whether the field given is indexed.
 func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	return s.common.IndexDefined(tagName)
 }
@@ -69,7 +69,7 @@ func (s *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, erro
 }
 
 // ProjTags creates a projection view from the present streamSchema
-// with a given list of projections
+// with a given list of projections.
 func (s *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 	if len(refs) == 0 {
 		return nil

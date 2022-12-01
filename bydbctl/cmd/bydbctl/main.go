@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main provides main entry for the command-line toolkit, i.e. bydbctl
+// Package main provides main entry for the command-line toolkit, i.e. bydbctl.
 package main
 
 import (

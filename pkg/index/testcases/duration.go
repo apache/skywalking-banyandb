@@ -44,14 +44,14 @@ type SimpleStore interface {
 }
 
 type args struct {
-	fieldKey  index.FieldKey
 	termRange index.RangeOpts
+	fieldKey  index.FieldKey
 	orderType modelv1.Sort
 }
 
 type result struct {
-	key   int
 	items []int
+	key   int
 }
 
 func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
@@ -59,8 +59,8 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 	is := require.New(t)
 	tests := []struct {
 		name string
-		args args
 		want []int
+		args args
 	}{
 		{
 			name: "sort in asc order",

@@ -38,13 +38,12 @@ type Ratio float64
 
 type Strategy struct {
 	optionsErr   error
-	ratio        Ratio
 	ctrl         Controller
 	current      atomic.Value
-	currentRatio uint64
 	logger       *logger.Logger
-
-	closer *run.Closer
+	closer       *run.Closer
+	ratio        Ratio
+	currentRatio uint64
 }
 
 type StrategyOptions func(*Strategy)

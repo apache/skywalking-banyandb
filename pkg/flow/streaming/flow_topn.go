@@ -68,19 +68,13 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 }
 
 type topNAggregator struct {
-	// cacheSize is the maximum number of entries which can be held in the buffer, i.e. treeMap
-	cacheSize int
-	// currentTopNum indicates how many records are tracked.
-	// This should not exceed cacheSize
-	currentTopNum int
-	treeMap       *treemap.Map
-	// sortKeyExtractor is an extractor to fetch sort key from the record
-	// TODO: currently we only support sorting numeric field, i.e. int64
+	treeMap          *treemap.Map
 	sortKeyExtractor func(flow.StreamRecord) int64
-	// sort indicates the order of results
-	sort       TopNSort
-	comparator utils.Comparator
-	dirty      bool
+	comparator       utils.Comparator
+	cacheSize        int
+	currentTopNum    int
+	sort             TopNSort
+	dirty            bool
 }
 
 type TopNOption func(aggregator *topNAggregator)

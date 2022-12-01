@@ -26,7 +26,7 @@ import (
 var _ ResolvableExpr = (*TagRef)(nil)
 
 // TagRef is the reference to the field
-// also it holds the definition (derived from the streamSchema, measureSchema) of the tag
+// also it holds the definition (derived from the streamSchema, measureSchema) of the tag.
 type TagRef struct {
 	// Tag defines the family name and name of the Tag
 	Tag *Tag
@@ -67,7 +67,7 @@ func NewTagRef(familyName, tagName string) *TagRef {
 	}
 }
 
-// NewSearchableTagRef is a short-handed method for creating a TagRef to the tag in the searchable family
+// NewSearchableTagRef is a short-handed method for creating a TagRef to the tag in the searchable family.
 func NewSearchableTagRef(tagName string) *TagRef {
 	return &TagRef{
 		Tag: NewTag("searchable", tagName),
@@ -77,7 +77,7 @@ func NewSearchableTagRef(tagName string) *TagRef {
 var _ ResolvableExpr = (*FieldRef)(nil)
 
 // FieldRef is the reference to the field
-// also it holds the definition (derived from measureSchema) of the field
+// also it holds the definition (derived from measureSchema) of the field.
 type FieldRef struct {
 	// Field defines the name of the Field
 	Field *Field
@@ -113,6 +113,6 @@ func (f *FieldRef) Resolve(s Schema) error {
 }
 
 type FieldSpec struct {
-	FieldIdx int
 	Spec     *databasev1.FieldSpec
+	FieldIdx int
 }

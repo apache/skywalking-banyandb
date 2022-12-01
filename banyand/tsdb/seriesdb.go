@@ -75,9 +75,9 @@ func (e Entity) Copy() Entity {
 	return a
 }
 
-func NewEntity(len int) Entity {
-	e := make(Entity, len)
-	for i := 0; i < len; i++ {
+func NewEntity(length int) Entity {
+	e := make(Entity, length)
+	for i := 0; i < length; i++ {
 		e[i] = AnyEntry
 	}
 	return e
@@ -244,12 +244,11 @@ var (
 )
 
 type seriesDB struct {
-	sync.Mutex
-	l *logger.Logger
-
-	segCtrl        *segmentController
 	seriesMetadata kv.Store
-	sID            common.ShardID
+	l              *logger.Logger
+	segCtrl        *segmentController
+	sync.Mutex
+	sID common.ShardID
 }
 
 func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
@@ -352,7 +351,7 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 	l := logger.FetchOrDefault(ctx, "series_database", s.l)
 	if path.isFull {
 		data, err := s.seriesMetadata.Get(prefix)
-		if err != nil && err != kv.ErrKeyNotFound {
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
 			return nil, err
 		}
 		if err == nil {
@@ -368,7 +367,7 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 					Uint64("series_id", uint64(seriesID)).
 					Msg("got a series with a full path")
 			}
-			return []Series{newSeries(s.context(), seriesID, series, s)}, nil
+			return []Series{newSeries(ctx, seriesID, series, s)}, nil
 		}
 		if e := l.Debug(); e.Enabled() {
 			e.Hex("path", path.prefix).Msg("doesn't get any series")
@@ -446,7 +445,7 @@ func (s *seriesDB) create(ctx context.Context, ts time.Time) (BlockDelegate, err
 		}
 		return block.delegate(ctx)
 	}
-	seg, err := s.segCtrl.create(timeRange.Start, false)
+	seg, err := s.segCtrl.create(timeRange.Start)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +499,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 
 // HashEntity runs hash function (e.g. with xxhash algorithm) on each segment of the Entity,
 // and concatenates all uint64 in byte array. So the return length of the byte array will be
-// 8 (every uint64 has 8 bytes) * length of the input
+// 8 (every uint64 has 8 bytes) * length of the input.
 func HashEntity(entity Entity) []byte {
 	result := make([]byte, 0, len(entity)*8)
 	for _, entry := range entity {
@@ -557,7 +556,6 @@ func (a SeriesList) Merge(other SeriesList) SeriesList {
 			}
 			final = append(final, other[j])
 			j++
-
 		}
 	}
 	for ; i < len(a); i++ {

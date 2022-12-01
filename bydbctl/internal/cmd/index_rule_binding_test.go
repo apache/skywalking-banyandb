@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -94,7 +94,7 @@ subject:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		GinkgoWriter.Println(out)
-		resp := new(database_v1.IndexRuleBindingRegistryServiceGetResponse)
+		resp := new(databasev1.IndexRuleBindingRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding.Metadata.Group).To(Equal("group1"))
 		Expect(resp.IndexRuleBinding.Metadata.Name).To(Equal("name1"))
@@ -120,7 +120,7 @@ subject:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.IndexRuleBindingRegistryServiceGetResponse)
+		resp := new(databasev1.IndexRuleBindingRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding.Metadata.Group).To(Equal("group1"))
 		Expect(resp.IndexRuleBinding.Metadata.Name).To(Equal("name1"))
@@ -162,7 +162,7 @@ subject:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.IndexRuleBindingRegistryServiceListResponse)
+		resp := new(databasev1.IndexRuleBindingRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding).To(HaveLen(2))
 	})

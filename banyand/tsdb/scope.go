@@ -27,8 +27,8 @@ import (
 var _ Shard = (*ScopedShard)(nil)
 
 type ScopedShard struct {
-	scope     Entry
 	delegated Shard
+	scope     Entry
 }
 
 func NewScopedShard(scope Entry, delegated Shard) Shard {
@@ -69,8 +69,8 @@ func (sd *ScopedShard) State() ShardState {
 var _ SeriesDatabase = (*scopedSeriesDatabase)(nil)
 
 type scopedSeriesDatabase struct {
-	scope     Entry
 	delegated SeriesDatabase
+	scope     Entry
 }
 
 func (sdd *scopedSeriesDatabase) Stats() observability.Statistics {

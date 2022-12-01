@@ -32,11 +32,11 @@ type Element interface {
 }
 
 // DedupPriorityQueue implements heap.Interface.
-// DedupPriorityQueue is not thread-safe
+// DedupPriorityQueue is not thread-safe.
 type DedupPriorityQueue struct {
 	comparator      utils.Comparator
-	Items           []Element
 	cache           map[Element]struct{}
+	Items           []Element
 	allowDuplicates bool
 }
 

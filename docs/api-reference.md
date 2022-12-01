@@ -3,7 +3,7 @@
 
 ## Table of Contents
 
-- [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
+- [banyandb/common/v1/common.proto](#banyandb_commonv1_common-proto)
     - [Group](#banyandb-common-v1-Group)
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
     - [Metadata](#banyandb-common-v1-Metadata)
@@ -212,7 +212,7 @@
 
 
 
-<a name="banyandb_common_v1_common-proto"></a>
+<a name="banyandb_commonv1_common-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/common/v1/common.proto

@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
@@ -30,10 +31,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measure_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	stream_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/ui"
@@ -53,14 +54,13 @@ func NewService() ServiceRepo {
 }
 
 type service struct {
-	listenAddr   string
-	grpcAddr     string
 	mux          *chi.Mux
 	stopCh       chan struct{}
 	clientCloser context.CancelFunc
 	l            *logger.Logger
-
-	srv *http.Server
+	srv          *http.Server
+	listenAddr   string
+	grpcAddr     string
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -91,8 +91,9 @@ func (p *service) PreRun() error {
 	serveIndex := serveFileContents("index.html", httpFS)
 	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 	p.srv = &http.Server{
-		Addr:    p.listenAddr,
-		Handler: p.mux,
+		Addr:              p.listenAddr,
+		Handler:           p.mux,
+		ReadHeaderTimeout: 3 * time.Second,
 	}
 	return nil
 }
@@ -112,14 +113,14 @@ func (p *service) Serve() run.StopNotify {
 	}
 	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
 	err = multierr.Combine(
-		database_v1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		database_v1.RegisterMeasureRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		database_v1.RegisterIndexRuleRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		database_v1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		database_v1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		stream_v1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		measure_v1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
-		property_v1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterMeasureRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterIndexRuleRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		streamv1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		measurev1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to register endpoints")

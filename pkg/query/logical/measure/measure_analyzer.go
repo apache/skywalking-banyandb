@@ -47,7 +47,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 		return nil, err
 	}
 
-	indexRules, err := a.metadataRepoImpl.IndexRules(context.TODO(), metadata)
+	indexRules, err := a.metadataRepoImpl.IndexRules(ctx, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, 
 // parseFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
-// 2 - If criteria is given, but all of those fields exist in the "entity" definition
+// 2 - If criteria is given, but all of those fields exist in the "entity" definition.
 func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema, groupByEntity bool) (logical.UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 

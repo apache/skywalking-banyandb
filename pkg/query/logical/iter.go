@@ -32,7 +32,7 @@ type ItemIterator interface {
 
 var _ heap.Interface = (*containerHeap)(nil)
 
-// container contains both iter and its current item
+// container contains both iter and its current item.
 type container struct {
 	c    Comparator
 	item tsdb.Item
@@ -58,16 +58,9 @@ func (h *containerHeap) Pop() interface{} {
 }
 
 type itemIter struct {
-	// c is the comparator to sort items
-	c Comparator
-	// iters is the list of initial Iterator
+	c     Comparator
+	h     *containerHeap
 	iters []tsdb.Iterator
-	// deq is the deque of the container
-	// 1. When we push a new container, we can normally append it to the tail of the deq,
-	//    and then sort the whole slice
-	// 2. When we pop a new container, we can just pop out the first element in the deq.
-	//    The rest of the slice is still sorted.
-	h *containerHeap
 }
 
 func NewItemIter(iters []tsdb.Iterator, c Comparator) ItemIterator {

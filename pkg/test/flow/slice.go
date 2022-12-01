@@ -29,9 +29,9 @@ import (
 var _ flow.Source = (*sourceSlice)(nil)
 
 type sourceSlice struct {
-	flow.ComponentState
 	slice interface{}
 	out   chan flow.StreamRecord
+	flow.ComponentState
 }
 
 func (s *sourceSlice) Out() <-chan flow.StreamRecord {

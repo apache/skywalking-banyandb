@@ -39,15 +39,9 @@ type Schema interface {
 }
 
 type TagSpec struct {
-	// Idx is defined as
-	// 1) the field index based on the (stream/measure) schema for the underlying plans which
-	//    directly interact with the database and index modules,
-	// 2) the projection index given by the users for those plans which can only access the data from parent plans,
-	//    e.g. orderBy plan uses this projection index to access the data entities (normally a projection view)
-	//    from the parent plan.
+	Spec         *databasev1.TagSpec
 	TagFamilyIdx int
 	TagIdx       int
-	Spec         *databasev1.TagSpec
 }
 
 func (fs *TagSpec) Equal(other *TagSpec) bool {
@@ -96,7 +90,7 @@ func (cs *CommonSchema) ShardNumber() uint32 {
 	return cs.Group.ResourceOpts.ShardNum
 }
 
-// IndexDefined checks whether the field given is indexed
+// IndexDefined checks whether the field given is indexed.
 func (cs *CommonSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	for _, idxRule := range cs.IndexRules {
 		for _, tn := range idxRule.GetTags() {

@@ -34,7 +34,7 @@ func Int64ToBytes(i int64) []byte {
 	}
 	u := uint64(abs)
 	if i >= 0 {
-		u = u | 1<<63
+		u |= 1 << 63
 	} else {
 		u = 1<<63 - u
 	}
@@ -56,7 +56,7 @@ func Uint32ToBytes(u uint32) []byte {
 func BytesToInt64(b []byte) int64 {
 	u := binary.BigEndian.Uint64(b)
 	if b[0] >= 128 {
-		u = u ^ 1<<63
+		u ^= 1 << 63
 	} else {
 		u = 1<<63 - u
 	}

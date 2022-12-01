@@ -62,8 +62,8 @@ func init() {
 var _ index.Store = (*store)(nil)
 
 type StoreOpts struct {
-	Path   string
 	Logger *logger.Logger
+	Path   string
 }
 
 type doc struct {
@@ -306,13 +306,11 @@ func (s *store) flush() {
 
 type blugeMatchIterator struct {
 	delegated search.DocumentMatchIterator
+	err       error
+	current   *index.PostingValue
+	agg       *index.PostingValue
 	fieldKey  string
-
-	current *index.PostingValue
-	agg     *index.PostingValue
-
-	closed bool
-	err    error
+	closed    bool
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string) blugeMatchIterator {

@@ -29,8 +29,8 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measure_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -97,7 +97,7 @@ metadata:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.MeasureRegistryServiceGetResponse)
+		resp := new(databasev1.MeasureRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Measure.Metadata.Name).To(Equal("name1"))
@@ -121,7 +121,7 @@ entity:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.MeasureRegistryServiceGetResponse)
+		resp := new(databasev1.MeasureRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Measure.Metadata.Name).To(Equal("name1"))
@@ -160,7 +160,7 @@ metadata:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.MeasureRegistryServiceListResponse)
+		resp := new(databasev1.MeasureRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure).To(HaveLen(2))
 	})
@@ -219,7 +219,7 @@ tagProjection:
 		Eventually(func() int {
 			out := issue()
 			GinkgoWriter.Println(out)
-			resp := new(measure_v1.QueryResponse)
+			resp := new(measurev1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)
@@ -257,7 +257,7 @@ tagProjection:
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
-			resp := new(measure_v1.QueryResponse)
+			resp := new(measurev1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)

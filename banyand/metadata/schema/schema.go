@@ -69,17 +69,14 @@ type Registry interface {
 }
 
 type TypeMeta struct {
-	Kind  Kind
 	Name  string
 	Group string
+	Kind  Kind
 }
 
 type Metadata struct {
-	TypeMeta
-
-	// Spec holds the configuration object as a protobuf message
-	// Or a metadataHolder as a container
 	Spec Spec
+	TypeMeta
 }
 
 type Spec interface{}

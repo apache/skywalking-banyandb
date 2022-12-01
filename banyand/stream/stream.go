@@ -30,24 +30,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// a chunk is 1MB
+// a chunk is 1MB.
 const chunkSize = 1 << 20
 
 var _ schema.Resource = (*stream)(nil)
 
 type stream struct {
-	name     string
-	group    string
-	shardNum uint32
-	l        *logger.Logger
-	// schema is the reference to the spec of the stream
-	schema *databasev1.Stream
-	// maxObservedModRevision is the max observed revision of index rules in the spec
-	maxObservedModRevision int64
 	db                     tsdb.Supplier
+	l                      *logger.Logger
+	schema                 *databasev1.Stream
+	indexWriter            *index.Writer
+	name                   string
+	group                  string
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
-	indexWriter            *index.Writer
+	maxObservedModRevision int64
+	shardNum               uint32
 }
 
 func (s *stream) GetMetadata() *commonv1.Metadata {
@@ -81,7 +79,7 @@ type streamSpec struct {
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) (*stream, error) {
+func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) *stream {
 	sm := &stream{
 		shardNum:   shardNum,
 		schema:     spec.schema,
@@ -99,5 +97,5 @@ func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Lo
 		IndexRules:        spec.indexRules,
 		EnableGlobalIndex: true,
 	})
-	return sm, nil
+	return sm
 }

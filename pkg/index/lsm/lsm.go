@@ -57,8 +57,8 @@ func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
 }
 
 type StoreOpts struct {
-	Path         string
 	Logger       *logger.Logger
+	Path         string
 	MemTableSize int64
 }
 

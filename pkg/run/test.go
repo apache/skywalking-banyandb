@@ -25,15 +25,15 @@ import (
 var _ Service = (*Tester)(nil)
 
 type Tester struct {
-	ID              string
 	startedNotifier chan struct{}
 	stopCh          chan struct{}
+	ID              string
 	once            sync.Once
 }
 
-func NewTester(ID string) *Tester {
+func NewTester(id string) *Tester {
 	return &Tester{
-		ID:              ID,
+		ID:              id,
 		startedNotifier: make(chan struct{}),
 		stopCh:          make(chan struct{}),
 		once:            sync.Once{},

@@ -20,9 +20,10 @@ package traffic
 import (
 	"context"
 	"crypto/rand"
-	// Load some tag templates
+	// Load some tag templates.
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -107,13 +108,13 @@ func SendWrites(ts TestCase) (*z.Closer, error) {
 }
 
 type sender struct {
+	client     streamv1.StreamService_WriteClient
 	svc        string
 	instance   string
+	data       []byte
 	succeed    uint64
 	sendFailed uint64
 	revFailed  uint64
-	client     streamv1.StreamService_WriteClient
-	data       []byte
 }
 
 func newSender(svcID, instanceID int, client streamv1.StreamServiceClient, data []byte) (*sender, error) {
@@ -180,7 +181,7 @@ func (s *sender) write(searchTagFamily *modelv1.TagFamilyForWrite) {
 		return
 	}
 	_, err = s.client.Recv()
-	if err != nil && err != io.EOF {
+	if errors.Is(err, io.EOF) {
 		l.Error().Str("svc", s.svc).Str("instance", s.instance).Err(err).Msg("receiving failed")
 		s.revFailed++
 		return

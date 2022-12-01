@@ -15,10 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package cmd is an internal package defining cli commands for bydbctl
+// Package cmd is an internal package defining cli commands for bydbctl.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -90,7 +91,7 @@ func initConfig() {
 	}
 
 	if err := readCfg(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
 			cobra.CheckErr(err)
 		}
 		cobra.CheckErr(viper.SafeWriteConfig())

@@ -27,7 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// Payload represents a simple data
+// Payload represents a simple data.
 type Payload interface{}
 type (
 	MessageID uint64
@@ -37,10 +37,10 @@ type (
 	}
 )
 
-// Message is send on the bus to all subscribed listeners
+// Message is send on the bus to all subscribed listeners.
 type Message struct {
-	id      MessageID
 	payload Payload
+	id      MessageID
 }
 
 func (m Message) ID() MessageID {
@@ -82,19 +82,19 @@ type Topic struct {
 	Type ChType
 }
 
-func UniTopic(ID string) Topic {
-	return Topic{ID: ID, Type: ChTypeUnidirectional}
+func UniTopic(id string) Topic {
+	return Topic{ID: id, Type: ChTypeUnidirectional}
 }
 
-func BiTopic(ID string) Topic {
-	return Topic{ID: ID, Type: ChTypeBidirectional}
+func BiTopic(id string) Topic {
+	return Topic{ID: id, Type: ChTypeBidirectional}
 }
 
-// The Bus allows publish-subscribe-style communication between components
+// The Bus allows publish-subscribe-style communication between components.
 type Bus struct {
 	topics map[Topic][]Channel
-	mutex  sync.RWMutex
 	closer *run.Closer
+	mutex  sync.RWMutex
 }
 
 func NewBus() *Bus {
@@ -132,7 +132,7 @@ func (l *localFuture) Get() (Message, error) {
 	}
 	m, ok := <-l.retCh
 	if ok {
-		l.retCount = l.retCount - 1
+		l.retCount--
 		return m, nil
 	}
 	return Message{}, io.EOF
@@ -143,7 +143,7 @@ func (l *localFuture) GetAll() ([]Message, error) {
 	ret := make([]Message, 0, l.retCount)
 	for {
 		m, err := l.Get()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return ret, globalErr
 		}
 		if err != nil {
@@ -155,8 +155,8 @@ func (l *localFuture) GetAll() ([]Message, error) {
 }
 
 type Event struct {
-	m Message
 	f Future
+	m Message
 }
 
 func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {

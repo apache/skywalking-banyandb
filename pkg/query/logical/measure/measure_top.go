@@ -92,8 +92,8 @@ func (h *topHeap) Pop() interface{} {
 }
 
 type TopQueue struct {
-	n  int
 	th topHeap
+	n  int
 }
 
 func NewTopQueue(n int, reverted bool) *TopQueue {

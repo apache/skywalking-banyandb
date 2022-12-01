@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 type equalityChecker func(a, b proto.Message) bool
@@ -66,5 +67,22 @@ var checkerMap = map[Kind]equalityChecker{
 			protocmp.IgnoreFields(&databasev1.Stream{}, "updated_at"),
 			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
 			protocmp.Transform())
+	},
+	KindTopNAggregation: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.TopNAggregation{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform())
+	},
+	KindProperty: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform())
+	},
+	KindMask: func(a, b proto.Message) bool {
+		return false
 	},
 }

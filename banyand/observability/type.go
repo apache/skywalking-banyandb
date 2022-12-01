@@ -16,6 +16,10 @@
 // under the License.
 package observability
 
+import "errors"
+
+var errNoAddr = errors.New("no address")
+
 type Statistics struct {
 	MemBytes    int64
 	MaxMemBytes int64

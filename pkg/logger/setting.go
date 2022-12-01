@@ -35,9 +35,9 @@ const rootName = "ROOT"
 var root = rootLogger{}
 
 type rootLogger struct {
-	done uint32
-	m    sync.Mutex
 	l    *Logger
+	m    sync.Mutex
+	done uint32
 }
 
 func (rl *rootLogger) verify() {
@@ -74,7 +74,7 @@ func (rl *rootLogger) set(cfg Logging) error {
 	return nil
 }
 
-// GetLogger return logger with a scope
+// GetLogger return logger with a scope.
 func GetLogger(scope ...string) *Logger {
 	root.verify()
 	if len(scope) < 1 {
@@ -87,12 +87,12 @@ func GetLogger(scope ...string) *Logger {
 	return l
 }
 
-// Init initializes a rs/zerolog logger from user config
+// Init initializes a rs/zerolog logger from user config.
 func Init(cfg Logging) (err error) {
 	return root.set(cfg)
 }
 
-// getLogger initializes a root logger
+// getLogger initializes a root logger.
 func getLogger(cfg Logging) (*Logger, error) {
 	modules := make(map[string]zerolog.Level)
 	if len(cfg.Modules) > 0 {

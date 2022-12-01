@@ -27,10 +27,9 @@ import (
 )
 
 type retentionTask struct {
-	segment *segmentController
-
-	option   cron.ParseOption
+	segment  *segmentController
 	expr     string
+	option   cron.ParseOption
 	duration time.Duration
 }
 

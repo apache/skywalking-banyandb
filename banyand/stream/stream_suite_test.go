@@ -41,7 +41,6 @@ func TestStream(t *testing.T) {
 	RunSpecs(t, "Stream Suite")
 }
 
-// BeforeSuite - Init logger
 var _ = BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -49,7 +48,6 @@ var _ = BeforeSuite(func() {
 	})).To(Succeed())
 })
 
-// service to preload stream
 type preloadStreamService struct {
 	metaSvc metadata.Service
 }

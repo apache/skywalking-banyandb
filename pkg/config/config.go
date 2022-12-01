@@ -18,6 +18,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -32,8 +33,8 @@ const (
 )
 
 type config struct {
-	name  string
 	viper *viper.Viper
+	name  string
 }
 
 func Load(name string, fs *pflag.FlagSet) error {
@@ -62,7 +63,7 @@ func (c *config) initializeConfig(fs *pflag.FlagSet) error {
 	// if we cannot parse the config file.
 	if err := v.ReadInConfig(); err != nil {
 		// It's okay if there isn't a config file
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
 			return err
 		}
 	}
@@ -82,7 +83,7 @@ func (c *config) initializeConfig(fs *pflag.FlagSet) error {
 	return bindFlags(fs, v)
 }
 
-// Bind each cobra flag to its associated viper configuration (config file and environment variable)
+// Bind each cobra flag to its associated viper configuration (config file and environment variable).
 func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 	var err error
 	fs.VisitAll(func(f *pflag.Flag) {

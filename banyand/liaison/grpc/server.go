@@ -52,28 +52,26 @@ var (
 )
 
 type Server struct {
-	addr           string
-	maxRecvMsgSize int
-	tls            bool
-	certFile       string
-	keyFile        string
-	log            *logger.Logger
-	ser            *grpclib.Server
-	pipeline       queue.Queue
-	repo           discovery.ServiceRepo
-	creds          credentials.TransportCredentials
-
-	stopCh chan struct{}
-
+	pipeline queue.Queue
+	creds    credentials.TransportCredentials
+	repo     discovery.ServiceRepo
+	stopCh   chan struct{}
+	*measureRegistryServer
+	log *logger.Logger
+	ser *grpclib.Server
+	*propertyServer
+	*topNAggregationRegistryServer
+	*groupRegistryServer
+	*indexRuleRegistryServer
 	streamSVC  *streamService
 	measureSVC *measureService
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
-	*indexRuleRegistryServer
-	*measureRegistryServer
-	*groupRegistryServer
-	*topNAggregationRegistryServer
-	*propertyServer
+	addr           string
+	keyFile        string
+	certFile       string
+	maxRecvMsgSize int
+	tls            bool
 }
 
 func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
@@ -113,9 +111,9 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 func (s *Server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	components := []struct {
+		discoverySVC *discoveryService
 		shardEvent   bus.Topic
 		entityEvent  bus.Topic
-		discoverySVC *discoveryService
 	}{
 		{
 			shardEvent:   event.StreamTopicShardEvent,

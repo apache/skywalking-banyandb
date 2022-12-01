@@ -172,10 +172,10 @@ func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	path     string
-	dbOpts   tsdb.DatabaseOpts
 	metadata metadata.Repo
 	l        *logger.Logger
+	path     string
+	dbOpts   tsdb.DatabaseOpts
 }
 
 func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
@@ -192,7 +192,7 @@ func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resource
 	return openStream(shardNum, db, streamSpec{
 		schema:     streamSchema,
 		indexRules: spec.IndexRules,
-	}, s.l)
+	}, s.l), nil
 }
 
 func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

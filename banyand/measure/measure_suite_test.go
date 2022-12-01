@@ -42,7 +42,6 @@ func TestMeasure(t *testing.T) {
 	ginkgo.RunSpecs(t, "Measure Suite")
 }
 
-// BeforeSuite - Init logger
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -50,7 +49,6 @@ var _ = ginkgo.BeforeSuite(func() {
 	})).To(gomega.Succeed())
 })
 
-// service to preload measure
 type preloadMeasureService struct {
 	metaSvc metadata.Service
 }

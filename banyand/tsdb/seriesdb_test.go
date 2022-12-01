@@ -422,9 +422,9 @@ func Test_SeriesDatabase_List(t *testing.T) {
 	data := setUpEntities(tester, s)
 	tests := []struct {
 		name    string
+		want    SeriesList
 		path    Path
 		wantErr bool
-		want    SeriesList
 	}{
 		{
 			name: "equal",
@@ -504,8 +504,8 @@ func Test_SeriesDatabase_List(t *testing.T) {
 }
 
 type entityWithID struct {
-	id     common.SeriesID
 	entity Entity
+	id     common.SeriesID
 }
 
 func setUpEntities(t *assert.Assertions, db SeriesDatabase) []*entityWithID {

@@ -58,7 +58,7 @@ type healthCheckClient struct {
 
 func (g *healthCheckClient) Check(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	var resp *grpc_health_v1.HealthCheckResponse
-	if err := grpchelper.Request(context.Background(), 10*time.Second, func(rpcCtx context.Context) (err error) {
+	if err := grpchelper.Request(ctx, 10*time.Second, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(g.conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
 				Service: "",

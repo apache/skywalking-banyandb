@@ -37,8 +37,8 @@ import (
 )
 
 type streamService struct {
-	*discoveryService
 	streamv1.UnimplementedStreamServiceServer
+	*discoveryService
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
@@ -51,7 +51,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	sampled := s.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
 		writeEntity, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -113,7 +113,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
-		if errQuery == io.EOF {
+		if errors.Is(errQuery, io.EOF) {
 			return emptyStreamQueryResponse, nil
 		}
 		return nil, errQuery

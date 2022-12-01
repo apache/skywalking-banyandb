@@ -15,26 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package tsdb
-
-import (
-	"errors"
-
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-)
-
-var ErrInvalidUnit = errors.New("invalid interval rule's unit")
-
-func ToIntervalRule(ir *commonv1.IntervalRule) (result tsdb.IntervalRule, err error) {
-	switch ir.Unit {
-	case commonv1.IntervalRule_UNIT_DAY:
-		result.Unit = tsdb.DAY
-	case commonv1.IntervalRule_UNIT_HOUR:
-		result.Unit = tsdb.HOUR
-	default:
-		return result, ErrInvalidUnit
-	}
-	result.Num = int(ir.Num)
-	return result, err
-}
+// Package data contains data transmission topics.
+package data

@@ -103,8 +103,8 @@ func modules(flags []string) func() {
 }
 
 type preloadService struct {
-	name    string
 	metaSvc metadata.Service
+	name    string
 }
 
 func (p *preloadService) Name() string {

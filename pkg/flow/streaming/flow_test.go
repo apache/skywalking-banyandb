@@ -31,7 +31,7 @@ import (
 )
 
 // numberRange generates a slice with `count` number of integers starting from `begin`,
-// i.e. [begin, begin + count)
+// i.e. [begin, begin + count).
 func numberRange(begin, count int) []int {
 	result := make([]int, 0)
 	for i := 0; i < count; i++ {

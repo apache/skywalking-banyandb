@@ -24,12 +24,11 @@ import (
 
 // Closer can close a goroutine then wait for it to stop.
 type Closer struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
 	waiting sync.WaitGroup
 	lock    sync.RWMutex
 	closed  bool
-
-	ctx    context.Context
-	cancel context.CancelFunc
 }
 
 // NewCloser instances a new Closer.
@@ -70,7 +69,7 @@ func (c *Closer) CloseThenWait() {
 	c.waiting.Wait()
 }
 
-// Closed returns whether the Closer is closed
+// Closed returns whether the Closer is closed.
 func (c *Closer) Closed() bool {
 	c.lock.RLock()
 	defer c.lock.RUnlock()

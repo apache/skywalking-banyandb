@@ -73,8 +73,8 @@ func ConfigureListener(lc, lp string) RegistryOption {
 }
 
 type eventHandler struct {
-	interestKeys Kind
 	handler      EventHandler
+	interestKeys Kind
 }
 
 func (eh *eventHandler) InterestOf(kind Kind) bool {
@@ -233,7 +233,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 		}
 
 		modRevision := getResp.Kvs[0].ModRevision
-		txnResp, txnErr := e.kv.Txn(context.Background()).
+		txnResp, txnErr := e.kv.Txn(ctx).
 			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
 			Then(clientv3.OpPut(key, string(val))).
 			Commit()
@@ -329,6 +329,10 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 			message = &databasev1.IndexRule{}
 		case KindProperty:
 			message = &propertyv1.Property{}
+		case KindTopNAggregation:
+			message = &databasev1.TopNAggregation{}
+		default:
+			return false, nil
 		}
 		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
 			e.notifyDelete(Metadata{

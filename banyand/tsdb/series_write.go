@@ -98,7 +98,7 @@ func (w *writerBuilder) Build() (Writer, error) {
 		return nil, errors.WithStack(ErrNoVal)
 	}
 	for i, value := range w.values {
-		for j := i + 1; j < len(w.values); j = j + 1 {
+		for j := i + 1; j < len(w.values); j++ {
 			if value.family == nil && w.values[j].family == nil {
 				return nil, errors.Wrap(ErrDuplicatedFamily, "default family")
 			}
@@ -132,13 +132,13 @@ func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
 var _ Writer = (*writer)(nil)
 
 type writer struct {
-	block   BlockDelegate
 	ts      time.Time
+	block   BlockDelegate
+	itemID  *GlobalItemID
 	columns []struct {
 		family []byte
 		val    []byte
 	}
-	itemID *GlobalItemID
 }
 
 func (w *writer) ItemID() GlobalItemID {
@@ -173,8 +173,8 @@ func (w *writer) String() string {
 }
 
 type dataBucket struct {
-	seriesID common.SeriesID
 	family   []byte
+	seriesID common.SeriesID
 }
 
 func (d dataBucket) marshal() []byte {

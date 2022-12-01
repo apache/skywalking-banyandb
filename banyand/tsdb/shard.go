@@ -43,17 +43,15 @@ const (
 var _ Shard = (*shard)(nil)
 
 type shard struct {
-	l        *logger.Logger
-	id       common.ShardID
-	position common.Position
-
 	seriesDatabase        SeriesDatabase
 	indexDatabase         IndexDatabase
+	l                     *logger.Logger
 	segmentController     *segmentController
 	segmentManageStrategy *bucket.Strategy
 	scheduler             *timestamp.Scheduler
-
-	closeOnce sync.Once
+	position              common.Position
+	closeOnce             sync.Once
+	id                    common.ShardID
 }
 
 func OpenShard(ctx context.Context, id common.ShardID,
@@ -98,10 +96,7 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		return nil, err
 	}
 	s.seriesDatabase = sdb
-	idb, err := newIndexDatabase(shardCtx, s.id, s.segmentController)
-	if err != nil {
-		return nil, err
-	}
+	idb := newIndexDatabase(shardCtx, s.id, s.segmentController)
 	s.indexDatabase = idb
 	s.segmentManageStrategy, err = bucket.NewStrategy(s.segmentController, bucket.WithLogger(s.l))
 	if err != nil {

@@ -82,8 +82,8 @@ func NewPreRunner(name string, fn func() error) PreRunner {
 }
 
 type preRunner struct {
-	name string
 	fn   func() error
+	name string
 }
 
 func (p preRunner) Name() string {
@@ -118,19 +118,16 @@ type Service interface {
 // to manage service lifecycles. It allows for easy composition of elegant
 // monoliths as well as adding signal handlers, metrics services, etc.
 type Group struct {
-	name string
-
-	f       *FlagSet
-	r       run.Group
-	c       []Config
-	p       []PreRunner
-	s       []Service
-	readyCh chan struct{}
-	log     *logger.Logger
-
+	f            *FlagSet
+	readyCh      chan struct{}
+	log          *logger.Logger
+	name         string
+	r            run.Group
+	c            []Config
+	p            []PreRunner
+	s            []Service
 	showRunGroup bool
-
-	configured bool
+	configured   bool
 }
 
 func NewGroup(name string) Group {
@@ -140,7 +137,7 @@ func NewGroup(name string) Group {
 	}
 }
 
-// Name shows the name of the group
+// Name shows the name of the group.
 func (g Group) Name() string {
 	return g.name
 }
@@ -150,7 +147,7 @@ func (g Group) Name() string {
 // phases. If a Unit doesn't satisfy any of the bootstrap phases it is ignored
 // by Group.
 // The returned array of booleans is of the same size as the amount of provided
-// Units, signalling for each provided Unit if it successfully registered with
+// Units, signaling for each provided Unit if it successfully registered with
 // Group for at least one of the bootstrap phases or if it was ignored.
 func (g *Group) Register(units ...Unit) []bool {
 	g.log = logger.GetLogger(g.name)

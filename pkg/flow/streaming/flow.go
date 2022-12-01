@@ -32,8 +32,8 @@ type streamingFlow struct {
 	ctx    context.Context
 	source flow.Source
 	sink   flow.Sink
-	ops    []flow.Operator
 	drain  chan error
+	ops    []flow.Operator
 }
 
 func New(source flow.Source) flow.Flow {

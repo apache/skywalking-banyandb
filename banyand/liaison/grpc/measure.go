@@ -37,8 +37,8 @@ import (
 )
 
 type measureService struct {
-	*discoveryService
 	measurev1.UnimplementedMeasureServiceServer
+	*discoveryService
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
@@ -51,7 +51,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	sampled := ms.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
 		writeRequest, err := measure.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -108,7 +108,7 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	}
 	msg, errFeat := feat.Get()
 	if errFeat != nil {
-		if errFeat == io.EOF {
+		if errors.Is(errFeat, io.EOF) {
 			return emptyMeasureQueryResponse, nil
 		}
 		return nil, errFeat

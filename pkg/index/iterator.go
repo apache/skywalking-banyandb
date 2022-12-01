@@ -38,15 +38,14 @@ var (
 )
 
 type FieldIteratorTemplate struct {
-	delegated *delegateIterator
-
-	init      bool
-	cur       *PostingValue
 	err       error
-	termRange RangeOpts
+	delegated *delegateIterator
+	cur       *PostingValue
 	fn        CompositePostingValueFn
-	reverse   bool
 	seekKey   []byte
+	termRange RangeOpts
+	init      bool
+	reverse   bool
 }
 
 func (f *FieldIteratorTemplate) Next() bool {
@@ -146,11 +145,11 @@ type SwitchFn = func(a, b []byte) bool
 var _ FieldIterator = (*mergedIterator)(nil)
 
 type mergedIterator struct {
+	cur          *PostingValue
+	switchFn     SwitchFn
 	inner        []FieldIterator
 	drained      []FieldIterator
 	drainedCount int
-	cur          *PostingValue
-	switchFn     SwitchFn
 	init         bool
 	closed       bool
 }
@@ -232,12 +231,11 @@ var _ kv.Iterator = (*delegateIterator)(nil)
 
 type delegateIterator struct {
 	delegated     kv.Iterator
-	fieldKey      FieldKey
-	fieldKeyBytes []byte
 	l             *logger.Logger
-
-	curField Field
-	closed   bool
+	fieldKeyBytes []byte
+	curField      Field
+	fieldKey      FieldKey
+	closed        bool
 }
 
 func newDelegateIterator(delegated kv.Iterator, fieldKey FieldKey, l *logger.Logger) *delegateIterator {

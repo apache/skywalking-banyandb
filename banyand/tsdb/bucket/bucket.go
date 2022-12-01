@@ -70,11 +70,11 @@ func (*dummyReporter) String() string {
 }
 
 type timeBasedReporter struct {
-	timestamp.TimeRange
-	name      string
+	clock     timestamp.Clock
 	scheduler *timestamp.Scheduler
 	count     *atomic.Uint32
-	clock     timestamp.Clock
+	timestamp.TimeRange
+	name string
 }
 
 func NewTimeBasedReporter(name string, timeRange timestamp.TimeRange, clock timestamp.Clock, scheduler *timestamp.Scheduler) Reporter {

@@ -38,14 +38,14 @@ import (
 var _ logical.Plan = (*localIndexScan)(nil)
 
 type localIndexScan struct {
+	schema logical.Schema
+	filter index.Filter
 	*logical.OrderBy
-	timeRange         timestamp.TimeRange
-	schema            logical.Schema
 	metadata          *commonv1.Metadata
+	l                 *logger.Logger
+	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
 	entities          []tsdb.Entity
-	filter            index.Filter
-	l                 *logger.Logger
 }
 
 func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {

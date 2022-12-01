@@ -31,7 +31,11 @@ type MarshalError struct {
 func Proto(message proto.Message) []byte {
 	b, err := protojson.Marshal(message)
 	if err != nil {
-		b, _ = json.Marshal(MarshalError{Msg: err.Error()})
+		var errJSON error
+		b, errJSON = json.Marshal(MarshalError{Msg: err.Error()})
+		if errJSON != nil {
+			return nil
+		}
 	}
 	return b
 }

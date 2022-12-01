@@ -35,11 +35,9 @@ var (
 )
 
 type unresolvedAggregation struct {
-	unresolvedInput logical.UnresolvedPlan
-	// aggrFunc is the type of aggregation
-	aggrFunc modelv1.AggregationFunction
-	// groupBy should be a subset of tag projection
+	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field
+	aggrFunc         modelv1.AggregationFunction
 	isGroup          bool
 }
 

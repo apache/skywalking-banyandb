@@ -90,8 +90,8 @@ func TestStore_Match(t *testing.T) {
 	s.(*store).flush()
 
 	tests := []struct {
-		matches []string
 		want    posting.List
+		matches []string
 		wantErr bool
 	}{
 		{

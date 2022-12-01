@@ -202,15 +202,14 @@ func (gmi *groupIterator) Close() error {
 }
 
 type groupSortIterator struct {
-	groupByTagsRefs [][]*logical.TagRef
 	iter            executor.MIterator
+	err             error
+	cdp             *measurev1.DataPoint
+	groupByTagsRefs [][]*logical.TagRef
+	current         []*measurev1.DataPoint
 	index           int
-
-	current []*measurev1.DataPoint
-	cdp     *measurev1.DataPoint
-	key     uint64
-	closed  bool
-	err     error
+	key             uint64
+	closed          bool
 }
 
 func newGroupSortIterator(iter executor.MIterator, groupByTagsRefs [][]*logical.TagRef) executor.MIterator {

@@ -27,10 +27,10 @@ import (
 var _ flow.Sink = (*Slice)(nil)
 
 type Slice struct {
-	sync.RWMutex
-	flow.ComponentState
-	slice []interface{}
 	in    chan flow.StreamRecord
+	slice []interface{}
+	flow.ComponentState
+	sync.RWMutex
 }
 
 func NewSlice() *Slice {

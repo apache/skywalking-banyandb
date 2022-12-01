@@ -22,7 +22,7 @@ import (
 	"encoding/binary"
 )
 
-// Writer writes data into a buffer
+// Writer writes data into a buffer.
 type Writer struct {
 	buf *bytes.Buffer
 

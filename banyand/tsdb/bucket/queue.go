@@ -54,15 +54,14 @@ const (
 var ErrInvalidSize = errors.New("invalid size")
 
 type lruQueue struct {
-	l          *logger.Logger
-	size       int
-	recentSize int
-	evictSize  int
-	evictFn    EvictFn
-
 	recent      simplelru.LRUCache
 	frequent    simplelru.LRUCache
 	recentEvict simplelru.LRUCache
+	l           *logger.Logger
+	evictFn     EvictFn
+	size        int
+	recentSize  int
+	evictSize   int
 	lock        sync.RWMutex
 }
 
