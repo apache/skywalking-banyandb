@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package bucket
 
 import (
@@ -31,10 +32,13 @@ import (
 )
 
 type (
-	EvictFn       func(ctx context.Context, id interface{}) error
+	// EvictFn is a closure executed on evicting an item.
+	EvictFn func(ctx context.Context, id interface{}) error
+	// OnAddRecentFn is a notifier on adding an item into the recent queue.
 	OnAddRecentFn func() error
 )
 
+// Queue is a LRU queue.
 type Queue interface {
 	Touch(id fmt.Stringer) bool
 	Push(ctx context.Context, id fmt.Stringer, fn OnAddRecentFn) error
@@ -45,13 +49,14 @@ type Queue interface {
 }
 
 const (
-	QueueName          = "block-queue-cleanup"
-	DefaultRecentRatio = 0.25
+	// QueueName is identity of the queue.
+	QueueName = "block-queue-cleanup"
 
+	defaultRecentRatio    = 0.25
 	defaultEvictBatchSize = 10
 )
 
-var ErrInvalidSize = errors.New("invalid size")
+var errInvalidSize = errors.New("invalid size")
 
 type lruQueue struct {
 	recent      simplelru.LRUCache
@@ -65,12 +70,13 @@ type lruQueue struct {
 	lock        sync.RWMutex
 }
 
+// NewQueue return a Queue for blocks eviction.
 func NewQueue(l *logger.Logger, size int, maxSize int, scheduler *timestamp.Scheduler, evictFn EvictFn) (Queue, error) {
 	if size <= 0 {
-		return nil, ErrInvalidSize
+		return nil, errInvalidSize
 	}
 
-	recentSize := int(float64(size) * DefaultRecentRatio)
+	recentSize := int(float64(size) * defaultRecentRatio)
 	evictSize := maxSize - size
 
 	recent, err := simplelru.NewLRU(size, nil)

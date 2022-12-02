@@ -36,10 +36,11 @@ import (
 )
 
 var (
-	ErrEmptyRootPath  = errors.New("root path is empty")
-	ErrStreamNotExist = errors.New("stream doesn't exist")
+	errEmptyRootPath  = errors.New("root path is empty")
+	errStreamNotExist = errors.New("stream doesn't exist")
 )
 
+// Service allows inspecting the stream elements.
 type Service interface {
 	run.PreRunner
 	run.Config
@@ -64,7 +65,7 @@ type service struct {
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 	sm, ok := s.schemaRepo.loadStream(metadata)
 	if !ok {
-		return nil, errors.WithStack(ErrStreamNotExist)
+		return nil, errors.WithStack(errStreamNotExist)
 	}
 	return sm, nil
 }
@@ -80,7 +81,7 @@ func (s *service) FlagSet() *run.FlagSet {
 
 func (s *service) Validate() error {
 	if s.root == "" {
-		return ErrEmptyRootPath
+		return errEmptyRootPath
 	}
 	return nil
 }

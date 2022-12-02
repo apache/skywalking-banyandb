@@ -43,10 +43,7 @@ type measureService struct {
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
 	reply := func() error {
-		if err := measure.Send(&measurev1.WriteResponse{}); err != nil {
-			return err
-		}
-		return nil
+		return measure.Send(&measurev1.WriteResponse{})
 	}
 	sampled := ms.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
@@ -118,7 +115,7 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	case []*measurev1.DataPoint:
 		return &measurev1.QueryResponse{DataPoints: d}, nil
 	case common.Error:
-		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
+		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
 	return nil, nil
 }
@@ -142,7 +139,7 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	case []*measurev1.TopNList:
 		return &measurev1.TopNResponse{Lists: d}, nil
 	case common.Error:
-		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
+		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
 	return nil, nil
 }

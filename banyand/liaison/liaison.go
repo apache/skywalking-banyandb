@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package liaison implements a transmission layer between a data layer and a client.
 package liaison
 
 import (
@@ -27,12 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Endpoint interface {
-	run.Config
-	run.PreRunner
-	run.Service
-}
-
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) (Endpoint, error) {
+// NewEndpoint return a new endpoint which is the entry point for the database server.
+func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) (run.Unit, error) {
 	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
 }

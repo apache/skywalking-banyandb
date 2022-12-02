@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package http implements the gRPC gateway.
 package http
 
 import (
@@ -40,14 +41,13 @@ import (
 	"github.com/apache/skywalking-banyandb/ui"
 )
 
-type ServiceRepo interface {
-	run.Config
-	run.Service
-}
+var (
+	_ run.Config  = (*service)(nil)
+	_ run.Service = (*service)(nil)
+)
 
-var _ ServiceRepo = (*service)(nil)
-
-func NewService() ServiceRepo {
+// NewService return a http service.
+func NewService() run.Unit {
 	return &service{
 		stopCh: make(chan struct{}),
 	}

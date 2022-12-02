@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package queue implements the data transmission queue
+// Package queue implements the data transmission queue.
 package queue
 
 import (

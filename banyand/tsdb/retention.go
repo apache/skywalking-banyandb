@@ -47,7 +47,7 @@ func newRetentionTask(segment *segmentController, ttl IntervalRule) *retentionTa
 		segment:  segment,
 		option:   cron.Minute | cron.Hour,
 		expr:     expr,
-		duration: ttl.EstimatedDuration(),
+		duration: ttl.estimatedDuration(),
 	}
 }
 

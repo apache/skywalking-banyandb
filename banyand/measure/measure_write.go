@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var ErrMalformedElement = errors.New("element is malformed")
+var errMalformedElement = errors.New("element is malformed")
 
 func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue) error {
 	t := value.GetTimestamp().AsTime().Local()
@@ -47,10 +47,10 @@ func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
-		return errors.Wrap(ErrMalformedElement, "no tag family")
+		return errors.Wrap(errMalformedElement, "no tag family")
 	}
 	if fLen > len(sm.TagFamilies) {
-		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
+		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.databaseSupplier.SupplyTSDB().Shard(shardID)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []
 			builder.Family(familyIdentity(spec.GetName(), pbv1.TagFlag), bb)
 		}
 		if len(value.GetFields()) > len(sm.GetFields()) {
-			return nil, errors.Wrap(ErrMalformedElement, "fields number is more than expected")
+			return nil, errors.Wrap(errMalformedElement, "fields number is more than expected")
 		}
 		for fi, fieldValue := range value.GetFields() {
 			fieldSpec := sm.GetFields()[fi]
@@ -90,7 +90,7 @@ func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []
 				continue
 			}
 			if fType != fieldSpec.GetFieldType() {
-				return nil, errors.Wrapf(ErrMalformedElement, "field %s type is unexpected", fieldSpec.GetName())
+				return nil, errors.Wrapf(errMalformedElement, "field %s type is unexpected", fieldSpec.GetName())
 			}
 			data := encodeFieldValue(fieldValue)
 			if data == nil {

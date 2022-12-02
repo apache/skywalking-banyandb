@@ -36,7 +36,7 @@ import (
 )
 
 var (
-	ErrUnspecifiedIndexType = errors.New("Unspecified index type")
+	errUnspecifiedIndexType = errors.New("Unspecified index type")
 	emptyFilters            = make([]filterFn, 0)
 )
 
@@ -89,7 +89,7 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 		case databasev1.IndexRule_TYPE_INVERTED:
 			inner, err = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
 		case databasev1.IndexRule_TYPE_UNSPECIFIED:
-			return nil, errors.WithMessagef(ErrUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
+			return nil, errors.WithMessagef(errUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
 		}
 		if err != nil {
 			return nil, err

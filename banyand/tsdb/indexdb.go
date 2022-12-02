@@ -30,24 +30,25 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
+// IndexDatabase allows stocking index data.
 type IndexDatabase interface {
 	WriterBuilder() IndexWriterBuilder
 	Seek(field index.Field) ([]GlobalItemID, error)
 }
 
+// IndexWriter allows ingesting index data.
 type IndexWriter interface {
 	WriteLSMIndex(field []index.Field) error
 	WriteInvertedIndex(field []index.Field) error
 }
 
+// IndexWriterBuilder is a helper to build IndexWriter.
 type IndexWriterBuilder interface {
 	Scope(scope Entry) IndexWriterBuilder
 	Time(ts time.Time) IndexWriterBuilder
 	GlobalItemID(itemID GlobalItemID) IndexWriterBuilder
 	Build() (IndexWriter, error)
 }
-
-type IndexSeekBuilder interface{}
 
 var _ IndexDatabase = (*indexDB)(nil)
 
@@ -65,7 +66,7 @@ func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 	for _, s := range i.segCtrl.segments() {
 		err = s.globalIndex.GetAll(f, func(rawBytes []byte) error {
 			id := &GlobalItemID{}
-			errUnMarshal := id.UnMarshal(rawBytes)
+			errUnMarshal := id.unMarshal(rawBytes)
 			if errUnMarshal != nil {
 				return errUnMarshal
 			}
@@ -120,7 +121,7 @@ func (i *indexWriterBuilder) Build() (IndexWriter, error) {
 		return nil, err
 	}
 	if i.globalItemID == nil {
-		return nil, errors.WithStack(ErrNoVal)
+		return nil, errors.WithStack(errNoVal)
 	}
 	return &indexWriter{
 		scope:  i.scope,
@@ -155,7 +156,7 @@ func (i *indexWriter) WriteLSMIndex(fields []index.Field) (err error) {
 			err = multierr.Append(err, errInternal)
 			continue
 		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano())))
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.marshal(), uint64(i.ts.UnixNano())))
 	}
 	return err
 }
@@ -170,11 +171,12 @@ func (i *indexWriter) WriteInvertedIndex(fields []index.Field) (err error) {
 			err = multierr.Append(err, errInternal)
 			continue
 		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.Marshal(), uint64(i.ts.UnixNano())))
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.marshal(), uint64(i.ts.UnixNano())))
 	}
 	return err
 }
 
+// GlobalSeriesID encodes Entry to common.SeriesID.
 func GlobalSeriesID(scope Entry) common.SeriesID {
 	return common.SeriesID(convert.Hash(scope))
 }

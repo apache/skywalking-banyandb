@@ -82,7 +82,7 @@ func modules(flags []string) func() {
 	measureSvc, err := measure.NewService(context.TODO(), metaSvc, repo, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Query` module
-	q, err := query.NewExecutor(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
+	q, err := query.NewService(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
 	httpServer := http.NewService()

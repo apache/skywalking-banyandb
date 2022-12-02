@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var ErrEndOfSegment = errors.New("reached the end of the segment")
+var errEndOfSegment = errors.New("reached the end of the segment")
 
 type segment struct {
 	globalIndex kv.Store

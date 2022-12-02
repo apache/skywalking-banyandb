@@ -15,6 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package tsdb implements a time-series-based storage engine.
+// It provides:
+//   - Partition data based on a time axis.
+//   - Sharding data based on a series id which represents a unique entity of stream/measure
+//   - Retrieving data based on index.Filter.
+//   - Cleaning expired data, or the data retention.
 package tsdb
 
 import (
@@ -55,23 +61,27 @@ const (
 )
 
 var (
-	ErrInvalidShardID = errors.New("invalid shard id")
-	ErrOpenDatabase   = errors.New("fails to open the database")
+	errInvalidShardID = errors.New("invalid shard id")
+	errOpenDatabase   = errors.New("fails to open the database")
 
 	optionsKey = contextOptionsKey{}
 )
 
 type contextOptionsKey struct{}
 
+// Supplier allows getting a tsdb's runtime.
 type Supplier interface {
 	SupplyTSDB() Database
 }
+
+// Database allows listing and getting shard details.
 type Database interface {
 	io.Closer
 	Shards() []Shard
 	Shard(id common.ShardID) (Shard, error)
 }
 
+// Shard allows accessing data of tsdb.
 type Shard interface {
 	io.Closer
 	ID() common.ShardID
@@ -84,6 +94,7 @@ type Shard interface {
 
 var _ Database = (*database)(nil)
 
+// DatabaseOpts wraps options to create a tsdb.
 type DatabaseOpts struct {
 	EncodingMethod     EncodingMethod
 	Location           string
@@ -97,14 +108,18 @@ type DatabaseOpts struct {
 	EnableGlobalIndex  bool
 }
 
+// EncodingMethod wraps encoder/decoder pools to flush/compact data on disk.
 type EncodingMethod struct {
 	EncoderPool encoding.SeriesEncoderPool
 	DecoderPool encoding.SeriesDecoderPool
 }
 
 type (
+	// SectionID is the kind of a block/segment.
 	SectionID uint32
-	BlockID   struct {
+
+	// BlockID is the identity of a block in a shard.
+	BlockID struct {
 		SegID   SectionID
 		BlockID SectionID
 	}
@@ -114,6 +129,7 @@ func (b BlockID) String() string {
 	return fmt.Sprintf("BlockID-%d-%d", parseSuffix(b.SegID), parseSuffix(b.BlockID))
 }
 
+// GenerateInternalID returns a identity of a section(segment or block) based on IntervalRule.
 func GenerateInternalID(unit IntervalUnit, suffix int) SectionID {
 	return SectionID(unit)<<31 | ((SectionID(suffix) << 1) >> 1)
 }
@@ -131,11 +147,14 @@ func readSectionID(data []byte, offset int) (SectionID, int) {
 	return SectionID(convert.BytesToUint32(data[offset:end])), end
 }
 
+// BlockState is a sample of a block's runtime state.
 type BlockState struct {
 	TimeRange timestamp.TimeRange
 	ID        BlockID
 	Closed    bool
 }
+
+// ShardState is a sample of a shard's runtime state.
 type ShardState struct {
 	Blocks           []BlockState
 	OpenBlocks       []BlockID
@@ -159,7 +178,7 @@ func (d *database) Shards() []Shard {
 
 func (d *database) Shard(id common.ShardID) (Shard, error) {
 	if uint(id) >= uint(len(d.sLst)) {
-		return nil, ErrInvalidShardID
+		return nil, errInvalidShardID
 	}
 	return d.sLst[id], nil
 }
@@ -175,24 +194,26 @@ func (d *database) Close() error {
 	return err
 }
 
+// OpenDatabase returns a new tsdb runtime. This constructor will create a new database if it's absent,
+// or load an existing one.
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if opts.EncodingMethod.EncoderPool == nil || opts.EncodingMethod.DecoderPool == nil {
-		return nil, errors.Wrap(ErrOpenDatabase, "encoding method is absent")
+		return nil, errors.Wrap(errOpenDatabase, "encoding method is absent")
 	}
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}
 	if opts.SegmentInterval.Num == 0 {
-		return nil, errors.Wrap(ErrOpenDatabase, "segment interval is absent")
+		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
 	if opts.BlockInterval.Num == 0 {
-		return nil, errors.Wrap(ErrOpenDatabase, "block interval is absent")
+		return nil, errors.Wrap(errOpenDatabase, "block interval is absent")
 	}
-	if opts.BlockInterval.EstimatedDuration() > opts.SegmentInterval.EstimatedDuration() {
-		return nil, errors.Wrapf(ErrOpenDatabase, "the block size is bigger than the segment size")
+	if opts.BlockInterval.estimatedDuration() > opts.SegmentInterval.estimatedDuration() {
+		return nil, errors.Wrapf(errOpenDatabase, "the block size is bigger than the segment size")
 	}
 	if opts.TTL.Num == 0 {
-		return nil, errors.Wrap(ErrOpenDatabase, "ttl is absent")
+		return nil, errors.Wrap(errOpenDatabase, "ttl is absent")
 	}
 	db := &database{
 		location:    opts.Location,
@@ -242,7 +263,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	// TODO: open the manifest file
 	db.Lock()
 	defer db.Unlock()
-	err := WalkDir(db.location, shardPathPrefix, func(suffix string) error {
+	err := walkDir(db.location, shardPathPrefix, func(suffix string) error {
 		shardID, err := strconv.Atoi(suffix)
 		if err != nil {
 			return err
@@ -281,9 +302,9 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	return db, nil
 }
 
-type WalkFn func(suffix string) error
+type walkFn func(suffix string) error
 
-func WalkDir(root, prefix string, walkFn WalkFn) error {
+func walkDir(root, prefix string, wf walkFn) error {
 	files, err := os.ReadDir(root)
 	if err != nil {
 		return errors.Wrapf(err, "failed to walk the database path: %s", root)
@@ -293,7 +314,7 @@ func WalkDir(root, prefix string, walkFn WalkFn) error {
 			continue
 		}
 		segs := strings.Split(f.Name(), "-")
-		errWalk := walkFn(segs[len(segs)-1])
+		errWalk := wf(segs[len(segs)-1])
 		if errWalk != nil {
 			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
 		}

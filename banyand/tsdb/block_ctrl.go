@@ -93,7 +93,7 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 	}
 	b := c.(*block)
 
-	return bc.newHeadBlock(bc.blockSize.NextTime(b.Start))
+	return bc.newHeadBlock(bc.blockSize.nextTime(b.Start))
 }
 
 func (bc *blockController) newHeadBlock(now time.Time) (*block, error) {
@@ -157,14 +157,14 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
+func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRange) ([]blockDelegate, error) {
 	bb := bc.search(func(b *block) bool {
 		return b.Overlapping(timeRange)
 	})
 	if bb == nil {
 		return nil, nil
 	}
-	dd := make([]BlockDelegate, len(bb))
+	dd := make([]blockDelegate, len(bb))
 	for i, b := range bb {
 		d, err := b.delegate(ctx)
 		if err != nil {
@@ -175,7 +175,7 @@ func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRan
 	return dd, nil
 }
 
-func (bc *blockController) get(ctx context.Context, blockID SectionID) (BlockDelegate, error) {
+func (bc *blockController) get(ctx context.Context, blockID SectionID) (blockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
 		return b.delegate(ctx)
@@ -251,7 +251,7 @@ func (bc *blockController) create(start time.Time) (*block, error) {
 			next = s
 		}
 	}
-	stdEnd := bc.blockSize.NextTime(start)
+	stdEnd := bc.blockSize.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start

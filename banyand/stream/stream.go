@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package stream implements a time-series-based storage which is consists of a sequence of element.
+// Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
 package stream
 
 import (
@@ -65,7 +67,7 @@ func (s *stream) EntityLocator() partition.EntityLocator {
 }
 
 func (s *stream) Close() error {
-	return s.indexWriter.Close()
+	return nil
 }
 
 func (s *stream) parseSpec() {

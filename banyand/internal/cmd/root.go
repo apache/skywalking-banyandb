@@ -33,6 +33,7 @@ const logo = `
 ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═════╝ 
 `
 
+// NewRoot returns a root command.
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,

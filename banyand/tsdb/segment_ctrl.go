@@ -134,8 +134,8 @@ func (sc *segmentController) Next() (bucket.Reporter, error) {
 		return nil, err
 	}
 	seg := c.(*segment)
-	reporter, err := sc.create(sc.segmentSize.NextTime(seg.Start))
-	if errors.Is(err, ErrEndOfSegment) {
+	reporter, err := sc.create(sc.segmentSize.nextTime(seg.Start))
+	if errors.Is(err, errEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
 	}
 	return reporter, err
@@ -187,7 +187,7 @@ func (sc *segmentController) open() error {
 	defer sc.Unlock()
 	return loadSections(sc.location, sc, sc.segmentSize, func(start, end time.Time) error {
 		_, err := sc.load(start, end, sc.location)
-		if errors.Is(err, ErrEndOfSegment) {
+		if errors.Is(err, errEndOfSegment) {
 			return nil
 		}
 		return err
@@ -207,7 +207,7 @@ func (sc *segmentController) create(start time.Time) (*segment, error) {
 			next = s
 		}
 	}
-	stdEnd := sc.segmentSize.NextTime(start)
+	stdEnd := sc.segmentSize.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start

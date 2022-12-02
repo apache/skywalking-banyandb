@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package grpc implements the gRPC services defined by APIs.
 package grpc
 
 import (
@@ -45,13 +46,13 @@ import (
 const defaultRecvSize = 1024 * 1024 * 10
 
 var (
-	ErrServerCert = errors.New("invalid server cert file")
-	ErrServerKey  = errors.New("invalid server key file")
-	ErrNoAddr     = errors.New("no address")
-	ErrQueryMsg   = errors.New("invalid query message")
+	errServerCert = errors.New("invalid server cert file")
+	errServerKey  = errors.New("invalid server key file")
+	errNoAddr     = errors.New("no address")
+	errQueryMsg   = errors.New("invalid query message")
 )
 
-type Server struct {
+type server struct {
 	pipeline queue.Queue
 	creds    credentials.TransportCredentials
 	repo     discovery.ServiceRepo
@@ -74,8 +75,9 @@ type Server struct {
 	tls            bool
 }
 
-func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) *Server {
-	return &Server{
+// NewServer returns a new gRPC server.
+func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) run.Unit {
+	return &server{
 		pipeline: pipeline,
 		repo:     repo,
 		streamSVC: &streamService{
@@ -108,7 +110,7 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 	}
 }
 
-func (s *Server) PreRun() error {
+func (s *server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	components := []struct {
 		discoverySVC *discoveryService
@@ -140,11 +142,11 @@ func (s *Server) PreRun() error {
 	return nil
 }
 
-func (s *Server) Name() string {
+func (s *server) Name() string {
 	return "grpc"
 }
 
-func (s *Server) FlagSet() *run.FlagSet {
+func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "the size of max receiving message")
 	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
@@ -154,18 +156,18 @@ func (s *Server) FlagSet() *run.FlagSet {
 	return fs
 }
 
-func (s *Server) Validate() error {
+func (s *server) Validate() error {
 	if s.addr == "" {
-		return ErrNoAddr
+		return errNoAddr
 	}
 	if !s.tls {
 		return nil
 	}
 	if s.certFile == "" {
-		return ErrServerCert
+		return errServerCert
 	}
 	if s.keyFile == "" {
-		return ErrServerKey
+		return errServerKey
 	}
 	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if errTLS != nil {
@@ -175,7 +177,7 @@ func (s *Server) Validate() error {
 	return nil
 }
 
-func (s *Server) Serve() run.StopNotify {
+func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
@@ -215,7 +217,7 @@ func (s *Server) Serve() run.StopNotify {
 	return s.stopCh
 }
 
-func (s *Server) GracefulStop() {
+func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	stopped := make(chan struct{})
 	go func() {

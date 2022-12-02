@@ -38,10 +38,12 @@ import (
 )
 
 var (
-	ErrEmptyRootPath   = errors.New("root path is empty")
+	errEmptyRootPath = errors.New("root path is empty")
+	// ErrMeasureNotExist denotes a measure doesn't exist in the metadata repo.
 	ErrMeasureNotExist = errors.New("measure doesn't exist")
 )
 
+// Service allows inspecting the measure data points.
 type Service interface {
 	run.PreRunner
 	run.Config
@@ -85,7 +87,7 @@ func (s *service) FlagSet() *run.FlagSet {
 
 func (s *service) Validate() error {
 	if s.root == "" {
-		return ErrEmptyRootPath
+		return errEmptyRootPath
 	}
 	return nil
 }

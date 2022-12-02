@@ -31,6 +31,7 @@ var (
 	_ run.Config  = (*metricService)(nil)
 )
 
+// NewProfService returns a pprof service.
 func NewProfService() run.Service {
 	return &pprofService{
 		closer: run.NewCloser(1),

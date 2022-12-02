@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package index implements transferring data to indices.
 package index
 
 import (
@@ -35,8 +36,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type CallbackFn func()
-
+// Message wraps value and other info to generate relative indices.
 type Message struct {
 	Value       Value
 	LocalWriter tsdb.Writer
@@ -44,11 +44,13 @@ type Message struct {
 	Scope       tsdb.Entry
 }
 
+// Value represents the input data for generating indices.
 type Value struct {
 	Timestamp   time.Time
 	TagFamilies []*modelv1.TagFamilyForWrite
 }
 
+// WriterOptions wrap all options to create an index writer.
 type WriterOptions struct {
 	DB                tsdb.Supplier
 	Families          []*databasev1.TagFamilySpec
@@ -64,6 +66,7 @@ const (
 	tree
 )
 
+// Writer generates indices based on index rules.
 type Writer struct {
 	db                tsdb.Supplier
 	l                 *logger.Logger
@@ -72,6 +75,7 @@ type Writer struct {
 	enableGlobalIndex bool
 }
 
+// NewWriter returns a new Writer with WriterOptions.
 func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 	w := new(Writer)
 	parentLogger := ctx.Value(logger.ContextKey)
@@ -125,10 +129,6 @@ func (s *Writer) Write(m Message) {
 	if err != nil {
 		s.l.Error().Err(err).Msg("encounter some errors when generating indices")
 	}
-}
-
-func (s *Writer) Close() error {
-	return nil
 }
 
 // TODO: should listen to pipeline in a distributed cluster.
@@ -225,12 +225,12 @@ func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
 	)
 }
 
-var ErrUnsupportedIndexType = errors.New("unsupported index type")
+var errUnsupportedIndexType = errors.New("unsupported index type")
 
 func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]byte, err error) {
 	val = make([][]byte, 0)
 	if len(ruleIndex.TagIndices) != 1 {
-		return nil, errors.WithMessagef(ErrUnsupportedIndexType,
+		return nil, errors.WithMessagef(errUnsupportedIndexType,
 			"the index rule %s(%v) didn't support composited tags",
 			ruleIndex.Rule.Metadata.Name, ruleIndex.Rule.Tags)
 	}

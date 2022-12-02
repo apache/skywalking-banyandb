@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main implements the executable banyandb server named banyand.
 package main
 
 import (

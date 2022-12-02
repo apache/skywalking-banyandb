@@ -33,11 +33,14 @@ import (
 )
 
 var (
+	// ErrEmptySeriesSpan hints there is no any data blocks based on the input time range.
 	ErrEmptySeriesSpan = errors.New("there is no data in such time range")
-	ErrItemIDMalformed = errors.New("serialized item id is malformed")
-	ErrBlockAbsent     = errors.New("block is absent")
+	errItemIDMalformed = errors.New("serialized item id is malformed")
+	errBlockAbsent     = errors.New("block is absent")
 )
 
+// GlobalItemID is the top level identity of an item.
+// The item could be retrieved by a GlobalItemID in a tsdb.
 type GlobalItemID struct {
 	ShardID  common.ShardID
 	segID    SectionID
@@ -46,7 +49,7 @@ type GlobalItemID struct {
 	ID       common.ItemID
 }
 
-func (i *GlobalItemID) Marshal() []byte {
+func (i *GlobalItemID) marshal() []byte {
 	return bytes.Join([][]byte{
 		convert.Uint32ToBytes(uint32(i.ShardID)),
 		sectionIDToBytes(i.segID),
@@ -56,9 +59,9 @@ func (i *GlobalItemID) Marshal() []byte {
 	}, nil)
 }
 
-func (i *GlobalItemID) UnMarshal(data []byte) error {
+func (i *GlobalItemID) unMarshal(data []byte) error {
 	if len(data) != 4+4+4+8+8 {
-		return ErrItemIDMalformed
+		return errItemIDMalformed
 	}
 	var offset int
 	i.ShardID = common.ShardID(convert.BytesToUint32(data[offset : offset+4]))
@@ -71,6 +74,8 @@ func (i *GlobalItemID) UnMarshal(data []byte) error {
 	return nil
 }
 
+// Series denotes a series of data points group by a common.SeriesID
+// common.SeriesID is encoded by a entity defined by Stream or Measure.
 type Series interface {
 	ID() common.SeriesID
 	Span(ctx context.Context, timeRange timestamp.TimeRange) (SeriesSpan, error)
@@ -79,6 +84,7 @@ type Series interface {
 	String() string
 }
 
+// SeriesSpan is a span in a time series. It contains data blocks in such time range.
 type SeriesSpan interface {
 	io.Closer
 	WriterBuilder() WriterBuilder
@@ -101,7 +107,7 @@ func (s *series) Get(ctx context.Context, id GlobalItemID) (Item, io.Closer, err
 		return nil, nil, err
 	}
 	if b == nil {
-		return nil, nil, errors.WithMessagef(ErrBlockAbsent, "id: %v", id)
+		return nil, nil, errors.WithMessagef(errBlockAbsent, "id: %v", id)
 	}
 	return &item{
 		data:        b.dataReader(),
@@ -191,7 +197,7 @@ type seriesSpan struct {
 	l         *logger.Logger
 	timeRange timestamp.TimeRange
 	series    string
-	blocks    []BlockDelegate
+	blocks    []blockDelegate
 	seriesID  common.SeriesID
 	shardID   common.ShardID
 }
@@ -211,7 +217,7 @@ func (s *seriesSpan) SeekerBuilder() SeekerBuilder {
 	return newSeekerBuilder(s)
 }
 
-func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []BlockDelegate, id common.SeriesID, series string, shardID common.ShardID) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange timestamp.TimeRange, blocks []blockDelegate, id common.SeriesID, series string, shardID common.ShardID) *seriesSpan {
 	s := &seriesSpan{
 		blocks:    blocks,
 		seriesID:  id,

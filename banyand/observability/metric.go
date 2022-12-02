@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package observability
 
 import (
@@ -31,6 +32,7 @@ var (
 	_ run.Config  = (*metricService)(nil)
 )
 
+// NewMetricService returns a metric service.
 func NewMetricService() run.Service {
 	return &metricService{
 		closer: run.NewCloser(1),

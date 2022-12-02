@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package query implement the query module for liaison and other modules to retrieve data.
 package query
 
 import (
@@ -28,13 +29,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-type Executor interface {
-	run.PreRunner
-}
-
-func NewExecutor(_ context.Context, streamService stream.Service, measureService measure.Service,
+// NewService return a new query service.
+func NewService(_ context.Context, streamService stream.Service, measureService measure.Service,
 	metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue,
-) (Executor, error) {
+) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
 		serviceRepo: serviceRepo,

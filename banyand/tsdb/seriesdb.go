@@ -49,12 +49,17 @@ var (
 	zeroIntBytes    = convert.Uint64ToBytes(0)
 )
 
+// AnyEntry is the `*` for a regular expression. It could match "any" Entry in an Entity.
 var AnyEntry = Entry(nil)
 
+// Entry is an element in an Entity.
 type Entry []byte
 
+// Entity denotes an identity of a Series.
+// It defined by Stream or Measure schema.
 type Entity []Entry
 
+// Marshal encodes an Entity to bytes.
 func (e Entity) Marshal() []byte {
 	data := make([][]byte, len(e))
 	for i, entry := range e {
@@ -63,18 +68,21 @@ func (e Entity) Marshal() []byte {
 	return bytes.Join(data, nil)
 }
 
+// Prepend inserts an Entry before the first Entry as the prefix.
 func (e Entity) Prepend(entry Entry) Entity {
 	d := e
 	d = append(Entity{entry}, d...)
 	return d
 }
 
+// Copy an Entity deeply.
 func (e Entity) Copy() Entity {
 	a := make(Entity, len(e))
 	copy(a, e)
 	return a
 }
 
+// NewEntity return an Entity with an fixed length.
 func NewEntity(length int) Entity {
 	e := make(Entity, length)
 	for i := 0; i < length; i++ {
@@ -83,18 +91,23 @@ func NewEntity(length int) Entity {
 	return e
 }
 
+// EntityValue represents the value of a tag which is a part of an entity.
 type EntityValue *modelv1.TagValue
 
+// EntityValueToEntry transforms EntityValue to Entry.
 func EntityValueToEntry(ev EntityValue) (Entry, error) {
 	return pbv1.MarshalTagValue(ev)
 }
 
+// EntityValues is the encoded Entity.
 type EntityValues []EntityValue
 
+// Prepend inserts an EntityValue before the first EntityValue as the prefix.
 func (evs EntityValues) Prepend(scope EntityValue) EntityValues {
 	return append(EntityValues{scope}, evs...)
 }
 
+// Encode EntityValues to tag values.
 func (evs EntityValues) Encode() (result []*modelv1.TagValue) {
 	for _, v := range evs {
 		result = append(result, v)
@@ -102,6 +115,7 @@ func (evs EntityValues) Encode() (result []*modelv1.TagValue) {
 	return
 }
 
+// ToEntity transforms EntityValues to Entity.
 func (evs EntityValues) ToEntity() (result Entity, err error) {
 	for _, v := range evs {
 		entry, errMarshal := EntityValueToEntry(v)
@@ -113,6 +127,7 @@ func (evs EntityValues) ToEntity() (result Entity, err error) {
 	return
 }
 
+// String outputs the string represent of an EntityValue.
 func (evs EntityValues) String() string {
 	var strBuilder strings.Builder
 	vv := evs.Encode()
@@ -125,6 +140,7 @@ func (evs EntityValues) String() string {
 	return strBuilder.String()
 }
 
+// DecodeEntityValues decodes tag values to EntityValues.
 func DecodeEntityValues(tvv []*modelv1.TagValue) (result EntityValues) {
 	for _, tv := range tvv {
 		result = append(result, tv)
@@ -132,14 +148,17 @@ func DecodeEntityValues(tvv []*modelv1.TagValue) (result EntityValues) {
 	return
 }
 
+// StrValue returns an EntityValue which wraps a string value.
 func StrValue(v string) EntityValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
 }
 
+// Int64Value returns an EntityValue which wraps a int64 value.
 func Int64Value(v int64) EntityValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}}
 }
 
+// MarshalEntityValues encodes EntityValues to bytes.
 func MarshalEntityValues(evs EntityValues) ([]byte, error) {
 	data := &modelv1.TagFamilyForWrite{}
 	for _, v := range evs {
@@ -148,6 +167,7 @@ func MarshalEntityValues(evs EntityValues) ([]byte, error) {
 	return proto.Marshal(data)
 }
 
+// UnmarshalEntityValues decodes EntityValues from bytes.
 func UnmarshalEntityValues(evs []byte) (result EntityValues, err error) {
 	data := &modelv1.TagFamilyForWrite{}
 	result = make(EntityValues, len(data.Tags))
@@ -160,6 +180,8 @@ func UnmarshalEntityValues(evs []byte) (result EntityValues, err error) {
 	return
 }
 
+// Path denotes a expression to match a Series.
+// It supports the fuzzy matching more than EQ by setting an entry to AnyEntry.
 type Path struct {
 	prefix   []byte
 	seekKey  []byte
@@ -169,7 +191,8 @@ type Path struct {
 	offset   int
 }
 
-func NewPath(entries []Entry) Path {
+// NewPath return a Path with a matching expression.
+func NewPath(matchingExpression []Entry) Path {
 	p := Path{
 		seekKey:  make([]byte, 0),
 		mask:     make([]byte, 0),
@@ -177,7 +200,7 @@ func NewPath(entries []Entry) Path {
 	}
 
 	var encounterAny bool
-	for _, e := range entries {
+	for _, e := range matchingExpression {
 		if e == nil {
 			encounterAny = true
 			p.mask = append(p.mask, zeroIntBytes...)
@@ -207,7 +230,7 @@ func (p *Path) extractPrefix() {
 	}
 }
 
-func (p Path) Prepend(entry Entry) Path {
+func (p Path) prepend(entry Entry) Path {
 	e := Hash(entry)
 	p.template = prepend(p.template, e)
 	p.offset += len(e)
@@ -223,6 +246,7 @@ func prepend(src []byte, entry []byte) []byte {
 	return dst
 }
 
+// SeriesDatabase allows retrieving series.
 type SeriesDatabase interface {
 	observability.Observable
 	io.Closer
@@ -233,9 +257,9 @@ type SeriesDatabase interface {
 
 type blockDatabase interface {
 	shardID() common.ShardID
-	span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error)
-	create(ctx context.Context, ts time.Time) (BlockDelegate, error)
-	block(ctx context.Context, id GlobalItemID) (BlockDelegate, error)
+	span(ctx context.Context, timeRange timestamp.TimeRange) ([]blockDelegate, error)
+	create(ctx context.Context, ts time.Time) (blockDelegate, error)
+	block(ctx context.Context, id GlobalItemID) (blockDelegate, error)
 }
 
 var (
@@ -272,7 +296,7 @@ func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	return newSeries(s.context(), id, series, s), nil
 }
 
-func (s *seriesDB) block(ctx context.Context, id GlobalItemID) (BlockDelegate, error) {
+func (s *seriesDB) block(ctx context.Context, id GlobalItemID) (blockDelegate, error) {
 	seg := s.segCtrl.get(id.segID)
 	if seg == nil {
 		return nil, nil
@@ -410,8 +434,8 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 	return result, err
 }
 
-func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
-	result := make([]BlockDelegate, 0)
+func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]blockDelegate, error) {
+	result := make([]blockDelegate, 0)
 	for _, s := range s.segCtrl.span(timeRange) {
 		dd, err := s.blockController.span(ctx, timeRange)
 		if err != nil {
@@ -425,7 +449,7 @@ func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]B
 	return result, nil
 }
 
-func (s *seriesDB) create(ctx context.Context, ts time.Time) (BlockDelegate, error) {
+func (s *seriesDB) create(ctx context.Context, ts time.Time) (blockDelegate, error) {
 	s.Lock()
 	defer s.Unlock()
 	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
@@ -508,10 +532,12 @@ func HashEntity(entity Entity) []byte {
 	return result
 }
 
+// SeriesID transforms Entity to common.SeriesID.
 func SeriesID(entity Entity) common.SeriesID {
 	return common.SeriesID(convert.Hash(HashEntity(entity)))
 }
 
+// Hash encode Entry to 8 bytes.
 func Hash(entry []byte) []byte {
 	return convert.Uint64ToBytes(convert.Hash(entry))
 }
@@ -520,6 +546,7 @@ func bytesToSeriesID(data []byte) common.SeriesID {
 	return common.SeriesID(convert.BytesToUint64(data))
 }
 
+// SeriesList is a collection of Series.
 type SeriesList []Series
 
 func (a SeriesList) Len() int {
@@ -534,6 +561,7 @@ func (a SeriesList) Swap(i, j int) {
 	a[i], a[j] = a[j], a[i]
 }
 
+// Merge other SeriesList with this one to create a new SeriesList.
 func (a SeriesList) Merge(other SeriesList) SeriesList {
 	if len(other) == 0 {
 		return a

@@ -400,7 +400,7 @@ func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupReg
 	}, nil
 }
 
-func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupRegistryServiceListRequest) (
+func (rs *groupRegistryServer) List(ctx context.Context, _ *databasev1.GroupRegistryServiceListRequest) (
 	*databasev1.GroupRegistryServiceListResponse, error,
 ) {
 	groups, err := rs.schemaRegistry.GroupRegistry().ListGroup(ctx)

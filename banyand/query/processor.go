@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -44,7 +45,7 @@ const (
 )
 
 var (
-	_ Executor            = (*queryService)(nil)
+	_ run.PreRunner       = (*queryService)(nil)
 	_ bus.MessageListener = (*streamQueryProcessor)(nil)
 	_ bus.MessageListener = (*measureQueryProcessor)(nil)
 	_ bus.MessageListener = (*topNQueryProcessor)(nil)

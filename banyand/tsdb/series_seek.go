@@ -34,12 +34,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// Iterator allows iterating a series in a time span.
 type Iterator interface {
 	Next() bool
 	Val() Item
 	Close() error
 }
 
+// Item allows retrieving raw data from an item.
 type Item interface {
 	Family(family []byte) ([]byte, error)
 	PrintContext(l *logger.Logger, family []byte, n int)
@@ -49,6 +51,7 @@ type Item interface {
 	Time() uint64
 }
 
+// SeekerBuilder a helper to build a Seeker.
 type SeekerBuilder interface {
 	Filter(predicator index.Filter) SeekerBuilder
 	OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder
@@ -56,6 +59,7 @@ type SeekerBuilder interface {
 	Build() (Seeker, error)
 }
 
+// Seeker allows searching data in a Database.
 type Seeker interface {
 	Seek() ([]Iterator, error)
 }

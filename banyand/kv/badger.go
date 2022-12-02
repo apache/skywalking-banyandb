@@ -34,12 +34,13 @@ import (
 )
 
 var (
-	_              Store           = (*badgerDB)(nil)
-	_              IndexStore      = (*badgerDB)(nil)
-	_              y.Iterator      = (*mergedIter)(nil)
-	_              TimeSeriesStore = (*badgerTSS)(nil)
-	bitMergeEntry  byte            = 1 << 3
-	ErrKeyNotFound                 = badger.ErrKeyNotFound
+	_             Store           = (*badgerDB)(nil)
+	_             IndexStore      = (*badgerDB)(nil)
+	_             y.Iterator      = (*mergedIter)(nil)
+	_             TimeSeriesStore = (*badgerTSS)(nil)
+	bitMergeEntry byte            = 1 << 3
+	// ErrKeyNotFound denotes the expected key can not be got from the kv service.
+	ErrKeyNotFound = badger.ErrKeyNotFound
 )
 
 type badgerTSS struct {
@@ -147,12 +148,6 @@ func (b *badgerDB) Stats() observability.Statistics {
 	return badgerStats(b.db)
 }
 
-func (b *badgerDB) Handover(iterator Iterator) error {
-	return b.db.HandoverIterator(&mergedIter{
-		delegated: iterator,
-	})
-}
-
 func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchSize = opt.PrefetchSize
@@ -173,7 +168,7 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 		err := f(b.shardID, k, func() ([]byte, error) {
 			return y.Copy(it.Value().Value), nil
 		})
-		if errors.Is(err, ErrStopScan) {
+		if errors.Is(err, errStopScan) {
 			break
 		}
 		if err != nil {

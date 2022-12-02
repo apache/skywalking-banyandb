@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package metadata implements a Raft-based distributed metadata storage system.
+// Powered by etcd.
 package metadata
 
 import (
@@ -39,6 +41,7 @@ type IndexFilter interface {
 	Subjects(ctx context.Context, indexRule *databasev1.IndexRule, catalog commonv1.Catalog) ([]schema.Spec, error)
 }
 
+// Repo is the facade to interact with the metadata repository.
 type Repo interface {
 	IndexFilter
 	StreamRegistry() schema.Stream
@@ -50,6 +53,7 @@ type Repo interface {
 	PropertyRegistry() schema.Property
 }
 
+// Service is the metadata repository.
 type Service interface {
 	Repo
 	run.PreRunner
@@ -101,6 +105,7 @@ func (s *service) GracefulStop() {
 	<-s.schemaRegistry.StopNotify()
 }
 
+// NewService returns a new metadata repository Service.
 func NewService(_ context.Context) (Service, error) {
 	return &service{}, nil
 }

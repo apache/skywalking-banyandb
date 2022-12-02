@@ -53,7 +53,7 @@ const (
 	defaultEnqueueTimeout = 500 * time.Millisecond
 )
 
-var ErrBlockClosingInterrupted = errors.New("interrupt to close the block")
+var errBlockClosingInterrupted = errors.New("interrupt to close the block")
 
 type block struct {
 	encodingMethod EncodingMethod
@@ -189,9 +189,9 @@ func (b *block) open() (err error) {
 	return nil
 }
 
-func (b *block) delegate(ctx context.Context) (BlockDelegate, error) {
+func (b *block) delegate(ctx context.Context) (blockDelegate, error) {
 	if b.deleted.Load() {
-		return nil, errors.WithMessagef(ErrBlockAbsent, "block %s is deleted", b)
+		return nil, errors.WithMessagef(errBlockAbsent, "block %s is deleted", b)
 	}
 	blockID := BlockID{
 		BlockID: b.blockID,
@@ -276,7 +276,7 @@ func (b *block) close(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		stopWaiting.Store(true)
-		return errors.Wrapf(ErrBlockClosingInterrupted, "block:%s", b)
+		return errors.Wrapf(errBlockClosingInterrupted, "block:%s", b)
 	case <-ch:
 	}
 	b.closed.Store(true)
@@ -313,7 +313,7 @@ func (b *block) stats() (names []string, stats []observability.Statistics) {
 	return names, stats
 }
 
-type BlockDelegate interface {
+type blockDelegate interface {
 	io.Closer
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
@@ -330,7 +330,7 @@ type BlockDelegate interface {
 	String() string
 }
 
-var _ BlockDelegate = (*bDelegate)(nil)
+var _ blockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block

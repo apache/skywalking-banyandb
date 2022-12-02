@@ -36,7 +36,7 @@ import (
 )
 
 var (
-	ErrMalformedElement = errors.New("element is malformed")
+	errMalformedElement = errors.New("element is malformed")
 	writtenBytes        *prometheus.CounterVec
 )
 
@@ -59,10 +59,10 @@ func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.
 	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
-		return errors.Wrap(ErrMalformedElement, "no tag family")
+		return errors.Wrap(errMalformedElement, "no tag family")
 	}
 	if fLen > len(sm.TagFamilies) {
-		return errors.Wrap(ErrMalformedElement, "tag family number is more than expected")
+		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.db.SupplyTSDB().Shard(shardID)
 	if err != nil {

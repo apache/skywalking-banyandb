@@ -43,10 +43,7 @@ type streamService struct {
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	reply := func() error {
-		if err := stream.Send(&streamv1.WriteResponse{}); err != nil {
-			return err
-		}
-		return nil
+		return stream.Send(&streamv1.WriteResponse{})
 	}
 	sampled := s.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
@@ -127,7 +124,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	case []*streamv1.Element:
 		return &streamv1.QueryResponse{Elements: d}, nil
 	case common.Error:
-		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
+		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
 	return nil, nil
 }

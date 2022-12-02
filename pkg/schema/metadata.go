@@ -88,7 +88,7 @@ type Resource interface {
 
 type ResourceSupplier interface {
 	OpenResource(shardNum uint32, db tsdb.Supplier, spec ResourceSpec) (Resource, error)
-	ResourceSchema(repo metadata.Repo, metdata *commonv1.Metadata) (ResourceSchema, error)
+	ResourceSchema(metdata *commonv1.Metadata) (ResourceSchema, error)
 	OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error)
 }
 
@@ -287,7 +287,7 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) (Resource, erro
 			return nil, errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
 		}
 	}
-	stm, err := sr.resourceSupplier.ResourceSchema(sr.metadata, metadata)
+	stm, err := sr.resourceSupplier.ResourceSchema(metadata)
 	if err != nil {
 		return nil, errors.WithMessage(err, "fails to get the resource")
 	}

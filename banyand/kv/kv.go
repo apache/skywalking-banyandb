@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package kv implements a key-value engine.
 package kv
 
 import (
@@ -31,21 +32,25 @@ import (
 )
 
 var (
-	ErrStopScan     = errors.New("stop scanning")
+	errStopScan = errors.New("stop scanning")
+
+	// DefaultScanOpts is a helper to provides canonical options for scanning.
 	DefaultScanOpts = ScanOpts{
 		PrefetchSize:   100,
 		PrefetchValues: true,
 	}
 )
 
-type Writer interface {
+type writer interface {
 	// Put a value
 	Put(key, val []byte) error
 	PutWithVersion(key, val []byte, version uint64) error
 }
 
+// ScanFunc is the closure executed on scanning out a pair of key-value.
 type ScanFunc func(shardID int, key []byte, getVal func() ([]byte, error)) error
 
+// ScanOpts wraps options for scanning the kv storage.
 type ScanOpts struct {
 	Prefix         []byte
 	PrefetchSize   int
@@ -53,6 +58,7 @@ type ScanOpts struct {
 	Reverse        bool
 }
 
+// Reader allows retrieving data from kv.
 type Reader interface {
 	Iterable
 	// Get a value by its key
@@ -65,10 +71,11 @@ type Reader interface {
 type Store interface {
 	observability.Observable
 	io.Closer
-	Writer
+	writer
 	Reader
 }
 
+// TimeSeriesWriter allows writing to a time-series storage.
 type TimeSeriesWriter interface {
 	// Put a value with a timestamp/version
 	Put(key, val []byte, ts uint64) error
@@ -77,6 +84,7 @@ type TimeSeriesWriter interface {
 	PutAsync(key, val []byte, ts uint64, f func(error)) error
 }
 
+// TimeSeriesReader allows retrieving data from a time-series storage.
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
 	Get(key []byte, ts uint64) ([]byte, error)
@@ -91,6 +99,7 @@ type TimeSeriesStore interface {
 	TimeSeriesReader
 }
 
+// TimeSeriesOptions sets an options for creating a TimeSeriesStore.
 type TimeSeriesOptions func(TimeSeriesStore)
 
 // TSSWithLogger sets a external logger into underlying TimeSeriesStore.
@@ -104,6 +113,7 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 	}
 }
 
+// TSSWithEncoding sets encoding and decoding pools for flushing and compacting.
 func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
 		if btss, ok := store.(*badgerTSS); ok {
@@ -117,25 +127,20 @@ func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encodin
 	}
 }
 
-func TSSWithFlushCallback(callback func()) TimeSeriesOptions {
+// TSSWithMemTableSize sets the size of memory table in bytes.
+func TSSWithMemTableSize(sizeInBytes int64) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
-		if btss, ok := store.(*badgerTSS); ok {
-			btss.dbOpts.FlushCallBack = callback
-		}
-	}
-}
-
-func TSSWithMemTableSize(size int64) TimeSeriesOptions {
-	return func(store TimeSeriesStore) {
-		if size < 1 {
+		if sizeInBytes < 1 {
 			return
 		}
 		if btss, ok := store.(*badgerTSS); ok {
-			btss.dbOpts.MemTableSize = size
+			btss.dbOpts.MemTableSize = sizeInBytes
 		}
 	}
 }
 
+// Iterator allows iterating the kv tables.
+// TODO: use generic to provide a unique iterator
 type Iterator interface {
 	Next()
 	Rewind()
@@ -147,17 +152,16 @@ type Iterator interface {
 	Close() error
 }
 
+// Iterable allows creating a Iterator.
 type Iterable interface {
 	NewIterator(opt ScanOpts) Iterator
 }
 
-type HandoverCallback func()
-
+// IndexStore allows writing and reading index format data.
 type IndexStore interface {
 	observability.Observable
 	Iterable
 	Reader
-	Handover(iterator Iterator) error
 	Close() error
 }
 
@@ -184,6 +188,7 @@ func OpenTimeSeriesStore(shardID int, path string, options ...TimeSeriesOptions)
 	return btss, nil
 }
 
+// StoreOptions sets options for creating Store.
 type StoreOptions func(Store)
 
 // StoreWithLogger sets a external logger into underlying Store.
@@ -236,6 +241,7 @@ func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error)
 	return bdb, nil
 }
 
+// IndexOptions sets options for creating the index store.
 type IndexOptions func(store IndexStore)
 
 // IndexWithLogger sets a external logger into underlying IndexStore.

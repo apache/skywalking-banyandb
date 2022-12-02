@@ -47,7 +47,8 @@ import (
 
 const (
 	timeBucketFormat = "200601021504"
-	TopNTagFamily    = "__topN__"
+	// TopNTagFamily is the identity of a tag family which contains the topN calculated result.
+	TopNTagFamily = "__topN__"
 )
 
 var (
@@ -57,6 +58,7 @@ var (
 
 	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
 
+	// TopNValueFieldSpec denotes the field specification of the topN calculated result.
 	TopNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
 		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
@@ -109,7 +111,7 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 
 // Teardown is called by the Flow as a lifecycle hook.
 // So we should not block on err channel within this method.
-func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
+func (t *topNStreamingProcessor) Teardown(_ context.Context) error {
 	t.Wait()
 	return nil
 }
@@ -280,13 +282,13 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[1].(int64)
 			}),
-			OrderBy(t.topNSchema.GetFieldValueSort()),
+			orderBy(t.topNSchema.GetFieldValueSort()),
 		).To(t).Open()
 	go t.handleError()
 	return t
 }
 
-func OrderBy(sort modelv1.Sort) streaming.TopNOption {
+func orderBy(sort modelv1.Sort) streaming.TopNOption {
 	if sort == modelv1.Sort_SORT_ASC {
 		return streaming.OrderBy(streaming.ASC)
 	}

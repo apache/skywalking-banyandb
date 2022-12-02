@@ -54,6 +54,7 @@ type shard struct {
 	id                    common.ShardID
 }
 
+// OpenShard returns an existed Shard or create a new one if not existed.
 func OpenShard(ctx context.Context, id common.ShardID,
 	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize, maxOpenedBlockSize int,
 ) (Shard, error) {
@@ -178,8 +179,10 @@ func (s *shard) Close() (err error) {
 	return err
 }
 
+// IntervalUnit denotes the unit of a time point.
 type IntervalUnit int
 
+// Available IntervalUnits. HOUR and DAY are adequate for the APM scenario.
 const (
 	HOUR IntervalUnit = iota
 	DAY
@@ -195,12 +198,13 @@ func (iu IntervalUnit) String() string {
 	panic("invalid interval unit")
 }
 
+// IntervalRule defines a length of two points in time.
 type IntervalRule struct {
 	Unit IntervalUnit
 	Num  int
 }
 
-func (ir IntervalRule) NextTime(current time.Time) time.Time {
+func (ir IntervalRule) nextTime(current time.Time) time.Time {
 	switch ir.Unit {
 	case HOUR:
 		return current.Add(time.Hour * time.Duration(ir.Num))
@@ -210,17 +214,7 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 	panic("invalid interval unit")
 }
 
-func (ir IntervalRule) PreviousTime(current time.Time) time.Time {
-	switch ir.Unit {
-	case HOUR:
-		return current.Add(-time.Hour * time.Duration(ir.Num))
-	case DAY:
-		return current.AddDate(0, 0, -ir.Num)
-	}
-	panic("invalid interval unit")
-}
-
-func (ir IntervalRule) EstimatedDuration() time.Duration {
+func (ir IntervalRule) estimatedDuration() time.Duration {
 	switch ir.Unit {
 	case HOUR:
 		return time.Hour * time.Duration(ir.Num)
@@ -236,7 +230,7 @@ type parser interface {
 
 func loadSections(root string, parser parser, intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
 	var startTimeLst []time.Time
-	if err := WalkDir(
+	if err := walkDir(
 		root,
 		segPathPrefix,
 		func(suffix string) error {
@@ -255,7 +249,7 @@ func loadSections(root string, parser parser, intervalRule IntervalRule, loadFn 
 		if i < len(startTimeLst)-1 {
 			end = startTimeLst[i+1]
 		} else {
-			end = intervalRule.NextTime(start)
+			end = intervalRule.nextTime(start)
 		}
 		if err := loadFn(start, end); err != nil {
 			return err

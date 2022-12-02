@@ -25,6 +25,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// Queue builds a data transmission tunnel between subscribers and publishers.
+//
 //go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
 type Queue interface {
 	run.Unit
@@ -33,6 +35,7 @@ type Queue interface {
 	run.Service
 }
 
+// NewQueue return a new Queue which relies on the discovery service.
 func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {
 	return &local{
 		repo:   repo,
