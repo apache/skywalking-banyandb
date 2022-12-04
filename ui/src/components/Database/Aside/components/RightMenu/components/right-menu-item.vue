@@ -55,6 +55,8 @@ defineProps({
 
 i {
     font-size: 20px;
-    color: var(--color-main);
+    &:hover {
+        color: var(--color-main);
+    }
 }
 </style>

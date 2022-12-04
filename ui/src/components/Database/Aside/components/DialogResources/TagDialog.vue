@@ -19,16 +19,10 @@
 
 <script setup>
 import { watch, ref, reactive } from 'vue'
-import TagDialog from './TagDialog.vue'
 const rule = {
-    name: [
+    tagFamily: [
         {
-            required: true, message: 'Please enter the name', trigger: 'blur'
-        }
-    ],
-    group: [
-        {
-            required: true, message: 'Please enter the group', trigger: 'blur'
+            required: true, message: 'Please enter the tagFamily name', trigger: 'blur'
         }
     ]
 }
@@ -40,15 +34,19 @@ const props = defineProps({
     },
     operation: {
         type: String,
-        default: 'create',
+        default: 'Add',
         required: true
     },
     type: {
         type: String,
-        default: 'stream',
+        default: 'Tag',
         required: true
     },
     group: {
+        type: String,
+        required: true
+    },
+    name: {
         type: String,
         required: true
     }
@@ -56,37 +54,19 @@ const props = defineProps({
 
 let data = reactive({
     dialogVisible: false,
-    tagDialogVisible: false,
-    operation: 'Add',
     form: {
         metadata: {
             group: '',
-            name: ''
+            name: '',
+            tagFamily: ''
         }
     }
 })
 let rules = rule
-let tableData = [{
-    name: 'stream-ids',
-    tags: [{
-        name: 'start_time',
-        type: 'TAG_TYPE_INT',
-        indexedOnly: false
-    }]
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
-}, {
-    name: 'stream-ids',
+let tags = [{
+    name: 'start_time',
+    type: 'TAG_TYPE_INT',
+    indexedOnly: false
 }]
 const ruleForm = ref()
 const emit = defineEmits(['confirm', 'cancel'])
@@ -136,50 +116,31 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
                     </el-input>
                 </el-form-item>
                 <el-form-item label="name" label-width="100px" prop="name">
-                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name">
+                    <el-input disabled v-model="data.form.metadata.name">
+                    </el-input>
+                </el-form-item>
+                <el-form-item label="tagFamily" label-width="100px" prop="tagFamily">
+                    <el-input v-model="data.form.metadata.tagFamily">
                     </el-input>
                 </el-form-item>
                 <div class="flex justify-between justify-between opeartorTag">
                     <div>
-                        <span>Tag Families</span>
+                        <span>Tag</span>
                     </div>
                     <div style="width: 50%" class="flex justify-end">
-                        <el-button type="primary" size="small" @click="data.tagDialogVisible = true, data.operation = 'Add'">Add tag families
-                        </el-button>
+                        <el-button type="primary" size="small">Add tag</el-button>
                         <el-button size="small">Batch deletion</el-button>
                     </div>
                 </div>
-                <el-table :data="tableData" border>
+                <el-table :data="tags" border>
                     <el-table-column type="selection" width="55" />
-                    <!-- <el-table-column label="Tags" type="expand" width="60">
-                        <template #default="props">
-                            <div class="flex justify-end justify-between opeartorTag">
-                                <el-button type="primary" size="small">Add tag</el-button>
-                                <el-button size="small">Batch deletion</el-button>
-                            </div>
-                            <el-table :data="props.row.tags" border style="width: 95%; margin-left: 5%;">
-                                <el-table-column type="selection" width="55" />
-                                <el-table-column label="Name" prop="name" />
-                                <el-table-column label="Type" prop="type" />
-                                <el-table-column label="indexedOnly" prop="indexedOnly" />
-                                <el-table-column fixed="right" label="Operations" width="150">
-                                    <template #default>
-                                        <el-button size="small" @click="handleClick">Detele</el-button>
-                                        <el-button size="small">Edit</el-button>
-                                    </template>
-                                </el-table-column>
-                            </el-table>
-                            <div style="width: 95%; margin-left: 5%;">
-                                <el-divider />
-                            </div>
-                        </template>
-                    </el-table-column> -->
-                    <el-table-column label="Name" prop="name"></el-table-column>
+                    <el-table-column label="Name" prop="name" />
+                    <el-table-column label="Type" prop="type" />
+                    <el-table-column label="indexedOnly" prop="indexedOnly" />
                     <el-table-column fixed="right" label="Operations" width="150">
                         <template #default>
                             <el-button size="small" @click="handleClick">Detele</el-button>
-                            <el-button size="small" @click="data.tagDialogVisible = true, data.operation = 'Edit'">Edit
-                            </el-button>
+                            <el-button size="small">Edit</el-button>
                         </template>
                     </el-table-column>
                 </el-table>
@@ -191,8 +152,6 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
             </div>
         </el-dialog>
     </div>
-    <tag-dialog :visible.sync="data.tagDialogVisible" @cancel="data.tagDialogVisible = false"
-        :group="data.form.metadata.group" :name="data.form.metadata.name" :operation="data.operation"></tag-dialog>
 </template>
 
 <style lang="scss" scoped>
