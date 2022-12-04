@@ -136,20 +136,20 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
 
 <template>
     <div>
-        <el-dialog width="25%" center :title="`${operation} ${type}`" @close="cancelForm" v-model="data.dialogVisible">
+        <el-dialog width="25%" center :title="`${operation} ${type}`" :show-close="false" v-model="data.dialogVisible">
             <el-form ref="ruleForm" :rules="rules" :model="data.form.metadata" label-position="left">
                 <el-form-item label="group" label-width="100px" prop="group">
-                    <el-input disabled v-model="data.form.metadata.group" style="width: 300px;">
+                    <el-input disabled v-model="data.form.metadata.group">
                     </el-input>
                 </el-form-item>
                 <el-form-item label="name" label-width="100px" prop="name">
-                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name" style="width: 300px;">
+                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name">
                     </el-input>
                 </el-form-item>
             </el-form>
-            <div slot="footer" class="dialog-footer">
+            <div slot="footer" class="dialog-footer footer">
                 <el-button @click="cancelForm">cancel</el-button>
-                <el-button type="primary" @click="confirmForm">{{operation}}
+                <el-button type="primary" @click="confirmForm">{{ operation }}
                 </el-button>
             </div>
         </el-dialog>
@@ -157,5 +157,9 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
 </template>
 
 <style lang="scss" scoped>
-
+.footer {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
 </style>

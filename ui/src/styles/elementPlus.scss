@@ -22,12 +22,12 @@
 /* ====================
        button
 =======================*/
-.el-button.nav-button {
-    height: 25px;
-    border-radius: 1px;
-    line-height: 28px;
-    font-size: 12px;
-    margin: 0;
+.el-button {
+    height: 25px !important;
+    border-radius: 1px !important;
+    line-height: 28px !important;
+    font-size: 12px !important;
+    margin: 0 ;
 
     &:hover {
         color: var(--color-main) !important;
