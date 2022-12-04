@@ -43,10 +43,12 @@ defineProps({
 .right-menu-item {
     padding: 3px 6px 3px 6px;
     width: calc(100% - 12px);
+    line-height: 30px;
     height: 30px;
     text-align: start;
     background-color: white;
     color: var(--color-main-font);
+
     &:hover {
         background-color: #ecf5ff;
         color: var(--color-main);
@@ -55,6 +57,9 @@ defineProps({
 
 i {
     font-size: 20px;
+    line-height: 30px;
+    height: 30px;
+
     &:hover {
         color: var(--color-main);
     }
