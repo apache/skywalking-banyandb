@@ -19,8 +19,6 @@
 
 <script setup>
 import RightMenuItem from './components/right-menu-item.vue'
-function handle() {
-}
 defineProps({
     rightMenuList: Array
 })
@@ -29,10 +27,8 @@ defineProps({
 <template>
     <div style="width: 100%;" class="border-radius-little">
         <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item
-            @handleRightItem="$emit('handleRightItem', index)"
-                :class="index == rightMenuList.length - 1 ? 'border-radius-bottom-little' : index == 0 ? 'border-radius-top-little bd-bottom' : 'bd-bottom'"
-                :icon="item.icon" :name="item.name"></right-menu-item>
+            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
+            </right-menu-item>
         </div>
     </div>
 </template>

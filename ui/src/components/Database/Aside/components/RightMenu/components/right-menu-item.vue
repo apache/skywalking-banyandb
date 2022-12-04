@@ -22,21 +22,10 @@ defineProps({
     icon: String,
     name: String
 })
-let bdColor = 'white'
-let colorStr = 'var(--color-main-font)'
-function handleOver() {
-    bdColor = '#ecf5ff'
-    colorStr = 'var(--color-main)'
-}
-function handleLeave() {
-    bdColor = "white"
-    colorStr = "var(--color-main-font)"
-}
 </script>
 
 <template>
-    <div class="flex right-menu-item align-item-center pointer" @mouseover="handleOver" @mouseleave="handleLeave"
-        :style="{ backgroundColor: bdColor, color: colorStr}" @click="$emit('handleRightItem')">
+    <div class="flex right-menu-item align-item-center pointer" @click="$emit('handleRightItem')">
         <i :class="icon"></i>
         <el-icon>
             <Folder v-if="icon === 'el-icon-folder'" />
@@ -44,7 +33,9 @@ function handleLeave() {
             <RefreshRight v-if="icon === 'el-icon-refresh-right'" />
             <Delete v-if="icon === 'el-icon-delete'" />
         </el-icon>
-        <div style="width: 70%;" class="text-overflow-hidden margin-left-small">{{ name }}</div>
+        <div style="width: 70%;" class="text-overflow-hidden margin-left-small">
+            <span :title="name">{{ name }}</span>
+        </div>
     </div>
 </template>
 
@@ -52,12 +43,18 @@ function handleLeave() {
 .right-menu-item {
     padding: 3px 6px 3px 6px;
     width: calc(100% - 12px);
-    height: 40px;
+    height: 30px;
     text-align: start;
+    background-color: white;
+    color: var(--color-main-font);
+    &:hover {
+        background-color: #ecf5ff;
+        color: var(--color-main);
+    }
 }
 
 i {
-    font-size: 25px;
+    font-size: 20px;
     color: var(--color-main);
 }
 </style>

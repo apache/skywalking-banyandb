@@ -84,7 +84,7 @@ const handleRightItem = (index) => {
         </el-main>
       </el-container>
     </div>
-    <div v-show="showRightMenu" class="right-menu border-radius-little box-shadow"
+    <div v-show="showRightMenu" class="right-menu box-shadow"
       :style="{ top: top + 'px', left: left + 'px' }">
       <right-menu-component @handleRightItem="handleRightItem" :rightMenuList="rightMenuList">
       </right-menu-component>

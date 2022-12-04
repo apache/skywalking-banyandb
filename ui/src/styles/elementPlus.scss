@@ -25,10 +25,10 @@
 .el-button {
     height: 25px !important;
     border-radius: 1px !important;
-    line-height: 28px !important;
     font-size: 12px !important;
-    margin: 0 ;
-
+    display: flex;
+    align-items: center;
+    justify-content: center;
     &:hover {
         color: var(--color-main) !important;
         background-color: var(--color-main-background) !important;
