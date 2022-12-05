@@ -65,7 +65,7 @@ func (u *unaryOperator) Exec(downstream flow.Inlet) {
 	go flow.Transmit(&u.ComponentState, downstream, u)
 }
 
-func (u *unaryOperator) Teardown(ctx context.Context) error {
+func (u *unaryOperator) Teardown(_ context.Context) error {
 	u.Wait()
 	return nil
 }

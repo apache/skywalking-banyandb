@@ -21,12 +21,14 @@ import (
 	"encoding/binary"
 )
 
+// Uint64ToBytes converts uint64 to bytes.
 func Uint64ToBytes(u uint64) []byte {
 	bs := make([]byte, 8)
 	binary.BigEndian.PutUint64(bs, u)
 	return bs
 }
 
+// Int64ToBytes converts int64 to bytes.
 func Int64ToBytes(i int64) []byte {
 	abs := i
 	if i < 0 {
@@ -41,18 +43,14 @@ func Int64ToBytes(i int64) []byte {
 	return Uint64ToBytes(u)
 }
 
-func Uint16ToBytes(u uint16) []byte {
-	bs := make([]byte, 2)
-	binary.BigEndian.PutUint16(bs, u)
-	return bs
-}
-
+// Uint32ToBytes converts uint32 to bytes.
 func Uint32ToBytes(u uint32) []byte {
 	bs := make([]byte, 4)
 	binary.BigEndian.PutUint32(bs, u)
 	return bs
 }
 
+// BytesToInt64 converts bytes to int64.
 func BytesToInt64(b []byte) int64 {
 	u := binary.BigEndian.Uint64(b)
 	if b[0] >= 128 {
@@ -67,46 +65,12 @@ func BytesToInt64(b []byte) int64 {
 	return abs
 }
 
+// BytesToUint64 converts bytes to uint64.
 func BytesToUint64(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }
 
+// BytesToUint32 converts bytes to uint32.
 func BytesToUint32(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
-}
-
-func BytesToUint16(b []byte) uint16 {
-	return binary.BigEndian.Uint16(b)
-}
-
-func IntToInt64(numbers ...int) []int64 {
-	var arr []int64
-	for i := 0; i < len(numbers); i++ {
-		arr = append(arr, int64(numbers[i]))
-	}
-	return arr
-}
-
-func Int8ToInt64(numbers ...int8) []int64 {
-	var arr []int64
-	for i := 0; i < len(numbers); i++ {
-		arr = append(arr, int64(numbers[i]))
-	}
-	return arr
-}
-
-func Int16ToInt64(numbers ...int16) []int64 {
-	var arr []int64
-	for i := 0; i < len(numbers); i++ {
-		arr = append(arr, int64(numbers[i]))
-	}
-	return arr
-}
-
-func Int32ToInt64(numbers ...int32) []int64 {
-	var arr []int64
-	for i := 0; i < len(numbers); i++ {
-		arr = append(arr, int64(numbers[i]))
-	}
-	return arr
 }

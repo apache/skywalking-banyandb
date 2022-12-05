@@ -26,16 +26,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+// Analyzer analyzes the stream querying expression to the execution plan.
 type Analyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
+// CreateAnalyzerFromMetaService returns a Analyzer.
 func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
 	return &Analyzer{
 		metaSvc,
 	}, nil
 }
 
+// BuildSchema returns Schema loaded from the metadata repository.
 func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
@@ -71,6 +74,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 	return s, nil
 }
 
+// Analyze converts logical expressions to executable operation tree represented by Plan.
 func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	// parse fields
 	plan := parseTags(criteria, metadata)
@@ -115,6 +119,6 @@ func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata) log
 		projTags[i] = projTagInFamily
 	}
 
-	return TagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+	return tagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
 		criteria.Criteria, nil, projTags...)
 }

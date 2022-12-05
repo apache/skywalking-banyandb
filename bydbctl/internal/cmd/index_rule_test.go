@@ -37,7 +37,7 @@ var _ = Describe("IndexRuleSchema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.SetUp()
+		_, addr, deferFunc = setup.Common()
 		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating indexRule schema

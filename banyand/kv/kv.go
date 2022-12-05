@@ -140,7 +140,7 @@ func TSSWithMemTableSize(sizeInBytes int64) TimeSeriesOptions {
 }
 
 // Iterator allows iterating the kv tables.
-// TODO: use generic to provide a unique iterator
+// TODO: use generic to provide a unique iterator.
 type Iterator interface {
 	Next()
 	Rewind()

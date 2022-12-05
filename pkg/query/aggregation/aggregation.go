@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package aggregation implements aggregation functions to statistic a range of values.
 package aggregation
 
 import (
@@ -25,14 +26,16 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-var ErrUnknownFunc = errors.New("unknown aggregation function")
+var errUnknownFunc = errors.New("unknown aggregation function")
 
+// Int64Func allows to aggregate int64.
 type Int64Func interface {
 	In(int64)
 	Val() int64
 	Reset()
 }
 
+// NewInt64Func returns a Int64Func based on function type.
 func NewInt64Func(af modelv1.AggregationFunction) (Int64Func, error) {
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
@@ -50,5 +53,5 @@ func NewInt64Func(af modelv1.AggregationFunction) (Int64Func, error) {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
 		return &sumInt64Func{}, nil
 	}
-	return nil, ErrUnknownFunc
+	return nil, errUnknownFunc
 }

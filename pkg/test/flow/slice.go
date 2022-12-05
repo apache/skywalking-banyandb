@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package flow implements mockers for testing flow.
 package flow
 
 import (
@@ -67,7 +68,7 @@ func (s *sourceSlice) run(ctx context.Context, sliceVal reflect.Value) {
 	}
 }
 
-func (s *sourceSlice) Teardown(ctx context.Context) error {
+func (s *sourceSlice) Teardown(_ context.Context) error {
 	s.Wait()
 	return nil
 }
@@ -77,6 +78,7 @@ func (s *sourceSlice) Exec(downstream flow.Inlet) {
 	go flow.Transmit(&s.ComponentState, downstream, s)
 }
 
+// NewSlice return a new mocked flow.Source.
 func NewSlice(slice interface{}) flow.Source {
 	return &sourceSlice{
 		slice: slice,

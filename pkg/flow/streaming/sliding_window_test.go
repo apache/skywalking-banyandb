@@ -25,7 +25,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -57,9 +56,9 @@ func (i *intSumAggregator) Dirty() bool {
 var _ = Describe("Sliding Window", func() {
 	var (
 		baseTS         time.Time
-		snk            *sink.Slice
+		snk            *slice
 		input          []flow.StreamRecord
-		slidingWindows *TumblingTimeWindows
+		slidingWindows *tumblingTimeWindows
 
 		aggrFactory = func() flow.AggregationOp {
 			return &intSumAggregator{}
@@ -71,9 +70,9 @@ var _ = Describe("Sliding Window", func() {
 	})
 
 	JustBeforeEach(func() {
-		snk = sink.NewSlice()
+		snk = newSlice()
 
-		slidingWindows = NewTumblingTimeWindows(time.Second * 15)
+		slidingWindows = NewTumblingTimeWindows(time.Second * 15).(*tumblingTimeWindows)
 		slidingWindows.aggregationFactory = aggrFactory
 		slidingWindows.windowCount = 2
 

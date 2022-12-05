@@ -124,7 +124,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 		}
 	}
 	if len(seriesList) == 0 {
-		return executor.EmptyMIterator, nil
+		return dummyIter, nil
 	}
 	var builders []logical.SeekerBuilder
 	if i.Index != nil {
@@ -154,7 +154,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 	}
 
 	if len(iters) == 0 {
-		return executor.EmptyMIterator, nil
+		return dummyIter, nil
 	}
 	transformContext := transformContext{
 		ec:                   ec,
@@ -164,8 +164,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 	if i.groupByEntity {
 		return newSeriesMIterator(iters, transformContext), nil
 	}
-	c := logical.CreateComparator(i.Sort)
-	it := logical.NewItemIter(iters, c)
+	it := logical.NewItemIter(iters, i.Sort)
 	return newIndexScanIterator(it, transformContext), nil
 }
 
@@ -186,7 +185,7 @@ func (i *localIndexScan) Schema() logical.Schema {
 	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
 }
 
-func IndexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter index.Filter, entities []tsdb.Entity,
+func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, filter index.Filter, entities []tsdb.Entity,
 	projectionTags [][]*logical.Tag, projectionFields []*logical.Field, groupByEntity bool, unresolvedOrderBy *logical.UnresolvedOrderBy,
 ) logical.UnresolvedPlan {
 	return &unresolvedIndexScan{
@@ -317,4 +316,20 @@ func transform(item tsdb.Item, ism transformContext) (*measurev1.DataPoint, erro
 		TagFamilies: tagFamilies,
 		Timestamp:   timestamppb.New(time.Unix(0, int64(item.Time()))),
 	}, nil
+}
+
+var dummyIter = dummyMIterator{}
+
+type dummyMIterator struct{}
+
+func (ei dummyMIterator) Next() bool {
+	return false
+}
+
+func (ei dummyMIterator) Current() []*measurev1.DataPoint {
+	return nil
+}
+
+func (ei dummyMIterator) Close() error {
+	return nil
 }

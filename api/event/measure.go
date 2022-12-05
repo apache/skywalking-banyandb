@@ -23,15 +23,21 @@ import (
 )
 
 var (
+	// MeasureShardEventKindVersion is the version tag of measure shard event kind.
 	MeasureShardEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "measure-event-shard",
 	}
+
+	// MeasureTopicShardEvent is the measure shard event publishing topic.
 	MeasureTopicShardEvent = bus.UniTopic(MeasureShardEventKindVersion.String())
 
+	// MeasureEntityEventKindVersion is the version tag of measure entity kind.
 	MeasureEntityEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "measure-event-entity",
 	}
+
+	// MeasureTopicEntityEvent is the measure entity event publishing topic.
 	MeasureTopicEntityEvent = bus.UniTopic(MeasureEntityEventKindVersion.String())
 )

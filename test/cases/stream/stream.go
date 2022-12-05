@@ -46,7 +46,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
-	g.FEntry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
 	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),

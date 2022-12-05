@@ -70,26 +70,28 @@ var (
 	minNanoTime = time.Unix(0, MinNanoTime).UTC()
 	maxNanoTime = time.Unix(0, MaxNanoTime).UTC()
 
-	MaxMilliTime       = time.UnixMilli(maxNanoTime.UnixMilli())
-	MaxMilliPbTime     = timestamppb.New(MaxMilliTime)
-	DefaultBeginPbTime = timestamppb.New(time.Unix(0, 0))
-	DefaultTimeRange   = &modelv1.TimeRange{
-		Begin: DefaultBeginPbTime,
-		End:   MaxMilliPbTime,
+	maxMilliTime       = time.UnixMilli(maxNanoTime.UnixMilli())
+	maxMilliPbTime     = timestamppb.New(maxMilliTime)
+	defaultBeginPbTime = timestamppb.New(time.Unix(0, 0))
+
+	// DefaultTimeRange for the input time range.
+	DefaultTimeRange = &modelv1.TimeRange{
+		Begin: defaultBeginPbTime,
+		End:   maxMilliPbTime,
 	}
 
-	ErrTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
-	ErrTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
-	ErrTimeEmpty          = errors.Errorf("time is empty")
+	errTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
+	errTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
+	errTimeEmpty          = errors.Errorf("time is empty")
 )
 
 // Check checks that a time is valid.
 func Check(t time.Time) error {
 	if t.Before(minNanoTime) || t.After(maxNanoTime) {
-		return ErrTimeOutOfRange
+		return errTimeOutOfRange
 	}
 	if t.Nanosecond()%int(mSecond) > 0 {
-		return ErrTimeNotMillisecond
+		return errTimeNotMillisecond
 	}
 	return nil
 }
@@ -97,7 +99,7 @@ func Check(t time.Time) error {
 // CheckPb checks that a protobuf timestamp is valid.
 func CheckPb(t *timestamppb.Timestamp) error {
 	if t == nil {
-		return ErrTimeEmpty
+		return errTimeEmpty
 	}
 	return Check(t.AsTime())
 }
@@ -105,7 +107,7 @@ func CheckPb(t *timestamppb.Timestamp) error {
 // CheckTimeRange checks that a protobuf time range is valid.
 func CheckTimeRange(timeRange *modelv1.TimeRange) error {
 	if timeRange == nil {
-		return ErrTimeEmpty
+		return errTimeEmpty
 	}
 	err := CheckPb(timeRange.Begin)
 	if err != nil {

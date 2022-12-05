@@ -20,11 +20,13 @@ package logical
 import (
 	"container/heap"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 var _ ItemIterator = (*itemIter)(nil)
 
+// ItemIterator allow iterating over a tsdb's series.
 type ItemIterator interface {
 	HasNext() bool
 	Next() tsdb.Item
@@ -34,7 +36,7 @@ var _ heap.Interface = (*containerHeap)(nil)
 
 // container contains both iter and its current item.
 type container struct {
-	c    Comparator
+	c    comparator
 	item tsdb.Item
 	iter tsdb.Iterator
 }
@@ -58,14 +60,15 @@ func (h *containerHeap) Pop() interface{} {
 }
 
 type itemIter struct {
-	c     Comparator
+	c     comparator
 	h     *containerHeap
 	iters []tsdb.Iterator
 }
 
-func NewItemIter(iters []tsdb.Iterator, c Comparator) ItemIterator {
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []tsdb.Iterator, sort modelv1.Sort) ItemIterator {
 	it := &itemIter{
-		c:     c,
+		c:     createComparator(sort),
 		iters: iters,
 		h:     &containerHeap{},
 	}

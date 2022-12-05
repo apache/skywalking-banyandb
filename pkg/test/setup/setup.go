@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package setup implements a real env in which to run tests.
 package setup
 
 import (
@@ -38,7 +39,8 @@ import (
 
 const host = "127.0.0.1"
 
-func SetUp(flags ...string) (string, string, func()) {
+// Common wires common modules to build a testing ready runtime.
+func Common(flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
@@ -87,7 +89,7 @@ func modules(flags []string) func() {
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
 	httpServer := http.NewService()
 
-	return test.SetUpModules(
+	return test.SetupModules(
 		flags,
 		repo,
 		pipeline,

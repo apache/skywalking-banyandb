@@ -141,6 +141,7 @@ linters-settings:
     scope: toplevel
   staticcheck:
     go: "1.19"
+    checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
   stylecheck:
     go: "1.19"
   exhaustive:

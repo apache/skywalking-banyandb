@@ -15,20 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package logger implements a logging system with a module tag.
+// The module tag represents a scope where the log event is emitted.
 package logger
 
 import (
 	"context"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
-var (
-	ContextKey           = contextKey{}
-	ErrNoLoggerInContext = errors.New("no logger in context")
-)
+// ContextKey is the key to store Logger in the context.
+var ContextKey = contextKey{}
 
 type contextKey struct{}
 
@@ -47,10 +46,12 @@ type Logger struct {
 	module  string
 }
 
+// Module returns logger's module name.
 func (l Logger) Module() string {
 	return l.module
 }
 
+// Named creates a new Logger and assigns a module to it.
 func (l *Logger) Named(name ...string) *Logger {
 	var mm []string
 	if l.module == rootName {
@@ -80,19 +81,22 @@ type Loggable interface {
 	SetLogger(*Logger)
 }
 
-func Fetch(ctx context.Context, name string) *Logger {
-	return FetchOrDefault(ctx, name, nil)
+// Fetch gets a Logger in a context, then creates a new Logger based on it.
+func Fetch(ctx context.Context, newModuleName string) *Logger {
+	return FetchOrDefault(ctx, newModuleName, nil)
 }
 
-func FetchOrDefault(ctx context.Context, name string, defaultLogger *Logger) *Logger {
+// FetchOrDefault gets a Logger in a context, then creates a new Logger based on it
+// If the context doesn't include a Logger. The default Logger will be picked.
+func FetchOrDefault(ctx context.Context, newModuleName string, defaultLogger *Logger) *Logger {
 	parentLogger := ctx.Value(ContextKey)
 	if parentLogger != nil {
 		if pl, ok := parentLogger.(*Logger); ok {
-			return pl.Named(name)
+			return pl.Named(newModuleName)
 		}
 	}
 	if defaultLogger == nil {
-		return GetLogger(name)
+		return GetLogger(newModuleName)
 	}
 	return defaultLogger
 }

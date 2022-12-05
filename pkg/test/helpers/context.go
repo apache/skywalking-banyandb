@@ -30,11 +30,13 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
+// SharedContext is the context shared between test cases in the integration testing.
 type SharedContext struct {
 	Connection *grpclib.ClientConn
 	BaseTime   time.Time
 }
 
+// Args is a wrapper seals all necessary info for table specs.
 type Args struct {
 	Begin     *timestamppb.Timestamp
 	End       *timestamppb.Timestamp
@@ -46,12 +48,14 @@ type Args struct {
 	WantErr   bool
 }
 
+// UnmarshalYAML decodes YAML raw bytes to proto.Message.
 func UnmarshalYAML(ii []byte, m proto.Message) {
 	j, err := yaml.YAMLToJSON(ii)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(protojson.Unmarshal(j, m)).To(gomega.Succeed())
 }
 
+// TimeRange returns a modelv1.TimeRange based on Args and SharedContext.
 func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 	if args.Begin != nil && args.End != nil {
 		return &modelv1.TimeRange{

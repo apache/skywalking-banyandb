@@ -48,6 +48,7 @@ type intEncoderPoolDelegator struct {
 	size int
 }
 
+// NewIntEncoderPool returns a SeriesEncoderPool which provides int-based xor encoders.
 func NewIntEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
 	return &intEncoderPoolDelegator{
 		name: name,
@@ -80,6 +81,7 @@ type intDecoderPoolDelegator struct {
 	size int
 }
 
+// NewIntDecoderPool returns a SeriesDecoderPool which provides int-based xor decoders.
 func NewIntDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
 	return &intDecoderPoolDelegator{
 		name: name,
@@ -106,6 +108,7 @@ func (b *intDecoderPoolDelegator) Put(decoder SeriesDecoder) {
 
 var _ SeriesEncoder = (*intEncoder)(nil)
 
+// ParseInterval parses the interval rule from the key in a kv pair.
 type ParseInterval = func(key []byte) time.Duration
 
 type intEncoder struct {
@@ -200,7 +203,7 @@ type intDecoder struct {
 
 func (i *intDecoder) Decode(key, data []byte) error {
 	if len(data) < 10 {
-		return ErrInvalidValue
+		return errInvalidValue
 	}
 	i.interval = i.fn(key)
 	i.startTime = binary.LittleEndian.Uint64(data[len(data)-10 : len(data)-2])

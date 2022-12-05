@@ -19,10 +19,12 @@ package convert
 
 import "github.com/cespare/xxhash"
 
+// Hash computes the 64-bit Hash digest of key.
 func Hash(key []byte) uint64 {
 	return xxhash.Sum64(key)
 }
 
+// HashStr computes the 64-bit Hash digest of key.
 func HashStr(key string) uint64 {
 	return xxhash.Sum64String(key)
 }

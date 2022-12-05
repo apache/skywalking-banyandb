@@ -52,7 +52,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Level: "warn",
 	})).To(Succeed())
 	var addr string
-	addr, _, deferFunc = setup.SetUp()
+	addr, _, deferFunc = setup.Common()
 	Eventually(
 		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 		flags.EventuallyTimeout).Should(Succeed())

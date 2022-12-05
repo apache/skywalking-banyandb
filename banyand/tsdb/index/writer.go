@@ -244,11 +244,11 @@ func getIndexValue(ruleIndex *partition.IndexRuleLocator, value Value) (val [][]
 		return nil, errors.WithMessagef(err, "index rule:%v", ruleIndex.Rule.Metadata)
 	}
 	fv, err := pbv1.ParseTagValue(tag)
-	if errors.Is(err, pbv1.ErrNullValue) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
+	}
+	if fv.GetValue() == nil && fv.GetArr() == nil {
+		return nil, nil
 	}
 	v := fv.GetValue()
 	if v != nil {

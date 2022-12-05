@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package partition implements a location system to find a shard or index rule.
+// This system reflects the entity identity which is a intermediate result in calculating the target shard.
 package partition
 
 import (
@@ -27,15 +29,19 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// ErrMalformedElement indicates the element is malformed.
 var ErrMalformedElement = errors.New("element is malformed")
 
+// EntityLocator combines several TagLocators that help find the entity value.
 type EntityLocator []TagLocator
 
+// TagLocator contains offsets to retrieve a tag swiftly.
 type TagLocator struct {
 	FamilyOffset int
 	TagOffset    int
 }
 
+// NewEntityLocator return a EntityLocator based on tag family spec and entity spec.
 func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.Entity) EntityLocator {
 	locator := make(EntityLocator, 0, len(entity.GetTagNames()))
 	for _, tagInEntity := range entity.GetTagNames() {
@@ -47,6 +53,7 @@ func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.E
 	return locator
 }
 
+// Find the entity from a tag family, prepend a subject to the entity.
 func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (tsdb.Entity, tsdb.EntityValues, error) {
 	entityValues := make(tsdb.EntityValues, len(e)+1)
 	entityValues[0] = tsdb.StrValue(subject)
@@ -64,6 +71,7 @@ func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) 
 	return entity, entityValues, nil
 }
 
+// Locate a shard and find the entity from a tag family, prepend a subject to the entity.
 func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
 	entity, tagValues, err := e.Find(subject, value)
 	if err != nil {
@@ -76,6 +84,7 @@ func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite
 	return entity, tagValues, common.ShardID(id), nil
 }
 
+// GetTagByOffset gets a tag value based of a tag family offset and a tag offset in this family.
 func GetTagByOffset(value []*modelv1.TagFamilyForWrite, fIndex, tIndex int) (*modelv1.TagValue, error) {
 	if fIndex >= len(value) {
 		return nil, errors.Wrap(ErrMalformedElement, "tag family offset is invalid")

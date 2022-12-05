@@ -185,7 +185,7 @@ func TestBus_PubAndSub(t *testing.T) {
 				}
 				go func(want []MessageID) {
 					ret, errRet := f.GetAll()
-					if errors.Is(errRet, ErrEmptyFuture) {
+					if errors.Is(errRet, errEmptyFuture) {
 						return
 					} else if errRet != nil {
 						t.Errorf("Publish()'s return message error = %v", err)

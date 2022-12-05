@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package v1 implements helpers to access data defined by API v1.
 package v1
 
 import (
@@ -22,6 +23,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
+// FindTagByName finds TagSpec in several tag families by its name.
+// The tag name should be unique in these families.
 func FindTagByName(families []*databasev1.TagFamilySpec, tagName string) (int, int, *databasev1.TagSpec) {
 	for fi, family := range families {
 		for ti, tag := range family.Tags {
@@ -33,7 +36,7 @@ func FindTagByName(families []*databasev1.TagFamilySpec, tagName string) (int, i
 	return 0, 0, nil
 }
 
-func TagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, isNull bool) {
+func tagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, isNull bool) {
 	switch tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Int:
 		return databasev1.TagType_TAG_TYPE_INT, false
@@ -53,6 +56,7 @@ func TagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, i
 	return databasev1.TagType_TAG_TYPE_UNSPECIFIED, false
 }
 
+// FieldValueTypeConv recognizes the field type from its value.
 func FieldValueTypeConv(tagValue *modelv1.FieldValue) (tagType databasev1.FieldType, isNull bool) {
 	switch tagValue.GetValue().(type) {
 	case *modelv1.FieldValue_Int:
@@ -67,6 +71,7 @@ func FieldValueTypeConv(tagValue *modelv1.FieldValue) (tagType databasev1.FieldT
 	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, false
 }
 
+// ParseMaxModRevision parses the index rule's max revision field from its metadata.
 func ParseMaxModRevision(indexRules []*databasev1.IndexRule) (maxRevisionForIdxRules int64) {
 	maxRevisionForIdxRules = int64(0)
 	for _, idxRule := range indexRules {

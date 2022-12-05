@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package schema implements a framework to sync schema info from the metadata repository.
 package schema
 
 import (
@@ -40,36 +41,45 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// EventType defines actions of events.
 type EventType uint8
 
+// EventType support Add/Update and Delete.
+// All events are idempotent.
 const (
 	EventAddOrUpdate EventType = iota
 	EventDelete
 )
 
+// EventKind defines category of events.
 type EventKind uint8
 
+// This framework groups events to a hierarchy. A group is the root node.
 const (
 	EventKindGroup EventKind = iota
 	EventKindResource
 )
 
+// Group is the root node, allowing get resources from its sub nodes.
 type Group interface {
 	GetSchema() *commonv1.Group
 	StoreResource(resourceSchema ResourceSchema) (Resource, error)
 	LoadResource(name string) (Resource, bool)
 }
 
+// MetadataEvent is the syncing message between metadata repo and this framework.
 type MetadataEvent struct {
 	Metadata *commonv1.Metadata
 	Typ      EventType
 	Kind     EventKind
 }
 
+// ResourceSchema allows get the metadata.
 type ResourceSchema interface {
 	GetMetadata() *commonv1.Metadata
 }
 
+// ResourceSpec wraps required fields to open a resource.
 type ResourceSpec struct {
 	Schema ResourceSchema
 	// IndexRules are index rules bound to the Schema
@@ -78,6 +88,7 @@ type ResourceSpec struct {
 	Aggregations []*databasev1.TopNAggregation
 }
 
+// Resource allows access metadata from a local cache.
 type Resource interface {
 	GetIndexRules() []*databasev1.IndexRule
 	MaxObservedModRevision() int64
@@ -86,12 +97,14 @@ type Resource interface {
 	io.Closer
 }
 
+// ResourceSupplier allows open a resource and its embedded tsdb.
 type ResourceSupplier interface {
 	OpenResource(shardNum uint32, db tsdb.Supplier, spec ResourceSpec) (Resource, error)
 	ResourceSchema(metdata *commonv1.Metadata) (ResourceSchema, error)
 	OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error)
 }
 
+// Repository is the collection of several hierarchies groups by a "Group".
 type Repository interface {
 	Watcher()
 	SendMetadataEvent(MetadataEvent)
@@ -117,6 +130,7 @@ type schemaRepo struct {
 	sync.RWMutex
 }
 
+// NewRepository return a new Repository.
 func NewRepository(
 	metadata metadata.Repo,
 	repo discovery.ServiceRepo,

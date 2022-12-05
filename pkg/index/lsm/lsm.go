@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package lsm implements a tree-based index repository.
 package lsm
 
 import (
@@ -56,12 +57,14 @@ func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
 	return err
 }
 
+// StoreOpts wraps options to create the lsm repository.
 type StoreOpts struct {
 	Logger       *logger.Logger
 	Path         string
 	MemTableSize int64
 }
 
+// NewStore creates a new lsm index repository.
 func NewStore(opts StoreOpts) (index.Store, error) {
 	var err error
 	var lsm kv.Store

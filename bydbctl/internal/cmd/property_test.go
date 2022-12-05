@@ -75,7 +75,7 @@ tags:
 	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.SetUp()
+		_, addr, deferFunc = setup.Common()
 		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating property schema

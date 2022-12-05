@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package measures implements a time-series-based storage which is consists of a sequence of data points.
+// Package measure implements a time-series-based storage which is consists of a sequence of data points.
 // Each data point contains tags and fields. They arrive in a fixed interval. A data point could be updated
 // by one with the identical entity(series_id) and timestamp.
 package measure

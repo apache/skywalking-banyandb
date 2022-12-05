@@ -27,7 +27,7 @@ import (
 // build is to be populated at build time using -ldflags -X.
 var build string
 
-// Show the service's build information.
+// Build shows the service's build information.
 func Build() string {
 	return build
 }

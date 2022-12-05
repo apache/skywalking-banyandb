@@ -38,7 +38,7 @@ type unresolvedTop struct {
 	top             *measurev1.QueryRequest_Top
 }
 
-func Top(input logical.UnresolvedPlan, top *measurev1.QueryRequest_Top) logical.UnresolvedPlan {
+func top(input logical.UnresolvedPlan, top *measurev1.QueryRequest_Top) logical.UnresolvedPlan {
 	return &unresolvedTop{
 		unresolvedInput: input,
 		top:             top,
@@ -55,13 +55,13 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 		return nil, err
 	}
 	if len(fieldRefs) == 0 {
-		return nil, errors.Wrap(logical.ErrFieldNotDefined, "top schema")
+		return nil, errors.Wrap(errFieldNotDefined, "top schema")
 	}
 	reverted := false
 	if gba.top.FieldValueSort == modelv1.Sort_SORT_ASC {
 		reverted = true
 	}
-	return &top{
+	return &topOp{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
@@ -71,25 +71,25 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 	}, nil
 }
 
-type top struct {
+type topOp struct {
 	*logical.Parent
 	topNStream *TopQueue
 	fieldRef   *logical.FieldRef
 }
 
-func (g *top) String() string {
+func (g *topOp) String() string {
 	return fmt.Sprintf("%s top %s", g.Input, g.topNStream.String())
 }
 
-func (g *top) Children() []logical.Plan {
+func (g *topOp) Children() []logical.Plan {
 	return []logical.Plan{g.Input}
 }
 
-func (g *top) Schema() logical.Schema {
+func (g *topOp) Schema() logical.Schema {
 	return g.Input.Schema()
 }
 
-func (g *top) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *topOp) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

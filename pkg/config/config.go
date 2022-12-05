@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package config implements a configuration system which could load configuration from flags and env vars.
 package config
 
 import (
@@ -37,15 +38,13 @@ type config struct {
 	name  string
 }
 
+// Load configurations from flags.
 func Load(name string, fs *pflag.FlagSet) error {
 	c := new(config)
 	v := viper.New()
 	c.name = name
 	c.viper = v
-	if err := c.initializeConfig(fs); err != nil {
-		return err
-	}
-	return nil
+	return c.initializeConfig(fs)
 }
 
 func (c *config) initializeConfig(fs *pflag.FlagSet) error {

@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,19 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package partition
-
-import (
-	"github.com/pkg/errors"
-
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-)
-
-// ShardID calculates a shard id.
-func ShardID(key []byte, shardNum uint32) (uint, error) {
-	if shardNum < 1 {
-		return 0, errors.New("invalid shardNum")
-	}
-	encodeKey := convert.Hash(key)
-	return uint(encodeKey % uint64(shardNum)), nil
-}
+// Package test implements helpers for testing.
+package test

@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package grpchelper implements helpers to access gRPC services.
 package grpchelper
 
 import (
@@ -29,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// Conn returns a gRPC client connection once connecting the server.
 func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	defaultOpts := []grpc.DialOption{
 		grpc.WithBlock(),
@@ -55,6 +58,8 @@ func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grp
 	return conn, nil
 }
 
+// Request execute a input closure to send traffics.
+// It provides common features like timeout, error handling, and etc.
 func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx context.Context) error) error {
 	rpcStart := time.Now()
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)

@@ -8,7 +8,6 @@ require (
 	github.com/blugelabs/bluge v0.2.2
 	github.com/cespare/xxhash v1.1.0
 	github.com/dgraph-io/badger/v3 v3.2011.1
-	github.com/dgraph-io/ristretto v0.1.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/envoyproxy/protoc-gen-validate v0.1.0
 	github.com/go-chi/chi/v5 v5.0.7
@@ -60,6 +59,7 @@ require (
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dgraph-io/ristretto v0.1.0 // indirect
 	github.com/dgryski/go-metro v0.0.0-20180109044635-280f6062b5bc // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package tsdb implements helpers around tsdb.IntervalRule.
 package tsdb
 
 import (
@@ -24,8 +25,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
-var ErrInvalidUnit = errors.New("invalid interval rule's unit")
+var errInvalidUnit = errors.New("invalid interval rule's unit")
 
+// ToIntervalRule decodes commonv1.IntervalRule to tsdb.IntervalRule.
 func ToIntervalRule(ir *commonv1.IntervalRule) (result tsdb.IntervalRule, err error) {
 	switch ir.Unit {
 	case commonv1.IntervalRule_UNIT_DAY:
@@ -33,7 +35,7 @@ func ToIntervalRule(ir *commonv1.IntervalRule) (result tsdb.IntervalRule, err er
 	case commonv1.IntervalRule_UNIT_HOUR:
 		result.Unit = tsdb.HOUR
 	default:
-		return result, ErrInvalidUnit
+		return result, errInvalidUnit
 	}
 	result.Num = int(ir.Num)
 	return result, err

@@ -34,7 +34,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
+var (
+	_                        logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
+	errMultipleGlobalIndexes                        = errors.New("multiple global indexes are not supported")
+)
 
 type unresolvedTagFilter struct {
 	startTime         time.Time
@@ -58,8 +61,8 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	var err error
 	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity)
 	if err != nil {
-		ge := &logical.GlobalIndexError{}
-		if errors.As(err, ge) {
+		var ge logical.GlobalIndexError
+		if errors.As(err, &ge) {
 			ctx.globalConditions = append(ctx.globalConditions, ge.IndexRule, ge.Expr)
 		} else {
 			return nil, err
@@ -82,8 +85,8 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		if errFilter != nil {
 			return nil, errFilter
 		}
-		if tagFilter != logical.BypassFilter {
-			plan = NewTagFilter(s, plan, tagFilter)
+		if tagFilter != logical.DummyFilter {
+			plan = newTagFilter(s, plan, tagFilter)
 		}
 	}
 	return plan, err
@@ -92,7 +95,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical.Plan, error) {
 	if len(ctx.globalConditions) > 0 {
 		if len(ctx.globalConditions) > 2 {
-			return nil, logical.ErrMultipleGlobalIndexes
+			return nil, errMultipleGlobalIndexes
 		}
 		return &globalIndexScan{
 			schema:            ctx.s,
@@ -121,7 +124,7 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical
 	}, nil
 }
 
-func TagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria,
+func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria,
 	orderBy *logical.UnresolvedOrderBy, projection ...[]*logical.Tag,
 ) logical.UnresolvedPlan {
 	return &unresolvedTagFilter{
@@ -160,7 +163,7 @@ type tagFilterPlan struct {
 	tagFilter logical.TagFilter
 }
 
-func NewTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter) logical.Plan {
+func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter) logical.Plan {
 	return &tagFilterPlan{
 		s:         s,
 		parent:    parent,

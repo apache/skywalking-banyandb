@@ -47,6 +47,7 @@ type plainEncoderPoolDelegator struct {
 	size int
 }
 
+// NewPlainEncoderPool returns a SeriesEncoderPool which provides encoders encoding arbitrary data.
 func NewPlainEncoderPool(name string, size int) SeriesEncoderPool {
 	return &plainEncoderPoolDelegator{
 		name: name,
@@ -76,6 +77,7 @@ type plainDecoderPoolDelegator struct {
 	size int
 }
 
+// NewPlainDecoderPool returns a NewPlainDecoderPool which provides decoders decoding arbitrary data.
 func NewPlainDecoderPool(name string, size int) SeriesDecoderPool {
 	return &plainDecoderPoolDelegator{
 		name: name,
@@ -151,7 +153,7 @@ func (t *plainEncoder) Reset(_ []byte) {
 
 func (t *plainEncoder) Encode() ([]byte, error) {
 	if t.tsBuff.Len() < 1 {
-		return nil, ErrEncodeEmpty
+		return nil, errEncodeEmpty
 	}
 	val := t.valBuff.Bytes()
 	t.len = uint32(len(val))
@@ -185,7 +187,7 @@ const (
 	TSLen = 8 + 4
 )
 
-var ErrInvalidValue = errors.New("invalid encoded value")
+var errInvalidValue = errors.New("invalid encoded value")
 
 // plainDecoder decodes encoded time index.
 type plainDecoder struct {
@@ -203,7 +205,7 @@ func (t *plainDecoder) Len() int {
 
 func (t *plainDecoder) Decode(_, rawData []byte) (err error) {
 	if len(rawData) < 2 {
-		return ErrInvalidValue
+		return errInvalidValue
 	}
 	var data []byte
 	size := binary.LittleEndian.Uint16(rawData[len(rawData)-2:])
@@ -212,14 +214,14 @@ func (t *plainDecoder) Decode(_, rawData []byte) (err error) {
 	}
 	l := uint32(len(data))
 	if l <= 8 {
-		return ErrInvalidValue
+		return errInvalidValue
 	}
 	lenOffset := len(data) - 4
 	numOffset := lenOffset - 4
 	t.num = binary.LittleEndian.Uint32(data[numOffset:lenOffset])
 	t.len = binary.LittleEndian.Uint32(data[lenOffset:])
 	if l <= t.len+8 {
-		return ErrInvalidValue
+		return errInvalidValue
 	}
 	t.val = data[:t.len]
 	t.ts = data[t.len:numOffset]
@@ -257,7 +259,7 @@ func (t *plainDecoder) Iterator() SeriesIterator {
 
 func getVal(buf []byte, offset uint32) ([]byte, error) {
 	if uint32(len(buf)) <= offset+4 {
-		return nil, ErrInvalidValue
+		return nil, errInvalidValue
 	}
 	dataLen := binary.LittleEndian.Uint32(buf[offset : offset+4])
 	return buf[offset+4 : offset+4+dataLen], nil

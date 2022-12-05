@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package measure implements execution operations for querying measure data.
 package measure
 
 import (
@@ -25,6 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
+
+var errFieldNotDefined = errors.New("field is not defined")
 
 type schema struct {
 	measure  *databasev1.Measure
@@ -58,7 +61,7 @@ func (m *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, 
 		if fs, ok := m.fieldMap[field.Name]; ok {
 			fieldRefs[idx] = &logical.FieldRef{Field: field, Spec: fs}
 		} else {
-			return nil, errors.Wrap(logical.ErrFieldNotDefined, field.Name)
+			return nil, errors.Wrap(errFieldNotDefined, field.Name)
 		}
 	}
 	return fieldRefs, nil

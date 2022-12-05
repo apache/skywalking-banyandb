@@ -15,19 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package partition
-
-import (
-	"github.com/pkg/errors"
-
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-)
-
-// ShardID calculates a shard id.
-func ShardID(key []byte, shardNum uint32) (uint, error) {
-	if shardNum < 1 {
-		return 0, errors.New("invalid shardNum")
-	}
-	encodeKey := convert.Hash(key)
-	return uint(encodeKey % uint64(shardNum)), nil
-}
+// Package timestamp implements several component related to time.
+package timestamp

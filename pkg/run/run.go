@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package run implements a lifecycle framework to control modules.
 package run
 
 import (
@@ -94,6 +95,7 @@ func (p preRunner) PreRun() error {
 	return p.fn()
 }
 
+// StopNotify sends the stopped event to the running system.
 type StopNotify <-chan struct{}
 
 // Service interface should be implemented by Group Unit objects that need
@@ -130,6 +132,7 @@ type Group struct {
 	configured   bool
 }
 
+// NewGroup return a Group with input name.
 func NewGroup(name string) Group {
 	return Group{
 		name:    name,
@@ -173,6 +176,7 @@ func (g *Group) Register(units ...Unit) []bool {
 	return hasRegistered
 }
 
+// RegisterFlags returns FlagSet contains Flags in all modules.
 func (g *Group) RegisterFlags() *FlagSet {
 	// run configuration stage
 	g.f = NewFlagSet(g.name)
@@ -386,6 +390,7 @@ func (g Group) ListUnits() string {
 	return fmt.Sprintf("Group: %s [%s]%s", g.name, t, s)
 }
 
+// WaitTillReady blocks the goroutine till all modules are ready.
 func (g *Group) WaitTillReady() {
 	<-g.readyCh
 }

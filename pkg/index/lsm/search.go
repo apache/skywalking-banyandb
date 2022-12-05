@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
-var ErrUnsupportedOperation = errors.New("unsupported operation")
+var errUnsupportedOperation = errors.New("unsupported operation")
 
 func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
 	return s.Range(fieldKey, index.RangeOpts{})
@@ -49,7 +49,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 		return nil
 	})
 	if errors.Is(err, kv.ErrKeyNotFound) {
-		return roaring.EmptyPostingList, nil
+		return roaring.DummyPostingList, nil
 	}
 	return
 }
@@ -57,7 +57,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
 	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
 	if err != nil {
-		return roaring.EmptyPostingList, err
+		return roaring.DummyPostingList, err
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
@@ -68,7 +68,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	return index.NewFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm,
+	return newFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm,
 		func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			pv := &index.PostingValue{
 				Term:  term,
@@ -98,5 +98,5 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 }
 
 func (s *store) Match(_ index.FieldKey, _ []string) (posting.List, error) {
-	return nil, errors.WithMessage(ErrUnsupportedOperation, "LSM-Tree index doesn't support full-text searching")
+	return nil, errors.WithMessage(errUnsupportedOperation, "LSM-Tree index doesn't support full-text searching")
 }

@@ -33,25 +33,25 @@ import (
 )
 
 var (
-	ErrTagNotDefined              = errors.New("tag is not defined")
-	ErrFieldNotDefined            = errors.New("field is not defined")
-	ErrUnsupportedConditionOp     = errors.New("unsupported condition operation")
-	ErrUnsupportedConditionValue  = errors.New("unsupported condition value type")
-	ErrInvalidCriteriaType        = errors.New("invalid criteria type")
-	ErrIncompatibleQueryCondition = errors.New("incompatible query condition type")
-	ErrIndexNotDefined            = errors.New("index is not define for the tag")
-	ErrMultipleGlobalIndexes      = errors.New("multiple global indexes are not supported")
-	ErrInvalidData                = errors.New("data is invalid")
+	errTagNotDefined             = errors.New("tag is not defined")
+	errUnsupportedConditionOp    = errors.New("unsupported condition operation")
+	errUnsupportedConditionValue = errors.New("unsupported condition value type")
+	errInvalidCriteriaType       = errors.New("invalid criteria type")
+	errIndexNotDefined           = errors.New("index is not define for the tag")
+	errInvalidData               = errors.New("data is invalid")
 
 	nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 )
 
 type (
+	// SeekerBuilder wraps the execution of tsdb.SeekerBuilder.
+	// TODO:// we could have a chance to remove this wrapper.
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
-	Comparator    func(a, b tsdb.Item) bool
+
+	comparator func(a, b tsdb.Item) bool
 )
 
-func CreateComparator(sortDirection modelv1.Sort) Comparator {
+func createComparator(sortDirection modelv1.Sort) comparator {
 	return func(a, b tsdb.Item) bool {
 		comp := bytes.Compare(a.SortedField(), b.SortedField())
 		if sortDirection == modelv1.Sort_SORT_DESC {
@@ -72,13 +72,13 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 			continue
 		}
 		tags := make([]*modelv1.Tag, len(refs))
-		familyName := refs[0].Tag.GetFamilyName()
+		familyName := refs[0].Tag.getFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, errors.WithMessage(err, "parse projection")
 		}
 		if len(refs) > len(parsedTagFamily.Tags) {
-			return nil, errors.Wrapf(ErrInvalidData,
+			return nil, errors.Wrapf(errInvalidData,
 				"the number of tags %d in %s is less then expected %d",
 				len(parsedTagFamily.Tags), familyName, len(refs))
 		}
@@ -144,12 +144,16 @@ func ExecuteForShard(l *logger.Logger, series tsdb.SeriesList, timeRange timesta
 	return itersInShard, closers, nil
 }
 
+// DefaultLimit is the default limit size of a querying.
 var DefaultLimit uint32 = 20
 
+// Tag represents the combination of  tag family and tag name.
+// It's a tag's identity.
 type Tag struct {
 	familyName, name string
 }
 
+// NewTag return a new Tag.
 func NewTag(family, name string) *Tag {
 	return &Tag{
 		familyName: family,
@@ -171,22 +175,26 @@ func (t *Tag) GetCompoundName() string {
 	return t.familyName + ":" + t.name
 }
 
-func (t *Tag) GetTagName() string {
+func (t *Tag) getTagName() string {
 	return t.name
 }
 
-func (t *Tag) GetFamilyName() string {
+func (t *Tag) getFamilyName() string {
 	return t.familyName
 }
 
+// Field identity a field in a measure.
 type Field struct {
 	Name string
 }
 
+// NewField return a new Field.
 func NewField(name string) *Field {
 	return &Field{Name: name}
 }
 
+// StringSlicesEqual reports whether a and b are the same length and contain the same strings.
+// A nil argument is equivalent to an empty slice.
 func StringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

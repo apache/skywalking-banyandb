@@ -24,10 +24,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// MarshalError is the error raised by marshaling a JSON object.
 type MarshalError struct {
 	Msg string `json:"msg"`
 }
 
+// Proto converts proto.Message to JSON raw data.
 func Proto(message proto.Message) []byte {
 	b, err := protojson.Marshal(message)
 	if err != nil {

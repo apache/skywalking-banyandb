@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package stream implements execution operations for querying stream data.
 package stream
 
 import (
@@ -32,7 +33,7 @@ type schema struct {
 	common *logical.CommonSchema
 }
 
-func (s *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error) {
 	panic("no field for stream")
 }
 

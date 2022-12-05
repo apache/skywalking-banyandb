@@ -20,14 +20,15 @@ package streaming
 import (
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 )
 
+// TopNSort defines the order of sorting.
 type TopNSort uint8
 
+// The available order of sorting.
 const (
 	DESC TopNSort = iota
 	ASC
@@ -39,7 +40,7 @@ type windowedFlow struct {
 }
 
 func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
-	s.wa.(*TumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
+	s.wa.(*tumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
 		topNAggrFunc := &topNAggregator{
 			cacheSize: topNum,
 			sort:      DESC,
@@ -77,14 +78,17 @@ type topNAggregator struct {
 	dirty            bool
 }
 
+// TopNOption is the option to set up a top-n aggregator.
 type TopNOption func(aggregator *topNAggregator)
 
+// WithSortKeyExtractor sets a closure to extract the sorting key.
 func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
 	return func(aggregator *topNAggregator) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
 	}
 }
 
+// OrderBy sets the sorting order.
 func OrderBy(sort TopNSort) TopNOption {
 	return func(aggregator *topNAggregator) {
 		aggregator.sort = sort
@@ -144,15 +148,6 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 	return t.currentTopNum < t.cacheSize
 }
 
-type Tuple2 struct {
-	V1 interface{} `json:"v1"`
-	V2 interface{} `json:"v2"`
-}
-
-func (t *Tuple2) Equal(other *Tuple2) bool {
-	return cmp.Equal(t.V1, other.V1) && cmp.Equal(t.V2, other.V2)
-}
-
 func (t *topNAggregator) Snapshot() interface{} {
 	t.dirty = false
 	iter := t.treeMap.Iterator()
@@ -168,4 +163,10 @@ func (t *topNAggregator) Snapshot() interface{} {
 
 func (t *topNAggregator) Dirty() bool {
 	return t.dirty
+}
+
+// Tuple2 is a tuple with 2 fields. Each field may be a separate type.
+type Tuple2 struct {
+	V1 interface{} `json:"v1"`
+	V2 interface{} `json:"v2"`
 }

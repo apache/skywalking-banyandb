@@ -27,16 +27,18 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-var ErrUnsupportedLogicalOperation = errors.New("unsupported logical operation")
+var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")
 
+// TagFilter allows matching a tag based on a predicate.
 type TagFilter interface {
 	fmt.Stringer
 	Match(tagFamilies []*modelv1.TagFamily) (bool, error)
 }
 
+// BuildTagFilter returns a TagFilter if predicates doesn't match any indices.
 func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schema Schema, hasGlobalIndex bool) (TagFilter, error) {
 	if criteria == nil {
-		return BypassFilter, nil
+		return DummyFilter, nil
 	}
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
@@ -46,10 +48,10 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 			return nil, err
 		}
 		if ok, _ := schema.IndexDefined(cond.Name); ok {
-			return BypassFilter, nil
+			return DummyFilter, nil
 		}
 		if _, ok := entityDict[cond.Name]; ok {
-			return BypassFilter, nil
+			return DummyFilter, nil
 		}
 		return parseFilter(cond, expr)
 	case *modelv1.Criteria_Le:
@@ -62,8 +64,8 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 		if err != nil {
 			return nil, err
 		}
-		if left == BypassFilter && right == BypassFilter {
-			return BypassFilter, nil
+		if left == DummyFilter && right == DummyFilter {
+			return DummyFilter, nil
 		}
 		switch le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
@@ -72,33 +74,33 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 			return and, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
 			if hasGlobalIndex {
-				return nil, errors.WithMessage(ErrUnsupportedLogicalOperation, "global index doesn't support OR")
+				return nil, errors.WithMessage(errUnsupportedLogicalOperation, "global index doesn't support OR")
 			}
 			or := newOrLogicalNode(2)
 			or.append(left).append(right)
 			return or, nil
 		}
 	}
-	return nil, ErrInvalidCriteriaType
+	return nil, errInvalidCriteriaType
 }
 
 func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
-		return newRangeTag(cond.Name, RangeOpts{
+		return newRangeTag(cond.Name, rangeOpts{
 			Lower: expr,
 		}), nil
 	case modelv1.Condition_BINARY_OP_GE:
-		return newRangeTag(cond.Name, RangeOpts{
+		return newRangeTag(cond.Name, rangeOpts{
 			IncludesLower: true,
 			Lower:         expr,
 		}), nil
 	case modelv1.Condition_BINARY_OP_LT:
-		return newRangeTag(cond.Name, RangeOpts{
+		return newRangeTag(cond.Name, rangeOpts{
 			Upper: expr,
 		}), nil
 	case modelv1.Condition_BINARY_OP_LE:
-		return newRangeTag(cond.Name, RangeOpts{
+		return newRangeTag(cond.Name, rangeOpts{
 			IncludesUpper: true,
 			Upper:         expr,
 		}), nil
@@ -115,7 +117,7 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 	case modelv1.Condition_BINARY_OP_NOT_IN:
 		panic("unimplemented")
 	default:
-		return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag filter parses %v", cond)
+		return nil, errors.WithMessagef(errUnsupportedConditionOp, "tag filter parses %v", cond)
 	}
 }
 
@@ -140,16 +142,17 @@ func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
 	case *modelv1.TagValue_Null:
 		return nullLiteralExpr, nil
 	}
-	return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "tag filter parses %v", value)
+	return nil, errors.WithMessagef(errUnsupportedConditionValue, "tag filter parses %v", value)
 }
 
-var BypassFilter = new(emptyFilter)
+// DummyFilter matches any predicate.
+var DummyFilter = new(dummyTagFilter)
 
-type emptyFilter struct{}
+type dummyTagFilter struct{}
 
-func (emptyFilter) Match(_ []*modelv1.TagFamily) (bool, error) { return true, nil }
+func (dummyTagFilter) Match(_ []*modelv1.TagFamily) (bool, error) { return true, nil }
 
-func (emptyFilter) String() string { return "bypass" }
+func (dummyTagFilter) String() string { return "dummy" }
 
 type logicalNodeOP interface {
 	TagFilter
@@ -161,7 +164,7 @@ type logicalNode struct {
 }
 
 func (n *logicalNode) append(sub TagFilter) *logicalNode {
-	if sub == BypassFilter {
+	if sub == DummyFilter {
 		return n
 	}
 	n.SubNodes = append(n.SubNodes, sub)
@@ -328,7 +331,7 @@ func (eq *eqTag) String() string {
 	return jsonToString(eq)
 }
 
-type RangeOpts struct {
+type rangeOpts struct {
 	Upper         ComparableExpr
 	Lower         ComparableExpr
 	IncludesUpper bool
@@ -337,10 +340,10 @@ type RangeOpts struct {
 
 type rangeTag struct {
 	*tagLeaf
-	Opts RangeOpts
+	Opts rangeOpts
 }
 
-func newRangeTag(tagName string, opts RangeOpts) *rangeTag {
+func newRangeTag(tagName string, opts rangeOpts) *rangeTag {
 	return &rangeTag{
 		tagLeaf: &tagLeaf{
 			Name: tagName,
@@ -426,7 +429,7 @@ func tagExpr(tagFamilies []*modelv1.TagFamily, tagName string) (ComparableExpr, 
 			}
 		}
 	}
-	return nil, ErrTagNotDefined
+	return nil, errTagNotDefined
 }
 
 type havingTag struct {

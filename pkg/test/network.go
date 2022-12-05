@@ -46,6 +46,7 @@ func AllocateFreePorts(n int) ([]int, error) {
 	return ports, nil
 }
 
+// NewEtcdListenUrls returns two urls with different ports.
 func NewEtcdListenUrls() (string, string, error) {
 	ports, err := AllocateFreePorts(2)
 	if err != nil {

@@ -30,8 +30,11 @@ import (
 )
 
 var (
+	// ErrSchedulerClosed indicates the scheduler is closed.
 	ErrSchedulerClosed = errors.New("the scheduler is closed")
-	ErrTaskDuplicated  = errors.New("the task is duplicated")
+
+	// ErrTaskDuplicated indicates registered task already exists.
+	ErrTaskDuplicated = errors.New("the task is duplicated")
 )
 
 // SchedulerAction is an executable when a trigger is fired

@@ -40,6 +40,7 @@ type DedupPriorityQueue struct {
 	allowDuplicates bool
 }
 
+// NewPriorityQueue returns a new DedupPriorityQueue.
 func NewPriorityQueue(comparator utils.Comparator, allowDuplicates bool) *DedupPriorityQueue {
 	return &DedupPriorityQueue{
 		comparator:      comparator,
@@ -101,11 +102,13 @@ func (pq *DedupPriorityQueue) Peek() Element {
 	return nil
 }
 
+// ReplaceLowest replaces the lowest item with the newLowest.
 func (pq *DedupPriorityQueue) ReplaceLowest(newLowest Element) {
 	pq.Items[0] = newLowest
 	heap.Fix(pq, 0)
 }
 
+// Values returns all items.
 func (pq *DedupPriorityQueue) Values() []Element {
 	values := make([]Element, pq.Len())
 	for pq.Len() > 0 {

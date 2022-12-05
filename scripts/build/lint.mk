@@ -24,7 +24,7 @@ include $(mk_dir)lint-bin.mk
 
 .PHONY: lint
 lint: $(LINTER) $(REVIVE) ## Run all linters
-	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
+	$(LINTER) run -v --config $(root_dir)/.golangci.yml --timeout 10m ./... && \
 	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...
 
 .PHONY: format

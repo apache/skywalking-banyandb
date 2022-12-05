@@ -103,8 +103,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 		return elems, nil
 	}
 
-	c := logical.CreateComparator(i.Sort)
-	it := logical.NewItemIter(iters, c)
+	it := logical.NewItemIter(iters, i.Sort)
 	for it.HasNext() {
 		nextItem := it.Next()
 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)

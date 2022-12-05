@@ -42,7 +42,7 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.SetUp()
+		addr, _, deferFn = setup.Common()
 		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
 		var err error
@@ -104,7 +104,7 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.SetUp()
+		addr, _, deferFn = setup.Common()
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())

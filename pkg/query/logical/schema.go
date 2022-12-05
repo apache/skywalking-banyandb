@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
+// Schema allows retrieving schemas in a convenient way.
 type Schema interface {
 	Scope() tsdb.Entry
 	EntityList() []string
@@ -38,17 +39,21 @@ type Schema interface {
 	ShardNumber() uint32
 }
 
+// TagSpec wraps offsets to access a tag in the raw data swiftly.
 type TagSpec struct {
 	Spec         *databasev1.TagSpec
 	TagFamilyIdx int
 	TagIdx       int
 }
 
+// Equal compares fs and other have the same fields.
 func (fs *TagSpec) Equal(other *TagSpec) bool {
 	return fs.TagFamilyIdx == other.TagFamilyIdx && fs.TagIdx == other.TagIdx &&
 		fs.Spec.GetType() == other.Spec.GetType() && fs.Spec.GetName() == other.Spec.GetName()
 }
 
+// CommonSchema represents a sharable fields between independent schemas.
+// It provides common access methods at the same time.
 type CommonSchema struct {
 	Group      *commonv1.Group
 	IndexRules []*databasev1.IndexRule
@@ -56,6 +61,7 @@ type CommonSchema struct {
 	EntityList []string
 }
 
+// ProjTags inits a dictionary for getting TagSpec by tag's name.
 func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 	if len(refs) == 0 {
 		return nil
@@ -67,7 +73,7 @@ func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 	}
 	for projFamilyIdx, refInFamily := range refs {
 		for projIdx, ref := range refInFamily {
-			newCommonSchema.TagMap[ref.Tag.GetTagName()] = &TagSpec{
+			newCommonSchema.TagMap[ref.Tag.getTagName()] = &TagSpec{
 				TagFamilyIdx: projFamilyIdx,
 				TagIdx:       projIdx,
 				Spec:         ref.Spec.Spec,
@@ -77,7 +83,7 @@ func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 	return newCommonSchema
 }
 
-// registerTag registers the tag spec with given tagFamilyName, tagName and indexes.
+// RegisterTag registers the tag spec with given tagFamilyName, tagName and indexes.
 func (cs *CommonSchema) RegisterTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
 	cs.TagMap[spec.GetName()] = &TagSpec{
 		TagIdx:       tagIdx,
@@ -86,6 +92,7 @@ func (cs *CommonSchema) RegisterTag(tagFamilyIdx, tagIdx int, spec *databasev1.T
 	}
 }
 
+// ShardNumber returns the number of shards defined by the schema.
 func (cs *CommonSchema) ShardNumber() uint32 {
 	return cs.Group.ResourceOpts.ShardNum
 }
@@ -102,6 +109,7 @@ func (cs *CommonSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRul
 	return false, nil
 }
 
+// IndexRuleDefined return the IndexRule by its name.
 func (cs *CommonSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
 	for _, idxRule := range cs.IndexRules {
 		if idxRule.GetMetadata().GetName() == indexRuleName {
@@ -119,10 +127,10 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	for i, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			if ts, ok := cs.TagMap[tag.GetTagName()]; ok {
+			if ts, ok := cs.TagMap[tag.getTagName()]; ok {
 				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			} else {
-				return nil, errors.Wrap(ErrTagNotDefined, tag.GetCompoundName())
+				return nil, errors.Wrap(errTagNotDefined, tag.GetCompoundName())
 			}
 		}
 		tagRefs[i] = tagRefsInFamily

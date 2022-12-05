@@ -99,7 +99,7 @@ func setUp() (*services, func()) {
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
-	moduleDeferFunc := test.SetUpModules(
+	moduleDeferFunc := test.SetupModules(
 		flags,
 		repo,
 		pipeline,

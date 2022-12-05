@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package iter implement a generic Iterator.
 package iter
 
 // An Iterator is a stream of items of some type.
