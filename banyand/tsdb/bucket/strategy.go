@@ -30,42 +30,48 @@ import (
 )
 
 var (
+	// ErrInvalidParameter denotes input parameters are invalid.
 	ErrInvalidParameter = errors.New("parameters are invalid")
-	ErrNoMoreBucket     = errors.New("no more buckets")
+	// ErrNoMoreBucket denotes the bucket volume reaches the limitation.
+	ErrNoMoreBucket = errors.New("no more buckets")
 )
 
-type Ratio float64
+type ratio float64
 
+// Strategy controls Reporters with Controller's help.
 type Strategy struct {
 	optionsErr   error
-	ratio        Ratio
 	ctrl         Controller
 	current      atomic.Value
-	currentRatio uint64
 	logger       *logger.Logger
-
-	closer *run.Closer
+	closer       *run.Closer
+	ratio        ratio
+	currentRatio uint64
 }
 
+// StrategyOptions sets how to create a Strategy.
 type StrategyOptions func(*Strategy)
 
-func WithNextThreshold(ratio Ratio) StrategyOptions {
+// WithNextThreshold sets a ratio to creat the next Reporter.
+func WithNextThreshold(r ratio) StrategyOptions {
 	return func(s *Strategy) {
-		if ratio > 1.0 {
+		if r > 1.0 {
 			s.optionsErr = multierr.Append(s.optionsErr,
-				errors.Wrapf(ErrInvalidParameter, "ratio %v is more than 1.0", ratio))
+				errors.Wrapf(ErrInvalidParameter, "ratio %v is more than 1.0", r))
 			return
 		}
-		s.ratio = ratio
+		s.ratio = r
 	}
 }
 
+// WithLogger sets a logger.Logger.
 func WithLogger(logger *logger.Logger) StrategyOptions {
 	return func(s *Strategy) {
 		s.logger = logger
 	}
 }
 
+// NewStrategy returns a Strategy.
 func NewStrategy(ctrl Controller, options ...StrategyOptions) (*Strategy, error) {
 	if ctrl == nil {
 		return nil, errors.Wrap(ErrInvalidParameter, "controller is absent")
@@ -99,12 +105,13 @@ func (s *Strategy) resetCurrent() error {
 	return nil
 }
 
+// Run the Strategy in the background.
 func (s *Strategy) Run() {
 	go func(s *Strategy) {
 		defer s.closer.Done()
 		for {
 			c, err := s.current.Load().(Reporter).Report()
-			if errors.Is(err, ErrReporterClosed) {
+			if errors.Is(err, errReporterClosed) {
 				return
 			}
 			if err != nil {
@@ -139,9 +146,9 @@ func (s *Strategy) observe(c Channel) bool {
 			if !more {
 				return moreBucket
 			}
-			ratio := Ratio(status.Volume) / Ratio(status.Capacity)
-			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(ratio)))
-			if ratio >= s.ratio && next == nil && moreBucket {
+			r := ratio(status.Volume) / ratio(status.Capacity)
+			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(r)))
+			if r >= s.ratio && next == nil && moreBucket {
 				n, err := s.ctrl.Next()
 				if errors.Is(err, ErrNoMoreBucket) {
 					moreBucket = false
@@ -152,7 +159,7 @@ func (s *Strategy) observe(c Channel) bool {
 					next = n
 				}
 			}
-			if ratio >= 1.0 {
+			if r >= 1.0 {
 				s.ctrl.OnMove(s.current.Load().(Reporter), next)
 				if next != nil {
 					s.current.Store(next)
@@ -165,6 +172,7 @@ func (s *Strategy) observe(c Channel) bool {
 	}
 }
 
+// Close the Strategy running in the background.
 func (s *Strategy) Close() {
 	s.closer.CloseThenWait()
 }

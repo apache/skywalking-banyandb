@@ -39,7 +39,7 @@ func TestSource_channel(t *testing.T) {
 
 	inlet := flow.NewMockInlet(ctrl)
 
-	srcCh := make(chan string)
+	srcCh := make(chan any)
 
 	assert := require.New(t)
 	src, err := sources.NewChannel(srcCh)

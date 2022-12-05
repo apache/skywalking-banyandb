@@ -25,11 +25,13 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 )
 
+// TopElement seals a sortable value and its data point which this value belongs to.
 type TopElement struct {
 	dp    *measurev1.DataPoint
 	value int64
 }
 
+// NewTopElement returns a TopElement.
 func NewTopElement(dp *measurev1.DataPoint, value int64) TopElement {
 	return TopElement{
 		dp:    dp,
@@ -37,6 +39,7 @@ func NewTopElement(dp *measurev1.DataPoint, value int64) TopElement {
 	}
 }
 
+// Val returns the sortable value.
 func (e TopElement) Val() int64 {
 	return e.value
 }
@@ -91,11 +94,13 @@ func (h *topHeap) Pop() interface{} {
 	return e
 }
 
+// TopQueue is a sortable queue only keeps top-n members when pushed new elements.
 type TopQueue struct {
-	n  int
 	th topHeap
+	n  int
 }
 
+// NewTopQueue returns a new TopQueue.
 func NewTopQueue(n int, reverted bool) *TopQueue {
 	return &TopQueue{
 		n: n,
@@ -106,6 +111,9 @@ func NewTopQueue(n int, reverted bool) *TopQueue {
 	}
 }
 
+// Insert pushes a new element to the queue.
+// It returns true if the element are accepted by the queue,
+// returns false if it's evicted.
 func (s *TopQueue) Insert(element TopElement) bool {
 	if len(s.th.elements) < s.n {
 		heap.Push(&s.th, element)
@@ -127,10 +135,12 @@ func (s *TopQueue) Insert(element TopElement) bool {
 	return true
 }
 
+// Purge resets the queue.
 func (s *TopQueue) Purge() {
 	s.th.elements = s.th.elements[:0]
 }
 
+// Elements returns all elements accepted by the queue.
 func (s *TopQueue) Elements() []TopElement {
 	l := &topSortedList{
 		elements: append([]TopElement(nil), s.th.elements...),
@@ -140,6 +150,7 @@ func (s *TopQueue) Elements() []TopElement {
 	return l.elements
 }
 
+// Strings shows the string represent.
 func (s TopQueue) String() string {
 	if s.th.reverted {
 		return fmt.Sprintf("bottom(%d)", s.n)
@@ -147,6 +158,7 @@ func (s TopQueue) String() string {
 	return fmt.Sprintf("top(%d)", s.n)
 }
 
+// Equal reports whether s and other have the queue's max acceptable number and sorting order.
 func (s *TopQueue) Equal(other *TopQueue) bool {
 	return s.th.reverted == other.th.reverted && s.n == other.n
 }

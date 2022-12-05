@@ -16,16 +16,15 @@
 # under the License.
 #
 
-LINT_OPTS ?= --timeout 1m0s
-
 include $(mk_dir)lint-bin.mk
 
 ##@ Code quality targets
 
 .PHONY: lint
-lint: $(LINTER)
+lint: $(LINTER) $(REVIVE) ## Run all linters
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
-	$(LINTER) --verbose run $(LINT_OPTS) --config $(root_dir)/deprecated-golangci.yml
+	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
+	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...
 
 .PHONY: format
 format: $(BUF)

@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 )
 
-var ErrNotExist = errors.New("the object doesn't exist")
+var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
 	shardRepo  *shardRepo
@@ -61,11 +61,11 @@ func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []
 		Name: metadata.Group,
 	}))
 	if !existed {
-		return nil, nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the shard num by: %v", metadata)
+		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
 	locator, existed := ds.entityRepo.getLocator(getID(metadata))
 	if !existed {
-		return nil, nil, common.ShardID(0), errors.Wrapf(ErrNotExist, "finding the locator by: %v", metadata)
+		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the locator by: %v", metadata)
 	}
 	return locator.Locate(metadata.Name, tagFamilies, shardNum)
 }
@@ -159,6 +159,8 @@ func (s *entityRepo) Rev(message bus.Message) (resp bus.Message) {
 		s.entitiesMap[id] = en
 	case databasev1.Action_ACTION_DELETE:
 		delete(s.entitiesMap, id)
+	case databasev1.Action_ACTION_UNSPECIFIED:
+		s.log.Warn().RawJSON("event", logger.Proto(e)).Msg("ignored unspecified event")
 	}
 	return
 }

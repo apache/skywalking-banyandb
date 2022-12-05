@@ -33,12 +33,13 @@ var serviceName = index.FieldKey{
 	IndexRuleID: 6,
 }
 
+// RunServiceName executes service name related cases.
 func RunServiceName(t *testing.T, store SimpleStore) {
 	tester := assert.New(t)
 	tests := []struct {
+		want    posting.List
 		name    string
 		arg     index.Field
-		want    posting.List
 		wantErr bool
 	}{
 		{
@@ -59,7 +60,7 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 		},
 		{
 			name: "unknown field",
-			want: roaring.EmptyPostingList,
+			want: roaring.DummyPostingList,
 		},
 		{
 			name: "unknown term",
@@ -67,7 +68,7 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 				Key:  serviceName,
 				Term: []byte("unknown"),
 			},
-			want: roaring.EmptyPostingList,
+			want: roaring.DummyPostingList,
 		},
 	}
 	for _, tt := range tests {
@@ -84,6 +85,7 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 	}
 }
 
+// SetUp initializes a index repository.
 func SetUp(t *assert.Assertions, store SimpleStore) {
 	for i := 0; i < 100; i++ {
 		if i < 100/2 {

@@ -28,7 +28,6 @@ include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 include ../scripts/build/build.mk
 include ../scripts/build/test.mk
-# TODO: remove this
-include ../scripts/build/lint-deprecated.mk
+include ../scripts/build/lint.mk
 include ../scripts/build/docker.mk
 include ../scripts/build/help.mk

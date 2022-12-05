@@ -26,16 +26,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+// Analyzer analyzes the stream querying expression to the execution plan.
 type Analyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
+// CreateAnalyzerFromMetaService returns a Analyzer.
 func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
 	return &Analyzer{
 		metaSvc,
 	}, nil
 }
 
+// BuildSchema returns Schema loaded from the metadata repository.
 func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
@@ -46,7 +49,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 		return nil, err
 	}
 
-	indexRules, err := a.metadataRepoImpl.IndexRules(context.TODO(), metadata)
+	indexRules, err := a.metadataRepoImpl.IndexRules(ctx, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -71,12 +74,10 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 	return s, nil
 }
 
+// Analyze converts logical expressions to executable operation tree represented by Plan.
 func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	// parse fields
-	plan, err := parseTags(criteria, metadata, s)
-	if err != nil {
-		return nil, err
-	}
+	plan := parseTags(criteria, metadata)
 
 	// parse orderBy
 	queryOrder := criteria.GetOrderBy()
@@ -106,7 +107,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, m
 //
 //	i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
 //	we use service_id + service_instance_id + state as the compound sharding keys.
-func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.UnresolvedPlan, error) {
+func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 
 	projTags := make([][]*logical.Tag, len(criteria.GetProjection().GetTagFamilies()))
@@ -118,6 +119,6 @@ func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s l
 		projTags[i] = projTagInFamily
 	}
 
-	return TagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		criteria.Criteria, nil, projTags...), nil
+	return tagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+		criteria.Criteria, nil, projTags...)
 }

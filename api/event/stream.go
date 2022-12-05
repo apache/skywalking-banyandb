@@ -23,15 +23,21 @@ import (
 )
 
 var (
+	// StreamShardEventKindVersion is the version tag of stream shard entity kind.
 	StreamShardEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "stream-event-shard",
 	}
+
+	// StreamTopicShardEvent is the stream entity event publishing topic.
 	StreamTopicShardEvent = bus.UniTopic(StreamShardEventKindVersion.String())
 
+	// StreamEntityEventKindVersion is the version tag of stream entity kind.
 	StreamEntityEventKindVersion = common.KindVersion{
 		Version: "v1",
 		Kind:    "stream-event-entity",
 	}
+
+	// StreamTopicEntityEvent is the stream entity event publishing topic.
 	StreamTopicEntityEvent = bus.UniTopic(StreamEntityEventKindVersion.String())
 )

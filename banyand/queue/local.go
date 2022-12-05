@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package queue implements the data transmission queue.
 package queue
 
 import (
@@ -34,7 +35,7 @@ type local struct {
 	stopCh chan struct{}
 }
 
-// GracefulStop implements Queue
+// GracefulStop implements Queue.
 func (l *local) GracefulStop() {
 	l.local.Close()
 	if l.stopCh != nil {
@@ -42,7 +43,7 @@ func (l *local) GracefulStop() {
 	}
 }
 
-// Serve implements Queue
+// Serve implements Queue.
 func (l *local) Serve() run.StopNotify {
 	return l.stopCh
 }

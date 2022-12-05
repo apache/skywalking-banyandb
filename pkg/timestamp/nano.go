@@ -20,7 +20,7 @@ package timestamp
 import (
 	"math"
 	"time"
-	// link runtime pkg fastrand
+	// link runtime pkg fastrand.
 	_ "unsafe"
 
 	"github.com/pkg/errors"
@@ -39,7 +39,7 @@ var (
 //go:linkname fastRandN runtime.fastrandn
 func fastRandN(n uint32) uint32
 
-// MToN convert time unix millisends to nanoseconds
+// MToN convert time unix millisends to nanoseconds.
 func MToN(ms time.Time) time.Time {
 	ns := ms.UnixNano()
 	if ms.Nanosecond()%int(mSecond) > 0 {
@@ -49,7 +49,7 @@ func MToN(ms time.Time) time.Time {
 	return time.Unix(ms.Unix(), nns%int64(time.Second))
 }
 
-// NowMilli returns a time based on a unix millisecond
+// NowMilli returns a time based on a unix millisecond.
 func NowMilli() time.Time {
 	return time.UnixMilli(time.Now().UnixMilli())
 }
@@ -57,12 +57,12 @@ func NowMilli() time.Time {
 const (
 	// MinNanoTime is the minimum time that can be represented.
 	//
-	// 1677-09-21 00:12:43.145224192 +0000 UTC
+	// 1677-09-21 00:12:43.145224192 +0000 UTC.
 	MinNanoTime = int64(math.MinInt64)
 
 	// MaxNanoTime is the maximum time that can be represented.
 	//
-	// 2262-04-11 23:47:16.854775807 +0000 UTC
+	// 2262-04-11 23:47:16.854775807 +0000 UTC.
 	MaxNanoTime = int64(math.MaxInt64)
 )
 
@@ -70,42 +70,44 @@ var (
 	minNanoTime = time.Unix(0, MinNanoTime).UTC()
 	maxNanoTime = time.Unix(0, MaxNanoTime).UTC()
 
-	MaxMilliTime       = time.UnixMilli(maxNanoTime.UnixMilli())
-	MaxMilliPbTime     = timestamppb.New(MaxMilliTime)
-	DefaultBeginPbTime = timestamppb.New(time.Unix(0, 0))
-	DefaultTimeRange   = &modelv1.TimeRange{
-		Begin: DefaultBeginPbTime,
-		End:   MaxMilliPbTime,
+	maxMilliTime       = time.UnixMilli(maxNanoTime.UnixMilli())
+	maxMilliPbTime     = timestamppb.New(maxMilliTime)
+	defaultBeginPbTime = timestamppb.New(time.Unix(0, 0))
+
+	// DefaultTimeRange for the input time range.
+	DefaultTimeRange = &modelv1.TimeRange{
+		Begin: defaultBeginPbTime,
+		End:   maxMilliPbTime,
 	}
 
-	ErrTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
-	ErrTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
-	ErrTimeEmpty          = errors.Errorf("time is empty")
+	errTimeOutOfRange     = errors.Errorf("time is out of range %d - %d", MinNanoTime, MaxNanoTime)
+	errTimeNotMillisecond = errors.Errorf("time is not millisecond precision")
+	errTimeEmpty          = errors.Errorf("time is empty")
 )
 
-// Check checks that a time is valid
+// Check checks that a time is valid.
 func Check(t time.Time) error {
 	if t.Before(minNanoTime) || t.After(maxNanoTime) {
-		return ErrTimeOutOfRange
+		return errTimeOutOfRange
 	}
 	if t.Nanosecond()%int(mSecond) > 0 {
-		return ErrTimeNotMillisecond
+		return errTimeNotMillisecond
 	}
 	return nil
 }
 
-// CheckPb checks that a protobuf timestamp is valid
+// CheckPb checks that a protobuf timestamp is valid.
 func CheckPb(t *timestamppb.Timestamp) error {
 	if t == nil {
-		return ErrTimeEmpty
+		return errTimeEmpty
 	}
 	return Check(t.AsTime())
 }
 
-// CheckTimeRange checks that a protobuf time range is valid
+// CheckTimeRange checks that a protobuf time range is valid.
 func CheckTimeRange(timeRange *modelv1.TimeRange) error {
 	if timeRange == nil {
-		return ErrTimeEmpty
+		return errTimeEmpty
 	}
 	err := CheckPb(timeRange.Begin)
 	if err != nil {

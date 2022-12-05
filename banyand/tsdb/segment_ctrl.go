@@ -34,17 +34,16 @@ import (
 )
 
 type segmentController struct {
-	sync.RWMutex
 	shardCtx    context.Context
+	blockQueue  bucket.Queue
+	clock       timestamp.Clock
+	scheduler   *timestamp.Scheduler
+	l           *logger.Logger
 	location    string
+	lst         []*segment
 	segmentSize IntervalRule
 	blockSize   IntervalRule
-	lst         []*segment
-	blockQueue  bucket.Queue
-	scheduler   *timestamp.Scheduler
-	clock       timestamp.Clock
-
-	l *logger.Logger
+	sync.RWMutex
 }
 
 func newSegmentController(shardCtx context.Context, location string, segmentSize, blockSize IntervalRule,
@@ -126,7 +125,7 @@ func (sc *segmentController) Current() (bucket.Reporter, error) {
 	}(); b != nil {
 		return b, nil
 	}
-	return sc.create(now, true)
+	return sc.create(now)
 }
 
 func (sc *segmentController) Next() (bucket.Reporter, error) {
@@ -135,8 +134,8 @@ func (sc *segmentController) Next() (bucket.Reporter, error) {
 		return nil, err
 	}
 	seg := c.(*segment)
-	reporter, err := sc.create(sc.segmentSize.NextTime(seg.Start), true)
-	if errors.Is(err, ErrEndOfSegment) {
+	reporter, err := sc.create(sc.segmentSize.nextTime(seg.Start))
+	if errors.Is(err, errEndOfSegment) {
 		return nil, bucket.ErrNoMoreBucket
 	}
 	return reporter, err
@@ -187,15 +186,15 @@ func (sc *segmentController) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	return loadSections(sc.location, sc, sc.segmentSize, func(start, end time.Time) error {
-		_, err := sc.load(start, end, sc.location, false)
-		if errors.Is(err, ErrEndOfSegment) {
+		_, err := sc.load(start, end, sc.location)
+		if errors.Is(err, errEndOfSegment) {
 			return nil
 		}
 		return err
 	})
 }
 
-func (sc *segmentController) create(start time.Time, createBlockIfEmpty bool) (*segment, error) {
+func (sc *segmentController) create(start time.Time) (*segment, error) {
 	sc.Lock()
 	defer sc.Unlock()
 	start = sc.Standard(start)
@@ -208,7 +207,7 @@ func (sc *segmentController) create(start time.Time, createBlockIfEmpty bool) (*
 			next = s
 		}
 	}
-	stdEnd := sc.segmentSize.NextTime(start)
+	stdEnd := sc.segmentSize.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
@@ -219,7 +218,7 @@ func (sc *segmentController) create(start time.Time, createBlockIfEmpty bool) (*
 	if err != nil {
 		return nil, err
 	}
-	return sc.load(start, end, sc.location, createBlockIfEmpty)
+	return sc.load(start, end, sc.location)
 }
 
 func (sc *segmentController) sortLst() {
@@ -228,7 +227,8 @@ func (sc *segmentController) sortLst() {
 	})
 }
 
-func (sc *segmentController) load(start, end time.Time, root string, createBlockIfEmpty bool) (seg *segment, err error) {
+// nolint: contextcheck
+func (sc *segmentController) load(start, end time.Time, root string) (seg *segment, err error) {
 	suffix := sc.Format(start)
 	seg, err = openSegment(common.SetPosition(sc.shardCtx, func(p common.Position) common.Position {
 		p.Segment = suffix

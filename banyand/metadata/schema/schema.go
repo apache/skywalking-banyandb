@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package schema implements CRUD schema.
 package schema
 
 import (
@@ -29,15 +30,18 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
-var ErrUnsupportedEntityType = errors.New("unsupported entity type")
+var errUnsupportedEntityType = errors.New("unsupported entity type")
 
+// Kind is the type of a resource.
 type Kind int
 
+// EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
 	OnAddOrUpdate(Metadata)
 	OnDelete(Metadata)
 }
 
+// KindMask tends to check whether an event is valid.
 const (
 	KindGroup Kind = 1 << iota
 	KindStream
@@ -46,14 +50,15 @@ const (
 	KindIndexRule
 	KindTopNAggregation
 	KindProperty
+	KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule | KindTopNAggregation
 )
 
-const KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule | KindTopNAggregation
-
+// ListOpt contains options to list resources.
 type ListOpt struct {
 	Group string
 }
 
+// Registry allowing depositing resources.
 type Registry interface {
 	io.Closer
 	ReadyNotify() <-chan struct{}
@@ -68,22 +73,23 @@ type Registry interface {
 	Property
 }
 
+// TypeMeta defines the identity and type of an Event.
 type TypeMeta struct {
-	Kind  Kind
 	Name  string
 	Group string
+	Kind  Kind
 }
 
+// Metadata wrap dedicated serialized resource and its TypeMeta.
 type Metadata struct {
-	TypeMeta
-
-	// Spec holds the configuration object as a protobuf message
-	// Or a metadataHolder as a container
 	Spec Spec
+	TypeMeta
 }
 
+// Spec is a placeholder of a serialized resource.
 type Spec interface{}
 
+// Unmarshal encode bytes to proto.Message.
 func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 	switch tm.Kind {
 	case KindGroup:
@@ -101,13 +107,13 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 	case KindTopNAggregation:
 		m = &databasev1.TopNAggregation{}
 	default:
-		return nil, ErrUnsupportedEntityType
+		return nil, errUnsupportedEntityType
 	}
 	err = proto.Unmarshal(data, m)
 	return
 }
 
-func (m Metadata) Key() (string, error) {
+func (m Metadata) key() (string, error) {
 	switch m.Kind {
 	case KindGroup:
 		return formatGroupKey(m.Name), nil
@@ -142,11 +148,11 @@ func (m Metadata) Key() (string, error) {
 			Name:  m.Name,
 		}), nil
 	default:
-		return "", ErrUnsupportedEntityType
+		return "", errUnsupportedEntityType
 	}
 }
 
-func (m Metadata) Equal(other proto.Message) bool {
+func (m Metadata) equal(other proto.Message) bool {
 	if other == nil {
 		return false
 	}
@@ -158,6 +164,7 @@ func (m Metadata) Equal(other proto.Message) bool {
 	return false
 }
 
+// Stream allows CRUD stream schemas in a group.
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
@@ -167,6 +174,7 @@ type Stream interface {
 	RegisterHandler(Kind, EventHandler)
 }
 
+// IndexRule allows CRUD index rule schemas in a group.
 type IndexRule interface {
 	GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
 	ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
@@ -175,6 +183,7 @@ type IndexRule interface {
 	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
+// IndexRuleBinding allows CRUD index rule binding schemas in a group.
 type IndexRuleBinding interface {
 	GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
 	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
@@ -183,6 +192,7 @@ type IndexRuleBinding interface {
 	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
+// Measure allows CRUD measure schemas in a group.
 type Measure interface {
 	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
@@ -193,6 +203,7 @@ type Measure interface {
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }
 
+// Group allows CRUD groups which is namespaces of resources.
 type Group interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
 	ListGroup(ctx context.Context) ([]*commonv1.Group, error)
@@ -202,6 +213,7 @@ type Group interface {
 	UpdateGroup(ctx context.Context, group *commonv1.Group) error
 }
 
+// TopNAggregation allows CRUD top-n aggregation schemas in a group.
 type TopNAggregation interface {
 	GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error)
 	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
@@ -210,6 +222,7 @@ type TopNAggregation interface {
 	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
+// Property allows CRUD properties or tags in group.
 type Property interface {
 	GetProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (*propertyv1.Property, error)
 	ListProperty(ctx context.Context, container *commonv1.Metadata, ids []string, tags []string) ([]*propertyv1.Property, error)

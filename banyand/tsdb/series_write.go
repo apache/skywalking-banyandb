@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
+// WriterBuilder is a helper to build a Writer.
 type WriterBuilder interface {
 	Family(name []byte, val []byte) WriterBuilder
 	Time(ts time.Time) WriterBuilder
@@ -36,6 +37,7 @@ type WriterBuilder interface {
 	Build() (Writer, error)
 }
 
+// Writer allow ingesting data into a tsdb.
 type Writer interface {
 	IndexWriter
 	Write() (GlobalItemID, error)
@@ -47,7 +49,7 @@ var _ WriterBuilder = (*writerBuilder)(nil)
 
 type writerBuilder struct {
 	series *seriesSpan
-	block  BlockDelegate
+	block  blockDelegate
 	values []struct {
 		family []byte
 		val    []byte
@@ -84,26 +86,25 @@ func (w *writerBuilder) Val(val []byte) WriterBuilder {
 }
 
 var (
-	ErrNoTime = errors.New("no time specified")
-	ErrNoVal  = errors.New("no value specified")
+	errNoTime           = errors.New("no time specified")
+	errNoVal            = errors.New("no value specified")
+	errDuplicatedFamily = errors.New("duplicated family")
 )
-
-var ErrDuplicatedFamily = errors.New("duplicated family")
 
 func (w *writerBuilder) Build() (Writer, error) {
 	if w.block == nil {
-		return nil, errors.WithMessagef(ErrNoTime, "ts:%v", w.ts)
+		return nil, errors.WithMessagef(errNoTime, "ts:%v", w.ts)
 	}
 	if len(w.values) < 1 {
-		return nil, errors.WithStack(ErrNoVal)
+		return nil, errors.WithStack(errNoVal)
 	}
 	for i, value := range w.values {
-		for j := i + 1; j < len(w.values); j = j + 1 {
+		for j := i + 1; j < len(w.values); j++ {
 			if value.family == nil && w.values[j].family == nil {
-				return nil, errors.Wrap(ErrDuplicatedFamily, "default family")
+				return nil, errors.Wrap(errDuplicatedFamily, "default family")
 			}
 			if bytes.Equal(value.family, w.values[j].family) {
-				return nil, errors.Wrapf(ErrDuplicatedFamily, "family:%s", value.family)
+				return nil, errors.Wrapf(errDuplicatedFamily, "family:%s", value.family)
 			}
 		}
 	}
@@ -132,13 +133,13 @@ func newWriterBuilder(seriesSpan *seriesSpan) WriterBuilder {
 var _ Writer = (*writer)(nil)
 
 type writer struct {
-	block   BlockDelegate
 	ts      time.Time
+	block   blockDelegate
+	itemID  *GlobalItemID
 	columns []struct {
 		family []byte
 		val    []byte
 	}
-	itemID *GlobalItemID
 }
 
 func (w *writer) ItemID() GlobalItemID {
@@ -173,8 +174,8 @@ func (w *writer) String() string {
 }
 
 type dataBucket struct {
-	seriesID common.SeriesID
 	family   []byte
+	seriesID common.SeriesID
 }
 
 func (d dataBucket) marshal() []byte {

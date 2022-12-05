@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package bus implements a message bus which is a common data model and a messaging infrastructure
+// to allow different modules to communicate locally or remotely.
 package bus
 
 import (
@@ -27,30 +29,36 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// Payload represents a simple data
-type Payload interface{}
 type (
+	payload interface{}
+
+	// MessageID the identity of a Message.
 	MessageID uint64
-	Future    interface {
+
+	// Future represents a future result of an asynchronous publishing.
+	Future interface {
 		Get() (Message, error)
 		GetAll() ([]Message, error)
 	}
 )
 
-// Message is send on the bus to all subscribed listeners
+// Message is send on the bus to all subscribed listeners.
 type Message struct {
+	payload payload
 	id      MessageID
-	payload Payload
 }
 
+// ID outputs the MessageID of the Message.
 func (m Message) ID() MessageID {
 	return m.id
 }
 
+// Data returns the data wrapped in the Message.
 func (m Message) Data() interface{} {
 	return m.payload
 }
 
+// NewMessage returns a new Message with a MessageID and embed data.
 func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, payload: data}
 }
@@ -60,65 +68,73 @@ type MessageListener interface {
 	Rev(message Message) Message
 }
 
+// Subscriber allow subscribing a Topic's messages.
 type Subscriber interface {
 	Subscribe(topic Topic, listener MessageListener) error
 }
 
+// Publisher allow sending Messages to a Topic.
 type Publisher interface {
 	Publish(topic Topic, message ...Message) (Future, error)
 }
 
-type Channel chan Event
+type channel chan event
 
-type ChType int
+type chType int
 
 var (
-	ChTypeUnidirectional ChType = 0
-	ChTypeBidirectional  ChType = 1
+	chTypeUnidirectional chType
+	chTypeBidirectional  chType = 1
 )
 
+// Topic is the object which messages are sent to or received from.
 type Topic struct {
-	ID   string
-	Type ChType
+	id  string
+	typ chType
 }
 
-func UniTopic(ID string) Topic {
-	return Topic{ID: ID, Type: ChTypeUnidirectional}
+// UniTopic returns an unary Topic.
+func UniTopic(id string) Topic {
+	return Topic{id: id, typ: chTypeUnidirectional}
 }
 
-func BiTopic(ID string) Topic {
-	return Topic{ID: ID, Type: ChTypeBidirectional}
+// BiTopic returns bidirectional Topic.
+func BiTopic(id string) Topic {
+	return Topic{id: id, typ: chTypeBidirectional}
 }
 
-// The Bus allows publish-subscribe-style communication between components
+// The Bus allows publish-subscribe-style communication between components.
 type Bus struct {
-	topics map[Topic][]Channel
-	mutex  sync.RWMutex
+	topics map[Topic][]channel
 	closer *run.Closer
+	mutex  sync.RWMutex
 }
 
+// NewBus returns a Bus.
 func NewBus() *Bus {
 	b := new(Bus)
-	b.topics = make(map[Topic][]Channel)
+	b.topics = make(map[Topic][]channel)
 	b.closer = run.NewCloser(0)
 	return b
 }
 
 var (
-	ErrTopicEmpty    = errors.New("the topic is empty")
+	// ErrTopicNotExist hints the topic published doesn't exist.
 	ErrTopicNotExist = errors.New("the topic does not exist")
-	ErrListenerEmpty = errors.New("the message listener is empty")
-	ErrEmptyFuture   = errors.New("can't invoke Get() on an empty future")
+
+	errTopicEmpty    = errors.New("the topic is empty")
+	errListenerEmpty = errors.New("the message listener is empty")
+	errEmptyFuture   = errors.New("can't invoke Get() on an empty future")
 )
 
 type emptyFuture struct{}
 
 func (e *emptyFuture) Get() (Message, error) {
-	return Message{}, ErrEmptyFuture
+	return Message{}, errEmptyFuture
 }
 
 func (e *emptyFuture) GetAll() ([]Message, error) {
-	return nil, ErrEmptyFuture
+	return nil, errEmptyFuture
 }
 
 type localFuture struct {
@@ -132,7 +148,7 @@ func (l *localFuture) Get() (Message, error) {
 	}
 	m, ok := <-l.retCh
 	if ok {
-		l.retCount = l.retCount - 1
+		l.retCount--
 		return m, nil
 	}
 	return Message{}, io.EOF
@@ -143,7 +159,7 @@ func (l *localFuture) GetAll() ([]Message, error) {
 	ret := make([]Message, 0, l.retCount)
 	for {
 		m, err := l.Get()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return ret, globalErr
 		}
 		if err != nil {
@@ -154,14 +170,15 @@ func (l *localFuture) GetAll() ([]Message, error) {
 	}
 }
 
-type Event struct {
-	m Message
+type event struct {
 	f Future
+	m Message
 }
 
+// Publish sends Messages to a Topic.
 func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
-	if topic.ID == "" {
-		return nil, ErrTopicEmpty
+	if topic.id == "" {
+		return nil, errTopicEmpty
 	}
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
@@ -170,15 +187,15 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 		return nil, ErrTopicNotExist
 	}
 	var f Future
-	switch topic.Type {
-	case ChTypeUnidirectional:
+	switch topic.typ {
+	case chTypeUnidirectional:
 		f = nil
-	case ChTypeBidirectional:
+	case chTypeBidirectional:
 		f = &localFuture{retCount: len(message), retCh: make(chan Message)}
 	}
 	for _, each := range cc {
 		for _, m := range message {
-			go func(ch Channel, message Message) {
+			go func(ch channel, message Message) {
 				if !b.closer.AddRunning() {
 					return
 				}
@@ -186,7 +203,7 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 				select {
 				case <-b.closer.CloseNotify():
 					return
-				case ch <- Event{
+				case ch <- event{
 					m: message,
 					f: f,
 				}:
@@ -202,22 +219,22 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 
 // Subscribe adds an MessageListener to be called when a message of a Topic is posted.
 func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
-	if topic.ID == "" {
-		return ErrTopicEmpty
+	if topic.id == "" {
+		return errTopicEmpty
 	}
 	if listener == nil {
-		return ErrListenerEmpty
+		return errListenerEmpty
 	}
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	if _, exist := b.topics[topic]; !exist {
-		b.topics[topic] = make([]Channel, 0)
+		b.topics[topic] = make([]channel, 0)
 	}
-	ch := make(Channel)
+	ch := make(channel)
 	list := b.topics[topic]
 	list = append(list, ch)
 	b.topics[topic] = list
-	go func(listener MessageListener, ch Channel) {
+	go func(listener MessageListener, ch channel) {
 		for {
 			c, ok := <-ch
 			if ok {
@@ -236,6 +253,7 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 	return nil
 }
 
+// Close a Bus until all Messages are sent to Subscribers.
 func (b *Bus) Close() {
 	b.closer.CloseThenWait()
 	for _, chs := range b.topics {

@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package config implements a configuration system which could load configuration from flags and env vars.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -32,19 +34,17 @@ const (
 )
 
 type config struct {
-	name  string
 	viper *viper.Viper
+	name  string
 }
 
+// Load configurations from flags.
 func Load(name string, fs *pflag.FlagSet) error {
 	c := new(config)
 	v := viper.New()
 	c.name = name
 	c.viper = v
-	if err := c.initializeConfig(fs); err != nil {
-		return err
-	}
-	return nil
+	return c.initializeConfig(fs)
 }
 
 func (c *config) initializeConfig(fs *pflag.FlagSet) error {
@@ -62,7 +62,7 @@ func (c *config) initializeConfig(fs *pflag.FlagSet) error {
 	// if we cannot parse the config file.
 	if err := v.ReadInConfig(); err != nil {
 		// It's okay if there isn't a config file
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
 			return err
 		}
 	}
@@ -82,7 +82,7 @@ func (c *config) initializeConfig(fs *pflag.FlagSet) error {
 	return bindFlags(fs, v)
 }
 
-// Bind each cobra flag to its associated viper configuration (config file and environment variable)
+// Bind each cobra flag to its associated viper configuration (config file and environment variable).
 func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 	var err error
 	fs.VisitAll(func(f *pflag.Flag) {

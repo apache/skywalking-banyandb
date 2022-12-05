@@ -20,13 +20,11 @@ include $(mk_dir)lint-bin.mk
 
 ##@ Code quality targets
 
-REVIVE := $(tool_bin)/revive
-$(REVIVE):
-	@GOBIN=$(tool_bin) go install github.com/mgechev/revive@$(REVIVE_VERSION)
+
 
 .PHONY: lint
 lint: $(LINTER) $(REVIVE) ## Run all linters
-	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
+	$(LINTER) run -v --config $(root_dir)/.golangci.yml --timeout 10m ./... && \
 	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...
 
 .PHONY: format

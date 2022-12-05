@@ -35,9 +35,9 @@ func TestTopNStream(t *testing.T) {
 	}
 	tests := []struct {
 		name   string
-		fields fields
 		args   args
 		wants  []int64
+		fields fields
 	}{
 		{
 			name: "top 3",

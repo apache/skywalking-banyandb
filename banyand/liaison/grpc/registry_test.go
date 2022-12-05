@@ -185,7 +185,7 @@ func setupForRegistry() func() {
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
 		"--etcd-listen-peer-url="+listenPeerURL)
-	deferFunc := test.SetUpModules(
+	deferFunc := test.SetupModules(
 		flags,
 		repo,
 		pipeline,

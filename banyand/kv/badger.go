@@ -19,6 +19,7 @@ package kv
 
 import (
 	"bytes"
+	"errors"
 	"log"
 	"math"
 	"time"
@@ -33,19 +34,20 @@ import (
 )
 
 var (
-	_              Store           = (*badgerDB)(nil)
-	_              IndexStore      = (*badgerDB)(nil)
-	_              y.Iterator      = (*mergedIter)(nil)
-	_              TimeSeriesStore = (*badgerTSS)(nil)
-	bitMergeEntry  byte            = 1 << 3
-	ErrKeyNotFound                 = badger.ErrKeyNotFound
+	_             Store           = (*badgerDB)(nil)
+	_             IndexStore      = (*badgerDB)(nil)
+	_             y.Iterator      = (*mergedIter)(nil)
+	_             TimeSeriesStore = (*badgerTSS)(nil)
+	bitMergeEntry byte            = 1 << 3
+	// ErrKeyNotFound denotes the expected key can not be got from the kv service.
+	ErrKeyNotFound = badger.ErrKeyNotFound
 )
 
 type badgerTSS struct {
-	shardID int
-	dbOpts  badger.Options
-	db      *badger.DB
+	dbOpts badger.Options
 	badger.TSet
+	db      *badger.DB
+	shardID int
 }
 
 func (b *badgerTSS) Context(key []byte, ts uint64, n int) (pre Iterator, next Iterator) {
@@ -88,8 +90,8 @@ func (b *badgerTSS) Close() error {
 
 type mergedIter struct {
 	delegated Iterator
-	valid     bool
 	data      []byte
+	valid     bool
 }
 
 func (i *mergedIter) Next() {
@@ -137,19 +139,13 @@ func (i mergedIter) Value() y.ValueStruct {
 }
 
 type badgerDB struct {
-	shardID int
 	dbOpts  badger.Options
 	db      *badger.DB
+	shardID int
 }
 
 func (b *badgerDB) Stats() observability.Statistics {
 	return badgerStats(b.db)
-}
-
-func (b *badgerDB) Handover(iterator Iterator) error {
-	return b.db.HandoverIterator(&mergedIter{
-		delegated: iterator,
-	})
 }
 
 func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error {
@@ -172,7 +168,7 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 		err := f(b.shardID, k, func() ([]byte, error) {
 			return y.Copy(it.Value().Value), nil
 		})
-		if err == ErrStopScan {
+		if errors.Is(err, errStopScan) {
 			break
 		}
 		if err != nil {
@@ -185,8 +181,8 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 var _ Iterator = (*iterator)(nil)
 
 type iterator struct {
-	reverse   bool
 	delegated y.Iterator
+	reverse   bool
 }
 
 func (i *iterator) Next() {
@@ -255,7 +251,7 @@ func (b *badgerDB) PutWithVersion(key, val []byte, version uint64) error {
 
 func (b *badgerDB) Get(key []byte) ([]byte, error) {
 	v, err := b.db.Get(y.KeyWithTs(key, math.MaxInt64))
-	if err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil, ErrKeyNotFound
 	}
 	if err != nil {
@@ -283,7 +279,7 @@ func (b *badgerDB) GetAll(key []byte, applyFn func([]byte) error) error {
 	return ErrKeyNotFound
 }
 
-// badgerLog delegates the zap log to the badger logger
+// badgerLog delegates the zap log to the badger logger.
 type badgerLog struct {
 	*log.Logger
 	delegated *logger.Logger

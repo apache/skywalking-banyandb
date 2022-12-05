@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package test
 
 import (
@@ -34,6 +35,7 @@ type shardEventMatcher struct {
 	action databasev1.Action
 }
 
+// NewShardEventMatcher return a Matcher to comparing shard event's action.
 func NewShardEventMatcher(action databasev1.Action) gomock.Matcher {
 	return &shardEventMatcher{
 		action: action,
@@ -58,6 +60,7 @@ type entityEventMatcher struct {
 	action databasev1.Action
 }
 
+// NewEntityEventMatcher return a Matcher for comparing entity event's action.
 func NewEntityEventMatcher(action databasev1.Action) gomock.Matcher {
 	return &entityEventMatcher{
 		action: action,

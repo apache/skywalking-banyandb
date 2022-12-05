@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package file provides utils to handle files
+// Package file provides utils to handle files.
 package file
 
 import (

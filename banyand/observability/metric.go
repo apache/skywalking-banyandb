@@ -14,10 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package observability
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -30,16 +32,18 @@ var (
 	_ run.Config  = (*metricService)(nil)
 )
 
+// NewMetricService returns a metric service.
 func NewMetricService() run.Service {
 	return &metricService{
-		stopCh: make(chan struct{}),
+		closer: run.NewCloser(1),
 	}
 }
 
 type metricService struct {
-	listenAddr string
-	stopCh     chan struct{}
 	l          *logger.Logger
+	svr        *http.Server
+	closer     *run.Closer
+	listenAddr string
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -49,6 +53,9 @@ func (p *metricService) FlagSet() *run.FlagSet {
 }
 
 func (p *metricService) Validate() error {
+	if p.listenAddr == "" {
+		return errNoAddr
+	}
 	return nil
 }
 
@@ -58,16 +65,22 @@ func (p *metricService) Name() string {
 
 func (p *metricService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
-	http.Handle("/metrics", promhttp.Handler())
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	p.svr = &http.Server{
+		Addr:              p.listenAddr,
+		ReadHeaderTimeout: 3 * time.Second,
+		Handler:           mux,
+	}
 	go func() {
+		defer p.closer.Done()
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start metric server")
-		_ = http.ListenAndServe(p.listenAddr, nil)
-		p.stopCh <- struct{}{}
+		_ = p.svr.ListenAndServe()
 	}()
-
-	return p.stopCh
+	return p.closer.CloseNotify()
 }
 
 func (p *metricService) GracefulStop() {
-	close(p.stopCh)
+	_ = p.svr.Close()
+	p.closer.CloseThenWait()
 }

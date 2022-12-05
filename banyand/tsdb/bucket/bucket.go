@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package bucket implements a rolling bucket system.
 package bucket
 
 import (
@@ -29,21 +30,25 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var ErrReporterClosed = errors.New("reporter is closed")
+var errReporterClosed = errors.New("reporter is closed")
 
+// Controller defines the provider of a Reporter.
 type Controller interface {
 	Current() (Reporter, error)
 	Next() (Reporter, error)
 	OnMove(prev, next Reporter)
 }
 
+// Status is a sample of the Reporter's status.
 type Status struct {
 	Capacity int
 	Volume   int
 }
 
+// Channel reports the status of a Reporter.
 type Channel chan Status
 
+// Reporter allows reporting status to its supervisor.
 type Reporter interface {
 	// TODO: refactor Report to return a status. It's too complicated to return a channel
 	Report() (Channel, error)
@@ -51,15 +56,16 @@ type Reporter interface {
 }
 
 var (
-	_             Reporter = (*dummyReporter)(nil)
-	_             Reporter = (*timeBasedReporter)(nil)
-	DummyReporter          = &dummyReporter{}
+	_ Reporter = (*dummyReporter)(nil)
+	_ Reporter = (*timeBasedReporter)(nil)
+	// DummyReporter is a special Reporter to avoid nil errors.
+	DummyReporter = &dummyReporter{}
 )
 
 type dummyReporter struct{}
 
 func (*dummyReporter) Report() (Channel, error) {
-	return nil, ErrReporterClosed
+	return nil, errReporterClosed
 }
 
 func (*dummyReporter) Stop() {
@@ -70,13 +76,14 @@ func (*dummyReporter) String() string {
 }
 
 type timeBasedReporter struct {
-	timestamp.TimeRange
-	name      string
+	clock     timestamp.Clock
 	scheduler *timestamp.Scheduler
 	count     *atomic.Uint32
-	clock     timestamp.Clock
+	timestamp.TimeRange
+	name string
 }
 
+// NewTimeBasedReporter returns a Reporter which sends report based on time.
 func NewTimeBasedReporter(name string, timeRange timestamp.TimeRange, clock timestamp.Clock, scheduler *timestamp.Scheduler) Reporter {
 	if timeRange.End.Before(clock.Now()) {
 		return DummyReporter
@@ -93,11 +100,11 @@ func NewTimeBasedReporter(name string, timeRange timestamp.TimeRange, clock time
 
 func (tr *timeBasedReporter) Report() (Channel, error) {
 	if tr.scheduler.Closed() {
-		return nil, ErrReporterClosed
+		return nil, errReporterClosed
 	}
 	now := tr.clock.Now()
 	if now.After(tr.End) {
-		return nil, ErrReporterClosed
+		return nil, errReporterClosed
 	}
 	ch := make(Channel, 1)
 	interval := tr.Duration() >> 4
@@ -137,7 +144,7 @@ func (tr *timeBasedReporter) Report() (Channel, error) {
 		}); err != nil {
 		close(ch)
 		if errors.Is(err, timestamp.ErrSchedulerClosed) {
-			return nil, ErrReporterClosed
+			return nil, errReporterClosed
 		}
 		return nil, err
 	}

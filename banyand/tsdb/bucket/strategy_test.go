@@ -37,7 +37,7 @@ var _ = Describe("Strategy", func() {
 	Context("Applying the strategy", func() {
 		var strategy *bucket.Strategy
 		It("uses the golden settings", func() {
-			ctrl := newController(2, 1, 10)
+			ctrl := newController(2, 1)
 			var err error
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
@@ -45,7 +45,7 @@ var _ = Describe("Strategy", func() {
 			Eventually(ctrl.isFull, flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("never reaches the limit", func() {
-			ctrl := newController(1, 0, 10)
+			ctrl := newController(1, 0)
 			var err error
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
@@ -53,7 +53,7 @@ var _ = Describe("Strategy", func() {
 			Consistently(ctrl.isFull).ShouldNot(BeTrue())
 		})
 		It("exceeds the limit", func() {
-			ctrl := newController(2, 3, 10)
+			ctrl := newController(2, 3)
 			var err error
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
@@ -61,7 +61,7 @@ var _ = Describe("Strategy", func() {
 			Eventually(ctrl.isFull, flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("'s first step exceeds the limit", func() {
-			ctrl := newController(2, 15, 10)
+			ctrl := newController(2, 15)
 			var err error
 			strategy, err = bucket.NewStrategy(ctrl)
 			Expect(err).NotTo(HaveOccurred())
@@ -76,7 +76,7 @@ var _ = Describe("Strategy", func() {
 	})
 	Context("Invalid parameter", func() {
 		It("passes a ratio > 1.0", func() {
-			ctrl := newController(2, 3, 10)
+			ctrl := newController(2, 3)
 			_, err := bucket.NewStrategy(ctrl, bucket.WithNextThreshold(1.1))
 			Expect(err).To(MatchError(bucket.ErrInvalidParameter))
 		})
@@ -84,17 +84,16 @@ var _ = Describe("Strategy", func() {
 })
 
 type controller struct {
+	reporter    *reporter
 	maxBuckets  int
 	usedBuckets int
-
-	reporter *reporter
-	capacity int
-	step     int
-	mux      sync.RWMutex
+	capacity    int
+	step        int
+	mux         sync.RWMutex
 }
 
-func newController(maxBuckets, step, capacity int) *controller {
-	ctrl := &controller{step: step, maxBuckets: maxBuckets, capacity: capacity}
+func newController(maxBuckets, step int) *controller {
+	ctrl := &controller{step: step, maxBuckets: maxBuckets, capacity: 10}
 	ctrl.newReporter()
 	return ctrl
 }

@@ -25,8 +25,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-func SetUpModules(flags []string, units ...run.Unit) func() {
-	closer := run.NewTester("closer")
+// SetupModules wires input modules to build a testing ready runtime.
+func SetupModules(flags []string, units ...run.Unit) func() {
+	closer, deferFn := run.NewTester("closer")
 	g := run.NewGroup("standalone-test")
 	g.Register(append([]run.Unit{closer}, units...)...)
 	err := g.RegisterFlags().Parse(flags)
@@ -44,7 +45,7 @@ func SetUpModules(flags []string, units ...run.Unit) func() {
 	}()
 	g.WaitTillReady()
 	return func() {
-		closer.GracefulStop()
+		deferFn()
 		wg.Wait()
 	}
 }

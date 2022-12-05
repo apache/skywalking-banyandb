@@ -29,7 +29,7 @@ import (
 
 const all = "*"
 
-var PropertyKeyPrefix = "/properties/"
+var propertyKeyPrefix = "/properties/"
 
 func (e *etcdSchemaRegistry) GetProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (*propertyv1.Property, error) {
 	var entity propertyv1.Property
@@ -62,7 +62,7 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 	if container.Group == "" {
 		return nil, BadRequest("container.group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group, PropertyKeyPrefix+container.Name), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group, propertyKeyPrefix+container.Name), func() proto.Message {
 		return &propertyv1.Property{}
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 	if err == nil {
 		return true, tagsNum, nil
 	}
-	if !errors.Is(err, ErrGRPCAlreadyExists) {
+	if !errors.Is(err, errGRPCAlreadyExists) {
 		return false, 0, err
 	}
 	if strategy != propertyv1.ApplyRequest_STRATEGY_REPLACE {
@@ -165,5 +165,5 @@ func transformKey(metadata *propertyv1.Metadata) *commonv1.Metadata {
 }
 
 func formatPropertyKey(metadata *commonv1.Metadata) string {
-	return formatKey(PropertyKeyPrefix, metadata)
+	return formatKey(propertyKeyPrefix, metadata)
 }

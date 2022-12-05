@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package helpers
 
 import (
@@ -28,8 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var ErrServiceUnhealthy = errors.New("service is unhealthy")
+var errServiceUnhealthy = errors.New("service is unhealthy")
 
+// HealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a gRPC server is ready.
 func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
 	return func() error {
 		conn, err := grpchelper.Conn(addr, connTimeout, opts...)
@@ -50,7 +52,7 @@ func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duratio
 		l := logger.GetLogger()
 		if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 			l.Warn().Str("responded_status", resp.GetStatus().String()).Msg("service unhealthy")
-			return ErrServiceUnhealthy
+			return errServiceUnhealthy
 		}
 		if e := l.Debug(); e.Enabled() {
 			e.Stringer("status", resp.GetStatus()).Msg("connected")

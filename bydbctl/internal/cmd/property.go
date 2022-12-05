@@ -22,7 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -51,13 +51,14 @@ func newPropertyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rest(func() ([]reqBody, error) { return parseFromYAMLForProperty(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					s := new(property_v1.Property)
+					s := new(propertyv1.Property)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &property_v1.ApplyRequest{
+					cr := &propertyv1.ApplyRequest{
 						Property: s,
+						Strategy: propertyv1.ApplyRequest_STRATEGY_MERGE,
 					}
 					b, err := protojson.Marshal(cr)
 					if err != nil {

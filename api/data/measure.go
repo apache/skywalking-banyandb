@@ -22,21 +22,29 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
+// MeasureWriteKindVersion is the version tag of measure write kind.
 var MeasureWriteKindVersion = common.KindVersion{
 	Version: "v1",
 	Kind:    "measure-write",
 }
 
+// TopicMeasureWrite is the measure write topic.
 var TopicMeasureWrite = bus.UniTopic(MeasureWriteKindVersion.String())
 
+// MeasureQueryKindVersion is the version tag of measure query kind.
 var MeasureQueryKindVersion = common.KindVersion{
 	Version: "v1",
 	Kind:    "measure-query",
 }
+
+// TopicMeasureQuery is the measure query topic.
 var TopicMeasureQuery = bus.BiTopic(MeasureQueryKindVersion.String())
 
+// TopNQueryKindVersion is the version tag of top-n query kind.
 var TopNQueryKindVersion = common.KindVersion{
 	Version: "v1",
 	Kind:    "topN-query",
 }
+
+// TopicTopNQuery is the top-n query topic.
 var TopicTopNQuery = bus.BiTopic(TopNQueryKindVersion.String())

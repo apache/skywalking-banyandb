@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package flow implements a streaming calculation framework.
 package flow
 
 import (
@@ -25,10 +26,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Data indicates a aggregated data.
 type Data []any
 
 // Flow is an abstraction of data flow for
-// both Streaming and Batch
+// both Streaming and Batch.
 type Flow interface {
 	io.Closer
 	// Filter is used to filter data.
@@ -82,15 +84,17 @@ type AggregationOp interface {
 	Dirty() bool
 }
 
+// AggregationOpFactory is a factory to create AggregationOp.
 type AggregationOpFactory func() AggregationOp
 
 // StreamRecord is a container wraps user data and timestamp.
 // It is the underlying transmission medium for the streaming processing.
 type StreamRecord struct {
-	ts   int64
 	data interface{}
+	ts   int64
 }
 
+// NewStreamRecord returns a StreamRecord with data and timestamp.
 func NewStreamRecord(data interface{}, ts int64) StreamRecord {
 	return StreamRecord{
 		data: data,
@@ -98,6 +102,7 @@ func NewStreamRecord(data interface{}, ts int64) StreamRecord {
 	}
 }
 
+// NewStreamRecordWithTimestampPb returns a StreamRecord whose timestamp is parsed from protobuf's timestamp.
 func NewStreamRecordWithTimestampPb(data interface{}, timestamp *timestamppb.Timestamp) StreamRecord {
 	return StreamRecord{
 		data: data,
@@ -105,6 +110,7 @@ func NewStreamRecordWithTimestampPb(data interface{}, timestamp *timestamppb.Tim
 	}
 }
 
+// NewStreamRecordWithoutTS returns a StreamRecord with data only.
 func NewStreamRecordWithoutTS(data interface{}) StreamRecord {
 	return StreamRecord{
 		data: data,
@@ -112,6 +118,7 @@ func NewStreamRecordWithoutTS(data interface{}) StreamRecord {
 	}
 }
 
+// WithNewData sets data to StreamRecord.
 func (sr StreamRecord) WithNewData(data interface{}) StreamRecord {
 	return StreamRecord{
 		ts:   sr.ts,
@@ -119,10 +126,12 @@ func (sr StreamRecord) WithNewData(data interface{}) StreamRecord {
 	}
 }
 
+// TimestampMillis returns the timestamp in millisecond.
 func (sr StreamRecord) TimestampMillis() int64 {
 	return sr.ts
 }
 
+// Data returns the embedded data.
 func (sr StreamRecord) Data() interface{} {
 	return sr.data
 }
@@ -139,6 +148,7 @@ type Outlet interface {
 	Out() <-chan StreamRecord
 }
 
+// Component is a lifecycle controller.
 type Component interface {
 	// Setup is the lifecycle hook for resource preparation, e.g. start background job for listening input channel.
 	// It must be called before the flow starts to process elements.
@@ -148,6 +158,7 @@ type Component interface {
 	Teardown(context.Context) error
 }
 
+// ComponentState watches whether the component is shutdown.
 type ComponentState struct {
 	sync.WaitGroup
 }

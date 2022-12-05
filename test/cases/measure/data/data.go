@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package data contains integration test cases of the measure
+// Package data contains integration test cases of the measure.
 package data
 
 import (
@@ -46,7 +46,7 @@ var inputFS embed.FS
 //go:embed want/*.yaml
 var wantFS embed.FS
 
-// VerifyFn verify whether the query response matches the wanted result
+// VerifyFn verify whether the query response matches the wanted result.
 var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
@@ -110,7 +110,7 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 	}
 }
 
-// Write data into the server
+// Write data into the server.
 func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration,
 ) {

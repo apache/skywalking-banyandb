@@ -25,6 +25,7 @@ env:
 
 jobs:
   test:
+    if: github.repository == 'apache/skywalking-banyandb'
     uses: ./.github/workflows/test.yml
     with:
       options: --repeat 49 --label-filter \\(integration\\&\\&\\!slow\\)\\|\\|banyand

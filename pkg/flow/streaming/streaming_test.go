@@ -19,19 +19,19 @@ package streaming
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	flowTest "github.com/apache/skywalking-banyandb/pkg/test/flow"
 )
 
 // numberRange generates a slice with `count` number of integers starting from `begin`,
-// i.e. [begin, begin + count)
+// i.e. [begin, begin + count).
 func numberRange(begin, count int) []int {
 	result := make([]int, 0)
 	for i := 0; i < count; i++ {
@@ -43,7 +43,7 @@ func numberRange(begin, count int) []int {
 var _ = Describe("Streaming", func() {
 	var (
 		f     flow.Flow
-		snk   *sink.Slice
+		snk   *slice
 		errCh <-chan error
 	)
 
@@ -60,7 +60,7 @@ var _ = Describe("Streaming", func() {
 		)
 
 		JustBeforeEach(func() {
-			snk = sink.NewSlice()
+			snk = newSlice()
 			f = New(input).
 				Filter(filter).
 				To(snk)
@@ -97,7 +97,7 @@ var _ = Describe("Streaming", func() {
 		)
 
 		JustBeforeEach(func() {
-			snk = sink.NewSlice()
+			snk = newSlice()
 			f = New(input).
 				Map(mapper).
 				To(snk)
@@ -141,7 +141,7 @@ var _ = Describe("Streaming", func() {
 		var input []flow.StreamRecord
 
 		JustBeforeEach(func() {
-			snk = sink.NewSlice()
+			snk = newSlice()
 
 			f = New(flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
@@ -195,7 +195,7 @@ var _ = Describe("Streaming", func() {
 		var input []flow.StreamRecord
 
 		JustBeforeEach(func() {
-			snk = sink.NewSlice()
+			snk = newSlice()
 
 			f = New(flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
@@ -239,3 +239,60 @@ var _ = Describe("Streaming", func() {
 		})
 	})
 })
+
+var _ flow.Sink = (*slice)(nil)
+
+type slice struct {
+	in    chan flow.StreamRecord
+	slice []interface{}
+	flow.ComponentState
+	sync.RWMutex
+}
+
+func newSlice() *slice {
+	return &slice{
+		slice: make([]interface{}, 0),
+		in:    make(chan flow.StreamRecord),
+	}
+}
+
+func (s *slice) Value() []interface{} {
+	s.RLock()
+	defer s.RUnlock()
+	return s.slice
+}
+
+func (s *slice) In() chan<- flow.StreamRecord {
+	return s.in
+}
+
+func (s *slice) Setup(ctx context.Context) error {
+	go s.run(ctx)
+
+	return nil
+}
+
+func (s *slice) run(ctx context.Context) {
+	s.Add(1)
+	defer func() {
+		s.Done()
+	}()
+	for {
+		select {
+		case item, ok := <-s.in:
+			if !ok {
+				return
+			}
+			s.Lock()
+			s.slice = append(s.slice, item)
+			s.Unlock()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *slice) Teardown(_ context.Context) error {
+	s.Wait()
+	return nil
+}

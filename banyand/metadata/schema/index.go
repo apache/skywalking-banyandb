@@ -28,8 +28,8 @@ import (
 )
 
 var (
-	IndexRuleBindingKeyPrefix = "/index-rule-bindings/"
-	IndexRuleKeyPrefix        = "/index-rules/"
+	indexRuleBindingKeyPrefix = "/index-rule-bindings/"
+	indexRuleKeyPrefix        = "/index-rules/"
 )
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
@@ -44,7 +44,7 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleBindingKeyPrefix), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), func() proto.Message {
 		return &databasev1.IndexRuleBinding{}
 	})
 	if err != nil {
@@ -95,7 +95,7 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 		return nil, err
 	}
 	if entity.Metadata.Id == 0 {
-		return nil, ErrGRPCDataLoss
+		return nil, errGRPCDataLoss
 	}
 	return &entity, nil
 }
@@ -104,7 +104,7 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, IndexRuleKeyPrefix), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), func() proto.Message {
 		return &databasev1.IndexRule{}
 	})
 	if err != nil {
@@ -114,7 +114,7 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	for _, message := range messages {
 		entity := message.(*databasev1.IndexRule)
 		if entity.Metadata.Id == 0 {
-			return nil, ErrGRPCDataLoss
+			return nil, errGRPCDataLoss
 		}
 		entities = append(entities, entity)
 	}
@@ -159,9 +159,9 @@ func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *comm
 }
 
 func formatIndexRuleKey(metadata *commonv1.Metadata) string {
-	return formatKey(IndexRuleKeyPrefix, metadata)
+	return formatKey(indexRuleKeyPrefix, metadata)
 }
 
 func formatIndexRuleBindingKey(metadata *commonv1.Metadata) string {
-	return formatKey(IndexRuleBindingKeyPrefix, metadata)
+	return formatKey(indexRuleBindingKeyPrefix, metadata)
 }

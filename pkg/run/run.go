@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package run implements a lifecycle framework to control modules.
 package run
 
 import (
@@ -82,8 +83,8 @@ func NewPreRunner(name string, fn func() error) PreRunner {
 }
 
 type preRunner struct {
-	name string
 	fn   func() error
+	name string
 }
 
 func (p preRunner) Name() string {
@@ -94,6 +95,7 @@ func (p preRunner) PreRun() error {
 	return p.fn()
 }
 
+// StopNotify sends the stopped event to the running system.
 type StopNotify <-chan struct{}
 
 // Service interface should be implemented by Group Unit objects that need
@@ -118,21 +120,19 @@ type Service interface {
 // to manage service lifecycles. It allows for easy composition of elegant
 // monoliths as well as adding signal handlers, metrics services, etc.
 type Group struct {
-	name string
-
-	f       *FlagSet
-	r       run.Group
-	c       []Config
-	p       []PreRunner
-	s       []Service
-	readyCh chan struct{}
-	log     *logger.Logger
-
+	f            *FlagSet
+	readyCh      chan struct{}
+	log          *logger.Logger
+	name         string
+	r            run.Group
+	c            []Config
+	p            []PreRunner
+	s            []Service
 	showRunGroup bool
-
-	configured bool
+	configured   bool
 }
 
+// NewGroup return a Group with input name.
 func NewGroup(name string) Group {
 	return Group{
 		name:    name,
@@ -140,7 +140,7 @@ func NewGroup(name string) Group {
 	}
 }
 
-// Name shows the name of the group
+// Name shows the name of the group.
 func (g Group) Name() string {
 	return g.name
 }
@@ -150,7 +150,7 @@ func (g Group) Name() string {
 // phases. If a Unit doesn't satisfy any of the bootstrap phases it is ignored
 // by Group.
 // The returned array of booleans is of the same size as the amount of provided
-// Units, signalling for each provided Unit if it successfully registered with
+// Units, signaling for each provided Unit if it successfully registered with
 // Group for at least one of the bootstrap phases or if it was ignored.
 func (g *Group) Register(units ...Unit) []bool {
 	g.log = logger.GetLogger(g.name)
@@ -176,6 +176,7 @@ func (g *Group) Register(units ...Unit) []bool {
 	return hasRegistered
 }
 
+// RegisterFlags returns FlagSet contains Flags in all modules.
 func (g *Group) RegisterFlags() *FlagSet {
 	// run configuration stage
 	g.f = NewFlagSet(g.name)
@@ -389,6 +390,7 @@ func (g Group) ListUnits() string {
 	return fmt.Sprintf("Group: %s [%s]%s", g.name, t, s)
 }
 
+// WaitTillReady blocks the goroutine till all modules are ready.
 func (g *Group) WaitTillReady() {
 	<-g.readyCh
 }

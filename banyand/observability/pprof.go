@@ -19,8 +19,8 @@ package observability
 
 import (
 	"net/http"
-	// Register pprof package
-	_ "net/http/pprof"
+	"net/http/pprof"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -31,16 +31,18 @@ var (
 	_ run.Config  = (*metricService)(nil)
 )
 
+// NewProfService returns a pprof service.
 func NewProfService() run.Service {
 	return &pprofService{
-		stopCh: make(chan struct{}),
+		closer: run.NewCloser(1),
 	}
 }
 
 type pprofService struct {
-	listenAddr string
-	stopCh     chan struct{}
 	l          *logger.Logger
+	svr        *http.Server
+	closer     *run.Closer
+	listenAddr string
 }
 
 func (p *pprofService) FlagSet() *run.FlagSet {
@@ -50,6 +52,9 @@ func (p *pprofService) FlagSet() *run.FlagSet {
 }
 
 func (p *pprofService) Validate() error {
+	if p.listenAddr == "" {
+		return errNoAddr
+	}
 	return nil
 }
 
@@ -59,15 +64,26 @@ func (p *pprofService) Name() string {
 
 func (p *pprofService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	p.svr = &http.Server{
+		Addr:              p.listenAddr,
+		ReadHeaderTimeout: 3 * time.Second,
+		Handler:           mux,
+	}
 	go func() {
+		defer p.closer.Done()
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start pprof server")
-		_ = http.ListenAndServe(p.listenAddr, nil)
-		p.stopCh <- struct{}{}
+		_ = p.svr.ListenAndServe()
 	}()
-
-	return p.stopCh
+	return p.closer.CloseNotify()
 }
 
 func (p *pprofService) GracefulStop() {
-	close(p.stopCh)
+	_ = p.svr.Close()
+	p.closer.CloseThenWait()
 }

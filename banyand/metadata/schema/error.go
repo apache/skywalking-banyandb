@@ -25,19 +25,16 @@ import (
 )
 
 var (
-	statusGRPCInvalidArgument  = status.New(codes.InvalidArgument, "banyandb: input is invalid")
-	ErrGRPCInvalidArgument     = statusGRPCInvalidArgument.Err()
-	statusGRPCResourceNotFound = status.New(codes.NotFound, "banyandb: resource not found")
-	ErrGRPCResourceNotFound    = statusGRPCResourceNotFound.Err()
-	statusGRPCAlreadyExists    = status.New(codes.AlreadyExists, "banyandb: resource already exists")
-	ErrGRPCAlreadyExists       = statusGRPCAlreadyExists.Err()
-	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
-	ErrGRPCDataLoss            = statusDataLoss.Err()
-)
+	// ErrGRPCResourceNotFound indicates the resource doesn't exist.
+	ErrGRPCResourceNotFound = statusGRPCResourceNotFound.Err()
 
-func IsNotFound(err error) bool {
-	return errors.Is(err, ErrGRPCResourceNotFound)
-}
+	statusGRPCInvalidArgument  = status.New(codes.InvalidArgument, "banyandb: input is invalid")
+	statusGRPCResourceNotFound = status.New(codes.NotFound, "banyandb: resource not found")
+	statusGRPCAlreadyExists    = status.New(codes.AlreadyExists, "banyandb: resource already exists")
+	errGRPCAlreadyExists       = statusGRPCAlreadyExists.Err()
+	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
+	errGRPCDataLoss            = statusDataLoss.Err()
+)
 
 // BadRequest creates a gRPC error with error details with type BadRequest,
 // which describes violations in a client request.
@@ -50,4 +47,8 @@ func BadRequest(field, desc string) error {
 	br.FieldViolations = append(br.FieldViolations, v)
 	st, _ := statusGRPCInvalidArgument.WithDetails(br)
 	return st.Err()
+}
+
+func isNotFound(err error) bool {
+	return errors.Is(err, ErrGRPCResourceNotFound)
 }

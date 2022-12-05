@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package helpers
 
 import (
@@ -25,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// HTTPHealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready.
 func HTTPHealthCheck(addr string) func() error {
 	return func() error {
 		client := resty.New()
@@ -40,7 +42,7 @@ func HTTPHealthCheck(addr string) func() error {
 		if resp.StatusCode() != 200 {
 			l.Warn().Str("responded_status", resp.Status()).Msg("service unhealthy")
 			time.Sleep(1 * time.Second)
-			return ErrServiceUnhealthy
+			return errServiceUnhealthy
 		}
 		if e := l.Debug(); e.Enabled() {
 			e.Stringer("response", resp).Msg("connected")

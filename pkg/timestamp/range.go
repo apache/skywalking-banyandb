@@ -21,6 +21,7 @@ import (
 	"time"
 )
 
+// TimeRange is a range of periods into which data can be written or retrieved.
 type TimeRange struct {
 	Start        time.Time
 	End          time.Time
@@ -28,6 +29,7 @@ type TimeRange struct {
 	IncludeEnd   bool
 }
 
+// Contains returns whether the unixNano is in the TimeRange.
 func (t TimeRange) Contains(unixNano uint64) bool {
 	tp := time.Unix(0, int64(unixNano))
 	if t.Start.Equal(tp) {
@@ -39,6 +41,7 @@ func (t TimeRange) Contains(unixNano uint64) bool {
 	return !tp.Before(t.Start) && !tp.After(t.End)
 }
 
+// Overlapping returns whether TimeRanges intersect each other.
 func (t TimeRange) Overlapping(other TimeRange) bool {
 	if t.Start.Equal(other.End) {
 		return t.IncludeStart && other.IncludeEnd
@@ -49,10 +52,12 @@ func (t TimeRange) Overlapping(other TimeRange) bool {
 	return !t.Start.After(other.End) && !other.Start.After(t.End)
 }
 
+// Duration converts TimeRange to time.Duration.
 func (t TimeRange) Duration() time.Duration {
 	return t.End.Sub(t.Start)
 }
 
+// String shows the string representation.
 func (t TimeRange) String() string {
 	var buf []byte
 	if t.IncludeStart {
@@ -71,6 +76,7 @@ func (t TimeRange) String() string {
 	return string(buf)
 }
 
+// NewInclusiveTimeRange returns TimeRange includes start and end time.
 func NewInclusiveTimeRange(start, end time.Time) TimeRange {
 	return TimeRange{
 		Start:        start,
@@ -80,14 +86,19 @@ func NewInclusiveTimeRange(start, end time.Time) TimeRange {
 	}
 }
 
+// NewInclusiveTimeRangeDuration returns TimeRange includes start and end time.
+// It is created from a start time and the Duration.
 func NewInclusiveTimeRangeDuration(start time.Time, duration time.Duration) TimeRange {
 	return NewTimeRangeDuration(start, duration, true, true)
 }
 
+// NewSectionTimeRange returns TimeRange includes start time.
+// This function is for creating blocks and segments of tsdb.
 func NewSectionTimeRange(start, end time.Time) TimeRange {
 	return NewTimeRange(start, end, true, false)
 }
 
+// NewTimeRange returns TimeRange.
 func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange {
 	return TimeRange{
 		Start:        start,
@@ -97,6 +108,7 @@ func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange
 	}
 }
 
+// NewTimeRangeDuration returns TimeRange from a start time and the Duration.
 func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart, includeEnd bool) TimeRange {
 	return NewTimeRange(start, start.Add(duration), includeStart, includeEnd)
 }

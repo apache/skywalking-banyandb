@@ -21,20 +21,20 @@ import (
 	"context"
 )
 
-// UnaryOperation represents user-defined unary function (i.e. Map, Filter, etc)
+// UnaryOperation represents user-defined unary function (i.e. Map, Filter, etc).
 type UnaryOperation[R any] interface {
 	Apply(ctx context.Context, data interface{}) R
 }
 
-// UnaryFunc implements UnaryOperation as type func (context.Context, interface{})
+// UnaryFunc implements UnaryOperation as type func (context.Context, interface{}).
 type UnaryFunc[R any] func(context.Context, interface{}) R
 
-// Apply implements UnOperation.Apply method
+// Apply implements UnOperation.Apply method.
 func (f UnaryFunc[R]) Apply(ctx context.Context, data interface{}) R {
 	return f(ctx, data)
 }
 
-// FilterFunc transform a function to an UnaryOperation
+// FilterFunc transform a function to an UnaryOperation.
 func FilterFunc(filter UnaryOperation[bool]) (UnaryOperation[any], error) {
 	return UnaryFunc[any](func(ctx context.Context, payload interface{}) interface{} {
 		predicate := filter.Apply(ctx, payload)

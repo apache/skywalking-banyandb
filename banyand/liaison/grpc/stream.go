@@ -37,21 +37,18 @@ import (
 )
 
 type streamService struct {
-	*discoveryService
 	streamv1.UnimplementedStreamServiceServer
+	*discoveryService
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	reply := func() error {
-		if err := stream.Send(&streamv1.WriteResponse{}); err != nil {
-			return err
-		}
-		return nil
+		return stream.Send(&streamv1.WriteResponse{})
 	}
 	sampled := s.log.Sample(&zerolog.BasicSampler{N: 10})
 	for {
 		writeEntity, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -80,12 +77,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if s.log.Debug().Enabled() {
 			iwr.EntityValues = tagValues.Encode()
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
-			Request:      writeEntity,
-			ShardId:      uint32(shardID),
-			SeriesHash:   tsdb.HashEntity(entity),
-			EntityValues: tagValues.Encode(),
-		})
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
 			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
@@ -113,7 +105,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
 	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
-		if errQuery == io.EOF {
+		if errors.Is(errQuery, io.EOF) {
 			return emptyStreamQueryResponse, nil
 		}
 		return nil, errQuery
@@ -127,7 +119,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	case []*streamv1.Element:
 		return &streamv1.QueryResponse{Elements: d}, nil
 	case common.Error:
-		return nil, errors.WithMessage(ErrQueryMsg, d.Msg())
+		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
 	return nil, nil
 }

@@ -32,7 +32,6 @@ func TestSchema(t *testing.T) {
 	ginkgo.RunSpecs(t, "Schema Suite")
 }
 
-// BeforeSuite - Init logger
 var _ = ginkgo.BeforeSuite(func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package topn_test contains integration test cases of the TopN
+// Package topn_test contains integration test cases of the TopN.
 package topn_test
 
 import (
@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	// SharedContext is the parallel execution context
+	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {

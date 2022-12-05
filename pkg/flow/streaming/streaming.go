@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package streaming implement the flow framework to provide the sliding window, top-n aggregation, and etc.
 package streaming
 
 import (
@@ -32,10 +33,11 @@ type streamingFlow struct {
 	ctx    context.Context
 	source flow.Source
 	sink   flow.Sink
-	ops    []flow.Operator
 	drain  chan error
+	ops    []flow.Operator
 }
 
+// New returns a new streaming flow.
 func New(source flow.Source) flow.Flow {
 	return &streamingFlow{
 		source: source,

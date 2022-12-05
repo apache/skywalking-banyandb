@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package measure
 
 import (
@@ -42,7 +43,7 @@ type unresolvedGroup struct {
 	groupByEntity bool
 }
 
-func GroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool) logical.UnresolvedPlan {
+func newUnresolvedGroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool) logical.UnresolvedPlan {
 	return &unresolvedGroup{
 		unresolvedInput: input,
 		groupBy:         groupBy,
@@ -202,15 +203,14 @@ func (gmi *groupIterator) Close() error {
 }
 
 type groupSortIterator struct {
-	groupByTagsRefs [][]*logical.TagRef
 	iter            executor.MIterator
+	err             error
+	cdp             *measurev1.DataPoint
+	groupByTagsRefs [][]*logical.TagRef
+	current         []*measurev1.DataPoint
 	index           int
-
-	current []*measurev1.DataPoint
-	cdp     *measurev1.DataPoint
-	key     uint64
-	closed  bool
-	err     error
+	key             uint64
+	closed          bool
 }
 
 func newGroupSortIterator(iter executor.MIterator, groupByTagsRefs [][]*logical.TagRef) executor.MIterator {

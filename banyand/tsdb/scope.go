@@ -24,53 +24,54 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 )
 
-var _ Shard = (*ScopedShard)(nil)
+var _ Shard = (*scopedShard)(nil)
 
-type ScopedShard struct {
-	scope     Entry
+type scopedShard struct {
 	delegated Shard
+	scope     Entry
 }
 
+// NewScopedShard returns a shard in a scope.
 func NewScopedShard(scope Entry, delegated Shard) Shard {
-	return &ScopedShard{
+	return &scopedShard{
 		scope:     scope,
 		delegated: delegated,
 	}
 }
 
-func (sd *ScopedShard) Close() error {
+func (sd *scopedShard) Close() error {
 	// the delegate can't close the underlying shard
 	return nil
 }
 
-func (sd *ScopedShard) ID() common.ShardID {
+func (sd *scopedShard) ID() common.ShardID {
 	return sd.delegated.ID()
 }
 
-func (sd *ScopedShard) Series() SeriesDatabase {
+func (sd *scopedShard) Series() SeriesDatabase {
 	return &scopedSeriesDatabase{
 		scope:     sd.scope,
 		delegated: sd.delegated.Series(),
 	}
 }
 
-func (sd *ScopedShard) Index() IndexDatabase {
+func (sd *scopedShard) Index() IndexDatabase {
 	return sd.delegated.Index()
 }
 
-func (sd *ScopedShard) TriggerSchedule(task string) bool {
+func (sd *scopedShard) TriggerSchedule(task string) bool {
 	return sd.delegated.TriggerSchedule(task)
 }
 
-func (sd *ScopedShard) State() ShardState {
+func (sd *scopedShard) State() ShardState {
 	return sd.delegated.State()
 }
 
 var _ SeriesDatabase = (*scopedSeriesDatabase)(nil)
 
 type scopedSeriesDatabase struct {
-	scope     Entry
 	delegated SeriesDatabase
+	scope     Entry
 }
 
 func (sdd *scopedSeriesDatabase) Stats() observability.Statistics {
@@ -90,5 +91,5 @@ func (sdd *scopedSeriesDatabase) GetByID(id common.SeriesID) (Series, error) {
 }
 
 func (sdd *scopedSeriesDatabase) List(ctx context.Context, path Path) (SeriesList, error) {
-	return sdd.delegated.List(ctx, path.Prepend(sdd.scope))
+	return sdd.delegated.List(ctx, path.prepend(sdd.scope))
 }

@@ -27,10 +27,9 @@ import (
 )
 
 type retentionTask struct {
-	segment *segmentController
-
-	option   cron.ParseOption
+	segment  *segmentController
 	expr     string
+	option   cron.ParseOption
 	duration time.Duration
 }
 
@@ -48,7 +47,7 @@ func newRetentionTask(segment *segmentController, ttl IntervalRule) *retentionTa
 		segment:  segment,
 		option:   cron.Minute | cron.Hour,
 		expr:     expr,
-		duration: ttl.EstimatedDuration(),
+		duration: ttl.estimatedDuration(),
 	}
 }
 

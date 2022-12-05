@@ -25,7 +25,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sink"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -56,10 +55,10 @@ func (i *intSumAggregator) Dirty() bool {
 
 var _ = Describe("Sliding Window", func() {
 	var (
-		baseTs         time.Time
-		snk            *sink.Slice
+		baseTS         time.Time
+		snk            *slice
 		input          []flow.StreamRecord
-		slidingWindows *TumblingTimeWindows
+		slidingWindows *tumblingTimeWindows
 
 		aggrFactory = func() flow.AggregationOp {
 			return &intSumAggregator{}
@@ -67,13 +66,13 @@ var _ = Describe("Sliding Window", func() {
 	)
 
 	BeforeEach(func() {
-		baseTs = time.Now()
+		baseTS = time.Now()
 	})
 
 	JustBeforeEach(func() {
-		snk = sink.NewSlice()
+		snk = newSlice()
 
-		slidingWindows = NewTumblingTimeWindows(time.Second * 15)
+		slidingWindows = NewTumblingTimeWindows(time.Second * 15).(*tumblingTimeWindows)
 		slidingWindows.aggregationFactory = aggrFactory
 		slidingWindows.windowCount = 2
 
@@ -93,7 +92,7 @@ var _ = Describe("Sliding Window", func() {
 	When("input a single element", func() {
 		BeforeEach(func() {
 			input = []flow.StreamRecord{
-				flow.NewStreamRecord(1, baseTs.UnixMilli()),
+				flow.NewStreamRecord(1, baseTS.UnixMilli()),
 			}
 		})
 
@@ -106,10 +105,10 @@ var _ = Describe("Sliding Window", func() {
 
 	When("input two elements within the same bucket", func() {
 		BeforeEach(func() {
-			baseTs = time.Unix(baseTs.Unix()-baseTs.Unix()%15, 0)
+			baseTS = time.Unix(baseTS.Unix()-baseTS.Unix()%15, 0)
 			input = []flow.StreamRecord{
-				flow.NewStreamRecord(1, baseTs.UnixMilli()),
-				flow.NewStreamRecord(2, baseTs.Add(time.Second*5).UnixMilli()),
+				flow.NewStreamRecord(1, baseTS.UnixMilli()),
+				flow.NewStreamRecord(2, baseTS.Add(time.Second*5).UnixMilli()),
 			}
 		})
 
@@ -122,10 +121,10 @@ var _ = Describe("Sliding Window", func() {
 
 	When("input two elements within adjacent buckets", func() {
 		BeforeEach(func() {
-			baseTs = time.Unix(baseTs.Unix()-baseTs.Unix()%15+14, 0)
+			baseTS = time.Unix(baseTS.Unix()-baseTS.Unix()%15+14, 0)
 			input = []flow.StreamRecord{
-				flow.NewStreamRecord(1, baseTs.UnixMilli()),
-				flow.NewStreamRecord(2, baseTs.Add(time.Second*5).UnixMilli()),
+				flow.NewStreamRecord(1, baseTS.UnixMilli()),
+				flow.NewStreamRecord(2, baseTS.Add(time.Second*5).UnixMilli()),
 			}
 		})
 

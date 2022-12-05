@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package encoding implements encoding/decoding data points.
 package encoding
 
 import (
@@ -23,7 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var ErrEncodeEmpty = errors.New("encode an empty value")
+var errEncodeEmpty = errors.New("encode an empty value")
 
 var (
 	rawSize = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -43,12 +44,13 @@ var (
 	}, []string{"name", "type"})
 )
 
+// SeriesEncoderPool allows putting and getting SeriesEncoder.
 type SeriesEncoderPool interface {
 	Get(metadata []byte) SeriesEncoder
 	Put(encoder SeriesEncoder)
 }
 
-// SeriesEncoder encodes time series data point
+// SeriesEncoder encodes time series data point.
 type SeriesEncoder interface {
 	// Append a data point
 	Append(ts uint64, value []byte)
@@ -62,12 +64,13 @@ type SeriesEncoder interface {
 	StartTime() uint64
 }
 
+// SeriesDecoderPool allows putting and getting SeriesDecoder.
 type SeriesDecoderPool interface {
 	Get(metadata []byte) SeriesDecoder
 	Put(encoder SeriesDecoder)
 }
 
-// SeriesDecoder decodes encoded time series data
+// SeriesDecoder decodes encoded time series data.
 type SeriesDecoder interface {
 	// Decode the time series data
 	Decode(key, data []byte) error
@@ -83,7 +86,7 @@ type SeriesDecoder interface {
 	Range() (start, end uint64)
 }
 
-// SeriesIterator iterates time series data
+// SeriesIterator iterates time series data.
 type SeriesIterator interface {
 	// Next scroll the cursor to the next
 	Next() bool

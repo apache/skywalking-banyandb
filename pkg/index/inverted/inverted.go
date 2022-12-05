@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package inverted implements a inverted index repository.
 package inverted
 
 import (
@@ -61,9 +62,10 @@ func init() {
 
 var _ index.Store = (*store)(nil)
 
+// StoreOpts wraps options to create a inverted index repository.
 type StoreOpts struct {
-	Path   string
 	Logger *logger.Logger
+	Path   string
 }
 
 type doc struct {
@@ -82,6 +84,7 @@ type store struct {
 	l      *logger.Logger
 }
 
+// NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.Store, error) {
 	config := bluge.DefaultConfig(opts.Path)
 	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
@@ -131,7 +134,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
-		return index.EmptyFieldIterator, nil
+		return index.DummyFieldIterator, nil
 	}
 	reader, err := s.writer.Reader()
 	if err != nil {
@@ -189,7 +192,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 
 func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
 	if len(matches) == 0 {
-		return roaring.EmptyPostingList, nil
+		return roaring.DummyPostingList, nil
 	}
 	reader, err := s.writer.Reader()
 	if err != nil {
@@ -221,7 +224,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
 	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
 	if err != nil {
-		return roaring.EmptyPostingList, err
+		return roaring.DummyPostingList, err
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
@@ -306,13 +309,11 @@ func (s *store) flush() {
 
 type blugeMatchIterator struct {
 	delegated search.DocumentMatchIterator
+	err       error
+	current   *index.PostingValue
+	agg       *index.PostingValue
 	fieldKey  string
-
-	current *index.PostingValue
-	agg     *index.PostingValue
-
-	closed bool
-	err    error
+	closed    bool
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string) blugeMatchIterator {
@@ -326,8 +327,10 @@ func (bmi *blugeMatchIterator) Next() bool {
 	if bmi.err != nil || bmi.closed {
 		return false
 	}
+	//revive:disable:empty-block
 	for bmi.nextTerm() {
 	}
+	//revive:enable:empty-block
 	if bmi.err != nil || bmi.closed {
 		return false
 	}

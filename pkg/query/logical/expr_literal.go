@@ -80,10 +80,6 @@ func (i *int64Literal) Equal(expr Expr) bool {
 	return false
 }
 
-func Int(num int64) Expr {
-	return &int64Literal{num}
-}
-
 func (i *int64Literal) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_INT)
 }
@@ -157,12 +153,6 @@ func (i *int64ArrLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func Ints(ints ...int64) Expr {
-	return &int64ArrLiteral{
-		arr: ints,
-	}
-}
-
 func (i *int64ArrLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_INT_ARRAY)
 }
@@ -221,7 +211,7 @@ func (s *strLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func Str(str string) LiteralExpr {
+func str(str string) LiteralExpr {
 	return &strLiteral{str}
 }
 
@@ -298,12 +288,6 @@ func (s *strArrLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func Strs(strs ...string) Expr {
-	return &strArrLiteral{
-		arr: strs,
-	}
-}
-
 func (s *strArrLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_STRING_ARRAY)
 }
@@ -365,7 +349,7 @@ func (s *idLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func ID(id string) LiteralExpr {
+func id(id string) LiteralExpr {
 	return &idLiteral{id}
 }
 
@@ -415,15 +399,15 @@ var (
 
 type nullLiteral struct{}
 
-func (s nullLiteral) Compare(other LiteralExpr) (int, bool) {
+func (s nullLiteral) Compare(_ LiteralExpr) (int, bool) {
 	return 0, false
 }
 
-func (s nullLiteral) BelongTo(other LiteralExpr) bool {
+func (s nullLiteral) BelongTo(_ LiteralExpr) bool {
 	return false
 }
 
-func (s nullLiteral) Contains(other LiteralExpr) bool {
+func (s nullLiteral) Contains(_ LiteralExpr) bool {
 	return false
 }
 
@@ -431,7 +415,7 @@ func (s nullLiteral) Bytes() [][]byte {
 	return nil
 }
 
-func (s nullLiteral) Equal(expr Expr) bool {
+func (s nullLiteral) Equal(_ Expr) bool {
 	return false
 }
 

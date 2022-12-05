@@ -31,8 +31,8 @@ import (
 )
 
 type streamRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedStreamRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (rs *streamRegistryServer) Create(ctx context.Context,
@@ -122,8 +122,8 @@ func groupExist(ctx context.Context, errResource error, metadata *commonv1.Metad
 }
 
 type indexRuleBindingRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedIndexRuleBindingRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
@@ -204,8 +204,8 @@ func (rs *indexRuleBindingRegistryServer) Exist(ctx context.Context, req *databa
 }
 
 type indexRuleRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedIndexRuleRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleRegistryServiceCreateRequest) (
@@ -280,8 +280,8 @@ func (rs *indexRuleRegistryServer) Exist(ctx context.Context, req *databasev1.In
 }
 
 type measureRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedMeasureRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureRegistryServiceCreateRequest) (
@@ -354,8 +354,8 @@ func (rs *measureRegistryServer) Exist(ctx context.Context, req *databasev1.Meas
 }
 
 type groupRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedGroupRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
@@ -400,7 +400,7 @@ func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupReg
 	}, nil
 }
 
-func (rs *groupRegistryServer) List(ctx context.Context, req *databasev1.GroupRegistryServiceListRequest) (
+func (rs *groupRegistryServer) List(ctx context.Context, _ *databasev1.GroupRegistryServiceListRequest) (
 	*databasev1.GroupRegistryServiceListResponse, error,
 ) {
 	groups, err := rs.schemaRegistry.GroupRegistry().ListGroup(ctx)
@@ -428,8 +428,8 @@ func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupR
 }
 
 type topNAggregationRegistryServer struct {
-	schemaRegistry metadata.Service
 	databasev1.UnimplementedTopNAggregationRegistryServiceServer
+	schemaRegistry metadata.Service
 }
 
 func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
