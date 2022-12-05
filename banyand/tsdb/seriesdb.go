@@ -265,6 +265,8 @@ type blockDatabase interface {
 var (
 	_ SeriesDatabase = (*seriesDB)(nil)
 	_ blockDatabase  = (*seriesDB)(nil)
+
+	dummySeriesList = make(SeriesList, 0)
 )
 
 type seriesDB struct {
@@ -376,27 +378,27 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 	if path.isFull {
 		data, err := s.seriesMetadata.Get(prefix)
 		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			if e := l.Debug(); e.Enabled() {
+				e.Hex("path", path.prefix).Msg("doesn't get any series")
+			}
+			return dummySeriesList, nil
+		}
+		if err != nil {
 			return nil, err
 		}
-		if err == nil {
-			seriesID, entityValue, err := decode(data)
-			if err != nil {
-				return nil, err
-			}
-			var series string
-			if e := l.Debug(); e.Enabled() {
-				series = entityValue.String()
-				e.Int("prefix_len", path.offset/8).
-					Str("series", series).
-					Uint64("series_id", uint64(seriesID)).
-					Msg("got a series with a full path")
-			}
-			return []Series{newSeries(ctx, seriesID, series, s)}, nil
+		seriesID, entityValue, err := decode(data)
+		if err != nil {
+			return nil, err
 		}
+		var series string
 		if e := l.Debug(); e.Enabled() {
-			e.Hex("path", path.prefix).Msg("doesn't get any series")
+			series = entityValue.String()
+			e.Int("prefix_len", path.offset/8).
+				Str("series", series).
+				Uint64("series_id", uint64(seriesID)).
+				Msg("got a series with a full path")
 		}
-		return nil, nil
+		return []Series{newSeries(ctx, seriesID, series, s)}, nil
 	}
 	result := make([]Series, 0)
 	var err error

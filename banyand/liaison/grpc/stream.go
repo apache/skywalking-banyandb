@@ -77,12 +77,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if s.log.Debug().Enabled() {
 			iwr.EntityValues = tagValues.Encode()
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &streamv1.InternalWriteRequest{
-			Request:      writeEntity,
-			ShardId:      uint32(shardID),
-			SeriesHash:   tsdb.HashEntity(entity),
-			EntityValues: tagValues.Encode(),
-		})
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
 			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
