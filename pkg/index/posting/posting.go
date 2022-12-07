@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package posting implements a posting list contains a list of document ids.
 package posting
 
 import (
@@ -23,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 )
 
+// ErrListEmpty indicates the postings list is empty.
 var ErrListEmpty = errors.New("postings list is empty")
 
 // List is a collection of common.ItemID.
@@ -68,6 +70,7 @@ type List interface {
 	SizeInBytes() int64
 }
 
+// Iterator allows iterating over a posting list.
 type Iterator interface {
 	Next() bool
 

@@ -24,8 +24,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	common_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -43,12 +43,12 @@ func newGroupCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					g := new(common_v1.Group)
+					g := new(commonv1.Group)
 					err := protojson.Unmarshal(request.data, g)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.GroupRegistryServiceCreateRequest{
+					cr := &databasev1.GroupRegistryServiceCreateRequest{
 						Group: g,
 					}
 					b, err := protojson.Marshal(cr)
@@ -72,12 +72,12 @@ func newGroupCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					g := new(common_v1.Group)
+					g := new(commonv1.Group)
 					err := protojson.Unmarshal(request.data, g)
 					if err != nil {
 						return nil, err
 					}
-					cr := &database_v1.GroupRegistryServiceUpdateRequest{
+					cr := &databasev1.GroupRegistryServiceUpdateRequest{
 						Group: g,
 					}
 					b, err := protojson.Marshal(cr)

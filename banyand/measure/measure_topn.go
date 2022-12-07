@@ -47,7 +47,8 @@ import (
 
 const (
 	timeBucketFormat = "200601021504"
-	TopNTagFamily    = "__topN__"
+	// TopNTagFamily is the identity of a tag family which contains the topN calculated result.
+	TopNTagFamily = "__topN__"
 )
 
 var (
@@ -57,6 +58,7 @@ var (
 
 	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
 
+	// TopNValueFieldSpec denotes the field specification of the topN calculated result.
 	TopNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
 		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
@@ -66,18 +68,18 @@ var (
 )
 
 type topNStreamingProcessor struct {
-	flow.ComponentState
-	l                *logger.Logger
-	shardNum         uint32
-	interval         time.Duration
-	topNSchema       *databasev1.TopNAggregation
-	sortDirection    modelv1.Sort
 	databaseSupplier tsdb.Supplier
+	streamingFlow    flow.Flow
+	l                *logger.Logger
+	topNSchema       *databasev1.TopNAggregation
 	src              chan interface{}
 	in               chan flow.StreamRecord
 	errCh            <-chan error
 	stopCh           chan struct{}
-	streamingFlow    flow.Flow
+	flow.ComponentState
+	interval      time.Duration
+	shardNum      uint32
+	sortDirection modelv1.Sort
 }
 
 func (t *topNStreamingProcessor) In() chan<- flow.StreamRecord {
@@ -98,7 +100,7 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := t.writeStreamRecord(record); err != nil {
+			if err := t.writeStreamRecord(ctx, record); err != nil {
 				t.l.Err(err).Msg("fail to write stream record")
 			}
 		case <-ctx.Done():
@@ -109,7 +111,7 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 
 // Teardown is called by the Flow as a lifecycle hook.
 // So we should not block on err channel within this method.
-func (t *topNStreamingProcessor) Teardown(ctx context.Context) error {
+func (t *topNStreamingProcessor) Teardown(_ context.Context) error {
 	t.Wait()
 	return nil
 }
@@ -124,7 +126,7 @@ func (t *topNStreamingProcessor) Close() error {
 	return err
 }
 
-func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record flow.StreamRecord) error {
 	tuples, ok := record.Data().([]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
@@ -141,12 +143,12 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
+		err = multierr.Append(err, t.writeData(ctx, eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+func (t *topNStreamingProcessor) writeData(ctx context.Context, eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool
@@ -166,7 +168,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	span, err := series.Create(ctx, eventTime)
 	if err != nil {
@@ -280,13 +282,13 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[1].(int64)
 			}),
-			OrderBy(t.topNSchema.GetFieldValueSort()),
+			orderBy(t.topNSchema.GetFieldValueSort()),
 		).To(t).Open()
 	go t.handleError()
 	return t
 }
 
-func OrderBy(sort modelv1.Sort) streaming.TopNOption {
+func orderBy(sort modelv1.Sort) streaming.TopNOption {
 	if sort == modelv1.Sort_SORT_ASC {
 		return streaming.OrderBy(streaming.ASC)
 	}
@@ -301,16 +303,13 @@ func (t *topNStreamingProcessor) handleError() {
 	t.stopCh <- struct{}{}
 }
 
-// topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure
+// topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	// RWMutex here is to protect the processorMap from data race, i.e.
-	// the send operation to the underlying channel vs. the close of the channel
-	// TODO: this can be optimized if the bus Listener can be synchronously finished,
-	sync.RWMutex
 	l            *logger.Logger
 	m            *measure
-	topNSchemas  []*databasev1.TopNAggregation
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
+	topNSchemas  []*databasev1.TopNAggregation
+	sync.RWMutex
 }
 
 func (manager *topNProcessorManager) Close() error {
@@ -417,7 +416,7 @@ func (manager *topNProcessorManager) buildFilterForCriteria(criteria *modelv1.Cr
 }
 
 // buildFilterForCondition builds a logical and composable filter for a logical expression which have underlying conditions,
-// or nested logical expressions as its children
+// or nested logical expressions as its children.
 func (manager *topNProcessorManager) buildFilterForLogicalExpr(logicalExpr *modelv1.LogicalExpression) (conditionFilter, error) {
 	left, lErr := manager.buildFilterForCriteria(logicalExpr.Left)
 	if lErr != nil {
@@ -437,7 +436,7 @@ func composeWithOp(left, right conditionFilter, op modelv1.LogicalExpression_Log
 	return &orFilter{left, right}
 }
 
-// buildFilterForCondition builds a single, composable filter for a single condition
+// buildFilterForCondition builds a single, composable filter for a single condition.
 func (manager *topNProcessorManager) buildFilterForCondition(cond *modelv1.Condition) (conditionFilter, error) {
 	familyOffset, tagOffset, spec := pbv1.FindTagByName(manager.m.GetSchema().GetTagFamilies(), cond.GetName())
 	if spec == nil {
@@ -529,9 +528,9 @@ type conditionFilter interface {
 }
 
 type strTagFilter struct {
-	partition.TagLocator
-	op  modelv1.Condition_BinaryOp
 	val string
+	partition.TagLocator
+	op modelv1.Condition_BinaryOp
 }
 
 func (f *strTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
@@ -541,14 +540,15 @@ func (f *strTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool 
 		return strValue == f.val
 	case modelv1.Condition_BINARY_OP_NE:
 		return strValue != f.val
+	default:
+		return false
 	}
-	return false
 }
 
 type idTagFilter struct {
-	partition.TagLocator
-	op  modelv1.Condition_BinaryOp
 	val string
+	partition.TagLocator
+	op modelv1.Condition_BinaryOp
 }
 
 func (f *idTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
@@ -558,8 +558,9 @@ func (f *idTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
 		return val == f.val
 	case modelv1.Condition_BINARY_OP_NE:
 		return val != f.val
+	default:
+		return false
 	}
-	return false
 }
 
 type int64TagFilter struct {
@@ -583,8 +584,9 @@ func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) boo
 		return val <= f.val
 	case modelv1.Condition_BINARY_OP_LT:
 		return val < f.val
+	default:
+		return false
 	}
-	return false
 }
 
 type andFilter struct {
@@ -603,10 +605,10 @@ func (f *orFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
 	return f.l.predicate(tagFamilies) || f.r.predicate(tagFamilies)
 }
 
-// groupTagsLocator can be used to locate tags within families
+// groupTagsLocator can be used to locate tags within families.
 type groupTagsLocator []partition.TagLocator
 
-// newGroupLocator generates a groupTagsLocator which strictly preserve the order of groupByNames
+// newGroupLocator generates a groupTagsLocator which strictly preserve the order of groupByNames.
 func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLocator, error) {
 	groupTags := make([]partition.TagLocator, 0, len(groupByNames))
 	for _, groupByName := range groupByNames {

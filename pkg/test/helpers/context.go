@@ -27,40 +27,44 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sigs.k8s.io/yaml"
 
-	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
+// SharedContext is the context shared between test cases in the integration testing.
 type SharedContext struct {
 	Connection *grpclib.ClientConn
 	BaseTime   time.Time
 }
 
+// Args is a wrapper seals all necessary info for table specs.
 type Args struct {
-	Input     string
-	Offset    time.Duration
-	Duration  time.Duration
 	Begin     *timestamppb.Timestamp
 	End       *timestamppb.Timestamp
+	Input     string
 	Want      string
+	Offset    time.Duration
+	Duration  time.Duration
 	WantEmpty bool
 	WantErr   bool
 }
 
+// UnmarshalYAML decodes YAML raw bytes to proto.Message.
 func UnmarshalYAML(ii []byte, m proto.Message) {
 	j, err := yaml.YAMLToJSON(ii)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(protojson.Unmarshal(j, m)).To(gomega.Succeed())
 }
 
-func TimeRange(args Args, shardContext SharedContext) *model_v1.TimeRange {
+// TimeRange returns a modelv1.TimeRange based on Args and SharedContext.
+func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 	if args.Begin != nil && args.End != nil {
-		return &model_v1.TimeRange{
+		return &modelv1.TimeRange{
 			Begin: args.Begin,
 			End:   args.End,
 		}
 	}
 	b := shardContext.BaseTime.Add(args.Offset)
-	return &model_v1.TimeRange{
+	return &modelv1.TimeRange{
 		Begin: timestamppb.New(b),
 		End:   timestamppb.New(b.Add(args.Duration)),
 	}

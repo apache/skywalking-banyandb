@@ -22,25 +22,27 @@ import (
 	"sync"
 )
 
-var _ Service = (*Tester)(nil)
+var _ Service = (*tester)(nil)
 
-type Tester struct {
-	ID              string
+type tester struct {
 	startedNotifier chan struct{}
 	stopCh          chan struct{}
+	ID              string
 	once            sync.Once
 }
 
-func NewTester(ID string) *Tester {
-	return &Tester{
-		ID:              ID,
+// NewTester return a tester module to stop the runtime programmatically.
+func NewTester(id string) (Unit, func()) {
+	t := &tester{
+		ID:              id,
 		startedNotifier: make(chan struct{}),
 		stopCh:          make(chan struct{}),
 		once:            sync.Once{},
 	}
+	return t, t.GracefulStop
 }
 
-func (t *Tester) WaitUntilStarted() error {
+func (t *tester) WaitUntilStarted() error {
 	select {
 	case err := <-t.stopCh:
 		return fmt.Errorf("stopped: %v", err)
@@ -49,16 +51,16 @@ func (t *Tester) WaitUntilStarted() error {
 	}
 }
 
-func (t *Tester) Name() string {
+func (t *tester) Name() string {
 	return t.ID
 }
 
-func (t *Tester) Serve() StopNotify {
+func (t *tester) Serve() StopNotify {
 	close(t.startedNotifier)
 	return t.stopCh
 }
 
-func (t *Tester) GracefulStop() {
+func (t *tester) GracefulStop() {
 	t.once.Do(func() {
 		close(t.stopCh)
 	})

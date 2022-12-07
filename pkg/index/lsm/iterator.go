@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package index
+package lsm
 
 import (
 	"bytes"
@@ -26,30 +26,30 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type CompositePostingValueFn = func(term, value []byte, delegated kv.Iterator) (*PostingValue, error)
+type compositePostingValueFn = func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error)
 
 var (
-	_            FieldIterator = (*FieldIteratorTemplate)(nil)
-	DefaultUpper               = convert.Uint64ToBytes(math.MaxUint64)
-	DefaultLower               = convert.Uint64ToBytes(0)
+	_            index.FieldIterator = (*fieldIteratorTemplate)(nil)
+	defaultUpper                     = convert.Uint64ToBytes(math.MaxUint64)
+	defaultLower                     = convert.Uint64ToBytes(0)
 )
 
-type FieldIteratorTemplate struct {
-	delegated *delegateIterator
-
-	init      bool
-	cur       *PostingValue
+type fieldIteratorTemplate struct {
 	err       error
-	termRange RangeOpts
-	fn        CompositePostingValueFn
-	reverse   bool
+	delegated *delegateIterator
+	cur       *index.PostingValue
+	fn        compositePostingValueFn
 	seekKey   []byte
+	termRange index.RangeOpts
+	init      bool
+	reverse   bool
 }
 
-func (f *FieldIteratorTemplate) Next() bool {
+func (f *fieldIteratorTemplate) Next() bool {
 	if !f.init {
 		f.init = true
 		f.delegated.Seek(f.seekKey)
@@ -79,22 +79,22 @@ func (f *FieldIteratorTemplate) Next() bool {
 	return true
 }
 
-func (f *FieldIteratorTemplate) Val() *PostingValue {
+func (f *fieldIteratorTemplate) Val() *index.PostingValue {
 	return f.cur
 }
 
-func (f *FieldIteratorTemplate) Close() error {
+func (f *fieldIteratorTemplate) Close() error {
 	return multierr.Append(f.err, f.delegated.Close())
 }
 
-func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, iterable kv.Iterable,
-	fn CompositePostingValueFn,
-) (*FieldIteratorTemplate, error) {
+func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, iterable kv.Iterable,
+	fn compositePostingValueFn,
+) (*fieldIteratorTemplate, error) {
 	if termRange.Upper == nil {
-		termRange.Upper = DefaultUpper
+		termRange.Upper = defaultUpper
 	}
 	if termRange.Lower == nil {
-		termRange.Lower = DefaultLower
+		termRange.Lower = defaultLower
 	}
 	var reverse bool
 	var term []byte
@@ -113,7 +113,7 @@ func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange Ran
 		Prefix:  fieldKey.Marshal(),
 		Reverse: reverse,
 	})
-	field := Field{
+	field := index.Field{
 		Key:  fieldKey,
 		Term: term,
 	}
@@ -121,7 +121,7 @@ func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange Ran
 	if err != nil {
 		return nil, err
 	}
-	return &FieldIteratorTemplate{
+	return &fieldIteratorTemplate{
 		delegated: newDelegateIterator(iter, fieldKey, l),
 		termRange: termRange,
 		fn:        fn,
@@ -130,8 +130,8 @@ func NewFieldIteratorTemplate(l *logger.Logger, fieldKey FieldKey, termRange Ran
 	}, nil
 }
 
-func parseKey(fieldKey FieldKey, key []byte) (Field, error) {
-	f := &Field{
+func parseKey(fieldKey index.FieldKey, key []byte) (index.Field, error) {
+	f := &index.Field{
 		Key: fieldKey,
 	}
 	err := f.Unmarshal(key)
@@ -141,106 +141,18 @@ func parseKey(fieldKey FieldKey, key []byte) (Field, error) {
 	return *f, nil
 }
 
-type SwitchFn = func(a, b []byte) bool
-
-var _ FieldIterator = (*mergedIterator)(nil)
-
-type mergedIterator struct {
-	inner        []FieldIterator
-	drained      []FieldIterator
-	drainedCount int
-	cur          *PostingValue
-	switchFn     SwitchFn
-	init         bool
-	closed       bool
-}
-
-func NewMergedIterator(merged []FieldIterator, fn SwitchFn) FieldIterator {
-	return &mergedIterator{
-		inner:    merged,
-		drained:  make([]FieldIterator, len(merged)),
-		switchFn: fn,
-	}
-}
-
-func (m *mergedIterator) Next() bool {
-	if m.closed {
-		return false
-	}
-	if m.allDrained() {
-		return false
-	}
-	if !m.init {
-		for i, iterator := range m.inner {
-			if !iterator.Next() {
-				m.drain(i)
-			}
-		}
-		if m.allDrained() {
-			return false
-		}
-		m.init = true
-	}
-	var head FieldIterator
-	var headIndex int
-	for i, iterator := range m.inner {
-		if iterator == nil {
-			continue
-		}
-		if head == nil {
-			head = iterator
-			continue
-		}
-		if m.switchFn(head.Val().Term, iterator.Val().Term) {
-			head = iterator
-			headIndex = i
-		}
-	}
-	m.cur = head.Val()
-	if !head.Next() {
-		m.drain(headIndex)
-	}
-	return true
-}
-
-func (m *mergedIterator) Val() *PostingValue {
-	return m.cur
-}
-
-func (m *mergedIterator) Close() error {
-	m.closed = true
-	var err error
-	for _, iterator := range m.drained {
-		if iterator == nil {
-			continue
-		}
-		err = multierr.Append(err, iterator.Close())
-	}
-	return err
-}
-
-func (m *mergedIterator) drain(index int) {
-	m.drained[index], m.inner[index] = m.inner[index], nil
-	m.drainedCount++
-}
-
-func (m *mergedIterator) allDrained() bool {
-	return m.drainedCount == len(m.inner)
-}
-
 var _ kv.Iterator = (*delegateIterator)(nil)
 
 type delegateIterator struct {
 	delegated     kv.Iterator
-	fieldKey      FieldKey
-	fieldKeyBytes []byte
 	l             *logger.Logger
-
-	curField Field
-	closed   bool
+	fieldKeyBytes []byte
+	curField      index.Field
+	fieldKey      index.FieldKey
+	closed        bool
 }
 
-func newDelegateIterator(delegated kv.Iterator, fieldKey FieldKey, l *logger.Logger) *delegateIterator {
+func newDelegateIterator(delegated kv.Iterator, fieldKey index.FieldKey, l *logger.Logger) *delegateIterator {
 	fieldKeyBytes := fieldKey.Marshal()
 	return &delegateIterator{
 		delegated:     delegated,
@@ -270,7 +182,7 @@ func (di *delegateIterator) RawKey() []byte {
 	return di.delegated.RawKey()
 }
 
-func (di *delegateIterator) Field() Field {
+func (di *delegateIterator) Field() index.Field {
 	return di.curField
 }
 

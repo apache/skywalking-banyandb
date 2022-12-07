@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package cmd is an internal package defining cli commands for BanyanDB
+// Package cmd is an internal package defining cli commands for BanyanDB.
 package cmd
 
 import (
@@ -33,6 +33,7 @@ const logo = `
 ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═════╝ 
 `
 
+// NewRoot returns a root command.
 func NewRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,

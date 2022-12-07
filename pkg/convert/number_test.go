@@ -22,7 +22,8 @@ import (
 	"testing"
 )
 
-func TestInt64ToBytes(t *testing.T) {
+// TODO: fix this case.
+func TestInt64ToBytes(_ *testing.T) {
 	fmt.Println(Int64ToBytes(-100))
 	fmt.Println(Int64ToBytes(-2))
 	fmt.Println(Int64ToBytes(-1))

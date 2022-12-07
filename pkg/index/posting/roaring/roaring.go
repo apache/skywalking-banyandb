@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package roaring implements the posting list by a roaring bitmap.
 package roaring
 
 import (
@@ -26,11 +27,12 @@ import (
 )
 
 var (
-	EmptyPostingList = NewPostingList()
+	// DummyPostingList is an empty list.
+	DummyPostingList = NewPostingList()
 
-	ErrIntersectRoaringOnly  = errors.New("Intersect only supported between roaringDocId sets")
-	ErrUnionRoaringOnly      = errors.New("Union only supported between roaringDocId sets")
-	ErrDifferenceRoaringOnly = errors.New("Difference only supported between roaringDocId sets")
+	errIntersectRoaringOnly  = errors.New("Intersect only supported between roaringDocId sets")
+	errUnionRoaringOnly      = errors.New("Union only supported between roaringDocId sets")
+	errDifferenceRoaringOnly = errors.New("Difference only supported between roaringDocId sets")
 )
 
 var _ posting.List = (*postingsList)(nil)
@@ -48,12 +50,14 @@ func (p *postingsList) Unmarshall(data []byte) error {
 	return p.bitmap.UnmarshalBinary(data)
 }
 
+// NewPostingList returns a empty posting list.
 func NewPostingList() posting.List {
 	return &postingsList{
 		bitmap: roaring64.New(),
 	}
 }
 
+// NewPostingListWithInitialData return a posting list with initialized data.
 func NewPostingListWithInitialData(data ...uint64) posting.List {
 	list := NewPostingList()
 	for _, d := range data {
@@ -62,6 +66,7 @@ func NewPostingListWithInitialData(data ...uint64) posting.List {
 	return list
 }
 
+// NewRange return a posting list added the integers in [start, end).
 func NewRange(start, end uint64) posting.List {
 	list := &postingsList{
 		bitmap: roaring64.New(),
@@ -128,7 +133,7 @@ func (p *postingsList) Insert(id common.ItemID) {
 func (p *postingsList) Intersect(other posting.List) error {
 	o, ok := other.(*postingsList)
 	if !ok {
-		return ErrIntersectRoaringOnly
+		return errIntersectRoaringOnly
 	}
 	p.bitmap.And(o.bitmap)
 	return nil
@@ -137,7 +142,7 @@ func (p *postingsList) Intersect(other posting.List) error {
 func (p *postingsList) Difference(other posting.List) error {
 	o, ok := other.(*postingsList)
 	if !ok {
-		return ErrDifferenceRoaringOnly
+		return errDifferenceRoaringOnly
 	}
 	p.bitmap.AndNot(o.bitmap)
 	return nil
@@ -146,7 +151,7 @@ func (p *postingsList) Difference(other posting.List) error {
 func (p *postingsList) Union(other posting.List) error {
 	o, ok := other.(*postingsList)
 	if !ok {
-		return ErrUnionRoaringOnly
+		return errUnionRoaringOnly
 	}
 	p.bitmap.Or(o.bitmap)
 	return nil

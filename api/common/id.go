@@ -27,19 +27,28 @@ import (
 )
 
 type (
+	// SeriesID identity a series in a shard.
 	SeriesID uint64
-	ShardID  uint32
-	ItemID   uint64
+
+	// ShardID identity a shard in a tsdb.
+	ShardID uint32
+
+	// ItemID identity an item in a series.
+	ItemID uint64
 )
 
+// Marshal encodes series id to bytes.
 func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
+// PositionKey is a context key to store the module position.
 var PositionKey = contextPositionKey{}
 
 type contextPositionKey struct{}
 
+// Position is stored in the context.
+// The logger could attach it for debugging.
 type Position struct {
 	Module   string
 	Database string
@@ -49,6 +58,7 @@ type Position struct {
 	KV       string
 }
 
+// Labels converts Position to Prom Labels.
 func (p Position) Labels() prometheus.Labels {
 	return prometheus.Labels{
 		"module":   p.Module,
@@ -60,6 +70,7 @@ func (p Position) Labels() prometheus.Labels {
 	}
 }
 
+// SetPosition sets a position returned from fn to attach it to ctx, then return a new context.
 func SetPosition(ctx context.Context, fn func(p Position) Position) context.Context {
 	val := ctx.Value(PositionKey)
 	var p Position
@@ -71,14 +82,17 @@ func SetPosition(ctx context.Context, fn func(p Position) Position) context.Cont
 	return context.WithValue(ctx, PositionKey, fn(p))
 }
 
+// Error wraps a error msg.
 type Error struct {
 	msg string
 }
 
+// NewError returns a new Error.
 func NewError(tpl string, args ...any) Error {
 	return Error{msg: fmt.Sprintf(tpl, args...)}
 }
 
+// Msg shows the string msg.
 func (e Error) Msg() string {
 	return e.msg
 }

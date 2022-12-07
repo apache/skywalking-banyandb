@@ -24,14 +24,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var ErrUnsupportedIndexRule = errors.New("the index rule is not supported")
+var errUnsupportedIndexRule = errors.New("the index rule is not supported")
 
 func (s *seekerBuilder) Filter(predicator index.Filter) SeekerBuilder {
 	s.predicator = predicator
 	return s
 }
 
-func (s *seekerBuilder) buildIndexFilter(block BlockDelegate) (filterFn, error) {
+func (s *seekerBuilder) buildIndexFilter(block blockDelegate) (filterFn, error) {
 	if s.predicator == nil {
 		return nil, nil
 	}
@@ -42,7 +42,7 @@ func (s *seekerBuilder) buildIndexFilter(block BlockDelegate) (filterFn, error) 
 		case databasev1.IndexRule_TYPE_TREE:
 			return block.lsmIndexReader(), nil
 		default:
-			return nil, ErrUnsupportedIndexRule
+			return nil, errUnsupportedIndexRule
 		}
 	}, s.seriesSpan.seriesID)
 	if err != nil {

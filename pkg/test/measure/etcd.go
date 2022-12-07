@@ -15,29 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package measure implements helpers to load schemas for testing.
 package measure
 
 import (
 	"context"
 	"embed"
-	"fmt"
-	"os"
 	"path"
-	"strconv"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
 const (
@@ -51,6 +43,7 @@ const (
 //go:embed testdata/*
 var store embed.FS
 
+// PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
 		return e.CreateGroup(context.TODO(), group)
@@ -80,10 +73,6 @@ func PreloadSchema(e schema.Registry) error {
 	return nil
 }
 
-func RandomTempDir() string {
-	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
-}
-
 func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T) error) error {
 	entries, err := store.ReadDir(dir)
 	if err != nil {
@@ -102,78 +91,5 @@ func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T)
 			return err
 		}
 	}
-	return nil
-}
-
-var rpcTimeout = 10 * time.Second
-
-func RegisterForNew(addr string, metricNum int) error {
-	conn, err := grpchelper.Conn(addr, 1*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	ctx := context.Background()
-
-	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
-			_, err = databasev1.NewGroupRegistryServiceClient(conn).
-				Create(rpcCtx, &databasev1.GroupRegistryServiceCreateRequest{
-					Group: group,
-				})
-			return err
-		})
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		var err error
-		name := measure.GetMetadata().GetName()
-		num := metricNum
-		if name != "service_cpm_minute" {
-			num = 1
-		}
-		for i := 0; i < num; i++ {
-			err = multierr.Append(err, grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
-				m := proto.Clone(measure).(*databasev1.Measure)
-				if i > 0 {
-					m.Metadata.Name = m.GetMetadata().GetName() + "_" + strconv.Itoa(i)
-				}
-				_, err = databasev1.NewMeasureRegistryServiceClient(conn).
-					Create(rpcCtx, &databasev1.MeasureRegistryServiceCreateRequest{
-						Measure: m,
-					})
-				return err
-			}))
-		}
-		return err
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
-			_, err = databasev1.NewIndexRuleRegistryServiceClient(conn).
-				Create(rpcCtx, &databasev1.IndexRuleRegistryServiceCreateRequest{
-					IndexRule: indexRule,
-				})
-			return err
-		})
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-		return grpchelper.Request(ctx, rpcTimeout, func(rpcCtx context.Context) (err error) {
-			_, err = databasev1.NewIndexRuleBindingRegistryServiceClient(conn).
-				Create(rpcCtx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
-					IndexRuleBinding: indexRuleBinding,
-				})
-			return err
-		})
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-
 	return nil
 }

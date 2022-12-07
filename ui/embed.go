@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package ui provides Web based UI for BanyanDB
+// Package ui provides Web based UI for BanyanDB.
 package ui
 
 import "embed"

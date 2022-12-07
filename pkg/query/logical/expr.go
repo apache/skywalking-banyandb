@@ -23,10 +23,10 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-var _ ResolvableExpr = (*TagRef)(nil)
+var _ Expr = (*TagRef)(nil)
 
-// TagRef is the reference to the field
-// also it holds the definition (derived from the streamSchema, measureSchema) of the tag
+// TagRef is the reference to the tag
+// also it holds the definition (derived from the streamSchema, measureSchema) of the tag.
 type TagRef struct {
 	// Tag defines the family name and name of the Tag
 	Tag *Tag
@@ -34,13 +34,15 @@ type TagRef struct {
 	Spec *TagSpec
 }
 
+// Equal reports whether f and expr have the same name and data type.
 func (f *TagRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*TagRef); ok {
-		return other.Tag.GetTagName() == f.Tag.GetTagName() && other.Spec.Spec.GetType() == f.Spec.Spec.GetType()
+		return other.Tag.getTagName() == f.Tag.getTagName() && other.Spec.Spec.GetType() == f.Spec.Spec.GetType()
 	}
 	return false
 }
 
+// DataType shows the type of the tag's value.
 func (f *TagRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
@@ -48,36 +50,29 @@ func (f *TagRef) DataType() int32 {
 	return int32(f.Spec.Spec.GetType())
 }
 
-func (f *TagRef) Resolve(s Schema) error {
-	specs, err := s.CreateTagRef([]*Tag{f.Tag})
-	if err != nil {
-		return err
-	}
-	f.Spec = specs[0][0].Spec
-	return nil
-}
-
+// String shows the string representation.
 func (f *TagRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.Tag.GetCompoundName(), f.Spec.Spec.GetType().String())
 }
 
+// NewTagRef returns a new TagRef.
 func NewTagRef(familyName, tagName string) *TagRef {
 	return &TagRef{
 		Tag: NewTag(familyName, tagName),
 	}
 }
 
-// NewSearchableTagRef is a short-handed method for creating a TagRef to the tag in the searchable family
+// NewSearchableTagRef is a short-handed method for creating a TagRef to the tag in the searchable family.
 func NewSearchableTagRef(tagName string) *TagRef {
 	return &TagRef{
 		Tag: NewTag("searchable", tagName),
 	}
 }
 
-var _ ResolvableExpr = (*FieldRef)(nil)
+var _ Expr = (*FieldRef)(nil)
 
 // FieldRef is the reference to the field
-// also it holds the definition (derived from measureSchema) of the field
+// also it holds the definition (derived from measureSchema) of the field.
 type FieldRef struct {
 	// Field defines the name of the Field
 	Field *Field
@@ -85,10 +80,12 @@ type FieldRef struct {
 	Spec *FieldSpec
 }
 
+// String shows the string representation.
 func (f *FieldRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.Spec.Spec.GetName(), f.Spec.Spec.GetFieldType().String())
 }
 
+// DataType shows the type of the filed's value.
 func (f *FieldRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
@@ -96,6 +93,7 @@ func (f *FieldRef) DataType() int32 {
 	return int32(f.Spec.Spec.GetFieldType())
 }
 
+// Equal reports whether f and expr have the same name and data type.
 func (f *FieldRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*FieldRef); ok {
 		return other.Field.Name == f.Field.Name && other.Spec.Spec.GetFieldType() == f.Spec.Spec.GetFieldType()
@@ -103,16 +101,9 @@ func (f *FieldRef) Equal(expr Expr) bool {
 	return false
 }
 
-func (f *FieldRef) Resolve(s Schema) error {
-	specs, err := s.CreateFieldRef(f.Field)
-	if err != nil {
-		return err
-	}
-	f.Spec = specs[0].Spec
-	return nil
-}
-
+// FieldSpec is the reference to the field.
+// It also holds the definition of the field.
 type FieldSpec struct {
-	FieldIdx int
 	Spec     *databasev1.FieldSpec
+	FieldIdx int
 }

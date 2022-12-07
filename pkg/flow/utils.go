@@ -27,6 +27,7 @@ func Transmit(state *ComponentState, downstream Inlet, current Outlet) {
 	close(downstream.In())
 }
 
+// TryExactTimestamp tries to get the timestamp from the item.
 func TryExactTimestamp(item any) StreamRecord {
 	if r, ok := item.(StreamRecord); ok {
 		return r

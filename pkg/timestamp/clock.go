@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package timestamp
 
 import (
@@ -28,6 +29,7 @@ type Clock interface {
 	clock.Clock
 }
 
+// MockClock represents a mock clock that only moves forward programmatically.
 type MockClock interface {
 	clock.Clock
 	// Add moves the current time of the mock clock forward by the specified duration.
@@ -64,7 +66,7 @@ func GetClock(ctx context.Context) (Clock, context.Context) {
 	return c.(Clock), ctx
 }
 
-// SetContext returns a sub context with the passed Clock
+// SetClock returns a sub context with the passed Clock.
 func SetClock(ctx context.Context, clock Clock) context.Context {
 	return context.WithValue(ctx, clockKey, clock)
 }

@@ -22,11 +22,13 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// IndexRuleLocator combines several TagLocators that help find the index value.
 type IndexRuleLocator struct {
 	Rule       *databasev1.IndexRule
 	TagIndices []TagLocator
 }
 
+// ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
 func ParseIndexRuleLocators(families []*databasev1.TagFamilySpec, indexRules []*databasev1.IndexRule) (locators []*IndexRuleLocator) {
 	for _, rule := range indexRules {
 		tagIndices := make([]TagLocator, 0, len(rule.GetTags()))

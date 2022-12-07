@@ -22,15 +22,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
+// StreamWriteKindVersion is the version tag of stream write kind.
 var StreamWriteKindVersion = common.KindVersion{
 	Version: "v1",
 	Kind:    "stream-write",
 }
 
+// TopicStreamWrite is the stream write topic.
 var TopicStreamWrite = bus.UniTopic(StreamWriteKindVersion.String())
 
+// StreamQueryKindVersion is the version tag of stream query kind.
 var StreamQueryKindVersion = common.KindVersion{
 	Version: "v1",
 	Kind:    "stream-query",
 }
+
+// TopicStreamQuery is the stream query topic.
 var TopicStreamQuery = bus.BiTopic(StreamQueryKindVersion.String())

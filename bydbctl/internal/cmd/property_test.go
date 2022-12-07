@@ -27,7 +27,7 @@ import (
 	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/testing/protocmp"
 
-	property_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -70,12 +70,12 @@ tags:
       int:
         value: 3
 `
-	p1Proto := new(property_v1.Property)
+	p1Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p1YAML), p1Proto)
-	p2Proto := new(property_v1.Property)
+	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.SetUp()
+		_, addr, deferFunc = setup.Common()
 		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating property schema
@@ -99,7 +99,7 @@ tags:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		GinkgoWriter.Println(out)
-		resp := new(property_v1.GetResponse)
+		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
 			protocmp.IgnoreUnknown(),
@@ -117,7 +117,7 @@ tags:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		GinkgoWriter.Println(out)
-		resp := new(property_v1.GetResponse)
+		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property.Tags).To(HaveLen(1))
 		Expect(resp.Property.Tags[0].Key).To(Equal("state"))
@@ -133,7 +133,7 @@ tags:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		GinkgoWriter.Println(out)
-		resp := new(property_v1.GetResponse)
+		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
 			protocmp.IgnoreUnknown(),
@@ -165,7 +165,7 @@ tags:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(property_v1.GetResponse)
+		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 
 		Expect(cmp.Equal(resp.Property, p2Proto,
@@ -219,7 +219,7 @@ tags:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(property_v1.ListResponse)
+		resp := new(propertyv1.ListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property).To(HaveLen(2))
 	})

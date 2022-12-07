@@ -185,10 +185,10 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	path     string
-	dbOpts   tsdb.DatabaseOpts
 	metadata metadata.Repo
 	l        *logger.Logger
+	path     string
+	dbOpts   tsdb.DatabaseOpts
 }
 
 func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
@@ -209,7 +209,7 @@ func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resource
 	}, s.l)
 }
 
-func (s *supplier) ResourceSchema(repo metadata.Repo, md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)

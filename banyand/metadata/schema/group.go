@@ -29,8 +29,8 @@ import (
 )
 
 var (
-	GroupsKeyPrefix  = "/groups/"
-	GroupMetadataKey = "/__meta_group__"
+	groupsKeyPrefix  = "/groups/"
+	groupMetadataKey = "/__meta_group__"
 )
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
@@ -43,7 +43,7 @@ func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commo
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, error) {
-	messages, err := e.kv.Get(ctx, GroupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(GroupsKeyPrefix)))
+	messages, err := e.kv.Get(ctx, groupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(groupsKeyPrefix)))
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, 
 	var groups []*commonv1.Group
 	for _, kv := range messages.Kvs {
 		// kv.Key = "/groups/" + {group} + "/__meta_info__"
-		if strings.HasSuffix(string(kv.Key), GroupMetadataKey) {
+		if strings.HasSuffix(string(kv.Key), groupMetadataKey) {
 			message := &commonv1.Group{}
 			if innerErr := proto.Unmarshal(kv.Value, message); innerErr != nil {
 				return nil, innerErr
@@ -68,7 +68,7 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	if err != nil {
 		return false, errors.Wrap(err, group)
 	}
-	keyPrefix := GroupsKeyPrefix + g.GetMetadata().GetName() + "/"
+	keyPrefix := groupsKeyPrefix + g.GetMetadata().GetName() + "/"
 	resp, err := e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
 	if err != nil {
 		return false, err
@@ -107,5 +107,5 @@ func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Gr
 }
 
 func formatGroupKey(group string) string {
-	return GroupsKeyPrefix + group + GroupMetadataKey
+	return groupsKeyPrefix + group + groupMetadataKey
 }

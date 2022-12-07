@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -37,7 +37,7 @@ var _ = Describe("Group", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.SetUp()
+		_, addr, deferFunc = setup.Common()
 		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
 		addr = "http://" + addr
 		// extracting the operation of creating group
@@ -72,7 +72,7 @@ resource_opts:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.GroupRegistryServiceGetResponse)
+		resp := new(databasev1.GroupRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Group.Metadata.Name).To(Equal("group1"))
 	})
@@ -139,7 +139,7 @@ resource_opts:
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		resp := new(database_v1.GroupRegistryServiceListResponse)
+		resp := new(databasev1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Group).To(HaveLen(4))
 	})

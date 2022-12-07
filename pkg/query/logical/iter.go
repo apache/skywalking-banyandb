@@ -20,11 +20,13 @@ package logical
 import (
 	"container/heap"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 var _ ItemIterator = (*itemIter)(nil)
 
+// ItemIterator allow iterating over a tsdb's series.
 type ItemIterator interface {
 	HasNext() bool
 	Next() tsdb.Item
@@ -32,9 +34,9 @@ type ItemIterator interface {
 
 var _ heap.Interface = (*containerHeap)(nil)
 
-// container contains both iter and its current item
+// container contains both iter and its current item.
 type container struct {
-	c    Comparator
+	c    comparator
 	item tsdb.Item
 	iter tsdb.Iterator
 }
@@ -58,21 +60,15 @@ func (h *containerHeap) Pop() interface{} {
 }
 
 type itemIter struct {
-	// c is the comparator to sort items
-	c Comparator
-	// iters is the list of initial Iterator
+	c     comparator
+	h     *containerHeap
 	iters []tsdb.Iterator
-	// deq is the deque of the container
-	// 1. When we push a new container, we can normally append it to the tail of the deq,
-	//    and then sort the whole slice
-	// 2. When we pop a new container, we can just pop out the first element in the deq.
-	//    The rest of the slice is still sorted.
-	h *containerHeap
 }
 
-func NewItemIter(iters []tsdb.Iterator, c Comparator) ItemIterator {
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []tsdb.Iterator, sort modelv1.Sort) ItemIterator {
 	it := &itemIter{
-		c:     c,
+		c:     createComparator(sort),
 		iters: iters,
 		h:     &containerHeap{},
 	}

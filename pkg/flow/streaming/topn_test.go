@@ -43,8 +43,8 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 	}
 	tests := []struct {
 		name     string
-		sort     TopNSort
 		expected []*Tuple2
+		sort     TopNSort
 	}{
 		{
 			name: "DESC",

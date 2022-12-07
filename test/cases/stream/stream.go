@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package stream_test contains integration test cases of the stream
+// Package stream_test contains integration test cases of the stream.
 package stream_test
 
 import (
@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	// SharedContext is the parallel execution context
+	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
 	verify        = func(innerGm gm.Gomega, args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
@@ -46,7 +46,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
-	g.FEntry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
 	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),

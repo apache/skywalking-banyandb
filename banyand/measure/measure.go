@@ -15,13 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package measure implements a time-series-based storage which is consists of a sequence of data points.
+// Each data point contains tags and fields. They arrive in a fixed interval. A data point could be updated
+// by one with the identical entity(series_id) and timestamp.
 package measure
 
 import (
 	"context"
 	"time"
-
-	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -39,19 +40,18 @@ const (
 )
 
 type measure struct {
-	name     string
-	group    string
-	shardNum uint32
-	l        *logger.Logger
-	schema   *databasev1.Measure
-	// maxObservedModRevision is the max observed revision of index rules in the spec
-	maxObservedModRevision int64
 	databaseSupplier       tsdb.Supplier
+	l                      *logger.Logger
+	schema                 *databasev1.Measure
+	indexWriter            *index.Writer
+	processorManager       *topNProcessorManager
+	name                   string
+	group                  string
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
-	indexWriter            *index.Writer
+	maxObservedModRevision int64
 	interval               time.Duration
-	processorManager       *topNProcessorManager
+	shardNum               uint32
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {
@@ -75,7 +75,7 @@ func (s *measure) EntityLocator() partition.EntityLocator {
 }
 
 func (s *measure) Close() error {
-	return multierr.Combine(s.processorManager.Close(), s.indexWriter.Close())
+	return s.processorManager.Close()
 }
 
 func (s *measure) parseSpec() (err error) {

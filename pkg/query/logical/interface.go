@@ -21,32 +21,33 @@ import (
 	"fmt"
 )
 
+// UnresolvedPlan denotes an logical expression.
+// It could be analyzed to a Plan(executable operation) with the Schema.
 type UnresolvedPlan interface {
 	Analyze(Schema) (Plan, error)
 }
 
+// Plan is the executable operation. It belongs to a execution tree.
 type Plan interface {
 	fmt.Stringer
 	Children() []Plan
 	Schema() Schema
 }
 
+// Expr represents a predicate in criteria.
 type Expr interface {
 	fmt.Stringer
 	DataType() int32
 	Equal(Expr) bool
 }
 
+// LiteralExpr allows getting raw data represented as bytes.
 type LiteralExpr interface {
 	Expr
 	Bytes() [][]byte
 }
 
-type ResolvableExpr interface {
-	Expr
-	Resolve(Schema) error
-}
-
+// ComparableExpr allows comparing Expr and Expr arrays.
 type ComparableExpr interface {
 	LiteralExpr
 	Compare(LiteralExpr) (int, bool)

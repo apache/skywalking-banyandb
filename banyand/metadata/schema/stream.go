@@ -26,7 +26,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-var StreamKeyPrefix = "/streams/"
+var streamKeyPrefix = "/streams/"
 
 func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
 	var entity databasev1.Stream
@@ -40,7 +40,7 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, StreamKeyPrefix), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, streamKeyPrefix), func() proto.Message {
 		return &databasev1.Stream{}
 	})
 	if err != nil {
@@ -91,5 +91,5 @@ func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv
 }
 
 func formatStreamKey(metadata *commonv1.Metadata) string {
-	return formatKey(StreamKeyPrefix, metadata)
+	return formatKey(streamKeyPrefix, metadata)
 }

@@ -27,16 +27,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+// Analyzer analyzes the measure querying expression to the execution plan.
 type Analyzer struct {
 	metadataRepoImpl metadata.Repo
 }
 
+// CreateAnalyzerFromMetaService returns a Analyzer.
 func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
 	return &Analyzer{
 		metaSvc,
 	}, nil
 }
 
+// BuildSchema returns Schema loaded from the metadata repository.
 func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
 	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
 	if err != nil {
@@ -47,7 +50,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 		return nil, err
 	}
 
-	indexRules, err := a.metadataRepoImpl.IndexRules(context.TODO(), metadata)
+	indexRules, err := a.metadataRepoImpl.IndexRules(ctx, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +79,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 	return ms, nil
 }
 
+// Analyze converts logical expressions to executable operation tree represented by Plan.
 func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	groupByEntity := false
 	var groupByTags [][]*logical.Tag
@@ -99,11 +103,11 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, 
 	}
 
 	if criteria.GetGroupBy() != nil {
-		plan = GroupBy(plan, groupByTags, groupByEntity)
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
 	}
 
 	if criteria.GetAgg() != nil {
-		plan = Aggregation(plan,
+		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
@@ -111,7 +115,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, 
 	}
 
 	if criteria.GetTop() != nil {
-		plan = Top(plan, criteria.GetTop())
+		plan = top(plan, criteria.GetTop())
 	}
 
 	// parse limit and offset
@@ -119,7 +123,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, 
 	if limitParameter == 0 {
 		limitParameter = logical.DefaultLimit
 	}
-	plan = Limit(plan, criteria.GetOffset(), limitParameter)
+	plan = limit(plan, criteria.GetOffset(), limitParameter)
 
 	return plan.Analyze(s)
 }
@@ -127,7 +131,7 @@ func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, 
 // parseFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
-// 2 - If criteria is given, but all of those fields exist in the "entity" definition
+// 2 - If criteria is given, but all of those fields exist in the "entity" definition.
 func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema, groupByEntity bool) (logical.UnresolvedPlan, error) {
 	timeRange := criteria.GetTimeRange()
 
@@ -165,6 +169,6 @@ func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, 
 		unresolvedOrderBy = logical.NewOrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
 	}
 
-	return IndexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
+	return indexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
 		filter, entities, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
 }

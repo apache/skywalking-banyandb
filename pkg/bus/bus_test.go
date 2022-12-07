@@ -18,6 +18,7 @@
 package bus
 
 import (
+	"errors"
 	"reflect"
 	"sort"
 	"sync"
@@ -29,14 +30,14 @@ func TestBus_PubAndSub(t *testing.T) {
 	type message struct {
 		topic      Topic
 		messageIDS []MessageID
-		wantErr    bool
 		wantRet    []MessageID
+		wantErr    bool
 	}
 	type listener struct {
 		wantTopic    Topic
 		wantMessages []MessageID
-		wantErr      bool
 		ret          []MessageID
+		wantErr      bool
 	}
 	tests := []struct {
 		name      string
@@ -184,7 +185,7 @@ func TestBus_PubAndSub(t *testing.T) {
 				}
 				go func(want []MessageID) {
 					ret, errRet := f.GetAll()
-					if errRet == ErrEmptyFuture {
+					if errors.Is(errRet, errEmptyFuture) {
 						return
 					} else if errRet != nil {
 						t.Errorf("Publish()'s return message error = %v", err)
@@ -232,10 +233,10 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 var _ MessageListener = new(mockListener)
 
 type mockListener struct {
-	queue   []MessageID
 	wg      *sync.WaitGroup
 	closeWg *sync.WaitGroup
 	ret     chan Message
+	queue   []MessageID
 }
 
 func (m *mockListener) Rev(message Message) Message {

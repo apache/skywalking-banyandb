@@ -35,13 +35,15 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-var ErrTagFamilyNotExist = errors.New("tag family doesn't exist")
+var errTagFamilyNotExist = errors.New("tag family doesn't exist")
 
+// Query allow to retrieve measure data points.
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)
 	Measure(measure *commonv1.Metadata) (Measure, error)
 }
 
+// Measure allows inspecting measure data points' details.
 type Measure interface {
 	io.Closer
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
@@ -135,7 +137,7 @@ func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFam
 		}
 	}
 	if tagSpec == nil {
-		return nil, ErrTagFamilyNotExist
+		return nil, errTagFamilyNotExist
 	}
 	for i, tag := range tagFamily.GetTags() {
 		tags[i] = &modelv1.Tag{

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package signal implements a handler to listen to system signals.
 package signal
 
 import (
@@ -39,6 +40,7 @@ type Handler struct {
 	cancel chan struct{}
 }
 
+// Name shows the handler's name.
 func (h *Handler) Name() string {
 	return "signal"
 }

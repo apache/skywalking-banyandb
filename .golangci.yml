@@ -16,14 +16,31 @@
 linters:
   disable-all: true
   enable:
-    - deadcode
+    - asasalint
+    - asciicheck
+    # - containedctx
+    - contextcheck
+    - decorder
+    - dogsled
+    - errname
     - errcheck
-    - gocritic
-    - goconst
-    - gofumpt
+    - errchkjson
+    - errorlint
+    - exhaustive
+    # TODO:// enable this lint
+    # - exhaustruct
+    - exportloopref
     - gci
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - gofumpt
+    - goprintffuncname
+    - gosec
     - gosimple
     - govet
+    - importas
     - ineffassign
     - lll
     - misspell
@@ -31,10 +48,26 @@ linters:
     - stylecheck
     - typecheck
     - unconvert
-    - varcheck
-    - prealloc
+    - unparam
     - unused
+    - usestdlibvars
+    - whitespace
 linters-settings:
+  importas:
+    no-unaliased: true
+    alias:
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1
+        alias: commonv1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1
+        alias: databasev1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1
+        alias: modelv1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1
+        alias: propertyv1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1
+        alias: measurev1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
+        alias: streamv1
   lll:
     line-length: 170
   goconst:
@@ -46,6 +79,7 @@ linters-settings:
   misspell:
     locale: US
   unused:
+    go: "1.19"
     check-exported: false
   unparam:
     check-exported: false
@@ -100,6 +134,26 @@ linters-settings:
       - unslice
       - valSwap
       - weakCond
+  godot:
+    #   declarations - for top level declaration comments (default);
+    #   toplevel     - for top level comments;
+    #   all          - for all comments.
+    scope: toplevel
+  staticcheck:
+    go: "1.19"
+    checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+  stylecheck:
+    go: "1.19"
+  exhaustive:
+    check:
+      - switch
+      - map
+    default-signifies-exhaustive: true
+    ignore-enum-members: ".+UNSPECIFIED$"
+  exhaustruct:
+    exclude:
+      - 'cobra\.Command$'
+
 run:
   deadline: 20m
   skip-files:

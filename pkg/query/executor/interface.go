@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package executor defines the specifications accessing underlying data repositories.
 package executor
 
 import (
@@ -25,26 +26,31 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
+// ExecutionContext allows retrieving data from tsdb.
 type ExecutionContext interface {
 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 }
 
+// StreamExecutionContext allows retrieving data through the stream module.
 type StreamExecutionContext interface {
 	ExecutionContext
 	ParseElementID(item tsdb.Item) (string, error)
 }
 
+// StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(StreamExecutionContext) ([]*streamv1.Element, error)
 }
 
+// MeasureExecutionContext allows retrieving data through the measure module.
 type MeasureExecutionContext interface {
 	ExecutionContext
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
 }
 
+// MIterator allows iterating in a measure data set.
 type MIterator interface {
 	Next() bool
 
@@ -53,22 +59,7 @@ type MIterator interface {
 	Close() error
 }
 
-var EmptyMIterator = emptyMIterator{}
-
-type emptyMIterator struct{}
-
-func (ei emptyMIterator) Next() bool {
-	return false
-}
-
-func (ei emptyMIterator) Current() []*measurev1.DataPoint {
-	return nil
-}
-
-func (ei emptyMIterator) Close() error {
-	return nil
-}
-
+// MeasureExecutable allows querying in the measure schema.
 type MeasureExecutable interface {
 	Execute(MeasureExecutionContext) (MIterator, error)
 }

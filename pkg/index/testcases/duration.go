@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package testcases implements common helpers for testing inverted and lsm indices.
 package testcases
 
 import (
@@ -37,6 +38,7 @@ var duration = index.FieldKey{
 	IndexRuleID: 3,
 }
 
+// SimpleStore is subset of index.Store for testing.
 type SimpleStore interface {
 	index.FieldIterable
 	index.Writer
@@ -44,23 +46,24 @@ type SimpleStore interface {
 }
 
 type args struct {
-	fieldKey  index.FieldKey
 	termRange index.RangeOpts
+	fieldKey  index.FieldKey
 	orderType modelv1.Sort
 }
 
 type result struct {
-	key   int
 	items []int
+	key   int
 }
 
+// RunDuration executes duration related cases.
 func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 	tester := assert.New(t)
 	is := require.New(t)
 	tests := []struct {
 		name string
-		args args
 		want []int
+		args args
 	}{
 		{
 			name: "sort in asc order",
@@ -309,6 +312,7 @@ func toArray(list posting.List) []int {
 	return ints
 }
 
+// SetUpDuration initializes data for testing duration related cases.
 func SetUpDuration(t *assert.Assertions, store index.Writer) map[int]posting.List {
 	r := map[int]posting.List{
 		50:   roaring.NewPostingList(),
@@ -317,10 +321,10 @@ func SetUpDuration(t *assert.Assertions, store index.Writer) map[int]posting.Lis
 		1000: roaring.NewPostingList(),
 		2000: roaring.NewPostingList(),
 	}
-	return SetUpPartialDuration(t, store, r)
+	return setUpPartialDuration(t, store, r)
 }
 
-func SetUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]posting.List) map[int]posting.List {
+func setUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]posting.List) map[int]posting.List {
 	idx := make([]int, 0, len(r))
 	for key := range r {
 		idx = append(idx, key)

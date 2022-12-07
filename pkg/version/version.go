@@ -27,17 +27,17 @@ import (
 // build is to be populated at build time using -ldflags -X.
 var build string
 
-// Show the service's build information
+// Build shows the service's build information.
 func Build() string {
 	return build
 }
 
-// Show the service's version information
+// Show the service's version information.
 func Show(serviceName string) {
 	fmt.Println(serviceName + " " + Parse())
 }
 
-// Parse returns the parsed service's version information. (from raw git label)
+// Parse returns the parsed service's version information. (from raw git label).
 func Parse() string {
 	// versionString syntax:
 	//   <release tag>-<commits since release tag>-g<commit hash>-<branch name>

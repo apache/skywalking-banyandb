@@ -42,29 +42,34 @@ var (
 	_ Group            = (*etcdSchemaRegistry)(nil)
 	_ Property         = (*etcdSchemaRegistry)(nil)
 
-	ErrUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
-	ErrConcurrentModification     = errors.New("concurrent modification of entities")
+	errUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
+	errConcurrentModification     = errors.New("concurrent modification of entities")
 )
 
+// HasMetadata allows getting Metadata.
 type HasMetadata interface {
 	GetMetadata() *commonv1.Metadata
 	proto.Message
 }
 
+// RegistryOption is the option to create Registry.
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
+// RootDir sets the root directory of Registry.
 func RootDir(rootDir string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
 		config.rootDir = rootDir
 	}
 }
 
+// LoggerLevel sets the logger level.
 func LoggerLevel(loggerLevel string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
 		config.loggerLevel = loggerLevel
 	}
 }
 
+// ConfigureListener sets client and peer urls of listeners.
 func ConfigureListener(lc, lp string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
 		config.listenerClientURL = lc
@@ -73,11 +78,11 @@ func ConfigureListener(lc, lp string) RegistryOption {
 }
 
 type eventHandler struct {
-	interestKeys Kind
 	handler      EventHandler
+	interestKeys Kind
 }
 
-func (eh *eventHandler) InterestOf(kind Kind) bool {
+func (eh *eventHandler) interestOf(kind Kind) bool {
 	return KindMask&kind&eh.interestKeys != 0
 }
 
@@ -114,7 +119,7 @@ func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
 	hh := e.handlers
 	e.mux.RUnlock()
 	for _, h := range hh {
-		if h.InterestOf(metadata.Kind) {
+		if h.interestOf(metadata.Kind) {
 			h.handler.OnAddOrUpdate(metadata)
 		}
 	}
@@ -125,7 +130,7 @@ func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
 	hh := e.handlers
 	e.mux.RUnlock()
 	for _, h := range hh {
-		if h.InterestOf(metadata.Kind) {
+		if h.interestOf(metadata.Kind) {
 			h.handler.OnDelete(metadata)
 		}
 	}
@@ -149,6 +154,7 @@ func (e *etcdSchemaRegistry) Close() error {
 	return nil
 }
 
+// NewEtcdSchemaRegistry returns a Registry powered by Etcd.
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	registryConfig := &etcdSchemaRegistryConfig{
 		rootDir:           os.TempDir(),
@@ -189,7 +195,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return ErrGRPCResourceNotFound
 	}
 	if resp.Count > 1 {
-		return ErrUnexpectedNumberOfEntities
+		return errUnexpectedNumberOfEntities
 	}
 	if err = proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
 		return err
@@ -206,7 +212,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // and overwrite the existing value if so.
 // Otherwise, it will return ErrGRPCResourceNotFound.
 func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return err
 	}
@@ -215,7 +221,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 		return err
 	}
 	if getResp.Count > 1 {
-		return ErrUnexpectedNumberOfEntities
+		return errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
@@ -228,12 +234,12 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 			return innerErr
 		}
 		// directly return if we have the same entity
-		if metadata.Equal(existingVal) {
+		if metadata.equal(existingVal) {
 			return nil
 		}
 
 		modRevision := getResp.Kvs[0].ModRevision
-		txnResp, txnErr := e.kv.Txn(context.Background()).
+		txnResp, txnErr := e.kv.Txn(ctx).
 			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
 			Then(clientv3.OpPut(key, string(val))).
 			Commit()
@@ -241,7 +247,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 			return txnErr
 		}
 		if !txnResp.Succeeded {
-			return ErrConcurrentModification
+			return errConcurrentModification
 		}
 	} else {
 		return ErrGRPCResourceNotFound
@@ -254,7 +260,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 // and put the value if it does not exist.
 // Otherwise, it will return ErrGRPCAlreadyExists.
 func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return err
 	}
@@ -263,7 +269,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 		return err
 	}
 	if getResp.Count > 1 {
-		return ErrUnexpectedNumberOfEntities
+		return errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
@@ -271,7 +277,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 	}
 	replace := getResp.Count > 0
 	if replace {
-		return ErrGRPCAlreadyExists
+		return errGRPCAlreadyExists
 	}
 	_, err = e.kv.Put(ctx, key, string(val))
 	if err != nil {
@@ -304,11 +310,11 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 }
 
 func listPrefixesForEntity(group, entityPrefix string) string {
-	return GroupsKeyPrefix + group + entityPrefix
+	return groupsKeyPrefix + group + entityPrefix
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return false, err
 	}
@@ -329,6 +335,10 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 			message = &databasev1.IndexRule{}
 		case KindProperty:
 			message = &propertyv1.Property{}
+		case KindTopNAggregation:
+			message = &databasev1.TopNAggregation{}
+		default:
+			return false, nil
 		}
 		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
 			e.notifyDelete(Metadata{
@@ -346,7 +356,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 }
 
 func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
-	return GroupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
+	return groupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
 }
 
 func incrementLastByte(key string) string {

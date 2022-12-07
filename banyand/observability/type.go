@@ -14,13 +14,21 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package observability provides metrics, profiling, and etc.
 package observability
 
+import "errors"
+
+var errNoAddr = errors.New("no address")
+
+// Statistics represents a sample of a module.
 type Statistics struct {
 	MemBytes    int64
 	MaxMemBytes int64
 }
 
+// Observable allows sampling.
 type Observable interface {
 	Stats() Statistics
 }

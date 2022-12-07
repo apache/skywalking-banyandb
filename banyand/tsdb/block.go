@@ -53,43 +53,42 @@ const (
 	defaultEnqueueTimeout = 500 * time.Millisecond
 )
 
-var ErrBlockClosingInterrupted = errors.New("interrupt to close the block")
+var errBlockClosingInterrupted = errors.New("interrupt to close the block")
 
 type block struct {
-	path       string
-	l          *logger.Logger
-	queue      bucket.Queue
-	suffix     string
-	ref        *atomic.Int32
-	closed     *atomic.Bool
-	deleted    *atomic.Bool
-	lock       sync.RWMutex
-	position   common.Position
-	memSize    int64
-	lsmMemSize int64
-
-	store         kv.TimeSeriesStore
-	invertedIndex index.Store
-	lsmIndex      index.Store
-	closableLst   []io.Closer
-	clock         timestamp.Clock
-	timestamp.TimeRange
-	bucket.Reporter
-	segID          SectionID
-	blockID        SectionID
-	segSuffix      string
 	encodingMethod EncodingMethod
+	store          kv.TimeSeriesStore
+	queue          bucket.Queue
+	bucket.Reporter
+	clock         timestamp.Clock
+	lsmIndex      index.Store
+	invertedIndex index.Store
+	closed        *atomic.Bool
+	l             *logger.Logger
+	deleted       *atomic.Bool
+	ref           *atomic.Int32
+	position      common.Position
+	timestamp.TimeRange
+	segSuffix   string
+	suffix      string
+	path        string
+	closableLst []io.Closer
+	lsmMemSize  int64
+	memSize     int64
+	lock        sync.RWMutex
+	segID       SectionID
+	blockID     SectionID
 }
 
 type blockOpts struct {
-	segID     SectionID
-	segSuffix string
-	blockSize IntervalRule
-	timeRange timestamp.TimeRange
-	suffix    string
-	path      string
 	queue     bucket.Queue
 	scheduler *timestamp.Scheduler
+	timeRange timestamp.TimeRange
+	segSuffix string
+	suffix    string
+	path      string
+	blockSize IntervalRule
+	segID     SectionID
 }
 
 func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
@@ -190,9 +189,9 @@ func (b *block) open() (err error) {
 	return nil
 }
 
-func (b *block) delegate(ctx context.Context) (BlockDelegate, error) {
+func (b *block) delegate(ctx context.Context) (blockDelegate, error) {
 	if b.deleted.Load() {
-		return nil, errors.WithMessagef(ErrBlockAbsent, "block %s is deleted", b)
+		return nil, errors.WithMessagef(errBlockAbsent, "block %s is deleted", b)
 	}
 	blockID := BlockID{
 		BlockID: b.blockID,
@@ -277,7 +276,7 @@ func (b *block) close(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		stopWaiting.Store(true)
-		return errors.Wrapf(ErrBlockClosingInterrupted, "block:%s", b)
+		return errors.Wrapf(errBlockClosingInterrupted, "block:%s", b)
 	case <-ch:
 	}
 	b.closed.Store(true)
@@ -314,7 +313,7 @@ func (b *block) stats() (names []string, stats []observability.Statistics) {
 	return names, stats
 }
 
-type BlockDelegate interface {
+type blockDelegate interface {
 	io.Closer
 	contains(ts time.Time) bool
 	write(key []byte, val []byte, ts time.Time) error
@@ -331,7 +330,7 @@ type BlockDelegate interface {
 	String() string
 }
 
-var _ BlockDelegate = (*bDelegate)(nil)
+var _ blockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block

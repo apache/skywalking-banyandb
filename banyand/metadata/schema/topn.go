@@ -26,7 +26,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-var TopNAggregationKeyPrefix = "/topnagg/"
+var topNAggregationKeyPrefix = "/topnagg/"
 
 func (e *etcdSchemaRegistry) GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error) {
 	var entity databasev1.TopNAggregation
@@ -40,7 +40,7 @@ func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOp
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, TopNAggregationKeyPrefix), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, topNAggregationKeyPrefix), func() proto.Message {
 		return &databasev1.TopNAggregation{}
 	})
 	if err != nil {
@@ -86,5 +86,5 @@ func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata
 }
 
 func formatTopNAggregationKey(metadata *commonv1.Metadata) string {
-	return formatKey(TopNAggregationKeyPrefix, metadata)
+	return formatKey(topNAggregationKeyPrefix, metadata)
 }

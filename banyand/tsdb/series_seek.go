@@ -34,12 +34,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// Iterator allows iterating a series in a time span.
 type Iterator interface {
 	Next() bool
 	Val() Item
 	Close() error
 }
 
+// Item allows retrieving raw data from an item.
 type Item interface {
 	Family(family []byte) ([]byte, error)
 	PrintContext(l *logger.Logger, family []byte, n int)
@@ -49,6 +51,7 @@ type Item interface {
 	Time() uint64
 }
 
+// SeekerBuilder a helper to build a Seeker.
 type SeekerBuilder interface {
 	Filter(predicator index.Filter) SeekerBuilder
 	OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder
@@ -56,6 +59,7 @@ type SeekerBuilder interface {
 	Build() (Seeker, error)
 }
 
+// Seeker allows searching data in a Database.
 type Seeker interface {
 	Seek() ([]Iterator, error)
 }
@@ -63,13 +67,12 @@ type Seeker interface {
 var _ SeekerBuilder = (*seekerBuilder)(nil)
 
 type seekerBuilder struct {
-	seriesSpan *seriesSpan
-
 	predicator          index.Filter
-	order               modelv1.Sort
+	seriesSpan          *seriesSpan
 	indexRuleForSorting *databasev1.IndexRule
-	rangeOptsForSorting index.RangeOpts
 	l                   *logger.Logger
+	rangeOptsForSorting index.RangeOpts
+	order               modelv1.Sort
 }
 
 func (s *seekerBuilder) Build() (Seeker, error) {
@@ -109,11 +112,11 @@ func newSeeker(series []Iterator) Seeker {
 var _ Item = (*item)(nil)
 
 type item struct {
-	itemID      common.ItemID
 	data        kv.TimeSeriesReader
-	seriesID    common.SeriesID
-	sortedField []byte
 	decoderPool encoding.SeriesDecoderPool
+	sortedField []byte
+	itemID      common.ItemID
+	seriesID    common.SeriesID
 }
 
 func (i *item) Time() uint64 {

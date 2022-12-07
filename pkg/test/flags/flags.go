@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package flags implements injected flags to run tests.
 package flags
 
 import (
@@ -22,8 +24,12 @@ import (
 
 var (
 	eventuallyTimeout string
+
+	// EventuallyTimeout is the timeout of async time cases execution.
 	EventuallyTimeout time.Duration
-	LogLevel          = "debug"
+
+	// LogLevel is the log level of test cases.
+	LogLevel = "debug"
 )
 
 func init() {

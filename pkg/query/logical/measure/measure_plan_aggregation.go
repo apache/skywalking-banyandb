@@ -35,15 +35,13 @@ var (
 )
 
 type unresolvedAggregation struct {
-	unresolvedInput logical.UnresolvedPlan
-	// aggrFunc is the type of aggregation
-	aggrFunc modelv1.AggregationFunction
-	// groupBy should be a subset of tag projection
+	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field
+	aggrFunc         modelv1.AggregationFunction
 	isGroup          bool
 }
 
-func Aggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
+func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
 		aggrFunc:         aggrFunc,
@@ -63,7 +61,7 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 		return nil, err
 	}
 	if len(aggregationFieldRefs) == 0 {
-		return nil, errors.Wrap(logical.ErrFieldNotDefined, "aggregation schema")
+		return nil, errors.Wrap(errFieldNotDefined, "aggregation schema")
 	}
 	aggrFunc, err := aggregation.NewInt64Func(gba.aggrFunc)
 	if err != nil {

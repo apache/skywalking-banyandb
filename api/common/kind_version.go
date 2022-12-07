@@ -17,7 +17,7 @@
 
 package common
 
-// KindVersion contains elements which identify the API uniquely
+// KindVersion contains elements which identify the API uniquely.
 type KindVersion struct {
 	Version string
 	Kind    string

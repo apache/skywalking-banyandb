@@ -38,10 +38,12 @@ import (
 )
 
 var (
-	ErrEmptyRootPath   = errors.New("root path is empty")
+	errEmptyRootPath = errors.New("root path is empty")
+	// ErrMeasureNotExist denotes a measure doesn't exist in the metadata repo.
 	ErrMeasureNotExist = errors.New("measure doesn't exist")
 )
 
+// Service allows inspecting the measure data points.
 type Service interface {
 	run.PreRunner
 	run.Config
@@ -52,17 +54,15 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	root   string
-	dbOpts tsdb.DatabaseOpts
-
 	schemaRepo    schemaRepo
 	writeListener bus.MessageListener
-	l             *logger.Logger
 	metadata      metadata.Repo
 	pipeline      queue.Queue
 	repo          discovery.ServiceRepo
-	// stop channel for the service
-	stopCh chan struct{}
+	l             *logger.Logger
+	stopCh        chan struct{}
+	root          string
+	dbOpts        tsdb.DatabaseOpts
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -87,7 +87,7 @@ func (s *service) FlagSet() *run.FlagSet {
 
 func (s *service) Validate() error {
 	if s.root == "" {
-		return ErrEmptyRootPath
+		return errEmptyRootPath
 	}
 	return nil
 }
@@ -154,7 +154,7 @@ func (s *service) GracefulStop() {
 	}
 }
 
-// NewService returns a new service
+// NewService returns a new service.
 func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,

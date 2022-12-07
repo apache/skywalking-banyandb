@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package discovery implements the service discovery.
 package discovery
 
 import (
@@ -24,6 +25,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// ServiceRepo provides service subscripting and publishing.
+//
 //go:generate mockgen -destination=./discovery_mock.go -package=discovery github.com/apache/skywalking-banyandb/banyand/discovery ServiceRepo
 type ServiceRepo interface {
 	NodeID() string
@@ -52,6 +55,7 @@ func (r *repo) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, err
 	return r.local.Publish(topic, message...)
 }
 
+// NewServiceRepo return a new ServiceRepo.
 func NewServiceRepo(_ context.Context) (ServiceRepo, error) {
 	return &repo{
 		local: bus.NewBus(),

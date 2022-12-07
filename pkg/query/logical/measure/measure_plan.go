@@ -66,7 +66,7 @@ func (l *limitPlan) Children() []logical.Plan {
 	return []logical.Plan{l.Input}
 }
 
-func Limit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
+func limit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
 	return &limitPlan{
 		Parent: &logical.Parent{
 			UnresolvedInput: input,

@@ -21,26 +21,7 @@ import (
 	"strings"
 )
 
-func Format(p Plan) string {
-	return formatWithIndent(p, 0)
-}
-
-func formatWithIndent(p Plan, indent int) string {
-	res := ""
-	if indent > 1 {
-		res += strings.Repeat(" ", 5*(indent-1))
-	}
-	if indent > 0 {
-		res += "+"
-		res += strings.Repeat("-", 4)
-	}
-	res += p.String() + "\n"
-	for _, child := range p.Children() {
-		res += formatWithIndent(child, indent+1)
-	}
-	return res
-}
-
+// FormatTagRefs outputs formatted tag refs.
 func FormatTagRefs(sep string, exprGroup ...[]*TagRef) string {
 	var exprsStr []string
 	for _, exprs := range exprGroup {

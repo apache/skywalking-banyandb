@@ -33,19 +33,18 @@ import (
 )
 
 type blockController struct {
-	sync.RWMutex
 	segCtx       context.Context
-	segID        SectionID
+	blockQueue   bucket.Queue
+	clock        timestamp.Clock
+	scheduler    *timestamp.Scheduler
+	l            *logger.Logger
+	segTimeRange timestamp.TimeRange
 	segSuffix    string
 	location     string
-	segTimeRange timestamp.TimeRange
-	blockSize    IntervalRule
 	lst          []*block
-	blockQueue   bucket.Queue
-	scheduler    *timestamp.Scheduler
-	clock        timestamp.Clock
-
-	l *logger.Logger
+	blockSize    IntervalRule
+	sync.RWMutex
+	segID SectionID
 }
 
 func newBlockController(segCtx context.Context, segID SectionID, segSuffix, location string, segTimeRange timestamp.TimeRange,
@@ -94,7 +93,7 @@ func (bc *blockController) Next() (bucket.Reporter, error) {
 	}
 	b := c.(*block)
 
-	return bc.newHeadBlock(bc.blockSize.NextTime(b.Start))
+	return bc.newHeadBlock(bc.blockSize.nextTime(b.Start))
 }
 
 func (bc *blockController) newHeadBlock(now time.Time) (*block, error) {
@@ -158,14 +157,14 @@ func (bc *blockController) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRange) ([]BlockDelegate, error) {
+func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRange) ([]blockDelegate, error) {
 	bb := bc.search(func(b *block) bool {
 		return b.Overlapping(timeRange)
 	})
 	if bb == nil {
 		return nil, nil
 	}
-	dd := make([]BlockDelegate, len(bb))
+	dd := make([]blockDelegate, len(bb))
 	for i, b := range bb {
 		d, err := b.delegate(ctx)
 		if err != nil {
@@ -176,7 +175,7 @@ func (bc *blockController) span(ctx context.Context, timeRange timestamp.TimeRan
 	return dd, nil
 }
 
-func (bc *blockController) get(ctx context.Context, blockID SectionID) (BlockDelegate, error) {
+func (bc *blockController) get(ctx context.Context, blockID SectionID) (blockDelegate, error) {
 	b := bc.getBlock(blockID)
 	if b != nil {
 		return b.delegate(ctx)
@@ -252,7 +251,7 @@ func (bc *blockController) create(start time.Time) (*block, error) {
 			next = s
 		}
 	}
-	stdEnd := bc.blockSize.NextTime(start)
+	stdEnd := bc.blockSize.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
@@ -276,6 +275,7 @@ func (bc *blockController) create(start time.Time) (*block, error) {
 	return b, nil
 }
 
+// nolint: contextcheck
 func (bc *blockController) load(startTime, endTime time.Time, root string) (b *block, err error) {
 	suffix := bc.Format(startTime)
 	if b, err = newBlock(

@@ -42,7 +42,6 @@ func TestMeasure(t *testing.T) {
 	ginkgo.RunSpecs(t, "Measure Suite")
 }
 
-// BeforeSuite - Init logger
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
@@ -50,7 +49,6 @@ var _ = ginkgo.BeforeSuite(func() {
 	})).To(gomega.Succeed())
 })
 
-// service to preload measure
 type preloadMeasureService struct {
 	metaSvc metadata.Service
 }
@@ -102,7 +100,7 @@ func setUp() (*services, func()) {
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
-	moduleDeferFunc := test.SetUpModules(
+	moduleDeferFunc := test.SetupModules(
 		flags,
 		repo,
 		pipeline,

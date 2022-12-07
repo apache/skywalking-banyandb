@@ -21,21 +21,21 @@ import (
 	"io"
 )
 
-// Reader reads bits from buffer
+// Reader reads bits from buffer.
 type Reader struct {
 	in    io.ByteReader
 	cache byte
 	len   byte
 }
 
-// NewReader crate bit reader
+// NewReader crate bit reader.
 func NewReader(in io.ByteReader) *Reader {
 	return &Reader{
 		in: in,
 	}
 }
 
-// ReadBool reads a bit, 1 returns true, 0 returns false
+// ReadBool reads a bit, 1 returns true, 0 returns false.
 func (r *Reader) ReadBool() (bool, error) {
 	if r.len == 0 {
 		b, err := r.in.ReadByte()
@@ -51,7 +51,7 @@ func (r *Reader) ReadBool() (bool, error) {
 	return b != 0, nil
 }
 
-// ReadBits read number of bits
+// ReadBits read number of bits.
 func (r *Reader) ReadBits(numBits int) (uint64, error) {
 	var result uint64
 
@@ -78,7 +78,7 @@ func (r *Reader) ReadBits(numBits int) (uint64, error) {
 	return result, nil
 }
 
-// ReadByte reads a byte
+// ReadByte reads a byte.
 func (r *Reader) ReadByte() (byte, error) {
 	if r.len == 0 {
 		b, err := r.in.ReadByte()
@@ -97,7 +97,7 @@ func (r *Reader) ReadByte() (byte, error) {
 	return result, nil
 }
 
-// Reset resets the reader to read from a new slice
+// Reset resets the reader to read from a new slice.
 func (r *Reader) Reset() {
 	r.len = 0
 	r.cache = 0

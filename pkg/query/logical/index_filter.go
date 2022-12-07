@@ -26,33 +26,33 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	database_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	model_v1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
-var (
-	ErrNotRangeOperation        = errors.New("this is not an range operation")
-	ErrEmptyTree                = errors.New("tree is empty")
-	ErrInvalidLogicalExpression = errors.New("invalid logical expression")
-)
+var errInvalidLogicalExpression = errors.New("invalid logical expression")
 
+// GlobalIndexError represents a index rule is "global".
+// The local filter can't handle it.
 type GlobalIndexError struct {
-	IndexRule *database_v1.IndexRule
+	IndexRule *databasev1.IndexRule
 	Expr      LiteralExpr
 }
 
-func (g *GlobalIndexError) Error() string { return g.IndexRule.String() }
+func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
 
-func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map[string]int, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+// BuildLocalFilter returns a new index.Filter for local indices.
+// It could parse series Path at the same time.
+func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
 	if criteria == nil {
 		return nil, []tsdb.Entity{entity}, nil
 	}
 	switch criteria.GetExp().(type) {
-	case *model_v1.Criteria_Condition:
+	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
 		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
@@ -62,8 +62,8 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
-			if indexRule.Location == database_v1.IndexRule_LOCATION_GLOBAL {
-				return nil, nil, &GlobalIndexError{
+			if indexRule.Location == databasev1.IndexRule_LOCATION_GLOBAL {
+				return nil, nil, GlobalIndexError{
 					IndexRule: indexRule,
 					Expr:      expr,
 				}
@@ -71,10 +71,10 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 			return parseCondition(cond, indexRule, expr, entity)
 		}
 		return eNode, []tsdb.Entity{entity}, nil
-	case *model_v1.Criteria_Le:
+	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, errors.WithMessagef(ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
@@ -92,90 +92,93 @@ func BuildLocalFilter(criteria *model_v1.Criteria, schema Schema, entityDict map
 			return nil, entities, nil
 		}
 		switch le.Op {
-		case model_v1.LogicalExpression_LOGICAL_OP_AND:
+		case modelv1.LogicalExpression_LOGICAL_OP_AND:
 			and := newAnd(2)
 			and.append(left).append(right)
 			return and, entities, nil
-		case model_v1.LogicalExpression_LOGICAL_OP_OR:
+		case modelv1.LogicalExpression_LOGICAL_OP_OR:
 			or := newOr(2)
 			or.append(left).append(right)
 			return or, entities, nil
 		}
-
 	}
-	return nil, nil, ErrInvalidCriteriaType
+	return nil, nil, errInvalidCriteriaType
 }
 
-func parseCondition(cond *model_v1.Condition, indexRule *database_v1.IndexRule, expr LiteralExpr, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, expr LiteralExpr, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
 	switch cond.Op {
-	case model_v1.Condition_BINARY_OP_GT:
+	case modelv1.Condition_BINARY_OP_GT:
 		return newRange(indexRule, index.RangeOpts{
 			Lower: bytes.Join(expr.Bytes(), nil),
 		}), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_GE:
+	case modelv1.Condition_BINARY_OP_GE:
 		return newRange(indexRule, index.RangeOpts{
 			IncludesLower: true,
 			Lower:         bytes.Join(expr.Bytes(), nil),
 		}), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_LT:
+	case modelv1.Condition_BINARY_OP_LT:
 		return newRange(indexRule, index.RangeOpts{
 			Upper: bytes.Join(expr.Bytes(), nil),
 		}), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_LE:
+	case modelv1.Condition_BINARY_OP_LE:
 		return newRange(indexRule, index.RangeOpts{
 			IncludesUpper: true,
 			Upper:         bytes.Join(expr.Bytes(), nil),
 		}), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_EQ:
+	case modelv1.Condition_BINARY_OP_EQ:
 		return newEq(indexRule, expr), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_MATCH:
+	case modelv1.Condition_BINARY_OP_MATCH:
 		return newMatch(indexRule, expr), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_NE:
+	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_HAVING:
+	case modelv1.Condition_BINARY_OP_HAVING:
 		bb := expr.Bytes()
 		and := newAnd(len(bb))
 		for _, b := range bb {
 			and.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return and, []tsdb.Entity{entity}, nil
-	case model_v1.Condition_BINARY_OP_NOT_HAVING:
+	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		bb := expr.Bytes()
 		and := newAnd(len(bb))
 		for _, b := range bb {
 			and.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return newNot(indexRule, and), []tsdb.Entity{entity}, nil
+	case modelv1.Condition_BINARY_OP_IN:
+		panic("unimplemented")
+	case modelv1.Condition_BINARY_OP_NOT_IN:
+		panic("unimplemented")
 	}
-	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "index filter parses %v", cond)
+	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
-func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *model_v1.Condition) (LiteralExpr, tsdb.Entity, error) {
+func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *modelv1.Condition) (LiteralExpr, tsdb.Entity, error) {
 	parsedEntity := make(tsdb.Entity, len(entity))
 	copy(parsedEntity, entity)
 	entityIdx, ok := entityDict[cond.Name]
-	if ok && cond.Op != model_v1.Condition_BINARY_OP_EQ {
-		return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
+	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ {
+		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
 	}
 	switch v := cond.Value.Value.(type) {
-	case *model_v1.TagValue_Str:
+	case *modelv1.TagValue_Str:
 		if ok {
 			parsedEntity[entityIdx] = []byte(v.Str.GetValue())
 			return nil, parsedEntity, nil
 		}
-		return Str(v.Str.GetValue()), nil, nil
-	case *model_v1.TagValue_Id:
+		return str(v.Str.GetValue()), nil, nil
+	case *modelv1.TagValue_Id:
 		if ok {
 			parsedEntity[entityIdx] = []byte(v.Id.GetValue())
 			return nil, parsedEntity, nil
 		}
-		return ID(v.Id.GetValue()), nil, nil
+		return id(v.Id.GetValue()), nil, nil
 
-	case *model_v1.TagValue_StrArray:
+	case *modelv1.TagValue_StrArray:
 		return &strArrLiteral{
 			arr: v.StrArray.GetValue(),
 		}, nil, nil
-	case *model_v1.TagValue_Int:
+	case *modelv1.TagValue_Int:
 		if ok {
 			parsedEntity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
 			return nil, parsedEntity, nil
@@ -183,24 +186,24 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 		return &int64Literal{
 			int64: v.Int.GetValue(),
 		}, nil, nil
-	case *model_v1.TagValue_IntArray:
+	case *modelv1.TagValue_IntArray:
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil, nil
-	case *model_v1.TagValue_Null:
+	case *modelv1.TagValue_Null:
 		return nullLiteralExpr, nil, nil
 	}
-	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionValue, "index filter parses %v", cond)
+	return nil, nil, errors.WithMessagef(errUnsupportedConditionValue, "index filter parses %v", cond)
 }
 
-func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
+func parseEntities(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
 	count := len(input)
 	result := make(tsdb.Entity, count)
 	mergedEntities := make([]tsdb.Entity, 0, len(left)+len(right))
 	mergedEntities = append(mergedEntities, left...)
 	mergedEntities = append(mergedEntities, right...)
 	switch op {
-	case model_v1.LogicalExpression_LOGICAL_OP_AND:
+	case modelv1.LogicalExpression_LOGICAL_OP_AND:
 		for i := 0; i < count; i++ {
 			entry := tsdb.AnyEntry
 			for j := 0; j < len(mergedEntities); j++ {
@@ -216,7 +219,7 @@ func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, l
 			}
 			result[i] = entry
 		}
-	case model_v1.LogicalExpression_LOGICAL_OP_OR:
+	case modelv1.LogicalExpression_LOGICAL_OP_OR:
 		for i := 0; i < count; i++ {
 			entry := tsdb.AnyEntry
 			for j := 0; j < len(mergedEntities); j++ {
@@ -233,15 +236,15 @@ func parseEntities(op model_v1.LogicalExpression_LogicalOp, input tsdb.Entity, l
 	return []tsdb.Entity{result}
 }
 
-type FieldKey struct {
-	*database_v1.IndexRule
+type fieldKey struct {
+	*databasev1.IndexRule
 }
 
-func newFieldKey(indexRule *database_v1.IndexRule) FieldKey {
-	return FieldKey{indexRule}
+func newFieldKey(indexRule *databasev1.IndexRule) fieldKey {
+	return fieldKey{indexRule}
 }
 
-func (fk FieldKey) ToIndex(seriesID common.SeriesID) index.FieldKey {
+func (fk fieldKey) toIndex(seriesID common.SeriesID) index.FieldKey {
 	return index.FieldKey{
 		IndexRuleID: fk.Metadata.Id,
 		Analyzer:    fk.Analyzer,
@@ -378,7 +381,7 @@ func (on *orNode) String() string {
 
 type leaf struct {
 	index.Filter
-	Key  FieldKey
+	Key  fieldKey
 	Expr LiteralExpr
 }
 
@@ -391,11 +394,11 @@ func (l *leaf) MarshalJSON() ([]byte, error) {
 
 type not struct {
 	index.Filter
-	Key   FieldKey
+	Key   fieldKey
 	Inner index.Filter
 }
 
-func newNot(indexRule *database_v1.IndexRule, inner index.Filter) *not {
+func newNot(indexRule *databasev1.IndexRule, inner index.Filter) *not {
 	return &not{
 		Key:   newFieldKey(indexRule),
 		Inner: inner,
@@ -407,7 +410,7 @@ func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (pos
 	if err != nil {
 		return nil, err
 	}
-	all, err := s.MatchField(n.Key.ToIndex(seriesID))
+	all, err := s.MatchField(n.Key.toIndex(seriesID))
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +436,7 @@ type eq struct {
 	*leaf
 }
 
-func newEq(indexRule *database_v1.IndexRule, values LiteralExpr) *eq {
+func newEq(indexRule *databasev1.IndexRule, values LiteralExpr) *eq {
 	return &eq{
 		leaf: &leaf{
 			Key:  newFieldKey(indexRule),
@@ -448,7 +451,7 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (pos
 		return nil, err
 	}
 	return s.MatchTerms(index.Field{
-		Key:  eq.Key.ToIndex(seriesID),
+		Key:  eq.Key.toIndex(seriesID),
 		Term: bytes.Join(eq.Expr.Bytes(), nil),
 	})
 }
@@ -467,7 +470,7 @@ type match struct {
 	*leaf
 }
 
-func newMatch(indexRule *database_v1.IndexRule, values LiteralExpr) *match {
+func newMatch(indexRule *databasev1.IndexRule, values LiteralExpr) *match {
 	return &match{
 		leaf: &leaf{
 			Key:  newFieldKey(indexRule),
@@ -487,7 +490,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 		matches[i] = string(v)
 	}
 	return s.Match(
-		match.Key.ToIndex(seriesID),
+		match.Key.toIndex(seriesID),
 		matches,
 	)
 }
@@ -507,7 +510,7 @@ type rangeOp struct {
 	Opts index.RangeOpts
 }
 
-func newRange(indexRule *database_v1.IndexRule, opts index.RangeOpts) *rangeOp {
+func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 	return &rangeOp{
 		leaf: &leaf{
 			Key: newFieldKey(indexRule),
@@ -521,7 +524,7 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) 
 	if err != nil {
 		return nil, err
 	}
-	return s.Range(r.Key.ToIndex(seriesID), r.Opts)
+	return s.Range(r.Key.toIndex(seriesID), r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -568,7 +571,7 @@ var (
 
 type emptyNode struct{}
 
-func (an emptyNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID) (posting.List, error) {
 	return bList, nil
 }
 
@@ -578,7 +581,7 @@ func (an emptyNode) String() string {
 
 type bypassList struct{}
 
-func (bl bypassList) Contains(id common.ItemID) bool {
+func (bl bypassList) Contains(_ common.ItemID) bool {
 	// all items should be fetched
 	return true
 }
@@ -603,39 +606,39 @@ func (bl bypassList) Clone() posting.List {
 	panic("not invoked")
 }
 
-func (bl bypassList) Equal(other posting.List) bool {
+func (bl bypassList) Equal(_ posting.List) bool {
 	panic("not invoked")
 }
 
-func (bl bypassList) Insert(i common.ItemID) {
+func (bl bypassList) Insert(_ common.ItemID) {
 	panic("not invoked")
 }
 
-func (bl bypassList) Intersect(other posting.List) error {
+func (bl bypassList) Intersect(_ posting.List) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) Difference(other posting.List) error {
+func (bl bypassList) Difference(_ posting.List) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) Union(other posting.List) error {
+func (bl bypassList) Union(_ posting.List) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) UnionMany(others []posting.List) error {
+func (bl bypassList) UnionMany(_ []posting.List) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) AddIterator(iter posting.Iterator) error {
+func (bl bypassList) AddIterator(_ posting.Iterator) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) AddRange(min common.ItemID, max common.ItemID) error {
+func (bl bypassList) AddRange(_ common.ItemID, _ common.ItemID) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) RemoveRange(min common.ItemID, max common.ItemID) error {
+func (bl bypassList) RemoveRange(_ common.ItemID, _ common.ItemID) error {
 	panic("not invoked")
 }
 
@@ -651,7 +654,7 @@ func (bl bypassList) Marshall() ([]byte, error) {
 	panic("not invoked")
 }
 
-func (bl bypassList) Unmarshall(data []byte) error {
+func (bl bypassList) Unmarshall(_ []byte) error {
 	panic("not invoked")
 }
 

@@ -21,21 +21,21 @@ import (
 	"bytes"
 )
 
-// Writer writes bits to an io.BufferWriter
+// Writer writes bits to an io.BufferWriter.
 type Writer struct {
 	out       *bytes.Buffer
 	cache     byte
 	available byte
 }
 
-// NewWriter create bit writer
+// NewWriter create bit writer.
 func NewWriter(buffer *bytes.Buffer) *Writer {
 	bw := new(Writer)
 	bw.Reset(buffer)
 	return bw
 }
 
-// Reset writes to a new writer
+// Reset writes to a new writer.
 func (w *Writer) Reset(buffer *bytes.Buffer) {
 	if buffer == nil {
 		w.out.Reset()
@@ -64,13 +64,13 @@ func (w *Writer) WriteBool(b bool) {
 	}
 }
 
-// WriteBits writes number of bits
+// WriteBits writes number of bits.
 func (w *Writer) WriteBits(u uint64, numBits int) {
 	u <<= 64 - uint(numBits)
 
 	for ; numBits >= 8; numBits -= 8 {
 		byt := byte(u >> 56)
-		w.WriteByte(byt)
+		_ = w.WriteByte(byt)
 		u <<= 8
 	}
 
@@ -81,13 +81,16 @@ func (w *Writer) WriteBits(u uint64, numBits int) {
 	}
 }
 
-// WriteByte write a byte
-func (w *Writer) WriteByte(b byte) {
-	_ = w.out.WriteByte(w.cache | (b >> (8 - w.available)))
+// WriteByte write a byte.
+func (w *Writer) WriteByte(b byte) error {
+	if err := w.out.WriteByte(w.cache | (b >> (8 - w.available))); err != nil {
+		return err
+	}
 	w.cache = b << w.available
+	return nil
 }
 
-// Flush flushes the currently in-process byte
+// Flush flushes the currently in-process byte.
 func (w *Writer) Flush() {
 	if w.available != 8 {
 		_ = w.out.WriteByte(w.cache)

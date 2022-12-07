@@ -236,12 +236,12 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 var _ heap.Interface = (*postAggregationProcessor)(nil)
 
 type aggregatorItem struct {
-	key       string
 	int64Func aggregation.Int64Func
+	key       string
 	index     int
 }
 
-// postProcessor defines necessary methods for Top-N post processor with or without aggregation
+// postProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type postProcessor interface {
 	put(key string, val int64, timestampMillis uint64) error
 	val() []*measurev1.TopNList
@@ -266,14 +266,14 @@ func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 	return aggregator
 }
 
-// postAggregationProcessor is an implementation of postProcessor with aggregation
+// postAggregationProcessor is an implementation of postProcessor with aggregation.
 type postAggregationProcessor struct {
+	cache           map[string]*aggregatorItem
+	items           []*aggregatorItem
+	latestTimestamp uint64
 	topN            int32
 	sort            modelv1.Sort
 	aggrFunc        modelv1.AggregationFunction
-	items           []*aggregatorItem
-	cache           map[string]*aggregatorItem
-	latestTimestamp uint64
 }
 
 func (aggr postAggregationProcessor) Len() int {
@@ -393,9 +393,9 @@ func (n *nonAggregatorItem) SetIndex(i int) {
 }
 
 type postNonAggregationProcessor struct {
+	timelines map[uint64]*flow.DedupPriorityQueue
 	topN      int32
 	sort      modelv1.Sort
-	timelines map[uint64]*flow.DedupPriorityQueue
 }
 
 func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {

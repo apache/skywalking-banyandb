@@ -56,9 +56,9 @@ type healthCheckClient struct {
 	conn *grpc.ClientConn
 }
 
-func (g *healthCheckClient) Check(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+func (g *healthCheckClient) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	var resp *grpc_health_v1.HealthCheckResponse
-	if err := grpchelper.Request(context.Background(), 10*time.Second, func(rpcCtx context.Context) (err error) {
+	if err := grpchelper.Request(ctx, 10*time.Second, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(g.conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
 				Service: "",
@@ -70,6 +70,6 @@ func (g *healthCheckClient) Check(ctx context.Context, r *grpc_health_v1.HealthC
 	return resp, nil
 }
 
-func (g *healthCheckClient) Watch(ctx context.Context, r *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
+func (g *healthCheckClient) Watch(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
 	return nil, status.Error(codes.Unimplemented, "unimplemented")
 }

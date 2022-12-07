@@ -14,10 +14,13 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package grpchelper implements helpers to access gRPC services.
 package grpchelper
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"google.golang.org/grpc"
@@ -28,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// Conn returns a gRPC client connection once connecting the server.
 func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	defaultOpts := []grpc.DialOption{
 		grpc.WithBlock(),
@@ -40,7 +44,7 @@ func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grp
 	defer dialCancel()
 	conn, err := grpc.DialContext(dialCtx, addr, opts...)
 	if err != nil {
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			l.Warn().Str("addr", addr).Dur("timeout", connTimeout).Msg("timeout: failed to connect service")
 		} else {
 			l.Warn().Str("addr", addr).Err(err).Msg("error: failed to connect service")
@@ -54,6 +58,8 @@ func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grp
 	return conn, nil
 }
 
+// Request execute a input closure to send traffics.
+// It provides common features like timeout, error handling, and etc.
 func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx context.Context) error) error {
 	rpcStart := time.Now()
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)

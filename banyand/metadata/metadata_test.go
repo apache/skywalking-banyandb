@@ -19,7 +19,6 @@ package metadata
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +26,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	testhelper "github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	test "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
@@ -43,14 +43,15 @@ func Test_service_RulesBySubject(t *testing.T) {
 	ctx := context.TODO()
 	s, _ := NewService(ctx)
 	is.NotNil(s)
-	rootDir := test.RandomTempDir()
-	err := s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
+	rootDir, deferFn, err := testhelper.NewSpace()
+	is.NoError(err)
+	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 	is.NoError(err)
 	err = s.PreRun()
 	is.NoError(err)
 	defer func() {
 		s.GracefulStop()
-		_ = os.RemoveAll(rootDir)
+		deferFn()
 	}()
 
 	err = test.PreloadSchema(s.SchemaRegistry())
@@ -100,16 +101,16 @@ func Test_service_RulesBySubject(t *testing.T) {
 				t.Errorf("RulesBySubject() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			is.Equal(getIndexRule(s, tt.want...), got)
+			is.Equal(getIndexRule(ctx, s, tt.want...), got)
 		})
 	}
 }
 
-func getIndexRule(s Service, names ...string) []*databasev1.IndexRule {
+func getIndexRule(ctx context.Context, s Service, names ...string) []*databasev1.IndexRule {
 	ruleRepo := s.IndexRuleRegistry()
 	result := make([]*databasev1.IndexRule, 0, len(names))
 	for _, name := range names {
-		indexRule, _ := ruleRepo.GetIndexRule(context.TODO(), &commonv1.Metadata{
+		indexRule, _ := ruleRepo.GetIndexRule(ctx, &commonv1.Metadata{
 			Group: "default",
 			Name:  name,
 		})

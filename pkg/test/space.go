@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Space create a tmp dir and returns the path and its clear function.
+// It will be panic when encountering some errors.
 func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 	var tempDirErr error
 	tempDir, tempDirErr = os.MkdirTemp("", "banyandb-test-*")
@@ -35,6 +37,8 @@ func Space(t *require.Assertions) (tempDir string, deferFunc func()) {
 	}
 }
 
+// NewSpace create a tmp dir and returns the path and its clear function.
+// It will return any error when failed to create this dir.
 func NewSpace() (tempDir string, deferFunc func(), err error) {
 	tempDir, err = os.MkdirTemp("", "banyandb-test-*")
 	return tempDir, func() {

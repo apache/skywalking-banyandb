@@ -42,12 +42,13 @@ var (
 )
 
 type intEncoderPoolDelegator struct {
-	name string
 	pool *sync.Pool
-	size int
 	fn   ParseInterval
+	name string
+	size int
 }
 
+// NewIntEncoderPool returns a SeriesEncoderPool which provides int-based xor encoders.
 func NewIntEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
 	return &intEncoderPoolDelegator{
 		name: name,
@@ -80,6 +81,7 @@ type intDecoderPoolDelegator struct {
 	size int
 }
 
+// NewIntDecoderPool returns a SeriesDecoderPool which provides int-based xor decoders.
 func NewIntDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
 	return &intDecoderPoolDelegator{
 		name: name,
@@ -106,14 +108,15 @@ func (b *intDecoderPoolDelegator) Put(decoder SeriesDecoder) {
 
 var _ SeriesEncoder = (*intEncoder)(nil)
 
+// ParseInterval parses the interval rule from the key in a kv pair.
 type ParseInterval = func(key []byte) time.Duration
 
 type intEncoder struct {
-	name      string
 	buff      *bytes.Buffer
 	bw        *bit.Writer
 	values    *XOREncoder
 	fn        ParseInterval
+	name      string
 	interval  time.Duration
 	startTime uint64
 	prevTime  uint64
@@ -189,18 +192,18 @@ func (ie *intEncoder) StartTime() uint64 {
 var _ SeriesDecoder = (*intDecoder)(nil)
 
 type intDecoder struct {
-	name      string
 	fn        ParseInterval
+	name      string
+	area      []byte
 	size      int
 	interval  time.Duration
 	startTime uint64
 	num       int
-	area      []byte
 }
 
 func (i *intDecoder) Decode(key, data []byte) error {
 	if len(data) < 10 {
-		return ErrInvalidValue
+		return errInvalidValue
 	}
 	i.interval = i.fn(key)
 	i.startTime = binary.LittleEndian.Uint64(data[len(data)-10 : len(data)-2])
@@ -248,16 +251,15 @@ var (
 )
 
 type intIterator struct {
+	err      error
+	br       *bit.Reader
+	values   *XORDecoder
 	endTime  uint64
 	interval int
 	size     int
-	br       *bit.Reader
-	values   *XORDecoder
-
 	currVal  uint64
 	currTime uint64
 	index    int
-	err      error
 }
 
 func (i *intIterator) Next() bool {
