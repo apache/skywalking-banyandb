@@ -329,7 +329,6 @@ func (s *seriesDB) Get(key []byte, entityValues EntityValues) (Series, error) {
 
 		var series string
 		if e := s.l.Debug(); e.Enabled() {
-			// TODO: store following info when the debug is enabled
 			errDecode = s.seriesMetadata.Put(prepend(seriesID.Marshal(), seriesPrefix), entityValuesBytes)
 			if errDecode != nil {
 				return nil, errDecode

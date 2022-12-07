@@ -52,7 +52,8 @@ var (
 )
 
 type queryService struct {
-	log         *logger.Logger
+	log *logger.Logger
+	// TODO: remove the metaService once https://github.com/apache/skywalking/issues/10121 is fixed.
 	metaService metadata.Service
 	serviceRepo discovery.ServiceRepo
 	pipeline    queue.Queue
@@ -85,19 +86,13 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical_stream.CreateAnalyzerFromMetaService(p.metaService)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build analyzer for stream %s: %v", meta.GetName(), err))
-		return
-	}
-
-	s, err := analyzer.BuildSchema(context.TODO(), meta)
+	s, err := logical_stream.BuildSchema(ec)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
 		return
 	}
 
-	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := logical_stream.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
 		return
@@ -143,19 +138,13 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	analyzer, err := logical_measure.CreateAnalyzerFromMetaService(p.metaService)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build analyzer for measure %s: %v", meta.GetName(), err))
-		return
-	}
-
-	s, err := analyzer.BuildSchema(context.TODO(), meta)
+	s, err := logical_measure.BuildSchema(ec)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
 		return
 	}
 
-	plan, err := analyzer.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := logical_measure.Analyze(context.TODO(), queryCriteria, meta, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return

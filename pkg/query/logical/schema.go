@@ -20,7 +20,6 @@ package logical
 import (
 	"github.com/pkg/errors"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
@@ -36,7 +35,6 @@ type Schema interface {
 	ProjTags(refs ...[]*TagRef) Schema
 	ProjFields(refs ...*FieldRef) Schema
 	Equal(Schema) bool
-	ShardNumber() uint32
 }
 
 // TagSpec wraps offsets to access a tag in the raw data swiftly.
@@ -55,7 +53,6 @@ func (fs *TagSpec) Equal(other *TagSpec) bool {
 // CommonSchema represents a sharable fields between independent schemas.
 // It provides common access methods at the same time.
 type CommonSchema struct {
-	Group      *commonv1.Group
 	IndexRules []*databasev1.IndexRule
 	TagMap     map[string]*TagSpec
 	EntityList []string
@@ -90,11 +87,6 @@ func (cs *CommonSchema) RegisterTag(tagFamilyIdx, tagIdx int, spec *databasev1.T
 		TagFamilyIdx: tagFamilyIdx,
 		Spec:         spec,
 	}
-}
-
-// ShardNumber returns the number of shards defined by the schema.
-func (cs *CommonSchema) ShardNumber() uint32 {
-	return cs.Group.ResourceOpts.ShardNum
 }
 
 // IndexDefined checks whether the field given is indexed.
