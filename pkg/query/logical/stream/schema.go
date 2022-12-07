@@ -86,10 +86,6 @@ func (s *schema) ProjFields(...*logical.FieldRef) logical.Schema {
 	panic("stream does not support field")
 }
 
-func (s *schema) ShardNumber() uint32 {
-	return s.common.ShardNumber()
-}
-
 func (s *schema) Scope() tsdb.Entry {
 	return tsdb.Entry(s.stream.Metadata.Name)
 }

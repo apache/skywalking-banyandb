@@ -104,10 +104,6 @@ func (m *schema) Equal(s2 logical.Schema) bool {
 	return false
 }
 
-func (m *schema) ShardNumber() uint32 {
-	return m.common.ShardNumber()
-}
-
 // registerTag registers the tag spec with given tagFamilyIdx and tagIdx.
 func (m *schema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
 	m.common.RegisterTag(tagFamilyIdx, tagIdx, spec)

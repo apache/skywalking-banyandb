@@ -54,6 +54,10 @@ func (s *stream) GetMetadata() *commonv1.Metadata {
 	return s.schema.Metadata
 }
 
+func (s *stream) GetSchema() *databasev1.Stream {
+	return s.schema
+}
+
 func (s *stream) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
