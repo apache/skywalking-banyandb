@@ -76,6 +76,13 @@ func (l *Logger) Named(name ...string) *Logger {
 	return &Logger{module: module, modules: l.modules, Logger: &subLogger}
 }
 
+// Sampled return a Logger with a sampler that will send every Nth events.
+func (l *Logger) Sampled(n uint32) *Logger {
+	sampled := l.Logger.Sample(&zerolog.BasicSampler{N: n})
+	l.Logger = &sampled
+	return l
+}
+
 // Loggable indicates the implement supports logging.
 type Loggable interface {
 	SetLogger(*Logger)

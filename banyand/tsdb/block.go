@@ -78,6 +78,7 @@ type block struct {
 	lock        sync.RWMutex
 	segID       SectionID
 	blockID     SectionID
+	indexOpts   InvertedIndexOpts
 }
 
 type blockOpts struct {
@@ -145,6 +146,7 @@ func (b *block) options(ctx context.Context) {
 	if b.lsmMemSize < defaultKVMemorySize {
 		b.lsmMemSize = defaultKVMemorySize
 	}
+	b.indexOpts = options.BlockInvertedIndex
 }
 
 func (b *block) openSafely() (err error) {
@@ -171,8 +173,9 @@ func (b *block) open() (err error) {
 	}
 	b.closableLst = append(b.closableLst, b.store)
 	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
-		Path:   path.Join(b.path, componentSecondInvertedIdx),
-		Logger: b.l.Named(componentSecondInvertedIdx),
+		Path:         path.Join(b.path, componentSecondInvertedIdx),
+		Logger:       b.l.Named(componentSecondInvertedIdx),
+		BatchWaitSec: b.indexOpts.BatchWaitSec,
 	}); err != nil {
 		return err
 	}

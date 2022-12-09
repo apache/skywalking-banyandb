@@ -49,10 +49,12 @@ func (f FieldKey) MarshalIndexRule() string {
 
 // Marshal encodes f to bytes.
 func (f FieldKey) Marshal() []byte {
-	return bytes.Join([][]byte{
-		f.SeriesID.Marshal(),
-		convert.Uint32ToBytes(f.IndexRuleID),
-	}, nil)
+	s := f.SeriesID.Marshal()
+	i := []byte(f.MarshalIndexRule())
+	b := make([]byte, len(s)+len(i))
+	bp := copy(b, s)
+	copy(b[bp:], i)
+	return b
 }
 
 // MarshalToStr encodes f to string.
@@ -79,8 +81,20 @@ type Field struct {
 }
 
 // Marshal encodes f to bytes.
-func (f Field) Marshal() ([]byte, error) {
-	return bytes.Join([][]byte{f.Key.Marshal(), f.Term}, nil), nil
+func (f Field) Marshal() []byte {
+	s := f.Key.SeriesID.Marshal()
+	i := []byte(f.Key.MarshalIndexRule())
+	b := make([]byte, len(s)+len(i)+len(f.Term))
+	bp := copy(b, s)
+	bp += copy(b[bp:], i)
+	copy(b[bp:], f.Term)
+	return b
+}
+
+// FieldStr return a string represent of Field which is composed by key and term.
+func FieldStr(key FieldKey, term []byte) string {
+	f := Field{Key: key, Term: term}
+	return string(f.Marshal())
 }
 
 // Unmarshal decodes bytes to f.
@@ -93,10 +107,16 @@ func (f *Field) Unmarshal(raw []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "unmarshal a field")
 	}
-	term := raw[12:]
-	f.Term = make([]byte, len(term))
-	copy(f.Term, term)
+	f.Term = UnmarshalTerm(raw)
 	return nil
+}
+
+// UnmarshalTerm decodes term from a encoded field.
+func UnmarshalTerm(raw []byte) []byte {
+	term := raw[12:]
+	result := make([]byte, len(term))
+	copy(result, term)
+	return result
 }
 
 // RangeOpts contains options to performance a continuous scan.

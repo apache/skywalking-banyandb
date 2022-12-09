@@ -23,10 +23,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -89,7 +91,6 @@ func (eh *eventHandler) interestOf(kind Kind) bool {
 type etcdSchemaRegistry struct {
 	server   *embed.Etcd
 	client   *clientv3.Client
-	kv       clientv3.KV
 	handlers []*eventHandler
 	mux      sync.RWMutex
 }
@@ -173,21 +174,26 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if e != nil {
 		<-e.Server.ReadyNotify() // wait for e.Server to join the cluster
 	}
-	client, err := clientv3.NewFromURL(e.Config().ACUrls[0].String())
+	config := clientv3.Config{
+		Endpoints:            []string{e.Config().ACUrls[0].String()},
+		DialTimeout:          5 * time.Second,
+		DialKeepAliveTime:    30 * time.Second,
+		DialKeepAliveTimeout: 10 * time.Second,
+		DialOptions:          []grpc.DialOption{grpc.WithBlock()},
+	}
+	client, err := clientv3.New(config)
 	if err != nil {
 		return nil, err
 	}
-	kvClient := clientv3.NewKV(client)
 	reg := &etcdSchemaRegistry{
 		server: e,
-		kv:     kvClient,
 		client: client,
 	}
 	return reg, nil
 }
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
-	resp, err := e.kv.Get(ctx, key)
+	resp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -216,7 +222,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 	if err != nil {
 		return err
 	}
-	getResp, err := e.kv.Get(ctx, key)
+	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -239,7 +245,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 		}
 
 		modRevision := getResp.Kvs[0].ModRevision
-		txnResp, txnErr := e.kv.Txn(ctx).
+		txnResp, txnErr := e.client.Txn(ctx).
 			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
 			Then(clientv3.OpPut(key, string(val))).
 			Commit()
@@ -264,7 +270,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 	if err != nil {
 		return err
 	}
-	getResp, err := e.kv.Get(ctx, key)
+	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -279,7 +285,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 	if replace {
 		return errGRPCAlreadyExists
 	}
-	_, err = e.kv.Put(ctx, key, string(val))
+	_, err = e.client.Put(ctx, key, string(val))
 	if err != nil {
 		return err
 	}
@@ -289,7 +295,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 }
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
-	resp, err := e.kv.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +324,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	if err != nil {
 		return false, err
 	}
-	resp, err := e.kv.Delete(ctx, key, clientv3.WithPrevKV())
+	resp, err := e.client.Delete(ctx, key, clientv3.WithPrevKV())
 	if err != nil {
 		return false, err
 	}

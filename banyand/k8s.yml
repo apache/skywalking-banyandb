@@ -81,6 +81,7 @@ spec:
         image: apache/skywalking-banyandb:v0.0.0-dev
         args:
         - "standalone"
+        - "--measure-idx-batch-wait-sec=30"
         - "--logging.level=warn"
         - "--logging.modules=measure.measure-default.service_cpm_minute"
         - "--logging.levels=debug"

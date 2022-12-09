@@ -82,6 +82,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	flagS.Int64Var(&s.dbOpts.BlockMemSize, "measure-block-mem-size", 16<<20, "block memory size")
 	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", 1<<20, "series metadata memory size")
+	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "measure-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
 }
 
