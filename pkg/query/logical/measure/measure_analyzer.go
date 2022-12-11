@@ -22,57 +22,33 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// Analyzer analyzes the measure querying expression to the execution plan.
-type Analyzer struct {
-	metadataRepoImpl metadata.Repo
-}
-
-// CreateAnalyzerFromMetaService returns a Analyzer.
-func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
-	return &Analyzer{
-		metaSvc,
-	}, nil
-}
-
 // BuildSchema returns Schema loaded from the metadata repository.
-func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
-	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return nil, err
-	}
-	measure, err := a.metadataRepoImpl.MeasureRegistry().GetMeasure(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
-
-	indexRules, err := a.metadataRepoImpl.IndexRules(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
+func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
+	md := measureSchema.GetSchema()
+	md.GetEntity()
 
 	ms := &schema{
 		common: &logical.CommonSchema{
-			Group:      group,
-			IndexRules: indexRules,
+			IndexRules: measureSchema.GetIndexRules(),
 			TagMap:     make(map[string]*logical.TagSpec),
-			EntityList: measure.GetEntity().GetTagNames(),
+			EntityList: md.GetEntity().GetTagNames(),
 		},
-		measure:  measure,
+		measure:  md,
 		fieldMap: make(map[string]*logical.FieldSpec),
 	}
 
-	for tagFamilyIdx, tagFamily := range measure.GetTagFamilies() {
+	for tagFamilyIdx, tagFamily := range md.GetTagFamilies() {
 		for tagIdx, spec := range tagFamily.GetTags() {
 			ms.registerTag(tagFamilyIdx, tagIdx, spec)
 		}
 	}
 
-	for fieldIdx, spec := range measure.GetFields() {
+	for fieldIdx, spec := range md.GetFields() {
 		ms.registerField(fieldIdx, spec)
 	}
 
@@ -80,7 +56,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func (a *Analyzer) Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	groupByEntity := false
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {

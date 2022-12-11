@@ -45,6 +45,8 @@ type Stream interface {
 	Shard(id common.ShardID) (tsdb.Shard, error)
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
 	ParseElementID(item tsdb.Item) (string, error)
+	GetSchema() *databasev1.Stream
+	GetIndexRules() []*databasev1.IndexRule
 }
 
 var _ Stream = (*stream)(nil)

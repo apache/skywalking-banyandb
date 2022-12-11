@@ -22,50 +22,25 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// Analyzer analyzes the stream querying expression to the execution plan.
-type Analyzer struct {
-	metadataRepoImpl metadata.Repo
-}
-
-// CreateAnalyzerFromMetaService returns a Analyzer.
-func CreateAnalyzerFromMetaService(metaSvc metadata.Service) (*Analyzer, error) {
-	return &Analyzer{
-		metaSvc,
-	}, nil
-}
-
 // BuildSchema returns Schema loaded from the metadata repository.
-func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata) (logical.Schema, error) {
-	group, err := a.metadataRepoImpl.GroupRegistry().GetGroup(ctx, metadata.GetGroup())
-	if err != nil {
-		return nil, err
-	}
-	stream, err := a.metadataRepoImpl.StreamRegistry().GetStream(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
-
-	indexRules, err := a.metadataRepoImpl.IndexRules(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
+func BuildSchema(streamSchema stream.Stream) (logical.Schema, error) {
+	sm := streamSchema.GetSchema()
 
 	s := &schema{
 		common: &logical.CommonSchema{
-			Group:      group,
-			IndexRules: indexRules,
+			IndexRules: streamSchema.GetIndexRules(),
 			TagMap:     make(map[string]*logical.TagSpec),
-			EntityList: stream.GetEntity().GetTagNames(),
+			EntityList: sm.GetEntity().GetTagNames(),
 		},
-		stream: stream,
+		stream: sm,
 	}
 
 	// generate the streamSchema of the fields for the traceSeries
-	for tagFamilyIdx, tagFamily := range stream.GetTagFamilies() {
+	for tagFamilyIdx, tagFamily := range sm.GetTagFamilies() {
 		for tagIdx, spec := range tagFamily.GetTags() {
 			s.registerTag(tagFamilyIdx, tagIdx, spec)
 		}
@@ -75,7 +50,7 @@ func (a *Analyzer) BuildSchema(ctx context.Context, metadata *commonv1.Metadata)
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func (a *Analyzer) Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	// parse fields
 	plan := parseTags(criteria, metadata)
 
