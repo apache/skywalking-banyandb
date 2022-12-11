@@ -281,7 +281,6 @@ func (s *store) run() {
 		defer s.closer.Done()
 		size := 0
 		batch := bluge.NewBatch()
-		timer := time.NewTimer(s.batchInterval)
 		flush := func() {
 			if size < 1 {
 				return
@@ -291,10 +290,10 @@ func (s *store) run() {
 			}
 			batch.Reset()
 			size = 0
-			timer = time.NewTimer(s.batchInterval)
 		}
 		var docIDBuffer bytes.Buffer
 		for {
+			timer := time.NewTimer(s.batchInterval)
 			select {
 			case <-s.closer.CloseNotify():
 				return
@@ -319,7 +318,7 @@ func (s *store) run() {
 							doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Marshal()).StoreValue().Sortable())
 						} else {
 							toAddSeriesIDField = true
-							doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).StoreValue().
+							doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).StoreValue().Sortable().
 								WithAnalyzer(analyzers[f.Key.Analyzer]))
 						}
 					}
@@ -327,13 +326,11 @@ func (s *store) run() {
 						doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
 					}
 					size++
+					batch.Update(doc.ID(), doc)
 					if size >= batchSize {
 						flush()
-					} else {
-						batch.Update(doc.ID(), doc)
 					}
 				}
-
 			case <-timer.C:
 				flush()
 			}
