@@ -34,6 +34,8 @@ var (
 	errGRPCAlreadyExists       = statusGRPCAlreadyExists.Err()
 	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
 	errGRPCDataLoss            = statusDataLoss.Err()
+
+	errClosed = errors.New("metadata registry is closed")
 )
 
 // BadRequest creates a gRPC error with error details with type BadRequest,

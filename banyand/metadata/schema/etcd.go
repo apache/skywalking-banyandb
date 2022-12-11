@@ -28,12 +28,15 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -64,13 +67,6 @@ func RootDir(rootDir string) RegistryOption {
 	}
 }
 
-// LoggerLevel sets the logger level.
-func LoggerLevel(loggerLevel string) RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.loggerLevel = loggerLevel
-	}
-}
-
 // ConfigureListener sets client and peer urls of listeners.
 func ConfigureListener(lc, lp string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
@@ -91,6 +87,7 @@ func (eh *eventHandler) interestOf(kind Kind) bool {
 type etcdSchemaRegistry struct {
 	server   *embed.Etcd
 	client   *clientv3.Client
+	closer   *run.Closer
 	handlers []*eventHandler
 	mux      sync.RWMutex
 }
@@ -102,8 +99,6 @@ type etcdSchemaRegistryConfig struct {
 	listenerClientURL string
 	// listenerPeerURL is the listener for peer
 	listenerPeerURL string
-	// loggerLevel defines log level
-	loggerLevel string
 }
 
 func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
@@ -150,6 +145,7 @@ func (e *etcdSchemaRegistry) StoppingNotify() <-chan struct{} {
 }
 
 func (e *etcdSchemaRegistry) Close() error {
+	e.closer.CloseThenWait()
 	_ = e.client.Close()
 	e.server.Close()
 	return nil
@@ -165,8 +161,15 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	for _, opt := range options {
 		opt(registryConfig)
 	}
+	zapCfg := logger.GetLogger("etcd").ToZapConfig()
+
+	var l *zap.Logger
+	var err error
+	if l, err = zapCfg.Build(); err != nil {
+		return nil, err
+	}
 	// TODO: allow use cluster setting
-	embedConfig := newStandaloneEtcdConfig(registryConfig)
+	embedConfig := newStandaloneEtcdConfig(registryConfig, l)
 	e, err := embed.StartEtcd(embedConfig)
 	if err != nil {
 		return nil, err
@@ -174,12 +177,14 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if e != nil {
 		<-e.Server.ReadyNotify() // wait for e.Server to join the cluster
 	}
+
 	config := clientv3.Config{
 		Endpoints:            []string{e.Config().ACUrls[0].String()},
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
 		DialOptions:          []grpc.DialOption{grpc.WithBlock()},
+		Logger:               l,
 	}
 	client, err := clientv3.New(config)
 	if err != nil {
@@ -188,11 +193,16 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	reg := &etcdSchemaRegistry{
 		server: e,
 		client: client,
+		closer: run.NewCloser(0),
 	}
 	return reg, nil
 }
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
+	if !e.closer.AddRunning() {
+		return errClosed
+	}
+	defer e.closer.Done()
 	resp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return err
@@ -218,6 +228,10 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // and overwrite the existing value if so.
 // Otherwise, it will return ErrGRPCResourceNotFound.
 func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
+	if !e.closer.AddRunning() {
+		return errClosed
+	}
+	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
 		return err
@@ -266,6 +280,10 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 // and put the value if it does not exist.
 // Otherwise, it will return ErrGRPCAlreadyExists.
 func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
+	if !e.closer.AddRunning() {
+		return errClosed
+	}
+	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
 		return err
@@ -295,6 +313,10 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 }
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
+	if !e.closer.AddRunning() {
+		return nil, errClosed
+	}
+	defer e.closer.Done()
 	resp, err := e.client.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
 	if err != nil {
 		return nil, err
@@ -320,6 +342,10 @@ func listPrefixesForEntity(group, entityPrefix string) string {
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
+	if !e.closer.AddRunning() {
+		return false, errClosed
+	}
+	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
 		return false, err
@@ -371,9 +397,9 @@ func incrementLastByte(key string) string {
 	return string(bb)
 }
 
-func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig) *embed.Config {
+func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logger) *embed.Config {
 	cfg := embed.NewConfig()
-	cfg.LogLevel = config.loggerLevel
+	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
 	cURL, _ := url.Parse(config.listenerClientURL)
 	pURL, _ := url.Parse(config.listenerPeerURL)

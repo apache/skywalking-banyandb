@@ -112,25 +112,21 @@ func getLogger(cfg Logging) (*Logger, error) {
 		return nil, err
 	}
 	var w io.Writer
-	switch cfg.Env {
-	case "dev":
+	development := strings.EqualFold(cfg.Env, "DEV")
+
+	if development {
 		cw := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
 		cw.FormatLevel = func(i interface{}) string {
 			return strings.ToUpper(fmt.Sprintf("| %-6s|", i))
 		}
-		cw.FormatMessage = func(i interface{}) string {
-			return fmt.Sprintf("***%s****", i)
-		}
-		cw.FormatFieldName = func(i interface{}) string {
-			return fmt.Sprintf("%s:", i)
-		}
-		cw.FormatFieldValue = func(i interface{}) string {
-			return strings.ToUpper(fmt.Sprintf("%s", i))
-		}
 		w = io.Writer(cw)
-	default:
-		w = os.Stdout
+	} else {
+		w = os.Stderr
 	}
-	l := zerolog.New(w).Level(lvl).With().Timestamp().Logger()
-	return &Logger{module: rootName, Logger: &l, modules: modules}, nil
+	ctx := zerolog.New(w).Level(lvl).With().Timestamp()
+	if development {
+		ctx = ctx.Stack().Caller()
+	}
+	l := ctx.Logger()
+	return &Logger{module: rootName, Logger: &l, modules: modules, development: development}, nil
 }

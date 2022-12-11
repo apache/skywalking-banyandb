@@ -21,9 +21,13 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // ContextKey is the key to store Logger in the context.
@@ -42,8 +46,9 @@ type Logging struct {
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
 type Logger struct {
 	*zerolog.Logger
-	modules map[string]zerolog.Level
-	module  string
+	modules     map[string]zerolog.Level
+	module      string
+	development bool
 }
 
 // Module returns logger's module name.
@@ -73,7 +78,7 @@ func (l *Logger) Named(name ...string) *Logger {
 		}
 	}
 	subLogger := root.l.With().Str("module", moduleBuilder.String()).Logger().Level(level)
-	return &Logger{module: module, modules: l.modules, Logger: &subLogger}
+	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger}
 }
 
 // Sampled return a Logger with a sampler that will send every Nth events.
@@ -81,6 +86,47 @@ func (l *Logger) Sampled(n uint32) *Logger {
 	sampled := l.Logger.Sample(&zerolog.BasicSampler{N: n})
 	l.Logger = &sampled
 	return l
+}
+
+// ToZapConfig outputs the zap config is derived from l.
+func (l *Logger) ToZapConfig() zap.Config {
+	level, err := zap.ParseAtomicLevel(l.GetLevel().String())
+	if err != nil {
+		panic(err)
+	}
+	if !l.development {
+		config := zap.NewProductionConfig()
+		config.Level = level
+		return config
+	}
+	encoderConfig := zapcore.EncoderConfig{
+		// Keys can be anything except the empty string.
+		TimeKey:       "T",
+		LevelKey:      "L",
+		NameKey:       "N",
+		CallerKey:     "C",
+		FunctionKey:   zapcore.OmitKey,
+		MessageKey:    "M",
+		StacktraceKey: "S",
+		LineEnding:    zapcore.DefaultLineEnding,
+		EncodeLevel: func(l zapcore.Level, pae zapcore.PrimitiveArrayEncoder) {
+			pae.AppendString(strings.ToUpper(fmt.Sprintf("| %-6s|", l.String())))
+		},
+		EncodeTime: func(t time.Time, pae zapcore.PrimitiveArrayEncoder) {
+			pae.AppendString(t.Format(time.RFC3339))
+		},
+		EncodeDuration:   zapcore.StringDurationEncoder,
+		EncodeCaller:     zapcore.FullCallerEncoder,
+		ConsoleSeparator: " ",
+	}
+	return zap.Config{
+		Level:            level,
+		Development:      true,
+		Encoding:         "console",
+		EncoderConfig:    encoderConfig,
+		OutputPaths:      []string{"stderr"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
 }
 
 // Loggable indicates the implement supports logging.
