@@ -21,7 +21,7 @@ services:
       - 6060
     command: standalone
     healthcheck:
-      test: ["CMD", "/grpc-health-probe", "-addr=localhost:17912"]
+      test: wget --spider http://localhost:17913 || wget --spider --no-check-certificate https://localhost:17913 || exit 1
       interval: 5s
       timeout: 10s
       retries: 120

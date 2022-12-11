@@ -54,13 +54,3 @@ EXPOSE 17913
 EXPOSE 6060
 
 ENTRYPOINT ["/banyand-server"]
-
-FROM busybox:stable-glibc AS test
-
-COPY --from=builder /out/banyand-server /banyand-server
-
-EXPOSE 17912
-EXPOSE 17913
-EXPOSE 6060
-
-ENTRYPOINT ["/banyand-server"]
