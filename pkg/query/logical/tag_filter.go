@@ -115,7 +115,7 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 	case modelv1.Condition_BINARY_OP_IN:
 		return newInTag(cond.Name, expr), nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
-		return newNotInTag(cond.Name, expr), nil
+		return newNotTag(newInTag(cond.Name, expr)), nil
 	default:
 		return nil, errors.WithMessagef(errUnsupportedConditionOp, "tag filter parses %v", cond)
 	}
@@ -300,7 +300,7 @@ func (n *notTag) String() string {
 	return jsonToString(n)
 }
 
-type eqTag struct {
+type inTag struct {
 	*tagLeaf
 }
 
@@ -313,7 +313,7 @@ func newInTag(tagName string, values LiteralExpr) *inTag {
 	}
 }
 
-func (h *inTag) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {
+func (h *inTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
 	expr, err := tagExpr(tagFamilies, h.Name)
 	if err != nil {
 		return false, err
@@ -321,21 +321,8 @@ func (h *inTag) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {
 	return expr.BelongTo(h.Expr), nil
 }
 
-func newNotInTag(tagName string, values LiteralExpr) *notInTag {
-	return &notInTag{
-		tagLeaf: &tagLeaf{
-			Name: tagName,
-			Expr: values,
-		},
-	}
-}
-
-func (h *notInTag) Match(tagFamilies []*model_v1.TagFamily) (bool, error) {
-	expr, err := tagExpr(tagFamilies, h.Name)
-	if err != nil {
-		return false, err
-	}
-	return expr.BelongTo(h.Expr), nil
+type eqTag struct {
+	*tagLeaf
 }
 
 func newEqTag(tagName string, values LiteralExpr) *eqTag {
