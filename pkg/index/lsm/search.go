@@ -39,12 +39,8 @@ func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err erro
 }
 
 func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
-	f, err := field.Marshal()
-	if err != nil {
-		return nil, err
-	}
 	list = roaring.NewPostingList()
-	err = s.lsm.GetAll(f, func(itemID []byte) error {
+	err = s.lsm.GetAll(field.Marshal(), func(itemID []byte) error {
 		list.Insert(common.ItemID(convert.BytesToUint64(itemID)))
 		return nil
 	})
@@ -94,7 +90,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 				pv.Value.Insert(common.ItemID(itemID))
 			}
 			return pv, nil
-		})
+		}), nil
 }
 
 func (s *store) Match(_ index.FieldKey, _ []string) (posting.List, error) {

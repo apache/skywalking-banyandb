@@ -101,7 +101,7 @@ func NewQueue(l *logger.Logger, size int, maxSize int, scheduler *timestamp.Sche
 		evictFn:     evictFn,
 		l:           l,
 	}
-	if err := scheduler.Register(QueueName, cron.Descriptor, "@every 1m", c.cleanEvict); err != nil {
+	if err := scheduler.Register(QueueName, cron.Descriptor, "@every 5m", c.cleanEvict); err != nil {
 		return nil, err
 	}
 	return c, nil

@@ -112,6 +112,8 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 
 func (s *server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
+	s.streamSVC.setLogger(s.log)
+	s.measureSVC.setLogger(s.log)
 	components := []struct {
 		discoverySVC *discoveryService
 		shardEvent   bus.Topic

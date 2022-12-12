@@ -59,12 +59,9 @@ type indexDB struct {
 
 func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 	result := make([]GlobalItemID, 0)
-	f, err := field.Marshal()
-	if err != nil {
-		return nil, err
-	}
+	f := field.Marshal()
 	for _, s := range i.segCtrl.segments() {
-		err = s.globalIndex.GetAll(f, func(rawBytes []byte) error {
+		err := s.globalIndex.GetAll(f, func(rawBytes []byte) error {
 			id := &GlobalItemID{}
 			errUnMarshal := id.unMarshal(rawBytes)
 			if errUnMarshal != nil {
@@ -76,8 +73,11 @@ func (i *indexDB) Seek(field index.Field) ([]GlobalItemID, error) {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return result, nil
 		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	return result, err
+	return result, nil
 }
 
 func (i *indexDB) WriterBuilder() IndexWriterBuilder {
@@ -151,12 +151,7 @@ func (i *indexWriter) WriteLSMIndex(fields []index.Field) (err error) {
 		if i.scope != nil {
 			field.Key.SeriesID = GlobalSeriesID(i.scope)
 		}
-		key, errInternal := field.Marshal()
-		if errInternal != nil {
-			err = multierr.Append(err, errInternal)
-			continue
-		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.marshal(), uint64(i.ts.UnixNano())))
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.marshal(), uint64(i.ts.UnixNano())))
 	}
 	return err
 }
@@ -166,12 +161,7 @@ func (i *indexWriter) WriteInvertedIndex(fields []index.Field) (err error) {
 		if i.scope != nil {
 			field.Key.SeriesID = GlobalSeriesID(i.scope)
 		}
-		key, errInternal := field.Marshal()
-		if errInternal != nil {
-			err = multierr.Append(err, errInternal)
-			continue
-		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(key, i.itemID.marshal(), uint64(i.ts.UnixNano())))
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.marshal(), uint64(i.ts.UnixNano())))
 	}
 	return err
 }
