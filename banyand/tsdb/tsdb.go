@@ -102,10 +102,16 @@ type DatabaseOpts struct {
 	BlockInterval      IntervalRule
 	TTL                IntervalRule
 	BlockMemSize       int64
+	BlockInvertedIndex InvertedIndexOpts
 	SeriesMemSize      int64
 	GlobalIndexMemSize int64
 	ShardNum           uint32
 	EnableGlobalIndex  bool
+}
+
+// InvertedIndexOpts wraps options to create the block inverted index.
+type InvertedIndexOpts struct {
+	BatchWaitSec int64
 }
 
 // EncodingMethod wraps encoder/decoder pools to flush/compact data on disk.

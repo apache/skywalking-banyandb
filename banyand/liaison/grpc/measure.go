@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -39,34 +38,44 @@ import (
 type measureService struct {
 	measurev1.UnimplementedMeasureServiceServer
 	*discoveryService
+	sampled *logger.Logger
+}
+
+func (ms *measureService) setLogger(log *logger.Logger) {
+	ms.sampled = log.Sampled(10)
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
-	reply := func() error {
-		return measure.Send(&measurev1.WriteResponse{})
+	reply := func(measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
+		if errResp := measure.Send(&measurev1.WriteResponse{}); errResp != nil {
+			logger.Err(errResp).Msg("failed to send response")
+		}
 	}
-	sampled := ms.log.Sample(&zerolog.BasicSampler{N: 10})
+	ctx := measure.Context()
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		writeRequest, err := measure.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
-			return err
+			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
+			reply(measure, ms.sampled)
+			continue
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
-			sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
+			ms.sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
+			reply(measure, ms.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
-			sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
+			ms.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
+			reply(measure, ms.sampled)
 			continue
 		}
 		iwr := &measurev1.InternalWriteRequest{
@@ -80,15 +89,9 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
-			continue
+			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
 		}
-		if errSend := reply(); errSend != nil {
-			return errSend
-		}
+		reply(measure, ms.sampled)
 	}
 }
 

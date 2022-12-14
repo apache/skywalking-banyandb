@@ -132,7 +132,7 @@ var _ = Describe("Queue", func() {
 		Expect(enRecentSize).To(Equal(192))
 		Expect(l.Len()).To(Equal(128))
 		Expect(len(evictLst)).To(Equal(0))
-		clock.Add(time.Minute)
+		clock.Add(6 * time.Minute)
 		if !scheduler.Trigger(bucket.QueueName) {
 			Fail("trigger fails")
 		}
