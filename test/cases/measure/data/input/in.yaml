@@ -25,32 +25,9 @@ tagProjection:
 fieldProjection:
   names: ["total", "value"]
 criteria:
-  le:
-    op: "LOGICAL_OP_in"
-    left:
-      condition:
-        name: "id"
-        op: "BINARY_OP_EQ"
-        value:
-          id:
-            value: "4"
-    right:
-      le:
-        op: "LOGICAL_OP_in"
-        left:
-          condition:
-            name: "id"
-            op: "BINARY_OP_EQ"
-            value:
-              id:
-                value: "5"
-        right:
-          le:
-            op: "LOGICAL_OP_in"
-            left:
-              condition:
-                name: "id"
-                op: "BINARY_OP_EQ"
-                value:
-                  id:
-                    value: "unknown"
+  condition:
+    name: "id"
+    op: "BINARY_OP_IN"
+    value:
+      str_array:
+        value: ["4", "5", "unknown"]
