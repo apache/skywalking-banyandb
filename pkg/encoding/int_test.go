@@ -18,6 +18,7 @@
 package encoding
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -84,8 +85,8 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 				data: []int64{7, 9},
 			},
 			want: tsData{
-				ts:    []uint64{uint64(4 * time.Minute), uint64(3 * time.Minute), uint64(2 * time.Minute), uint64(1 * time.Minute)},
-				data:  []int64{7, 0, 0, 9},
+				ts:    []uint64{uint64(4 * time.Minute), uint64(1 * time.Minute)},
+				data:  []int64{7, 9},
 				start: uint64(time.Minute),
 				end:   uint64(4 * time.Minute),
 			},
@@ -102,11 +103,11 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			at := assert.New(t)
-			encoder := encoderPool.Get(key)
+			var buffer bytes.Buffer
+			encoder := encoderPool.Get(key, &buffer)
 			defer encoderPool.Put(encoder)
 			decoder := decoderPool.Get(key)
 			defer decoderPool.Put(decoder)
-			encoder.Reset(key)
 			isFull := false
 			for i, v := range tt.args.ts {
 				encoder.Append(v, convert.Int64ToBytes(tt.args.data[i]))
@@ -115,11 +116,11 @@ func TestNewIntEncoderAndDecoder(t *testing.T) {
 					break
 				}
 			}
-			bb, err := encoder.Encode()
+			err := encoder.Encode()
 			at.NoError(err)
 
 			at.Equal(tt.want.start, encoder.StartTime())
-			at.NoError(decoder.Decode(key, bb))
+			at.NoError(decoder.Decode(key, buffer.Bytes()))
 			start, end := decoder.Range()
 			at.Equal(tt.want.start, start)
 			at.Equal(tt.want.end, end)
@@ -216,11 +217,11 @@ func TestNewIntDecoderGet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			at := assert.New(t)
-			encoder := encoderPool.Get(key)
+			var buffer bytes.Buffer
+			encoder := encoderPool.Get(key, &buffer)
 			defer encoderPool.Put(encoder)
 			decoder := decoderPool.Get(key)
 			defer decoderPool.Put(decoder)
-			encoder.Reset(key)
 			isFull := false
 			for i, v := range tt.args.ts {
 				encoder.Append(v, convert.Int64ToBytes(tt.args.data[i]))
@@ -229,11 +230,11 @@ func TestNewIntDecoderGet(t *testing.T) {
 					break
 				}
 			}
-			bb, err := encoder.Encode()
+			err := encoder.Encode()
 			at.NoError(err)
 
 			at.Equal(tt.want.start, encoder.StartTime())
-			at.NoError(decoder.Decode(key, bb))
+			at.NoError(decoder.Decode(key, buffer.Bytes()))
 			start, end := decoder.Range()
 			at.Equal(tt.want.start, start)
 			at.Equal(tt.want.end, end)

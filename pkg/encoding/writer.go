@@ -15,33 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package bit
+package encoding
 
 import (
-	"bytes"
+	"encoding/binary"
 )
 
 // Writer writes bits to an io.BufferWriter.
 type Writer struct {
-	out       *bytes.Buffer
+	out       BufferWriter
 	cache     byte
 	available byte
 }
 
 // NewWriter create bit writer.
-func NewWriter(buffer *bytes.Buffer) *Writer {
-	bw := new(Writer)
-	bw.Reset(buffer)
-	return bw
+func NewWriter() *Writer {
+	return new(Writer)
 }
 
 // Reset writes to a new writer.
-func (w *Writer) Reset(buffer *bytes.Buffer) {
-	if buffer == nil {
-		w.out.Reset()
-	} else {
-		w.out = buffer
-	}
+func (w *Writer) Reset(buffer BufferWriter) {
+	w.out = buffer
 	w.cache = 0
 	w.available = 8
 }
@@ -96,4 +90,46 @@ func (w *Writer) Flush() {
 		_ = w.out.WriteByte(w.cache)
 	}
 	w.Reset(w.out)
+}
+
+// Packer writes data into a buffer.
+type Packer struct {
+	buf BufferWriter
+
+	scratch [binary.MaxVarintLen64]byte
+}
+
+// NewPacker returns a new Writer.
+func NewPacker(buf BufferWriter) *Packer {
+	return &Packer{
+		buf: buf,
+	}
+}
+
+// Write binaries to the buffer.
+func (w *Packer) Write(p []byte) {
+	_, _ = w.buf.Write(p)
+}
+
+// PutUint16 puts uint16 data into the buffer.
+func (w *Packer) PutUint16(v uint16) {
+	binary.LittleEndian.PutUint16(w.scratch[:], v)
+	_, _ = w.buf.Write(w.scratch[:2])
+}
+
+// PutUint32 puts uint32 data into the buffer.
+func (w *Packer) PutUint32(v uint32) {
+	binary.LittleEndian.PutUint32(w.scratch[:], v)
+	_, _ = w.buf.Write(w.scratch[:4])
+}
+
+// PutUint64 puts uint64 data into the buffer.
+func (w *Packer) PutUint64(v uint64) {
+	binary.LittleEndian.PutUint64(w.scratch[:], v)
+	_, _ = w.buf.Write(w.scratch[:8])
+}
+
+// Bytes outputs the data in the buffer.
+func (w *Packer) Bytes() []byte {
+	return w.buf.Bytes()
 }
