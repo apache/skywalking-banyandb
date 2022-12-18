@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -206,9 +205,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts := s.dbOpts
 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
-	opts.EncodingMethod = tsdb.EncodingMethod{
-		EncoderPool: encoding.NewPlainEncoderPool(name, chunkSize),
-		DecoderPool: encoding.NewPlainDecoderPool(name, chunkSize),
+	opts.CompressionMethod = tsdb.CompressionMethod{
+		Type:             tsdb.CompressionTypeZSTD,
+		ChunkSizeInBytes: chunkSize,
 	}
 	var err error
 	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {

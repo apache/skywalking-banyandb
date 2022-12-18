@@ -221,9 +221,14 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
 	name := groupSchema.Metadata.Name
 	opts.EncodingMethod = tsdb.EncodingMethod{
-		EncoderPool: newEncoderPool(name, plainChunkSize, intChunkSize, s.l),
-		DecoderPool: newDecoderPool(name, plainChunkSize, intChunkSize, s.l),
+		EncoderPool: newEncoderPool(name, intChunkSize, s.l),
+		DecoderPool: newDecoderPool(name, intChunkSize, s.l),
 	}
+	opts.CompressionMethod = tsdb.CompressionMethod{
+		Type:             tsdb.CompressionTypeZSTD,
+		ChunkSizeInBytes: plainChunkSize,
+	}
+
 	var err error
 	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {
 		return nil, err

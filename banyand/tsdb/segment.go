@@ -86,7 +86,6 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 				memSize = defaultKVMemorySize
 			}
 			if s.globalIndex, err = kv.OpenStore(
-				0,
 				indexPath,
 				kv.StoreWithLogger(s.l),
 				kv.StoreWithMemTableSize(memSize),

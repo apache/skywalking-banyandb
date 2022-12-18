@@ -29,7 +29,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -95,7 +94,7 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 			return nil, err
 		}
 		if inner != nil {
-			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), b.decoderPool(),
+			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(),
 				s.seriesSpan.seriesID, filters))
 		}
 	}
@@ -142,10 +141,10 @@ func (s *seekerBuilder) buildSeriesByTime() ([]Iterator, error) {
 				return nil, err
 			}
 			if filter == nil {
-				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), b.decoderPool(),
+				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(),
 					s.seriesSpan.seriesID, emptyFilters))
 			} else {
-				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(), b.decoderPool(),
+				delegated = append(delegated, newSearcherIterator(s.seriesSpan.l, inner, b.dataReader(),
 					s.seriesSpan.seriesID, []filterFn{filter}))
 			}
 		}
@@ -167,7 +166,6 @@ type searcherIterator struct {
 	fieldIterator index.FieldIterator
 	cur           posting.Iterator
 	data          kv.TimeSeriesReader
-	decoderPool   encoding.SeriesDecoderPool
 	l             *logger.Logger
 	curKey        []byte
 	filters       []filterFn
@@ -205,7 +203,6 @@ func (s *searcherIterator) Val() Item {
 		itemID:      s.cur.Current(),
 		data:        s.data,
 		seriesID:    s.seriesID,
-		decoderPool: s.decoderPool,
 	}
 }
 
@@ -214,7 +211,7 @@ func (s *searcherIterator) Close() error {
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, data kv.TimeSeriesReader,
-	decoderPool encoding.SeriesDecoderPool, seriesID common.SeriesID, filters []filterFn,
+	seriesID common.SeriesID, filters []filterFn,
 ) Iterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
@@ -222,7 +219,6 @@ func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, da
 		seriesID:      seriesID,
 		filters:       filters,
 		l:             l,
-		decoderPool:   decoderPool,
 	}
 }
 
