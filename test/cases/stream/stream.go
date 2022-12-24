@@ -57,6 +57,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	}),
 	g.Entry("sort desc", helpers.Args{Input: "sort_desc", Duration: 1 * time.Hour}),
 	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
+	g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),
