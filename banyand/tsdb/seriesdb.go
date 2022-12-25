@@ -401,7 +401,7 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 	}
 	result := make([]Series, 0)
 	var err error
-	errScan := s.seriesMetadata.Scan(prefix, prepend(path.seekKey, entityPrefix), kv.DefaultScanOpts, func(_ int, key []byte, getVal func() ([]byte, error)) error {
+	errScan := s.seriesMetadata.Scan(prefix, prepend(path.seekKey, entityPrefix), kv.DefaultScanOpts, func(key []byte, getVal func() ([]byte, error)) error {
 		key = key[entityPrefixLen:]
 		comparableKey := make([]byte, len(key))
 		for i, b := range key {
@@ -512,7 +512,7 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		memSize = defaultKVMemorySize
 	}
 	var err error
-	sdb.seriesMetadata, err = kv.OpenStore(0, path+"/md",
+	sdb.seriesMetadata, err = kv.OpenStore(path+"/md",
 		kv.StoreWithNamedLogger("metadata", sdb.l),
 		kv.StoreWithMemTableSize(memSize),
 	)

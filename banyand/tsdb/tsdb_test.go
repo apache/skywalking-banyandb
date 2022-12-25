@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -109,12 +108,8 @@ func openDatabase(ctx context.Context, t *require.Assertions, path string) (db D
 	db, err := OpenDatabase(
 		context.WithValue(ctx, logger.ContextKey, logger.GetLogger("test")),
 		DatabaseOpts{
-			Location: path,
-			ShardNum: 1,
-			EncodingMethod: EncodingMethod{
-				EncoderPool: encoding.NewPlainEncoderPool("tsdb", 0),
-				DecoderPool: encoding.NewPlainDecoderPool("tsdb", 0),
-			},
+			Location:        path,
+			ShardNum:        1,
 			BlockInterval:   IntervalRule{Num: 2},
 			SegmentInterval: IntervalRule{Num: 1, Unit: DAY},
 			TTL:             IntervalRule{Num: 7, Unit: DAY},
