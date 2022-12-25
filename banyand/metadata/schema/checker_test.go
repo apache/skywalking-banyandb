@@ -22,6 +22,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -54,10 +55,16 @@ var _ = ginkgo.Describe("Utils", func() {
 	ginkgo.Context("Check equality for Stream", func() {
 		var s *databasev1.Stream
 		var checker equalityChecker
+		var goods []gleak.Goroutine
 
 		ginkgo.BeforeEach(func() {
 			s = loadStream()
 			checker = checkerMap[KindStream]
+			goods = gleak.Goroutines()
+		})
+
+		ginkgo.AfterEach(func() {
+			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
@@ -116,10 +123,16 @@ var _ = ginkgo.Describe("Utils", func() {
 	ginkgo.Context("Check equality for IndexRuleBinding", func() {
 		var irb *databasev1.IndexRuleBinding
 		var checker equalityChecker
+		var goods []gleak.Goroutine
 
 		ginkgo.BeforeEach(func() {
 			irb = loadIndexRuleBinding()
 			checker = checkerMap[KindIndexRuleBinding]
+			goods = gleak.Goroutines()
+		})
+
+		ginkgo.AfterEach(func() {
+			Eventually(gleak.Goroutines()).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
@@ -166,10 +179,15 @@ var _ = ginkgo.Describe("Utils", func() {
 	ginkgo.Context("Check equality for IndexRule", func() {
 		var ir *databasev1.IndexRule
 		var checker equalityChecker
-
+		var goods []gleak.Goroutine
 		ginkgo.BeforeEach(func() {
 			ir = loadIndexRule()
 			checker = checkerMap[KindIndexRule]
+			goods = gleak.Goroutines()
+		})
+
+		ginkgo.AfterEach(func() {
+			Eventually(gleak.Goroutines()).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
