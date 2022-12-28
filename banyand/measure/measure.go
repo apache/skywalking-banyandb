@@ -36,7 +36,8 @@ import (
 
 const (
 	plainChunkSize = 1 << 20
-	intChunkSize   = 120
+	intChunkNum    = 120
+	intChunkSize   = 4 * 1024
 )
 
 type measure struct {

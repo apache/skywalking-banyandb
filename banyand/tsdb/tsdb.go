@@ -117,8 +117,9 @@ type InvertedIndexOpts struct {
 
 // EncodingMethod wraps encoder/decoder pools to flush/compact data on disk.
 type EncodingMethod struct {
-	EncoderPool encoding.SeriesEncoderPool
-	DecoderPool encoding.SeriesDecoderPool
+	EncoderPool      encoding.SeriesEncoderPool
+	DecoderPool      encoding.SeriesDecoderPool
+	ChunkSizeInBytes int
 }
 
 // CompressionMethod denotes how to compress a single chunk.

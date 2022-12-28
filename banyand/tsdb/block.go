@@ -134,7 +134,8 @@ func (b *block) options(ctx context.Context) {
 		options = o.(DatabaseOpts)
 	}
 	if options.EncodingMethod.EncoderPool != nil && options.EncodingMethod.DecoderPool != nil {
-		b.openOpts.store = append(b.openOpts.store, kv.TSSWithEncoding(options.EncodingMethod.EncoderPool, options.EncodingMethod.DecoderPool))
+		b.openOpts.store = append(b.openOpts.store, kv.TSSWithEncoding(options.EncodingMethod.EncoderPool,
+			options.EncodingMethod.DecoderPool, options.EncodingMethod.ChunkSizeInBytes))
 	}
 	if options.CompressionMethod.Type == CompressionTypeZSTD {
 		b.openOpts.store = append(b.openOpts.store, kv.TSSWithZSTDCompression(options.CompressionMethod.ChunkSizeInBytes))
