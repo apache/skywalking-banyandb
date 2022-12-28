@@ -89,7 +89,6 @@ type TimeSeriesWriter interface {
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
 	Get(key []byte, ts uint64) ([]byte, error)
-	Context(key []byte, ts uint64, n int) (pre, next Iterator)
 }
 
 // TimeSeriesStore is time series storage.
@@ -115,7 +114,7 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 }
 
 // TSSWithEncoding sets encoding and decoding pools for building chunks.
-func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool) TimeSeriesOptions {
+func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool, chunkSize int) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
 		if btss, ok := store.(*badgerTSS); ok {
 			btss.dbOpts = btss.dbOpts.WithKeyBasedEncoder(
@@ -123,7 +122,7 @@ func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encodin
 					encoderPool,
 				}, &decoderPoolDelegate{
 					decoderPool,
-				})
+				}, chunkSize)
 		}
 	}
 }
@@ -187,6 +186,7 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 		opt(btss)
 	}
 	// Put all values into LSM
+	btss.dbOpts = btss.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
 	if btss.dbOpts.MemTableSize < 8<<20 {
 		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)

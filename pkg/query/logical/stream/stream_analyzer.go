@@ -26,6 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+const defaultLimit uint32 = 20
+
 // BuildSchema returns Schema loaded from the metadata repository.
 func BuildSchema(streamSchema stream.Stream) (logical.Schema, error) {
 	sm := streamSchema.GetSchema()
@@ -68,7 +70,7 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
-		limitParameter = logical.DefaultLimit
+		limitParameter = defaultLimit
 	}
 	plan = logical.NewLimit(plan, limitParameter)
 

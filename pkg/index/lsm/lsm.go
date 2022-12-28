@@ -64,7 +64,7 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	var err error
 	var lsm kv.Store
 	if lsm, err = kv.OpenStore(
-		opts.Path+"/lsm",
+		opts.Path,
 		kv.StoreWithLogger(opts.Logger),
 		kv.StoreWithMemTableSize(opts.MemTableSize)); err != nil {
 		return nil, err
