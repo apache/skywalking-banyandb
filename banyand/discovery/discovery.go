@@ -33,6 +33,7 @@ type ServiceRepo interface {
 	run.Unit
 	bus.Subscriber
 	bus.Publisher
+	GracefulStop()
 }
 
 type repo struct {
@@ -60,4 +61,8 @@ func NewServiceRepo(_ context.Context) (ServiceRepo, error) {
 	return &repo{
 		local: bus.NewBus(),
 	}, nil
+}
+
+func (r *repo) GracefulStop() {
+	r.local.Close()
 }
