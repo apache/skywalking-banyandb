@@ -98,6 +98,7 @@ var _ Database = (*database)(nil)
 type DatabaseOpts struct {
 	EncodingMethod     EncodingMethod
 	Location           string
+	CompressionMethod  CompressionMethod
 	SegmentInterval    IntervalRule
 	BlockInterval      IntervalRule
 	TTL                IntervalRule
@@ -116,9 +117,26 @@ type InvertedIndexOpts struct {
 
 // EncodingMethod wraps encoder/decoder pools to flush/compact data on disk.
 type EncodingMethod struct {
-	EncoderPool encoding.SeriesEncoderPool
-	DecoderPool encoding.SeriesDecoderPool
+	EncoderPool      encoding.SeriesEncoderPool
+	DecoderPool      encoding.SeriesDecoderPool
+	ChunkSizeInBytes int
 }
+
+// CompressionMethod denotes how to compress a single chunk.
+type CompressionMethod struct {
+	Type             CompressionType
+	ChunkSizeInBytes int
+}
+
+// CompressionType specifies how a chunk should be compressed.
+type CompressionType int
+
+const (
+	// CompressionTypeNone mode indicates that a chunk is not compressed.
+	CompressionTypeNone CompressionType = iota
+	// CompressionTypeZSTD mode indicates that a chunk is compressed using CompressionTypeZSTD algorithm.
+	CompressionTypeZSTD
+)
 
 type (
 	// SectionID is the kind of a block/segment.
@@ -203,9 +221,6 @@ func (d *database) Close() error {
 // OpenDatabase returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
 func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
-	if opts.EncodingMethod.EncoderPool == nil || opts.EncodingMethod.DecoderPool == nil {
-		return nil, errors.Wrap(errOpenDatabase, "encoding method is absent")
-	}
 	if _, err := mkdir(opts.Location); err != nil {
 		return nil, err
 	}

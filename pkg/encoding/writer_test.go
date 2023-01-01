@@ -15,28 +15,42 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package tsdb implements helpers around tsdb.IntervalRule.
-package tsdb
+package encoding
 
 import (
-	"errors"
+	"bytes"
+	"testing"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/stretchr/testify/assert"
 )
 
-var errInvalidUnit = errors.New("invalid interval rule's unit")
+func TestWriter(t *testing.T) {
+	out := &bytes.Buffer{}
+	w := NewWriter()
+	w.Reset(out)
 
-// ToIntervalRule decodes commonv1.IntervalRule to tsdb.IntervalRule.
-func ToIntervalRule(ir *commonv1.IntervalRule) (result tsdb.IntervalRule, err error) {
-	switch ir.Unit {
-	case commonv1.IntervalRule_UNIT_DAY:
-		result.Unit = tsdb.DAY
-	case commonv1.IntervalRule_UNIT_HOUR:
-		result.Unit = tsdb.HOUR
-	default:
-		return result, errInvalidUnit
-	}
-	result.Num = int(ir.Num)
-	return result, err
+	a := assert.New(t)
+
+	w.WriteByte(0xc1)
+	w.WriteBool(false)
+	w.WriteBits(0x3f, 6)
+	w.WriteBool(true)
+	w.WriteByte(0xac)
+	w.WriteBits(0x01, 1)
+	w.WriteBits(0x1248f, 20)
+	w.Flush()
+
+	w.WriteByte(0x01)
+	w.WriteByte(0x02)
+
+	w.WriteBits(0x0f, 4)
+
+	w.WriteByte(0x80)
+	w.WriteByte(0x8f)
+	w.Flush()
+
+	w.WriteBits(0x01, 1)
+	w.WriteByte(0xff)
+	w.Flush()
+	a.Equal([]byte{0xc1, 0x7f, 0xac, 0x89, 0x24, 0x78, 0x01, 0x02, 0xf8, 0x08, 0xf0, 0xff, 0x80}, out.Bytes())
 }
