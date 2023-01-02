@@ -110,10 +110,9 @@ func (s *series) Get(ctx context.Context, id GlobalItemID) (Item, io.Closer, err
 		return nil, nil, errors.WithMessagef(errBlockAbsent, "id: %v", id)
 	}
 	return &item{
-		data:        b.dataReader(),
-		itemID:      id.ID,
-		seriesID:    s.id,
-		decoderPool: b.decoderPool(),
+		data:     b.dataReader(),
+		itemID:   id.ID,
+		seriesID: s.id,
 	}, b, nil
 }
 

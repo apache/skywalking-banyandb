@@ -15,7 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// TODO:// move this into package encoding.
+// Package tsdb implements helpers around tsdb.IntervalRule.
+package tsdb
 
-// Package bit implement binary packer and unpacker to build custom binary stream.
-package bit
+import (
+	"github.com/pkg/errors"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+)
+
+var errUnknown = errors.New("unknown")
+
+// ToIntervalRule decodes commonv1.IntervalRule to tsdb.IntervalRule.
+func ToIntervalRule(ir *commonv1.IntervalRule) (result tsdb.IntervalRule, err error) {
+	switch ir.Unit {
+	case commonv1.IntervalRule_UNIT_DAY:
+		result.Unit = tsdb.DAY
+	case commonv1.IntervalRule_UNIT_HOUR:
+		result.Unit = tsdb.HOUR
+	default:
+		return result, errors.WithMessagef(errUnknown, "interval rule:%v", ir)
+	}
+	result.Num = int(ir.Num)
+	return result, err
+}

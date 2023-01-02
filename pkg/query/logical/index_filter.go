@@ -63,9 +63,14 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
 			if indexRule.Location == databasev1.IndexRule_LOCATION_GLOBAL {
-				return nil, nil, GlobalIndexError{
-					IndexRule: indexRule,
-					Expr:      expr,
+				switch cond.Op {
+				case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN:
+					return nil, nil, GlobalIndexError{
+						IndexRule: indexRule,
+						Expr:      expr,
+					}
+				default:
+					return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "gobal index conf:%s", cond)
 				}
 			}
 			return parseCondition(cond, indexRule, expr, entity)

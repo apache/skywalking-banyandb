@@ -27,6 +27,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+const defaultLimit uint32 = 100
+
 // BuildSchema returns Schema loaded from the metadata repository.
 func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
 	md := measureSchema.GetSchema()
@@ -97,7 +99,7 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
-		limitParameter = logical.DefaultLimit
+		limitParameter = defaultLimit
 	}
 	plan = limit(plan, criteria.GetOffset(), limitParameter)
 

@@ -19,8 +19,6 @@ package encoding
 
 import (
 	"math/bits"
-
-	"github.com/apache/skywalking-banyandb/pkg/bit"
 )
 
 const (
@@ -31,7 +29,7 @@ const (
 // XOREncoder intends to compress uint64 data
 // https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 type XOREncoder struct {
-	bw       *bit.Writer
+	bw       *Writer
 	preVal   uint64
 	leading  int
 	trailing int
@@ -40,7 +38,7 @@ type XOREncoder struct {
 }
 
 // NewXOREncoder creates xor zstdEncoder for compressing uint64 data.
-func NewXOREncoder(bw *bit.Writer) *XOREncoder {
+func NewXOREncoder(bw *Writer) *XOREncoder {
 	return &XOREncoder{
 		bw:    bw,
 		first: true,
@@ -85,7 +83,7 @@ func (e *XOREncoder) Write(val uint64) {
 // XORDecoder decodes buffer to uint64 values using xor compress.
 type XORDecoder struct {
 	err      error
-	br       *bit.Reader
+	br       *Reader
 	val      uint64
 	leading  uint64
 	trailing uint64
@@ -93,7 +91,7 @@ type XORDecoder struct {
 }
 
 // NewXORDecoder create zstdDecoder decompress buffer using xor.
-func NewXORDecoder(br *bit.Reader) *XORDecoder {
+func NewXORDecoder(br *Reader) *XORDecoder {
 	s := &XORDecoder{
 		br:    br,
 		first: true,

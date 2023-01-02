@@ -106,9 +106,6 @@ func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRan
 		term = termRange.Upper
 		reverse = true
 	}
-	if order == modelv1.Sort_SORT_DESC {
-		reverse = true
-	}
 	iter := iterable.NewIterator(kv.ScanOpts{
 		Prefix:  fieldKey.Marshal(),
 		Reverse: reverse,

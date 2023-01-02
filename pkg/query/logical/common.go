@@ -144,9 +144,6 @@ func ExecuteForShard(l *logger.Logger, series tsdb.SeriesList, timeRange timesta
 	return itersInShard, closers, nil
 }
 
-// DefaultLimit is the default limit size of a querying.
-var DefaultLimit uint32 = 20
-
 // Tag represents the combination of  tag family and tag name.
 // It's a tag's identity.
 type Tag struct {

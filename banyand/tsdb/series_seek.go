@@ -18,18 +18,10 @@
 package tsdb
 
 import (
-	"bytes"
-	"encoding/hex"
-	"time"
-
-	"github.com/dgraph-io/badger/v3/y"
-	"github.com/rs/zerolog"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -44,7 +36,6 @@ type Iterator interface {
 // Item allows retrieving raw data from an item.
 type Item interface {
 	Family(family []byte) ([]byte, error)
-	PrintContext(l *logger.Logger, family []byte, n int)
 	Val() ([]byte, error)
 	ID() common.ItemID
 	SortedField() []byte
@@ -113,7 +104,6 @@ var _ Item = (*item)(nil)
 
 type item struct {
 	data        kv.TimeSeriesReader
-	decoderPool encoding.SeriesDecoderPool
 	sortedField []byte
 	itemID      common.ItemID
 	seriesID    common.SeriesID
@@ -133,59 +123,6 @@ func (i *item) Family(family []byte) ([]byte, error) {
 		family:   family,
 	}
 	return i.data.Get(d.marshal(), uint64(i.itemID))
-}
-
-func (i *item) PrintContext(l *logger.Logger, family []byte, n int) {
-	decoder := i.decoderPool.Get(family)
-	defer i.decoderPool.Put(decoder)
-	d := dataBucket{
-		seriesID: i.seriesID,
-		family:   family,
-	}
-	key := d.marshal()
-	pre, next := i.data.Context(key, uint64(i.itemID), n)
-	defer pre.Close()
-	defer next.Close()
-	j := 0
-	each := func(iter kv.Iterator, logEvent *zerolog.Event) *zerolog.Event {
-		if !bytes.Equal(key, iter.Key()) {
-			return logEvent
-		}
-		j++
-
-		logEvent = logEvent.Int("i", j).
-			Time("ts", time.Unix(0, int64(y.ParseTs(iter.RawKey()))))
-		locArr := zerolog.Arr()
-		rangeArr := zerolog.Arr()
-		decodedNumArr := zerolog.Arr()
-		if err := decoder.Decode(family, iter.Val()); err != nil {
-			locArr.Str("mem")
-		} else {
-			locArr.Str("table")
-			start, end := decoder.Range()
-			rangeArr.Time(time.Unix(0, int64(start)))
-			rangeArr.Time(time.Unix(0, int64(end)))
-			decodedNumArr.Int(decoder.Len())
-		}
-		logEvent = logEvent.Array("loc", locArr).Array("range", rangeArr).Array("decodedNum", decodedNumArr)
-		return logEvent
-	}
-
-	s := hex.EncodeToString(key)
-	if len(s) > 7 {
-		s = s[:7]
-	}
-	event := l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID)))
-	for ; pre.Valid() && j < n; pre.Next() {
-		event = each(pre, event)
-	}
-	event.Msg("print previous lines")
-	j = 0
-	event = l.Info().Str("prefix", s).Time("ts", time.Unix(0, int64(i.itemID)))
-	for ; next.Valid() && j < n; next.Next() {
-		event = each(next, event)
-	}
-	event.Msg("print next lines")
 }
 
 func (i *item) Val() ([]byte, error) {
