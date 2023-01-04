@@ -15,11 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-dataPoints:
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: service_id
-        value:
-          str:
-            value: service_1
+metadata:
+  name: "service_cpm_minute"
+  group: "sw_metric"
+fieldProjection:
+  names: ["total", "value"]

@@ -21,7 +21,6 @@ package banyandb.model.v1;
 
 import "banyandb/model/v1/common.proto";
 import "google/protobuf/timestamp.proto";
-import "validate/validate.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 option java_package = "org.apache.skywalking.banyandb.model.v1";
@@ -110,7 +109,7 @@ message TagProjection {
     string name = 1;
     repeated string tags = 2;
   }
-  repeated TagFamily tag_families = 1 [(validate.rules).repeated.min_items = 1];
+  repeated TagFamily tag_families = 1;
 }
 
 // TimeRange is a range query for uint64,

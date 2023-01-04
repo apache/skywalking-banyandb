@@ -185,7 +185,7 @@ func (sc *segmentController) Parse(value string) (time.Time, error) {
 func (sc *segmentController) open() error {
 	sc.Lock()
 	defer sc.Unlock()
-	return loadSections(sc.location, sc, sc.segmentSize, func(start, end time.Time) error {
+	return loadSections(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
 		_, err := sc.load(start, end, sc.location)
 		if errors.Is(err, errEndOfSegment) {
 			return nil
@@ -214,8 +214,7 @@ func (sc *segmentController) create(start time.Time) (*segment, error) {
 	} else {
 		end = stdEnd
 	}
-	_, err := mkdir(segTemplate, sc.location, sc.Format(start))
-	if err != nil {
+	if err := mkdirIfNotExist(segTemplate, sc.location, sc.Format(start)); err != nil {
 		return nil, err
 	}
 	return sc.load(start, end, sc.location)
