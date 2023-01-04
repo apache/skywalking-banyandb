@@ -350,3 +350,15 @@ func mkdir(format string, a ...interface{}) (path string, err error) {
 	}
 	return path, err
 }
+
+func mkdirIfNotExist(format string, a ...interface{}) (err error) {
+	path := fmt.Sprintf(format, a...)
+	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err = os.MkdirAll(path, dirPerm); err != nil {
+			return errors.Wrapf(err, "failed to create %s", path)
+		}
+	} else {
+		return os.ErrExist
+	}
+	return err
+}

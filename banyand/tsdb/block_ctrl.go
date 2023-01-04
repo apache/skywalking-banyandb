@@ -226,7 +226,7 @@ func (bc *blockController) closeBlock(ctx context.Context, blockID SectionID) er
 func (bc *blockController) open() error {
 	bc.Lock()
 	defer bc.Unlock()
-	return loadSections(bc.location, bc, bc.blockSize, func(start, end time.Time) error {
+	return loadSections(bc.location, blockPathPrefix, bc, bc.blockSize, func(start, end time.Time) error {
 		_, err := bc.load(start, end, bc.location)
 		return err
 	})
@@ -261,8 +261,7 @@ func (bc *blockController) create(start time.Time) (*block, error) {
 	if end.After(bc.segTimeRange.End) {
 		end = bc.segTimeRange.End
 	}
-	_, err := mkdir(blockTemplate, bc.location, bc.Format(start))
-	if err != nil {
+	if err := mkdirIfNotExist(blockTemplate, bc.location, bc.Format(start)); err != nil {
 		return nil, err
 	}
 	b, err := bc.load(start, end, bc.location)

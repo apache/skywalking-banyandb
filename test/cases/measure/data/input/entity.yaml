@@ -21,7 +21,7 @@ metadata:
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["id", "service_id"]
+    tags: ["service_id"]
 criteria:
   le:
     op: "LOGICAL_OP_AND"
