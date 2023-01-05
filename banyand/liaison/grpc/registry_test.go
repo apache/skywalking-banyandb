@@ -200,16 +200,12 @@ func setupForRegistry() func() {
 		preloadStreamSvc,
 		tcp,
 	)
-	moduleDeferFunc := func() {
-		repo.GracefulStop()
-	}
 	Eventually(
 		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()
 		metaDeferFunc()
-		moduleDeferFunc()
 	}
 }
 
