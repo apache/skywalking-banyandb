@@ -39,47 +39,41 @@ var (
 )
 
 type encoderPool struct {
-	intPool     encoding.SeriesEncoderPool
-	defaultPool encoding.SeriesEncoderPool
-	l           *logger.Logger
+	intPool encoding.SeriesEncoderPool
+	l       *logger.Logger
 }
 
-func newEncoderPool(name string, plainSize, intSize int, l *logger.Logger) encoding.SeriesEncoderPool {
+func newEncoderPool(name string, size int, l *logger.Logger) encoding.SeriesEncoderPool {
 	return &encoderPool{
-		intPool:     encoding.NewIntEncoderPool(name, intSize, intervalFn),
-		defaultPool: encoding.NewPlainEncoderPool(name, plainSize),
-		l:           l,
+		intPool: encoding.NewIntEncoderPool(name, size, intervalFn),
+		l:       l,
 	}
 }
 
-func (p *encoderPool) Get(metadata []byte) encoding.SeriesEncoder {
+func (p *encoderPool) Get(metadata []byte, buffer encoding.BufferWriter) encoding.SeriesEncoder {
 	fieldSpec, _, err := pbv1.DecodeFieldFlag(metadata)
 	if err != nil {
 		p.l.Err(err).Msg("failed to decode field flag")
-		return p.defaultPool.Get(metadata)
 	}
 	if fieldSpec.EncodingMethod == databasev1.EncodingMethod_ENCODING_METHOD_GORILLA {
-		return p.intPool.Get(metadata)
+		return p.intPool.Get(metadata, buffer)
 	}
-	return p.defaultPool.Get(metadata)
+	return nil
 }
 
 func (p *encoderPool) Put(encoder encoding.SeriesEncoder) {
 	p.intPool.Put(encoder)
-	p.defaultPool.Put(encoder)
 }
 
 type decoderPool struct {
-	intPool     encoding.SeriesDecoderPool
-	defaultPool encoding.SeriesDecoderPool
-	l           *logger.Logger
+	intPool encoding.SeriesDecoderPool
+	l       *logger.Logger
 }
 
-func newDecoderPool(name string, plainSize, intSize int, l *logger.Logger) encoding.SeriesDecoderPool {
+func newDecoderPool(name string, size int, l *logger.Logger) encoding.SeriesDecoderPool {
 	return &decoderPool{
-		intPool:     encoding.NewIntDecoderPool(name, intSize, intervalFn),
-		defaultPool: encoding.NewPlainDecoderPool(name, plainSize),
-		l:           l,
+		intPool: encoding.NewIntDecoderPool(name, size, intervalFn),
+		l:       l,
 	}
 }
 
@@ -87,15 +81,16 @@ func (p *decoderPool) Get(metadata []byte) encoding.SeriesDecoder {
 	fieldSpec, _, err := pbv1.DecodeFieldFlag(metadata)
 	if err != nil {
 		p.l.Err(err).Msg("failed to decode field flag")
-		return p.defaultPool.Get(metadata)
+		return nil
 	}
 	if fieldSpec.EncodingMethod == databasev1.EncodingMethod_ENCODING_METHOD_GORILLA {
 		return p.intPool.Get(metadata)
 	}
-	return p.defaultPool.Get(metadata)
+	return nil
 }
 
 func (p *decoderPool) Put(decoder encoding.SeriesDecoder) {
-	p.intPool.Put(decoder)
-	p.defaultPool.Put(decoder)
+	if decoder != nil {
+		p.intPool.Put(decoder)
+	}
 }

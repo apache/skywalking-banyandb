@@ -19,12 +19,9 @@
 package encoding
 
 import (
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
-
-var errEncodeEmpty = errors.New("encode an empty value")
 
 var (
 	rawSize = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -46,7 +43,7 @@ var (
 
 // SeriesEncoderPool allows putting and getting SeriesEncoder.
 type SeriesEncoderPool interface {
-	Get(metadata []byte) SeriesEncoder
+	Get(metadata []byte, buffer BufferWriter) SeriesEncoder
 	Put(encoder SeriesEncoder)
 }
 
@@ -57,9 +54,9 @@ type SeriesEncoder interface {
 	// IsFull returns whether the encoded data reached its capacity
 	IsFull() bool
 	// Reset the underlying buffer
-	Reset(key []byte)
+	Reset(key []byte, buffer BufferWriter)
 	// Encode the time series data point to a binary
-	Encode() ([]byte, error)
+	Encode() error
 	// StartTime indicates the first entry's time
 	StartTime() uint64
 }
@@ -96,4 +93,11 @@ type SeriesIterator interface {
 	Time() uint64
 	// Error might return an error indicates a decode failure
 	Error() error
+}
+
+// BufferWriter allows writing a variable-sized buffer of bytes.
+type BufferWriter interface {
+	Write(data []byte) (n int, err error)
+	WriteByte(b byte) error
+	Bytes() []byte
 }
