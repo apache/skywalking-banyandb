@@ -15,11 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-dataPoints:
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: service_id
+metadata:
+  name: "service_traffic"
+  group: "sw_metric"
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["id", "service_id"]
+criteria:
+  le:
+    op: "LOGICAL_OP_AND"
+    left:
+      condition:
+        name: "id"
+        op: "BINARY_OP_IN"
         value:
-          str:
-            value: service_1
+          str_array:
+            value: ["1", "2"]

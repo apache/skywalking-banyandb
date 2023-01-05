@@ -228,11 +228,11 @@ type parser interface {
 	Parse(value string) (time.Time, error)
 }
 
-func loadSections(root string, parser parser, intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
+func loadSections(root, prefix string, parser parser, intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
 	var startTimeLst []time.Time
 	if err := walkDir(
 		root,
-		segPathPrefix,
+		prefix,
 		func(suffix string) error {
 			startTime, err := parser.Parse(suffix)
 			if err != nil {
