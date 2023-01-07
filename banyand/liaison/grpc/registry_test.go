@@ -45,10 +45,10 @@ import (
 var _ = Describe("Registry", func() {
 	var gracefulStop func()
 	var conn *grpclib.ClientConn
+	var goods []gleak.Goroutine
 	meta := &commonv1.Metadata{
 		Group: "default",
 	}
-	var goods []gleak.Goroutine
 
 	BeforeEach(func() {
 		goods = gleak.Goroutines()
