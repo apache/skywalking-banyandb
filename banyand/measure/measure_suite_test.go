@@ -105,7 +105,6 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetupModules(
 		flags,
-		repo,
 		pipeline,
 		metadataService,
 		preloadMeasureSvc,

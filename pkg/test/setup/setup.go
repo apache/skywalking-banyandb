@@ -91,7 +91,6 @@ func modules(flags []string) func() {
 
 	return test.SetupModules(
 		flags,
-		repo,
 		pipeline,
 		metaSvc,
 		&preloadService{name: "stream", metaSvc: metaSvc},
@@ -101,6 +100,7 @@ func modules(flags []string) func() {
 		q,
 		tcp,
 		httpServer,
+		repo,
 	)
 }
 
