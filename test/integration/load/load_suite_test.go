@@ -98,7 +98,7 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-	Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 }, func() {
 	deferFunc()
+	Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 })
