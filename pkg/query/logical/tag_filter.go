@@ -487,7 +487,7 @@ func (r *rangeTag) String() string {
 
 func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string) (ComparableExpr, error) {
 	if tagSpec := registry.FindTagSpecByName(tagName); tagSpec != nil {
-		if tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagFamilyIdx); tagVal != nil {
+		if tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagIdx); tagVal != nil {
 			return parseExpr(tagVal)
 		}
 	}
