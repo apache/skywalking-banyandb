@@ -217,3 +217,22 @@ func DecodeFieldFlag(key []byte) (*databasev1.FieldSpec, time.Duration, error) {
 		CompressionMethod: databasev1.CompressionMethod(int32(b[0] & 0x0F)),
 	}, time.Duration(convert.BytesToInt64(b[1:])), nil
 }
+
+func AttachSchema(tffws []*modelv1.TagFamilyForWrite, measure *databasev1.Measure) []*modelv1.TagFamily {
+	tfs := make([]*modelv1.TagFamily, len(tffws))
+	for tagFamilyIdx := 0; tagFamilyIdx < len(tffws); tagFamilyIdx++ {
+		tffw := tffws[tagFamilyIdx]
+		tags := make([]*modelv1.Tag, len(tffw.GetTags()))
+		for tagIndex := 0; tagIndex < len(tffw.GetTags()); tagIndex++ {
+			tags[tagIndex] = &modelv1.Tag{
+				Key:   measure.TagFamilies[tagFamilyIdx].Tags[tagIndex].Name,
+				Value: tffw.GetTags()[tagIndex],
+			}
+		}
+		tfs[tagFamilyIdx] = &modelv1.TagFamily{
+			Name: measure.TagFamilies[tagFamilyIdx].Name,
+			Tags: tags,
+		}
+	}
+	return tfs
+}

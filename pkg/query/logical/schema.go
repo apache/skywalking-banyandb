@@ -24,12 +24,27 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
+// IndexChecker allows checking the existence of a specific index rule
+type IndexChecker interface {
+	IndexDefined(tagName string) (bool, *databasev1.IndexRule)
+	IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule)
+}
+
+type emptyIndexChecker struct{}
+
+func (emptyIndexChecker) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
+func (emptyIndexChecker) IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
 // Schema allows retrieving schemas in a convenient way.
 type Schema interface {
+	IndexChecker
 	Scope() tsdb.Entry
 	EntityList() []string
-	IndexDefined(tagName string) (bool, *databasev1.IndexRule)
-	IndexRuleDefined(string) (bool, *databasev1.IndexRule)
 	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
 	ProjTags(refs ...[]*TagRef) Schema

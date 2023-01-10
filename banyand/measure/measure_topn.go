@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const (
@@ -55,8 +56,6 @@ var (
 	_ io.Closer = (*topNStreamingProcessor)(nil)
 	_ io.Closer = (*topNProcessorManager)(nil)
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
-
-	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
 
 	// TopNValueFieldSpec denotes the field specification of the topN calculated result.
 	TopNValueFieldSpec = &databasev1.FieldSpec{
@@ -393,86 +392,21 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 		}, nil
 	}
 
-	f, err := manager.buildFilterForCriteria(criteria)
+	f, err := logical.BuildSimpleTagFilter(criteria)
 	if err != nil {
 		return nil, err
 	}
 
 	return func(_ context.Context, dataPoint any) bool {
-		tfs := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
-		return f.predicate(tfs)
+		tffw := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
+		tfs := pbv1.AttachSchema(tffw, manager.m.schema)
+		ok, matchErr := f.Match(tfs)
+		if matchErr != nil {
+			manager.l.Err(matchErr).Msg("fail to match criteria")
+			return false
+		}
+		return ok
 	}, nil
-}
-
-func (manager *topNProcessorManager) buildFilterForCriteria(criteria *modelv1.Criteria) (conditionFilter, error) {
-	switch v := criteria.GetExp().(type) {
-	case *modelv1.Criteria_Condition:
-		return manager.buildFilterForCondition(v.Condition)
-	case *modelv1.Criteria_Le:
-		return manager.buildFilterForLogicalExpr(v.Le)
-	default:
-		return nil, errors.New("should not reach here")
-	}
-}
-
-// buildFilterForCondition builds a logical and composable filter for a logical expression which have underlying conditions,
-// or nested logical expressions as its children.
-func (manager *topNProcessorManager) buildFilterForLogicalExpr(logicalExpr *modelv1.LogicalExpression) (conditionFilter, error) {
-	left, lErr := manager.buildFilterForCriteria(logicalExpr.Left)
-	if lErr != nil {
-		return nil, lErr
-	}
-	right, rErr := manager.buildFilterForCriteria(logicalExpr.Right)
-	if rErr != nil {
-		return nil, rErr
-	}
-	return composeWithOp(left, right, logicalExpr.Op), nil
-}
-
-func composeWithOp(left, right conditionFilter, op modelv1.LogicalExpression_LogicalOp) conditionFilter {
-	if op == modelv1.LogicalExpression_LOGICAL_OP_AND {
-		return &andFilter{left, right}
-	}
-	return &orFilter{left, right}
-}
-
-// buildFilterForCondition builds a single, composable filter for a single condition.
-func (manager *topNProcessorManager) buildFilterForCondition(cond *modelv1.Condition) (conditionFilter, error) {
-	familyOffset, tagOffset, spec := pbv1.FindTagByName(manager.m.GetSchema().GetTagFamilies(), cond.GetName())
-	if spec == nil {
-		return nil, errors.New("fail to parse tag by name")
-	}
-	switch v := cond.GetValue().GetValue().(type) {
-	case *modelv1.TagValue_Int:
-		return &int64TagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Int.GetValue(),
-		}, nil
-	case *modelv1.TagValue_Str:
-		return &strTagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Str.GetValue(),
-		}, nil
-	case *modelv1.TagValue_Id:
-		return &idTagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Id.GetValue(),
-		}, nil
-	default:
-		return nil, errUnsupportedConditionValueType
-	}
 }
 
 func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (flow.UnaryFunc[any], error) {
