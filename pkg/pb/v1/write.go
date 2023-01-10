@@ -218,6 +218,7 @@ func DecodeFieldFlag(key []byte) (*databasev1.FieldSpec, time.Duration, error) {
 	}, time.Duration(convert.BytesToInt64(b[1:])), nil
 }
 
+// AttachSchema transforms TagFamilyForWrite to TagFamily.
 func AttachSchema(tffws []*modelv1.TagFamilyForWrite, measure *databasev1.Measure) []*modelv1.TagFamily {
 	tfs := make([]*modelv1.TagFamily, len(tffws))
 	for tagFamilyIdx := 0; tagFamilyIdx < len(tffws); tagFamilyIdx++ {

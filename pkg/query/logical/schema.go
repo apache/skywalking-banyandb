@@ -24,7 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
-// IndexChecker allows checking the existence of a specific index rule
+// IndexChecker allows checking the existence of a specific index rule.
 type IndexChecker interface {
 	IndexDefined(tagName string) (bool, *databasev1.IndexRule)
 	IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule)
