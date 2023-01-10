@@ -32,11 +32,11 @@ type IndexChecker interface {
 
 type emptyIndexChecker struct{}
 
-func (emptyIndexChecker) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+func (emptyIndexChecker) IndexDefined(_ string) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
-func (emptyIndexChecker) IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule) {
+func (emptyIndexChecker) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
