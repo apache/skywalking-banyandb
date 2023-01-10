@@ -306,6 +306,7 @@ func (t *topNStreamingProcessor) handleError() {
 type topNProcessorManager struct {
 	l            *logger.Logger
 	m            *measure
+	s            logical.Schema
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
 	topNSchemas  []*databasev1.TopNAggregation
 	sync.RWMutex
@@ -398,9 +399,8 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 	}
 
 	return func(_ context.Context, dataPoint any) bool {
-		tffw := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
-		tfs := pbv1.AttachSchema(tffw, manager.m.schema)
-		ok, matchErr := f.Match(tfs)
+		tffws := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
+		ok, matchErr := f.Match(logical.TagFamiliesForWrite(tffws), manager.s)
 		if matchErr != nil {
 			manager.l.Err(matchErr).Msg("fail to match criteria")
 			return false

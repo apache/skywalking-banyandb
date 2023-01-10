@@ -33,6 +33,10 @@ type schema struct {
 	common *logical.CommonSchema
 }
 
+func (s *schema) FindTagSpecByName(name string) *logical.TagSpec {
+	return s.common.FindTagSpecByName(name)
+}
+
 func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error) {
 	panic("no field for stream")
 }

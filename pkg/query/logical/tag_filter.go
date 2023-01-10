@@ -29,10 +29,46 @@ import (
 
 var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")
 
+// TagValueIndexAccessor provides accessor to get TagValue by two indexes, i.e. tagFamilyIndex and tagIndex.
+// It works like a matrix.
+type TagValueIndexAccessor interface {
+	GetTagValue(tagFamilyIdx, tagIdx int) *modelv1.TagValue
+}
+
+// TagFamilies wraps a slice of TagFamily.
+type TagFamilies []*modelv1.TagFamily
+
+// GetTagValue gets TagValue from the underlying TagFamily slice.
+func (tfs TagFamilies) GetTagValue(tagFamilyIdx, tagIdx int) *modelv1.TagValue {
+	if len(tfs)-1 < tagFamilyIdx {
+		return nil
+	}
+	tags := tfs[tagFamilyIdx].GetTags()
+	if len(tags)-1 < tagIdx {
+		return nil
+	}
+	return tags[tagIdx].GetValue()
+}
+
+// TagFamiliesForWrite wraps a slice of TagFamilyForWrite.
+type TagFamiliesForWrite []*modelv1.TagFamilyForWrite
+
+// GetTagValue gets TagValue from the underlying TagFamilyForWrite slice.
+func (tffws TagFamiliesForWrite) GetTagValue(tagFamilyIdx, tagIdx int) *modelv1.TagValue {
+	if len(tffws)-1 < tagFamilyIdx {
+		return nil
+	}
+	tagVals := tffws[tagFamilyIdx].GetTags()
+	if len(tagVals)-1 < tagIdx {
+		return nil
+	}
+	return tagVals[tagIdx]
+}
+
 // TagFilter allows matching a tag based on a predicate.
 type TagFilter interface {
 	fmt.Stringer
-	Match(tagFamilies []*modelv1.TagFamily) (bool, error)
+	Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error)
 }
 
 // BuildSimpleTagFilter returns a TagFilter without any local-index, global index, sharding key support.
@@ -155,7 +191,9 @@ var DummyFilter = new(dummyTagFilter)
 
 type dummyTagFilter struct{}
 
-func (dummyTagFilter) Match(_ []*modelv1.TagFamily) (bool, error) { return true, nil }
+func (dummyTagFilter) Match(_ TagValueIndexAccessor, _ TagSpecRegistry) (bool, error) {
+	return true, nil
+}
 
 func (dummyTagFilter) String() string { return "dummy" }
 
@@ -176,10 +214,10 @@ func (n *logicalNode) append(sub TagFilter) *logicalNode {
 	return n
 }
 
-func matchTag(tagFamilies []*modelv1.TagFamily, n *logicalNode, lp logicalNodeOP) (bool, error) {
+func matchTag(accessor TagValueIndexAccessor, registry TagSpecRegistry, n *logicalNode, lp logicalNodeOP) (bool, error) {
 	var result *bool
 	for _, sn := range n.SubNodes {
-		r, err := sn.Match(tagFamilies)
+		r, err := sn.Match(accessor, registry)
 		if err != nil {
 			return false, err
 		}
@@ -214,8 +252,8 @@ func (an *andLogicalNode) merge(bb ...bool) bool {
 	return true
 }
 
-func (an *andLogicalNode) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	return matchTag(tagFamilies, an.logicalNode, an)
+func (an *andLogicalNode) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	return matchTag(accessor, registry, an.logicalNode, an)
 }
 
 func (an *andLogicalNode) MarshalJSON() ([]byte, error) {
@@ -249,8 +287,8 @@ func (on *orLogicalNode) merge(bb ...bool) bool {
 	return false
 }
 
-func (on *orLogicalNode) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	return matchTag(tagFamilies, on.logicalNode, on)
+func (on *orLogicalNode) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	return matchTag(accessor, registry, on.logicalNode, on)
 }
 
 func (on *orLogicalNode) MarshalJSON() ([]byte, error) {
@@ -287,8 +325,8 @@ func newNotTag(inner TagFilter) *notTag {
 	}
 }
 
-func (n *notTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	b, err := n.Inner.Match(tagFamilies)
+func (n *notTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	b, err := n.Inner.Match(accessor, registry)
 	if err != nil {
 		return false, err
 	}
@@ -318,8 +356,8 @@ func newInTag(tagName string, values LiteralExpr) *inTag {
 	}
 }
 
-func (h *inTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	expr, err := tagExpr(tagFamilies, h.Name)
+func (h *inTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	expr, err := tagExpr(accessor, registry, h.Name)
 	if err != nil {
 		return false, err
 	}
@@ -339,8 +377,8 @@ func newEqTag(tagName string, values LiteralExpr) *eqTag {
 	}
 }
 
-func (eq *eqTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	expr, err := tagExpr(tagFamilies, eq.Name)
+func (eq *eqTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	expr, err := tagExpr(accessor, registry, eq.Name)
 	if err != nil {
 		return false, err
 	}
@@ -378,8 +416,8 @@ func newRangeTag(tagName string, opts rangeOpts) *rangeTag {
 	}
 }
 
-func (r *rangeTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	expr, err := tagExpr(tagFamilies, r.Name)
+func (r *rangeTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	expr, err := tagExpr(accessor, registry, r.Name)
 	if err != nil {
 		return false, err
 	}
@@ -447,12 +485,10 @@ func (r *rangeTag) String() string {
 	return jsonToString(r)
 }
 
-func tagExpr(tagFamilies []*modelv1.TagFamily, tagName string) (ComparableExpr, error) {
-	for _, tf := range tagFamilies {
-		for _, t := range tf.Tags {
-			if t.Key == tagName {
-				return parseExpr(t.Value)
-			}
+func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string) (ComparableExpr, error) {
+	if tagSpec := registry.FindTagSpecByName(tagName); tagSpec != nil {
+		if tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagFamilyIdx); tagVal != nil {
+			return parseExpr(tagVal)
 		}
 	}
 	return nil, errTagNotDefined
@@ -471,8 +507,8 @@ func newHavingTag(tagName string, values LiteralExpr) *havingTag {
 	}
 }
 
-func (h *havingTag) Match(tagFamilies []*modelv1.TagFamily) (bool, error) {
-	expr, err := tagExpr(tagFamilies, h.Name)
+func (h *havingTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	expr, err := tagExpr(accessor, registry, h.Name)
 	if err != nil {
 		return false, err
 	}

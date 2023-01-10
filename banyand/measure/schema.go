@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package measure implements execution operations for querying measure data.
 package measure
 
 import (
@@ -27,51 +26,56 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-var errFieldNotDefined = errors.New("field is not defined")
+// ErrFieldNotDefined indicated the field is not defined in the measure schema.
+var ErrFieldNotDefined = errors.New("field is not defined")
 
-type schema struct {
+type measureSchema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
 	common   *logical.CommonSchema
 }
 
-func (m *schema) Scope() tsdb.Entry {
+func (m *measureSchema) Scope() tsdb.Entry {
 	return tsdb.Entry(m.measure.Metadata.Name)
 }
 
-func (m *schema) EntityList() []string {
+func (m *measureSchema) EntityList() []string {
 	return m.common.EntityList
 }
 
-func (m *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+func (m *measureSchema) FindTagSpecByName(name string) *logical.TagSpec {
+	return m.common.FindTagSpecByName(name)
+}
+
+func (m *measureSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	return m.common.IndexDefined(tagName)
 }
 
-func (m *schema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+func (m *measureSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
 	return m.common.IndexRuleDefined(indexRuleName)
 }
 
-func (m *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+func (m *measureSchema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
 	return m.common.CreateRef(tags...)
 }
 
-func (m *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+func (m *measureSchema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
 	fieldRefs := make([]*logical.FieldRef, len(fields))
 	for idx, field := range fields {
 		if fs, ok := m.fieldMap[field.Name]; ok {
 			fieldRefs[idx] = &logical.FieldRef{Field: field, Spec: fs}
 		} else {
-			return nil, errors.Wrap(errFieldNotDefined, field.Name)
+			return nil, errors.Wrap(ErrFieldNotDefined, field.Name)
 		}
 	}
 	return fieldRefs, nil
 }
 
-func (m *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+func (m *measureSchema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 	if len(refs) == 0 {
 		return nil
 	}
-	newSchema := &schema{
+	newSchema := &measureSchema{
 		measure:  m.measure,
 		common:   m.common.ProjTags(refs...),
 		fieldMap: m.fieldMap,
@@ -79,7 +83,7 @@ func (m *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 	return newSchema
 }
 
-func (m *schema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
+func (m *measureSchema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
 	newFieldMap := make(map[string]*logical.FieldSpec)
 	i := 0
 	for _, fr := range fieldRefs {
@@ -89,15 +93,15 @@ func (m *schema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
 		}
 		i++
 	}
-	return &schema{
+	return &measureSchema{
 		measure:  m.measure,
 		common:   m.common,
 		fieldMap: newFieldMap,
 	}
 }
 
-func (m *schema) Equal(s2 logical.Schema) bool {
-	if other, ok := s2.(*schema); ok {
+func (m *measureSchema) Equal(s2 logical.Schema) bool {
+	if other, ok := s2.(*measureSchema); ok {
 		// TODO: add more equality checks
 		return cmp.Equal(other.common.TagMap, m.common.TagMap)
 	}
@@ -105,12 +109,12 @@ func (m *schema) Equal(s2 logical.Schema) bool {
 }
 
 // registerTag registers the tag spec with given tagFamilyIdx and tagIdx.
-func (m *schema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+func (m *measureSchema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
 	m.common.RegisterTag(tagFamilyIdx, tagIdx, spec)
 }
 
 // registerField registers the field spec with given index.
-func (m *schema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
+func (m *measureSchema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
 	m.fieldMap[spec.GetName()] = &logical.FieldSpec{
 		FieldIdx: fieldIdx,
 		Spec:     spec,

@@ -24,6 +24,7 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -61,7 +62,7 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 		return nil, err
 	}
 	if len(aggregationFieldRefs) == 0 {
-		return nil, errors.Wrap(errFieldNotDefined, "aggregation schema")
+		return nil, errors.Wrap(measure.ErrFieldNotDefined, "aggregation schema")
 	}
 	aggrFunc, err := aggregation.NewInt64Func(gba.aggrFunc)
 	if err != nil {

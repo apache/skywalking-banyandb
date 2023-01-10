@@ -40,8 +40,14 @@ func (emptyIndexChecker) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule
 	return false, nil
 }
 
+// TagSpecRegistry enables to find TagSpec by its name.
+type TagSpecRegistry interface {
+	FindTagSpecByName(string) *TagSpec
+}
+
 // Schema allows retrieving schemas in a convenient way.
 type Schema interface {
+	TagSpecRegistry
 	IndexChecker
 	Scope() tsdb.Entry
 	EntityList() []string
@@ -71,6 +77,14 @@ type CommonSchema struct {
 	IndexRules []*databasev1.IndexRule
 	TagMap     map[string]*TagSpec
 	EntityList []string
+}
+
+// FindTagSpecByName finds TagSpec by its name in the registry.
+func (cs *CommonSchema) FindTagSpecByName(name string) *TagSpec {
+	if spec, ok := cs.TagMap[name]; ok {
+		return spec
+	}
+	return nil
 }
 
 // ProjTags inits a dictionary for getting TagSpec by tag's name.

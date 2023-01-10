@@ -24,6 +24,7 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -55,7 +56,7 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 		return nil, err
 	}
 	if len(fieldRefs) == 0 {
-		return nil, errors.Wrap(errFieldNotDefined, "top schema")
+		return nil, errors.Wrap(measure.ErrFieldNotDefined, "top schema")
 	}
 	reverted := false
 	if gba.top.FieldValueSort == modelv1.Sort_SORT_ASC {

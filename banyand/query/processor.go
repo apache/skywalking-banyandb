@@ -138,7 +138,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	s, err := logical_measure.BuildSchema(ec)
+	s, err := measure.BuildSchema(ec)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
 		return
