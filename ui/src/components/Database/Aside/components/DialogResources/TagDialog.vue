@@ -39,8 +39,7 @@ const props = defineProps({
     },
     type: {
         type: String,
-        default: 'Tag',
-        required: true
+        default: 'Tag'
     },
     group: {
         type: String,

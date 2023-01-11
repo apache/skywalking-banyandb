@@ -100,27 +100,28 @@ function openDesign() { }
 
 <template>
     <div class="flex second-nav-contain align-item-center justify-center">
-        <div style="width: 130px;">
-            <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable placeholder="Please select">
-                <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
-                </el-option>
-            </el-select>
-        </div>
-
-        <div class="flex justify-between align-item-center" style="width: calc(100% - 130px);">
+        <div class="flex justify-between align-item-center" style="width: 100%;">
             <div class="flex align-item-center" style="width: 50%;">
+                <div class="flex justify-start align-item-center" style="width: 130px;">
+                    <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
+                        placeholder="Please select">
+                        <el-option v-for="item in data.options" :key="item.value" :label="item.label"
+                            :value="item.value">
+                        </el-option>
+                    </el-select>
+                </div>
                 <div class="flex justify-start align-item-center set-margin-left" style="width: 270px;">
                     <el-date-picker v-model="value" type="datetimerange" :shortcuts="pickerOptions.shortcuts"
                         range-separator="to" start-placeholder="begin" end-placeholder="end" align="right" disabled>
                     </el-date-picker>
                 </div>
-                <div class="flex justify-start align-item-center set-margin-left" style="width: 270px;">
+                <!-- <div class="flex justify-start align-item-center set-margin-left" style="width: 270px;">
                     <el-input class="search-input" placeholder="Search by Tags" clearable v-model="query" disabled>
                         <template #append>
                             <el-button :icon="Search" />
                         </template>
                     </el-input>
-                </div>
+                </div> -->
             </div>
             <div class="flex align-item-center justify-end" style="width:50%;">
                 <div>
@@ -143,6 +144,7 @@ function openDesign() { }
 .set-margin-left {
     margin-left: 10px;
 }
+
 .nav-button {
     width: 100%;
     margin: 0;
