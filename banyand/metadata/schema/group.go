@@ -43,7 +43,7 @@ func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commo
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, error) {
-	messages, err := e.kv.Get(ctx, groupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(groupsKeyPrefix)))
+	messages, err := e.client.Get(ctx, groupsKeyPrefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(groupsKeyPrefix)))
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 		return false, errors.Wrap(err, group)
 	}
 	keyPrefix := groupsKeyPrefix + g.GetMetadata().GetName() + "/"
-	resp, err := e.kv.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
+	resp, err := e.client.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
 	if err != nil {
 		return false, err
 	}

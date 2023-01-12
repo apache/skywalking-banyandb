@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
@@ -56,9 +55,9 @@ const (
 var errBlockClosingInterrupted = errors.New("interrupt to close the block")
 
 type block struct {
-	encodingMethod EncodingMethod
-	store          kv.TimeSeriesStore
-	queue          bucket.Queue
+	store    kv.TimeSeriesStore
+	openOpts openOpts
+	queue    bucket.Queue
 	bucket.Reporter
 	clock         timestamp.Clock
 	lsmIndex      index.Store
@@ -73,11 +72,16 @@ type block struct {
 	suffix      string
 	path        string
 	closableLst []io.Closer
-	lsmMemSize  int64
-	memSize     int64
 	lock        sync.RWMutex
 	segID       SectionID
 	blockID     SectionID
+}
+
+type openOpts struct {
+	store     []kv.TimeSeriesOptions
+	storePath string
+	inverted  inverted.StoreOpts
+	lsm       lsm.StoreOpts
 }
 
 type blockOpts struct {
@@ -129,21 +133,34 @@ func (b *block) options(ctx context.Context) {
 	if o != nil {
 		options = o.(DatabaseOpts)
 	}
-	if options.EncodingMethod.EncoderPool == nil {
-		options.EncodingMethod.EncoderPool = encoding.NewPlainEncoderPool("tsdb", 0)
+	if options.EncodingMethod.EncoderPool != nil && options.EncodingMethod.DecoderPool != nil {
+		b.openOpts.store = append(b.openOpts.store, kv.TSSWithEncoding(options.EncodingMethod.EncoderPool,
+			options.EncodingMethod.DecoderPool, options.EncodingMethod.ChunkSizeInBytes))
 	}
-	if options.EncodingMethod.EncoderPool == nil {
-		options.EncodingMethod.DecoderPool = encoding.NewPlainDecoderPool("tsdb", 0)
+	if options.CompressionMethod.Type == CompressionTypeZSTD {
+		b.openOpts.store = append(b.openOpts.store, kv.TSSWithZSTDCompression(options.CompressionMethod.ChunkSizeInBytes))
 	}
-	b.encodingMethod = options.EncodingMethod
+	var memSize int64
 	if options.BlockMemSize < 1 {
-		b.memSize = defaultMainMemorySize
+		memSize = defaultMainMemorySize
 	} else {
-		b.memSize = options.BlockMemSize
+		memSize = options.BlockMemSize
 	}
-	b.lsmMemSize = b.memSize / 8
-	if b.lsmMemSize < defaultKVMemorySize {
-		b.lsmMemSize = defaultKVMemorySize
+	b.openOpts.store = append(b.openOpts.store, kv.TSSWithMemTableSize(memSize), kv.TSSWithLogger(b.l.Named(componentMain)))
+	b.openOpts.storePath = path.Join(b.path, componentMain)
+	b.openOpts.inverted = inverted.StoreOpts{
+		Path:         path.Join(b.path, componentSecondInvertedIdx),
+		Logger:       b.l.Named(componentSecondInvertedIdx),
+		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
+	}
+	lsmMemSize := memSize / 8
+	if lsmMemSize < defaultKVMemorySize {
+		lsmMemSize = defaultKVMemorySize
+	}
+	b.openOpts.lsm = lsm.StoreOpts{
+		Path:         path.Join(b.path, componentSecondLSMIdx),
+		Logger:       b.l.Named(componentSecondLSMIdx),
+		MemTableSize: lsmMemSize,
 	}
 }
 
@@ -160,27 +177,14 @@ func (b *block) openSafely() (err error) {
 }
 
 func (b *block) open() (err error) {
-	if b.store, err = kv.OpenTimeSeriesStore(
-		0,
-		path.Join(b.path, componentMain),
-		kv.TSSWithEncoding(b.encodingMethod.EncoderPool, b.encodingMethod.DecoderPool),
-		kv.TSSWithLogger(b.l.Named(componentMain)),
-		kv.TSSWithMemTableSize(b.memSize),
-	); err != nil {
+	if b.store, err = kv.OpenTimeSeriesStore(b.openOpts.storePath, b.openOpts.store...); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.store)
-	if b.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
-		Path:   path.Join(b.path, componentSecondInvertedIdx),
-		Logger: b.l.Named(componentSecondInvertedIdx),
-	}); err != nil {
+	if b.invertedIndex, err = inverted.NewStore(b.openOpts.inverted); err != nil {
 		return err
 	}
-	if b.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
-		Path:         path.Join(b.path, componentSecondLSMIdx),
-		Logger:       b.l.Named(componentSecondLSMIdx),
-		MemTableSize: b.lsmMemSize,
-	}); err != nil {
+	if b.lsmIndex, err = lsm.NewStore(b.openOpts.lsm); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
@@ -321,7 +325,6 @@ type blockDelegate interface {
 	writeLSMIndex(fields []index.Field, id common.ItemID) error
 	writeInvertedIndex(fields []index.Field, id common.ItemID) error
 	dataReader() kv.TimeSeriesReader
-	decoderPool() encoding.SeriesDecoderPool
 	lsmIndexReader() index.Searcher
 	invertedIndexReader() index.Searcher
 	primaryIndexReader() index.FieldIterable
@@ -334,10 +337,6 @@ var _ blockDelegate = (*bDelegate)(nil)
 
 type bDelegate struct {
 	delegate *block
-}
-
-func (d *bDelegate) decoderPool() encoding.SeriesDecoderPool {
-	return d.delegate.encodingMethod.DecoderPool
 }
 
 func (d *bDelegate) dataReader() kv.TimeSeriesReader {

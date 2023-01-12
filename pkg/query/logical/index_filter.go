@@ -59,13 +59,18 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			return nil, nil, err
 		}
 		if parsedEntity != nil {
-			return nil, []tsdb.Entity{parsedEntity}, nil
+			return nil, parsedEntity, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
 			if indexRule.Location == databasev1.IndexRule_LOCATION_GLOBAL {
-				return nil, nil, GlobalIndexError{
-					IndexRule: indexRule,
-					Expr:      expr,
+				switch cond.Op {
+				case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN:
+					return nil, nil, GlobalIndexError{
+						IndexRule: indexRule,
+						Expr:      expr,
+					}
+				default:
+					return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "gobal index conf:%s", cond)
 				}
 			}
 			return parseCondition(cond, indexRule, expr, entity)
@@ -146,47 +151,81 @@ func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, ex
 		}
 		return newNot(indexRule, and), []tsdb.Entity{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
-		panic("unimplemented")
+		bb := expr.Bytes()
+		or := newOr(len(bb))
+		for _, b := range bb {
+			or.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return or, []tsdb.Entity{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
-		panic("unimplemented")
+		bb := expr.Bytes()
+		or := newOr(len(bb))
+		for _, b := range bb {
+			or.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return newNot(indexRule, or), []tsdb.Entity{entity}, nil
 	}
 	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
-func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *modelv1.Condition) (LiteralExpr, tsdb.Entity, error) {
-	parsedEntity := make(tsdb.Entity, len(entity))
-	copy(parsedEntity, entity)
+func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *modelv1.Condition) (LiteralExpr, []tsdb.Entity, error) {
 	entityIdx, ok := entityDict[cond.Name]
-	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ {
-		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ operation in condition(%v)", cond)
+	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
+		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
 	}
 	switch v := cond.Value.Value.(type) {
 	case *modelv1.TagValue_Str:
 		if ok {
+			parsedEntity := make(tsdb.Entity, len(entity))
+			copy(parsedEntity, entity)
 			parsedEntity[entityIdx] = []byte(v.Str.GetValue())
-			return nil, parsedEntity, nil
+			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		return str(v.Str.GetValue()), nil, nil
 	case *modelv1.TagValue_Id:
 		if ok {
+			parsedEntity := make(tsdb.Entity, len(entity))
+			copy(parsedEntity, entity)
 			parsedEntity[entityIdx] = []byte(v.Id.GetValue())
-			return nil, parsedEntity, nil
+			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		return id(v.Id.GetValue()), nil, nil
 
 	case *modelv1.TagValue_StrArray:
+		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
+			entities := make([]tsdb.Entity, len(v.StrArray.Value))
+			for i, va := range v.StrArray.Value {
+				parsedEntity := make(tsdb.Entity, len(entity))
+				copy(parsedEntity, entity)
+				parsedEntity[entityIdx] = []byte(va)
+				entities[i] = parsedEntity
+			}
+			return nil, entities, nil
+		}
 		return &strArrLiteral{
 			arr: v.StrArray.GetValue(),
 		}, nil, nil
 	case *modelv1.TagValue_Int:
 		if ok {
+			parsedEntity := make(tsdb.Entity, len(entity))
+			copy(parsedEntity, entity)
 			parsedEntity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
-			return nil, parsedEntity, nil
+			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		return &int64Literal{
 			int64: v.Int.GetValue(),
 		}, nil, nil
 	case *modelv1.TagValue_IntArray:
+		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
+			entities := make([]tsdb.Entity, len(v.IntArray.Value))
+			for i, va := range v.IntArray.Value {
+				parsedEntity := make(tsdb.Entity, len(entity))
+				copy(parsedEntity, entity)
+				parsedEntity[entityIdx] = convert.Int64ToBytes(va)
+				entities[i] = parsedEntity
+			}
+			return nil, entities, nil
+		}
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil, nil
@@ -199,11 +238,31 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 func parseEntities(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
 	count := len(input)
 	result := make(tsdb.Entity, count)
+	anyEntity := func(entities []tsdb.Entity) bool {
+		for _, entity := range entities {
+			for _, entry := range entity {
+				if !bytes.Equal(entry, tsdb.AnyEntry) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	leftAny := anyEntity(left)
+	rightAny := anyEntity(right)
+
 	mergedEntities := make([]tsdb.Entity, 0, len(left)+len(right))
-	mergedEntities = append(mergedEntities, left...)
-	mergedEntities = append(mergedEntities, right...)
+
 	switch op {
 	case modelv1.LogicalExpression_LOGICAL_OP_AND:
+		if leftAny && !rightAny {
+			return right
+		}
+		if !leftAny && rightAny {
+			return left
+		}
+		mergedEntities = append(mergedEntities, left...)
+		mergedEntities = append(mergedEntities, right...)
 		for i := 0; i < count; i++ {
 			entry := tsdb.AnyEntry
 			for j := 0; j < len(mergedEntities); j++ {
@@ -220,6 +279,14 @@ func parseEntities(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, le
 			result[i] = entry
 		}
 	case modelv1.LogicalExpression_LOGICAL_OP_OR:
+		if leftAny {
+			return left
+		}
+		if rightAny {
+			return right
+		}
+		mergedEntities = append(mergedEntities, left...)
+		mergedEntities = append(mergedEntities, right...)
 		for i := 0; i < count; i++ {
 			entry := tsdb.AnyEntry
 			for j := 0; j < len(mergedEntities); j++ {
@@ -306,7 +373,7 @@ func newAnd(size int) *andNode {
 func (an *andNode) merge(list ...posting.List) (posting.List, error) {
 	var result posting.List
 	for _, l := range list {
-		if _, ok := l.(bypassList); ok {
+		if _, ok := l.(*bypassList); ok {
 			continue
 		}
 		if result == nil {
@@ -351,7 +418,7 @@ func (on *orNode) merge(list ...posting.List) (posting.List, error) {
 	for _, l := range list {
 		// If a predicator is not indexed, all predicator are ignored.
 		// The tagFilter will take up this job to filter this items.
-		if _, ok := l.(bypassList); ok {
+		if _, ok := l.(*bypassList); ok {
 			return bList, nil
 		}
 		if result == nil {

@@ -76,6 +76,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.Int64Var(&s.dbOpts.BlockMemSize, "stream-block-mem-size", 8<<20, "block memory size")
 	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", 1<<20, "series metadata memory size")
 	flagS.Int64Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", 2<<20, "global index memory size")
+	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "stream-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
 }
 

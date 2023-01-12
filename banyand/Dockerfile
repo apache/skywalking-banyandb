@@ -34,8 +34,6 @@ ENV GO111MODULE "on"
 WORKDIR /src
 COPY go.* ./
 RUN go mod download
-RUN GOBIN=/bin go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.11 \
-    && chmod 755 /bin/grpc-health-probe
 
 FROM base AS builder
 
@@ -44,24 +42,12 @@ RUN --mount=target=. \
             BUILD_DIR=/out make -C banyand all
 
 FROM alpine:edge AS certs
-RUN apk add --no-cache ca-certificates
-RUN update-ca-certificates
+RUN apk add --no-cache ca-certificates && update-ca-certificates
 
 FROM busybox:stable-glibc
 
 COPY --from=builder /out/banyand-server /banyand-server
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
-
-EXPOSE 17912
-EXPOSE 17913
-EXPOSE 6060
-
-ENTRYPOINT ["/banyand-server"]
-
-FROM busybox:stable-glibc AS test
-
-COPY --from=builder /out/banyand-server /banyand-server
-COPY --from=base /bin/grpc-health-probe /grpc-health-probe
 
 EXPOSE 17912
 EXPOSE 17913

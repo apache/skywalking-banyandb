@@ -14,23 +14,47 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
-
-# // TODO: add jemalloc installation on Linux
-# BUILD_TAGS := jemalloc
-
-IMG_NAME := skywalking-banyandb
-
-include ../scripts/build/version.mk
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/docker.mk
-include ../scripts/build/help.mk
+dataPoints:
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "2"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "4"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-17T12:50:45.912Z"
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "3"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        id:
+          value: "5"
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2022-10-17T12:51:45.912Z"

@@ -46,13 +46,8 @@ func (s *store) Close() error {
 
 func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
 	for _, field := range fields {
-		f, errInternal := field.Marshal()
-		if errInternal != nil {
-			err = multierr.Append(err, errInternal)
-			continue
-		}
 		itemIDInt := uint64(itemID)
-		err = multierr.Append(err, s.lsm.PutWithVersion(f, convert.Uint64ToBytes(itemIDInt), itemIDInt))
+		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(itemIDInt), itemIDInt))
 	}
 	return err
 }
@@ -69,8 +64,7 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	var err error
 	var lsm kv.Store
 	if lsm, err = kv.OpenStore(
-		0,
-		opts.Path+"/lsm",
+		opts.Path,
 		kv.StoreWithLogger(opts.Logger),
 		kv.StoreWithMemTableSize(opts.MemTableSize)); err != nil {
 		return nil, err

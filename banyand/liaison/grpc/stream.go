@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -39,34 +38,44 @@ import (
 type streamService struct {
 	streamv1.UnimplementedStreamServiceServer
 	*discoveryService
+	sampled *logger.Logger
+}
+
+func (s *streamService) setLogger(log *logger.Logger) {
+	s.sampled = log.Sampled(10)
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
-	reply := func() error {
-		return stream.Send(&streamv1.WriteResponse{})
+	reply := func(stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
+		if errResp := stream.Send(&streamv1.WriteResponse{}); errResp != nil {
+			logger.Err(errResp).Msg("failed to send response")
+		}
 	}
-	sampled := s.log.Sample(&zerolog.BasicSampler{N: 10})
+	ctx := stream.Context()
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
-			return err
+			s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
+			reply(stream, s.sampled)
+			continue
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
-			sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
+			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
+			reply(stream, s.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
-			sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
+			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
+			reply(stream, s.sampled)
 			continue
 		}
 		iwr := &streamv1.InternalWriteRequest{
@@ -80,15 +89,9 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
-			sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
-			if errResp := reply(); errResp != nil {
-				return errResp
-			}
-			continue
+			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
 		}
-		if errSend := reply(); errSend != nil {
-			return errSend
-		}
+		reply(stream, s.sampled)
 	}
 }
 

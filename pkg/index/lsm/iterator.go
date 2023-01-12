@@ -89,7 +89,7 @@ func (f *fieldIteratorTemplate) Close() error {
 
 func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, iterable kv.Iterable,
 	fn compositePostingValueFn,
-) (*fieldIteratorTemplate, error) {
+) *fieldIteratorTemplate {
 	if termRange.Upper == nil {
 		termRange.Upper = defaultUpper
 	}
@@ -106,9 +106,6 @@ func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRan
 		term = termRange.Upper
 		reverse = true
 	}
-	if order == modelv1.Sort_SORT_DESC {
-		reverse = true
-	}
 	iter := iterable.NewIterator(kv.ScanOpts{
 		Prefix:  fieldKey.Marshal(),
 		Reverse: reverse,
@@ -117,17 +114,13 @@ func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRan
 		Key:  fieldKey,
 		Term: term,
 	}
-	seekKey, err := field.Marshal()
-	if err != nil {
-		return nil, err
-	}
 	return &fieldIteratorTemplate{
 		delegated: newDelegateIterator(iter, fieldKey, l),
 		termRange: termRange,
 		fn:        fn,
 		reverse:   reverse,
-		seekKey:   seekKey,
-	}, nil
+		seekKey:   field.Marshal(),
+	}
 }
 
 func parseKey(fieldKey index.FieldKey, key []byte) (index.Field, error) {

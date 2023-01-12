@@ -57,7 +57,7 @@ message QueryRequest {
   // tag_families are indexed.
   model.v1.Criteria criteria = 4;
   // tag_projection can be used to select tags of the data points in the response
-  model.v1.TagProjection tag_projection = 5 [(validate.rules).message.required = true];
+  model.v1.TagProjection tag_projection = 5;
   message FieldProjection {
     repeated string names = 1;
   }

@@ -21,7 +21,6 @@ package schema
 import (
 	"context"
 	"io"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // EventType defines actions of events.
@@ -115,6 +115,8 @@ type Repository interface {
 	Close()
 }
 
+const defaultWorkerNum = 10
+
 var _ Repository = (*schemaRepo)(nil)
 
 type schemaRepo struct {
@@ -123,10 +125,11 @@ type schemaRepo struct {
 	resourceSupplier ResourceSupplier
 	l                *logger.Logger
 	data             map[string]*group
-	workerStopCh     chan struct{}
+	closer           *run.Closer
 	eventCh          chan MetadataEvent
 	shardTopic       bus.Topic
 	entityTopic      bus.Topic
+	workerNum        int
 	sync.RWMutex
 }
 
@@ -147,8 +150,9 @@ func NewRepository(
 		shardTopic:       shardTopic,
 		entityTopic:      entityTopic,
 		data:             make(map[string]*group),
-		eventCh:          make(chan MetadataEvent),
-		workerStopCh:     make(chan struct{}),
+		eventCh:          make(chan MetadataEvent, defaultWorkerNum),
+		workerNum:        defaultWorkerNum,
+		closer:           run.NewCloser(defaultWorkerNum),
 	}
 }
 
@@ -157,9 +161,10 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 }
 
 func (sr *schemaRepo) Watcher() {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < sr.workerNum; i++ {
 		go func() {
 			defer func() {
+				sr.closer.Done()
 				if err := recover(); err != nil {
 					sr.l.Warn().Interface("err", err).Msg("watching the events")
 				}
@@ -173,32 +178,32 @@ func (sr *schemaRepo) Watcher() {
 					if e := sr.l.Debug(); e.Enabled() {
 						e.Interface("event", evt).Msg("received an event")
 					}
-					for i := 0; i < 10; i++ {
-						var err error
-						switch evt.Typ {
-						case EventAddOrUpdate:
-							switch evt.Kind {
-							case EventKindGroup:
-								_, err = sr.StoreGroup(evt.Metadata)
-							case EventKindResource:
-								_, err = sr.storeResource(evt.Metadata)
-							}
-						case EventDelete:
-							switch evt.Kind {
-							case EventKindGroup:
-								err = sr.deleteGroup(evt.Metadata)
-							case EventKindResource:
-								err = sr.deleteResource(evt.Metadata)
-							}
+					var err error
+					switch evt.Typ {
+					case EventAddOrUpdate:
+						switch evt.Kind {
+						case EventKindGroup:
+							_, err = sr.StoreGroup(evt.Metadata)
+						case EventKindResource:
+							_, err = sr.storeResource(evt.Metadata)
 						}
-						if err == nil {
-							break
+					case EventDelete:
+						switch evt.Kind {
+						case EventKindGroup:
+							err = sr.deleteGroup(evt.Metadata)
+						case EventKindResource:
+							err = sr.deleteResource(evt.Metadata)
 						}
-						runtime.Gosched()
-						time.Sleep(time.Second)
-						sr.l.Err(err).Interface("event", evt).Int("round", i).Msg("fail to handle the metadata event. retry...")
 					}
-				case <-sr.workerStopCh:
+					if err != nil {
+						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
+						select {
+						case sr.eventCh <- evt:
+						case <-sr.closer.CloseNotify():
+							return
+						}
+					}
+				case <-sr.closer.CloseNotify():
 					return
 				}
 			}
@@ -370,9 +375,7 @@ func (sr *schemaRepo) Close() {
 			sr.l.Warn().Interface("err", err).Msg("closing resource")
 		}
 	}()
-	if sr.workerStopCh != nil {
-		close(sr.workerStopCh)
-	}
+	sr.closer.CloseThenWait()
 
 	sr.RLock()
 	defer sr.RUnlock()

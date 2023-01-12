@@ -24,6 +24,7 @@ import (
 	"math"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3/options"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -48,7 +49,7 @@ type writer interface {
 }
 
 // ScanFunc is the closure executed on scanning out a pair of key-value.
-type ScanFunc func(shardID int, key []byte, getVal func() ([]byte, error)) error
+type ScanFunc func(key []byte, getVal func() ([]byte, error)) error
 
 // ScanOpts wraps options for scanning the kv storage.
 type ScanOpts struct {
@@ -88,7 +89,6 @@ type TimeSeriesWriter interface {
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
 	Get(key []byte, ts uint64) ([]byte, error)
-	Context(key []byte, ts uint64, n int) (pre, next Iterator)
 }
 
 // TimeSeriesStore is time series storage.
@@ -113,16 +113,28 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 	}
 }
 
-// TSSWithEncoding sets encoding and decoding pools for flushing and compacting.
-func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool) TimeSeriesOptions {
+// TSSWithEncoding sets encoding and decoding pools for building chunks.
+func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool, chunkSize int) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
 		if btss, ok := store.(*badgerTSS); ok {
-			btss.dbOpts = btss.dbOpts.WithExternalCompactor(
+			btss.dbOpts = btss.dbOpts.WithKeyBasedEncoder(
 				&encoderPoolDelegate{
 					encoderPool,
 				}, &decoderPoolDelegate{
 					decoderPool,
-				})
+				}, chunkSize)
+		}
+	}
+}
+
+// TSSWithZSTDCompression sets a ZSTD based compression method.
+func TSSWithZSTDCompression(chunkSize int) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.dbOpts = btss.dbOpts.
+				WithCompression(options.ZSTD).
+				WithBlockSize(chunkSize).
+				WithSameKeyBlock()
 		}
 	}
 }
@@ -167,14 +179,14 @@ type IndexStore interface {
 
 // OpenTimeSeriesStore creates a new TimeSeriesStore.
 // nolint: contextcheck
-func OpenTimeSeriesStore(shardID int, path string, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
+func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
 	btss := new(badgerTSS)
-	btss.shardID = shardID
 	btss.dbOpts = badger.DefaultOptions(path)
 	for _, opt := range options {
 		opt(btss)
 	}
 	// Put all values into LSM
+	btss.dbOpts = btss.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
 	if btss.dbOpts.MemTableSize < 8<<20 {
 		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
@@ -221,9 +233,8 @@ func StoreWithMemTableSize(size int64) StoreOptions {
 
 // OpenStore creates a new Store.
 // nolint: contextcheck
-func OpenStore(shardID int, path string, options ...StoreOptions) (Store, error) {
+func OpenStore(path string, options ...StoreOptions) (Store, error) {
 	bdb := new(badgerDB)
-	bdb.shardID = shardID
 	bdb.dbOpts = badger.DefaultOptions(path)
 	for _, opt := range options {
 		opt(bdb)
@@ -256,9 +267,8 @@ func IndexWithLogger(l *logger.Logger) IndexOptions {
 }
 
 // OpenIndexStore creates a new IndexStore.
-func OpenIndexStore(shardID int, path string, options ...IndexOptions) (IndexStore, error) {
+func OpenIndexStore(path string, options ...IndexOptions) (IndexStore, error) {
 	bdb := new(badgerDB)
-	bdb.shardID = shardID
 	bdb.dbOpts = badger.DefaultOptions(path)
 	for _, opt := range options {
 		opt(bdb)
