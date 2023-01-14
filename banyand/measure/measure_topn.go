@@ -199,7 +199,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 				},
 			},
 		},
-	})
+	}, true)
 }
 
 func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
@@ -397,6 +397,13 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
 			dataPoint := request.(*measurev1.DataPointValue)
+			if len(dataPoint.GetFields()) <= fieldIdx {
+				manager.l.Warn().Interface("point", dataPoint).
+					Str("fieldName", fieldName).
+					Int("len", len(dataPoint.GetFields())).
+					Int("fieldIdx", fieldIdx).
+					Msg("out of range")
+			}
 			return flow.Data{
 				// save string representation of group values as the key, i.e. v1
 				"",

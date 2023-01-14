@@ -39,7 +39,7 @@ import (
 
 var errMalformedElement = errors.New("element is malformed")
 
-func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue) error {
+func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue, isVirtualMeasure bool) error {
 	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
@@ -120,6 +120,9 @@ func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity [
 		_ = wp.Close()
 		return err
 	}
+	if isVirtualMeasure {
+		return nil
+	}
 	m := index.Message{
 		LocalWriter: writer,
 		Value: index.Value{
@@ -161,7 +164,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	err := stm.write(stm.schema, common.ShardID(writeEvent.GetShardId()),
-		writeEvent.SeriesHash, tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetDataPoint())
+		writeEvent.SeriesHash, tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetDataPoint(), false)
 	if err != nil {
 		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
 	}
