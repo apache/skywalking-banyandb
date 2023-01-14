@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -39,17 +39,16 @@ import (
 
 var errMalformedElement = errors.New("element is malformed")
 
-func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue) error {
+func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue) error {
 	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
 	}
-	sm := s.schema
 	fLen := len(value.GetTagFamilies())
 	if fLen < 1 {
 		return errors.Wrap(errMalformedElement, "no tag family")
 	}
-	if fLen > len(sm.TagFamilies) {
+	if fLen > len(sm.GetTagFamilies()) {
 		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.databaseSupplier.SupplyTSDB().Shard(shardID)
@@ -104,7 +103,7 @@ func (s *measure) write(md *commonv1.Metadata, shardID common.ShardID, entity []
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
-		if e := s.l.Named(md.Group, md.Name).Debug(); e.Enabled() {
+		if e := s.l.Named(sm.GetMetadata().GetGroup(), sm.GetMetadata().GetName()).Debug(); e.Enabled() {
 			e.Time("ts", t).
 				Int("ts_nano", t.Nanosecond()).
 				RawJSON("data", logger.Proto(value)).
@@ -161,7 +160,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find measure definition")
 		return
 	}
-	err := stm.write(writeEvent.GetRequest().GetMetadata(), common.ShardID(writeEvent.GetShardId()),
+	err := stm.write(stm.schema, common.ShardID(writeEvent.GetShardId()),
 		writeEvent.SeriesHash, tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetDataPoint())
 	if err != nil {
 		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")

@@ -26,10 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"golang.org/x/exp/slices"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -44,6 +41,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -67,17 +67,17 @@ var (
 )
 
 type topNStreamingProcessor struct {
-	databaseSupplier tsdb.Supplier
-	streamingFlow    flow.Flow
-	l                *logger.Logger
-	topNSchema       *databasev1.TopNAggregation
-	src              chan interface{}
-	in               chan flow.StreamRecord
-	errCh            <-chan error
-	stopCh           chan struct{}
+	m             *measure
+	streamingFlow flow.Flow
+	l             *logger.Logger
+	topNSchema    *databasev1.TopNAggregation
+	fakeMeasure   *databasev1.Measure
+	src           chan interface{}
+	in            chan flow.StreamRecord
+	errCh         <-chan error
+	stopCh        chan struct{}
 	flow.ComponentState
 	interval      time.Duration
-	shardNum      uint32
 	sortDirection modelv1.Sort
 }
 
@@ -147,7 +147,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record f
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(ctx context.Context, eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+func (t *topNStreamingProcessor) writeData(_ context.Context, eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool
@@ -159,86 +159,46 @@ func (t *topNStreamingProcessor) writeData(ctx context.Context, eventTime time.T
 	if err != nil {
 		return err
 	}
-	shard, err := t.databaseSupplier.SupplyTSDB().Shard(shardID)
-	if err != nil {
-		return err
-	}
-	series, err := shard.Series().Get(tsdb.HashEntity(entity), entityValues)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	span, err := series.Create(ctx, eventTime)
-	if err != nil {
-		if span != nil {
-			_ = span.Close()
-		}
-		return err
-	}
+
 	// measureID is consist of three parts,
 	// 1. groupValues
 	// 2. rankNumber
 	// 3. timeBucket
 	measureID := data[0].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
-	writeFn := func() (tsdb.Writer, error) {
-		builder := span.WriterBuilder().Time(eventTime)
-		virtualTagFamily := &modelv1.TagFamilyForWrite{
-			Tags: []*modelv1.TagValue{
-				// MeasureID
-				{
-					Value: &modelv1.TagValue_Id{
-						Id: &modelv1.ID{
-							Value: measureID,
+	return t.m.write(t.fakeMeasure, shardID, tsdb.HashEntity(entity), entityValues, &measurev1.DataPointValue{
+		Timestamp: timestamppb.New(eventTime),
+		TagFamilies: []*modelv1.TagFamilyForWrite{
+			{
+				Tags: []*modelv1.TagValue{
+					// MeasureID
+					{
+						Value: &modelv1.TagValue_Id{
+							Id: &modelv1.ID{
+								Value: measureID,
+							},
 						},
 					},
-				},
-				// GroupValues for merge in post processor
-				{
-					Value: &modelv1.TagValue_Str{
-						Str: &modelv1.Str{
-							Value: data[0].(string),
+					// GroupValues for merge in post processor
+					{
+						Value: &modelv1.TagValue_Str{
+							Str: &modelv1.Str{
+								Value: data[0].(string),
+							},
 						},
 					},
 				},
 			},
-		}
-		payload, errMarshal := proto.Marshal(virtualTagFamily)
-		if errMarshal != nil {
-			return nil, errMarshal
-		}
-		builder.Family(familyIdentity(TopNTagFamily, pbv1.TagFlag), payload)
-		virtualFieldValue := &modelv1.FieldValue{
-			Value: &modelv1.FieldValue_Int{
-				Int: &modelv1.Int{
-					Value: fieldValue,
+		},
+		Fields: []*modelv1.FieldValue{
+			{
+				Value: &modelv1.FieldValue_Int{
+					Int: &modelv1.Int{
+						Value: fieldValue,
+					},
 				},
 			},
-		}
-		fieldData := encodeFieldValue(virtualFieldValue)
-		builder.Family(familyIdentity(TopNValueFieldSpec.GetName(), pbv1.EncoderFieldFlag(TopNValueFieldSpec, t.interval)), fieldData)
-		writer, errWrite := builder.Build()
-		if errWrite != nil {
-			return nil, errWrite
-		}
-		_, errWrite = writer.Write()
-		if e := t.l.Debug(); e.Enabled() {
-			e.Time("ts", eventTime).
-				Int("ts_nano", eventTime.Nanosecond()).
-				Uint64("series_id", uint64(series.ID())).
-				Stringer("series", series).
-				Uint64("item_id", uint64(writer.ItemID().ID)).
-				Int("shard_id", int(shardID)).
-				Msg("write measure")
-		}
-		return writer, errWrite
-	}
-	_, err = writeFn()
-	if err != nil {
-		_ = span.Close()
-		return err
-	}
-	return span.Close()
+		},
+	})
 }
 
 func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
@@ -267,7 +227,7 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	id, err := partition.ShardID(e.Marshal(), t.shardNum)
+	id, err := partition.ShardID(e.Marshal(), t.m.shardNum)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -363,18 +323,40 @@ func (manager *topNProcessorManager) start() error {
 				return innerErr
 			}
 			streamingFlow = streamingFlow.Map(mapper)
-
 			processor := &topNStreamingProcessor{
-				l:                manager.l,
-				shardNum:         manager.m.shardNum,
-				interval:         interval,
-				topNSchema:       topNSchema,
-				sortDirection:    sortDirection,
-				databaseSupplier: manager.m.databaseSupplier,
-				src:              srcCh,
-				in:               make(chan flow.StreamRecord),
-				stopCh:           make(chan struct{}),
-				streamingFlow:    streamingFlow,
+				m:             manager.m,
+				l:             manager.l,
+				interval:      interval,
+				topNSchema:    topNSchema,
+				sortDirection: sortDirection,
+				src:           srcCh,
+				in:            make(chan flow.StreamRecord),
+				stopCh:        make(chan struct{}),
+				streamingFlow: streamingFlow,
+				fakeMeasure: &databasev1.Measure{
+					Metadata: topNSchema.Metadata,
+					TagFamilies: []*databasev1.TagFamilySpec{
+						{
+							Name: TopNTagFamily,
+							Tags: []*databasev1.TagSpec{
+								{
+									Name: "measureID",
+									Type: databasev1.TagType_TAG_TYPE_ID,
+								},
+								{
+									Name: "groupValues",
+									Type: databasev1.TagType_TAG_TYPE_STRING,
+								},
+							},
+						},
+					}, g
+					Fields: []*databasev1.FieldSpec{
+						{
+							Name:      "value",
+							FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+						},
+					},
+				},
 			}
 			processorList[i] = processor.start()
 		}
