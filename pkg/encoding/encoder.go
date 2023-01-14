@@ -20,46 +20,48 @@ package encoding
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var (
-	intEncoderPool = sync.Pool{
-		New: newIntEncoder,
+	encoderPool = sync.Pool{
+		New: newEncoder,
 	}
-	intDecoderPool = sync.Pool{
+	decoderPool = sync.Pool{
 		New: func() interface{} {
-			return &intDecoder{}
+			return &decoder{}
 		},
 	}
 
 	errInvalidValue = errors.New("invalid encoded value")
+	errNoData       = errors.New("there is no data")
 )
 
-type intEncoderPoolDelegator struct {
+type encoderPoolDelegator struct {
 	pool *sync.Pool
 	fn   ParseInterval
 	name string
 	size int
 }
 
-// NewIntEncoderPool returns a SeriesEncoderPool which provides int-based xor encoders.
-func NewIntEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
-	return &intEncoderPoolDelegator{
+// NewEncoderPool returns a SeriesEncoderPool which provides int-based xor encoders.
+func NewEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
+	return &encoderPoolDelegator{
 		name: name,
-		pool: &intEncoderPool,
+		pool: &encoderPool,
 		size: size,
 		fn:   fn,
 	}
 }
 
-func (b *intEncoderPoolDelegator) Get(metadata []byte, buffer BufferWriter) SeriesEncoder {
-	encoder := b.pool.Get().(*intEncoder)
+func (b *encoderPoolDelegator) Get(metadata []byte, buffer BufferWriter) SeriesEncoder {
+	encoder := b.pool.Get().(*encoder)
 	encoder.name = b.name
 	encoder.size = b.size
 	encoder.fn = b.fn
@@ -67,51 +69,51 @@ func (b *intEncoderPoolDelegator) Get(metadata []byte, buffer BufferWriter) Seri
 	return encoder
 }
 
-func (b *intEncoderPoolDelegator) Put(encoder SeriesEncoder) {
-	_, ok := encoder.(*intEncoder)
+func (b *encoderPoolDelegator) Put(seriesEncoder SeriesEncoder) {
+	_, ok := seriesEncoder.(*encoder)
 	if ok {
-		b.pool.Put(encoder)
+		b.pool.Put(seriesEncoder)
 	}
 }
 
-type intDecoderPoolDelegator struct {
+type decoderPoolDelegator struct {
 	pool *sync.Pool
 	fn   ParseInterval
 	name string
 	size int
 }
 
-// NewIntDecoderPool returns a SeriesDecoderPool which provides int-based xor decoders.
-func NewIntDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
-	return &intDecoderPoolDelegator{
+// NewDecoderPool returns a SeriesDecoderPool which provides int-based xor decoders.
+func NewDecoderPool(name string, size int, fn ParseInterval) SeriesDecoderPool {
+	return &decoderPoolDelegator{
 		name: name,
-		pool: &intDecoderPool,
+		pool: &decoderPool,
 		size: size,
 		fn:   fn,
 	}
 }
 
-func (b *intDecoderPoolDelegator) Get(_ []byte) SeriesDecoder {
-	decoder := b.pool.Get().(*intDecoder)
+func (b *decoderPoolDelegator) Get(_ []byte) SeriesDecoder {
+	decoder := b.pool.Get().(*decoder)
 	decoder.name = b.name
 	decoder.size = b.size
 	decoder.fn = b.fn
 	return decoder
 }
 
-func (b *intDecoderPoolDelegator) Put(decoder SeriesDecoder) {
-	_, ok := decoder.(*intDecoder)
+func (b *decoderPoolDelegator) Put(seriesDecoder SeriesDecoder) {
+	_, ok := seriesDecoder.(*decoder)
 	if ok {
-		b.pool.Put(decoder)
+		b.pool.Put(seriesDecoder)
 	}
 }
 
-var _ SeriesEncoder = (*intEncoder)(nil)
+var _ SeriesEncoder = (*encoder)(nil)
 
 // ParseInterval parses the interval rule from the key in a kv pair.
 type ParseInterval = func(key []byte) time.Duration
 
-type intEncoder struct {
+type encoder struct {
 	buff      BufferWriter
 	bw        *Writer
 	values    *XOREncoder
@@ -124,15 +126,15 @@ type intEncoder struct {
 	size      int
 }
 
-func newIntEncoder() interface{} {
+func newEncoder() interface{} {
 	bw := NewWriter()
-	return &intEncoder{
+	return &encoder{
 		bw:     bw,
 		values: NewXOREncoder(bw),
 	}
 }
 
-func (ie *intEncoder) Append(ts uint64, value []byte) {
+func (ie *encoder) Append(ts uint64, value []byte) {
 	if len(value) > 8 {
 		return
 	}
@@ -160,11 +162,11 @@ func (ie *intEncoder) Append(ts uint64, value []byte) {
 	rawSize.WithLabelValues(ie.name, "int").Add(float64(l + 8))
 }
 
-func (ie *intEncoder) IsFull() bool {
+func (ie *encoder) IsFull() bool {
 	return ie.num >= ie.size
 }
 
-func (ie *intEncoder) Reset(key []byte, buffer BufferWriter) {
+func (ie *encoder) Reset(key []byte, buffer BufferWriter) {
 	ie.buff = buffer
 	ie.bw.Reset(buffer)
 	ie.interval = ie.fn(key)
@@ -174,7 +176,7 @@ func (ie *intEncoder) Reset(key []byte, buffer BufferWriter) {
 	ie.values = NewXOREncoder(ie.bw)
 }
 
-func (ie *intEncoder) Encode() error {
+func (ie *encoder) Encode() error {
 	ie.bw.Flush()
 	buffWriter := NewPacker(ie.buff)
 	buffWriter.PutUint64(ie.startTime)
@@ -184,13 +186,13 @@ func (ie *intEncoder) Encode() error {
 	return nil
 }
 
-func (ie *intEncoder) StartTime() uint64 {
+func (ie *encoder) StartTime() uint64 {
 	return ie.startTime
 }
 
-var _ SeriesDecoder = (*intDecoder)(nil)
+var _ SeriesDecoder = (*decoder)(nil)
 
-type intDecoder struct {
+type decoder struct {
 	fn        ParseInterval
 	name      string
 	area      []byte
@@ -200,7 +202,7 @@ type intDecoder struct {
 	num       int
 }
 
-func (i *intDecoder) Decode(key, data []byte) error {
+func (i *decoder) Decode(key, data []byte) error {
 	if len(data) < 10 {
 		return errInvalidValue
 	}
@@ -211,28 +213,28 @@ func (i *intDecoder) Decode(key, data []byte) error {
 	return nil
 }
 
-func (i intDecoder) Len() int {
+func (i decoder) Len() int {
 	return i.num
 }
 
-func (i intDecoder) IsFull() bool {
+func (i decoder) IsFull() bool {
 	return i.num >= i.size
 }
 
-func (i intDecoder) Get(ts uint64) ([]byte, error) {
+func (i decoder) Get(ts uint64) ([]byte, error) {
 	for iter := i.Iterator(); iter.Next(); {
 		if iter.Time() == ts {
 			return iter.Val(), nil
 		}
 	}
-	return zeroBytes, nil
+	return nil, errors.WithMessagef(errNoData, "ts:%d", ts)
 }
 
-func (i intDecoder) Range() (start, end uint64) {
+func (i decoder) Range() (start, end uint64) {
 	return i.startTime, i.startTime + uint64(i.num-1)*uint64(i.interval)
 }
 
-func (i intDecoder) Iterator() SeriesIterator {
+func (i decoder) Iterator() SeriesIterator {
 	br := NewReader(bytes.NewReader(i.area))
 	return &intIterator{
 		endTime:  i.startTime + uint64(i.num*int(i.interval)),
@@ -243,11 +245,7 @@ func (i intDecoder) Iterator() SeriesIterator {
 	}
 }
 
-var (
-	_         SeriesIterator = (*intIterator)(nil)
-	zeroBytes                = convert.Uint64ToBytes(zero)
-	zero                     = convert.BytesToUint64(convert.Int64ToBytes(0))
-)
+var _ SeriesIterator = (*intIterator)(nil)
 
 type intIterator struct {
 	err      error

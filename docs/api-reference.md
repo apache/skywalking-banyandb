@@ -25,6 +25,7 @@
   
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
+    - [Float](#banyandb-model-v1-Float)
     - [ID](#banyandb-model-v1-ID)
     - [Int](#banyandb-model-v1-Int)
     - [IntArray](#banyandb-model-v1-IntArray)
@@ -479,6 +480,22 @@ Metadata is for multi-tenant, multi-model use
 | str | [Str](#banyandb-model-v1-Str) |  |  |
 | int | [Int](#banyandb-model-v1-Int) |  |  |
 | binary_data | [bytes](#bytes) |  |  |
+| float | [Float](#banyandb-model-v1-Float) |  |  |
+
+
+
+
+
+
+<a name="banyandb-model-v1-Float"></a>
+
+### Float
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| value | [double](#double) |  |  |
 
 
 
@@ -1073,6 +1090,7 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | FIELD_TYPE_STRING | 1 |  |
 | FIELD_TYPE_INT | 2 |  |
 | FIELD_TYPE_DATA_BINARY | 3 |  |
+| FIELD_TYPE_FLOAT | 4 |  |
 
 
 

@@ -26,32 +26,91 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-var errUnknownFunc = errors.New("unknown aggregation function")
+var (
+	errUnknownFunc          = errors.New("unknown aggregation function")
+	errUnSupportedFieldType = errors.New("unsupported field type")
+)
 
-// Int64Func allows to aggregate int64.
-type Int64Func interface {
-	In(int64)
-	Val() int64
+// Func supports aggregation operations.
+type Func[N Number] interface {
+	In(N)
+	Val() N
 	Reset()
 }
 
-// NewInt64Func returns a Int64Func based on function type.
-func NewInt64Func(af modelv1.AggregationFunction) (Int64Func, error) {
+// Number denotes the supported number types.
+type Number interface {
+	~int64 | ~float64
+}
+
+// NewFunc returns a aggregation function based on function type.
+func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
+	var result Func[N]
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		return &meanInt64Func{}, nil
+		result = &meanFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
-		return &countInt64Func{}, nil
+		result = &countFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
-		return &maxInt64Func{
-			val: math.MinInt64,
-		}, nil
+		result = &maxFunc[N]{min: minOf[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
-		return &minInt64Func{
-			val: math.MaxInt64,
-		}, nil
+		result = &minFunc[N]{max: maxOf[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
-		return &sumInt64Func{}, nil
+		result = &sumFunc[N]{zero: zero[N]()}
+	default:
+		return nil, errors.WithMessagef(errUnknownFunc, "unknown function:%s", modelv1.AggregationFunction_name[int32(af)])
 	}
-	return nil, errUnknownFunc
+	result.Reset()
+	return result, nil
+}
+
+// FromFieldValue transforms modelv1.FieldValue to Number.
+func FromFieldValue[N Number](fieldValue *modelv1.FieldValue) (N, error) {
+	switch fieldValue.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return N(fieldValue.GetInt().Value), nil
+	case *modelv1.FieldValue_Float:
+		return N(fieldValue.GetFloat().Value), nil
+	}
+	return zero[N](), errUnSupportedFieldType
+}
+
+// ToFieldValue transforms Number to modelv1.FieldValue.
+func ToFieldValue[N Number](value N) (*modelv1.FieldValue, error) {
+	switch any(value).(type) {
+	case int64:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: int64(value)}}}, nil
+	case float64:
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: float64(value)}}}, nil
+	}
+	return nil, errUnSupportedFieldType
+}
+
+func minOf[N Number]() (r N) {
+	switch x := any(&r).(type) {
+	case *int64:
+		*x = math.MinInt64
+	case *float64:
+		*x = -math.MaxFloat64
+	default:
+		panic("unreachable")
+	}
+	return
+}
+
+func maxOf[N Number]() (r N) {
+	switch x := any(&r).(type) {
+	case *int64:
+		*x = math.MaxInt64
+	case *float64:
+		*x = math.MaxFloat64
+	default:
+		panic("unreachable")
+	}
+	return
+}
+
+func zero[N Number]() N {
+	var z N
+	return z
 }
