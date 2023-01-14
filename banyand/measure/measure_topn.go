@@ -26,6 +26,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -41,9 +44,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -99,7 +99,8 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := t.writeStreamRecord(ctx, record); err != nil {
+			// nolint: contextcheck
+			if err := t.writeStreamRecord(record); err != nil {
 				t.l.Err(err).Msg("fail to write stream record")
 			}
 		case <-ctx.Done():
@@ -125,7 +126,7 @@ func (t *topNStreamingProcessor) Close() error {
 	return err
 }
 
-func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record flow.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
 	tuples, ok := record.Data().([]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
@@ -142,12 +143,12 @@ func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record f
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-		err = multierr.Append(err, t.writeData(ctx, eventTime, timeBucket, fieldValue, data, rankNum))
+		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(_ context.Context, eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool

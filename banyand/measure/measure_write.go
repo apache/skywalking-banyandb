@@ -59,7 +59,7 @@ func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity [
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
 	defer cancel()
 	wp, err := series.Create(ctx, t)
 	if err != nil {
