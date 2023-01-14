@@ -21,7 +21,9 @@ import (
 	"fmt"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
@@ -31,7 +33,8 @@ import (
 
 var (
 	_ logical.UnresolvedPlan = (*unresolvedAggregation)(nil)
-	_ logical.Plan           = (*aggregationPlan)(nil)
+
+	errUnsupportedAggregationField = errors.New("unsupported aggregation operation on this field")
 )
 
 type unresolvedAggregation struct {
@@ -63,47 +66,61 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 	if len(aggregationFieldRefs) == 0 {
 		return nil, errors.Wrap(errFieldNotDefined, "aggregation schema")
 	}
-	aggrFunc, err := aggregation.NewInt64Func(gba.aggrFunc)
+	fieldRef := aggregationFieldRefs[0]
+	switch fieldRef.Spec.Spec.FieldType {
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		return newAggregationPlan[int64](gba, prevPlan, measureSchema, fieldRef)
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		return newAggregationPlan[float64](gba, prevPlan, measureSchema, fieldRef)
+	default:
+		return nil, errors.WithMessagef(errUnsupportedAggregationField, "field: %s", fieldRef.Spec.Spec)
+	}
+}
+
+type aggregationPlan[N aggregation.Number] struct {
+	*logical.Parent
+	schema              logical.Schema
+	aggregationFieldRef *logical.FieldRef
+	aggrFunc            aggregation.Func[N]
+	aggrType            modelv1.AggregationFunction
+	isGroup             bool
+}
+
+func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
+	measureSchema logical.Schema, fieldRef *logical.FieldRef,
+) (*aggregationPlan[N], error) {
+	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc)
 	if err != nil {
 		return nil, err
 	}
-	return &aggregationPlan{
+	return &aggregationPlan[N]{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
 		},
 		schema:              measureSchema,
 		aggrFunc:            aggrFunc,
-		aggregationFieldRef: aggregationFieldRefs[0],
+		aggregationFieldRef: fieldRef,
 		isGroup:             gba.isGroup,
 	}, nil
 }
 
-type aggregationPlan struct {
-	*logical.Parent
-	schema              logical.Schema
-	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Int64Func
-	aggrType            modelv1.AggregationFunction
-	isGroup             bool
-}
-
-func (g *aggregationPlan) String() string {
+func (g *aggregationPlan[N]) String() string {
 	return fmt.Sprintf("%s aggregation: aggregation{type=%d,field=%s}",
 		g.Input,
 		g.aggrType,
 		g.aggregationFieldRef.Field.Name)
 }
 
-func (g *aggregationPlan) Children() []logical.Plan {
+func (g *aggregationPlan[N]) Children() []logical.Plan {
 	return []logical.Plan{g.Input}
 }
 
-func (g *aggregationPlan) Schema() logical.Schema {
+func (g *aggregationPlan[N]) Schema() logical.Schema {
 	return g.schema.ProjFields(g.aggregationFieldRef)
 }
 
-func (g *aggregationPlan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *aggregationPlan[N]) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -114,38 +131,49 @@ func (g *aggregationPlan) Execute(ec executor.MeasureExecutionContext) (executor
 	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
 }
 
-type aggGroupIterator struct {
+type aggGroupIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Int64Func
+	aggrFunc            aggregation.Func[N]
+
+	err error
 }
 
-func newAggGroupMIterator(
+func newAggGroupMIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
-	aggrFunc aggregation.Int64Func,
+	aggrFunc aggregation.Func[N],
 ) executor.MIterator {
-	return &aggGroupIterator{
+	return &aggGroupIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
 	}
 }
 
-func (ami *aggGroupIterator) Next() bool {
+func (ami *aggGroupIterator[N]) Next() bool {
+	if ami.err != nil {
+		return false
+	}
 	return ami.prev.Next()
 }
 
-func (ami *aggGroupIterator) Current() []*measurev1.DataPoint {
+func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
+	if ami.err != nil {
+		return nil
+	}
 	ami.aggrFunc.Reset()
 	group := ami.prev.Current()
 	var resultDp *measurev1.DataPoint
 	for _, dp := range group {
 		value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
-			GetValue().
-			GetInt().
 			GetValue()
-		ami.aggrFunc.In(value)
+		v, err := aggregation.FromFieldValue[N](value)
+		if err != nil {
+			ami.err = err
+			return nil
+		}
+		ami.aggrFunc.In(v)
 		if resultDp != nil {
 			continue
 		}
@@ -156,47 +184,47 @@ func (ami *aggGroupIterator) Current() []*measurev1.DataPoint {
 	if resultDp == nil {
 		return nil
 	}
+	val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
+	if err != nil {
+		ami.err = err
+		return nil
+	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
 		{
-			Name: ami.aggregationFieldRef.Field.Name,
-			Value: &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{
-						Value: ami.aggrFunc.Val(),
-					},
-				},
-			},
+			Name:  ami.aggregationFieldRef.Field.Name,
+			Value: val,
 		},
 	}
 	return []*measurev1.DataPoint{resultDp}
 }
 
-func (ami *aggGroupIterator) Close() error {
-	return ami.prev.Close()
+func (ami *aggGroupIterator[N]) Close() error {
+	return multierr.Combine(ami.err, ami.prev.Close())
 }
 
-type aggAllIterator struct {
+type aggAllIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Int64Func
+	aggrFunc            aggregation.Func[N]
 
 	result *measurev1.DataPoint
+	err    error
 }
 
-func newAggAllIterator(
+func newAggAllIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
-	aggrFunc aggregation.Int64Func,
+	aggrFunc aggregation.Func[N],
 ) executor.MIterator {
-	return &aggAllIterator{
+	return &aggAllIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
 	}
 }
 
-func (ami *aggAllIterator) Next() bool {
-	if ami.result != nil {
+func (ami *aggAllIterator[N]) Next() bool {
+	if ami.result != nil || ami.err != nil {
 		return false
 	}
 	defer ami.prev.Close()
@@ -205,10 +233,13 @@ func (ami *aggAllIterator) Next() bool {
 		group := ami.prev.Current()
 		for _, dp := range group {
 			value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
-				GetValue().
-				GetInt().
 				GetValue()
-			ami.aggrFunc.In(value)
+			v, err := aggregation.FromFieldValue[N](value)
+			if err != nil {
+				ami.err = err
+				return false
+			}
+			ami.aggrFunc.In(v)
 			if resultDp != nil {
 				continue
 			}
@@ -220,29 +251,28 @@ func (ami *aggAllIterator) Next() bool {
 	if resultDp == nil {
 		return false
 	}
+	val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
+	if err != nil {
+		ami.err = err
+		return false
+	}
 	resultDp.Fields = []*measurev1.DataPoint_Field{
 		{
-			Name: ami.aggregationFieldRef.Field.Name,
-			Value: &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{
-						Value: ami.aggrFunc.Val(),
-					},
-				},
-			},
+			Name:  ami.aggregationFieldRef.Field.Name,
+			Value: val,
 		},
 	}
 	ami.result = resultDp
 	return true
 }
 
-func (ami *aggAllIterator) Current() []*measurev1.DataPoint {
+func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
 	if ami.result == nil {
 		return nil
 	}
 	return []*measurev1.DataPoint{ami.result}
 }
 
-func (ami *aggAllIterator) Close() error {
+func (ami *aggAllIterator[N]) Close() error {
 	return nil
 }

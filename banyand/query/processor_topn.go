@@ -236,7 +236,7 @@ func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.T
 var _ heap.Interface = (*postAggregationProcessor)(nil)
 
 type aggregatorItem struct {
-	int64Func aggregation.Int64Func
+	int64Func aggregation.Func[int64]
 	key       string
 	index     int
 }
@@ -324,7 +324,7 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 		return nil
 	}
 
-	aggrFunc, err := aggregation.NewInt64Func(aggr.aggrFunc)
+	aggrFunc, err := aggregation.NewFunc[int64](aggr.aggrFunc)
 	if err != nil {
 		return err
 	}

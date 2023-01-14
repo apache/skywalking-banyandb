@@ -17,23 +17,20 @@
 
 package aggregation
 
-import "math"
-
-var _ Int64Func = (*meanInt64Func)(nil)
-
-type meanInt64Func struct {
-	sum   int64
-	count int64
+type meanFunc[N Number] struct {
+	sum   N
+	count N
+	zero  N
 }
 
-func (m *meanInt64Func) In(val int64) {
+func (m *meanFunc[N]) In(val N) {
 	m.sum += val
 	m.count++
 }
 
-func (m meanInt64Func) Val() int64 {
-	if m.count == 0 {
-		return 0
+func (m meanFunc[N]) Val() N {
+	if m.count == m.zero {
+		return m.zero
 	}
 	v := m.sum / m.count
 	if v < 1 {
@@ -42,83 +39,79 @@ func (m meanInt64Func) Val() int64 {
 	return v
 }
 
-func (m *meanInt64Func) Reset() {
-	m.sum = 0
-	m.count = 0
+func (m *meanFunc[N]) Reset() {
+	m.sum = m.zero
+	m.count = m.zero
 }
 
-var _ Int64Func = (*countInt64Func)(nil)
-
-type countInt64Func struct {
-	count int64
+type countFunc[N Number] struct {
+	count N
+	zero  N
 }
 
-func (c *countInt64Func) In(_ int64) {
+func (c *countFunc[N]) In(_ N) {
 	c.count++
 }
 
-func (c countInt64Func) Val() int64 {
+func (c countFunc[N]) Val() N {
 	return c.count
 }
 
-func (c *countInt64Func) Reset() {
-	c.count = 0
+func (c *countFunc[N]) Reset() {
+	c.count = c.zero
 }
 
-var _ Int64Func = (*sumInt64Func)(nil)
-
-type sumInt64Func struct {
-	sum int64
+type sumFunc[N Number] struct {
+	sum  N
+	zero N
 }
 
-func (s *sumInt64Func) In(val int64) {
+func (s *sumFunc[N]) In(val N) {
 	s.sum += val
 }
 
-func (s sumInt64Func) Val() int64 {
+func (s sumFunc[N]) Val() N {
 	return s.sum
 }
 
-func (s *sumInt64Func) Reset() {
-	s.sum = 0
+func (s *sumFunc[N]) Reset() {
+	s.sum = s.zero
 }
 
-var _ Int64Func = (*maxInt64Func)(nil)
-
-type maxInt64Func struct {
-	val int64
+type maxFunc[N Number] struct {
+	val N
+	min N
 }
 
-func (m *maxInt64Func) In(val int64) {
+func (m *maxFunc[N]) In(val N) {
 	if val > m.val {
 		m.val = val
 	}
 }
 
-func (m maxInt64Func) Val() int64 {
+func (m maxFunc[N]) Val() N {
 	return m.val
 }
 
-func (m *maxInt64Func) Reset() {
-	m.val = math.MinInt64
+func (m *maxFunc[N]) Reset() {
+	m.val = m.min
 }
 
-var _ Int64Func = (*minInt64Func)(nil)
-
-type minInt64Func struct {
-	val int64
+type minFunc[N Number] struct {
+	val N
+	max N
 }
 
-func (m *minInt64Func) In(val int64) {
+func (m *minFunc[N]) In(val N) {
 	if val < m.val {
 		m.val = val
 	}
 }
 
-func (m minInt64Func) Val() int64 {
+func (m minFunc[N]) Val() N {
 	return m.val
 }
 
-func (m *minInt64Func) Reset() {
-	m.val = math.MaxInt64
+func (m *minFunc[N]) Reset() {
+	m.val = m.max
 }
