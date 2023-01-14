@@ -116,51 +116,21 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		IndexRules: spec.indexRules,
 	})
 
-	s, err := BuildSchema(m)
-	if err != nil {
-		return nil, err
-	}
+	tagMapSpec := logical.TagSpecMap{}
+	tagMapSpec.RegisterTagFamilies(spec.schema.GetTagFamilies())
 
 	m.processorManager = &topNProcessorManager{
 		l:            l,
 		m:            m,
-		s:            s,
+		s:            tagMapSpec,
 		topNSchemas:  spec.topNAggregations,
 		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
 	}
 
-	err = m.processorManager.start()
+	err := m.processorManager.start()
 	if err != nil {
 		return nil, err
 	}
 
 	return m, nil
-}
-
-// BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(measure Measure) (logical.Schema, error) {
-	md := measure.GetSchema()
-	md.GetEntity()
-
-	ms := &measureSchema{
-		common: &logical.CommonSchema{
-			IndexRules: measure.GetIndexRules(),
-			TagMap:     make(map[string]*logical.TagSpec),
-			EntityList: md.GetEntity().GetTagNames(),
-		},
-		measure:  md,
-		fieldMap: make(map[string]*logical.FieldSpec),
-	}
-
-	for tagFamilyIdx, tagFamily := range md.GetTagFamilies() {
-		for tagIdx, spec := range tagFamily.GetTags() {
-			ms.registerTag(tagFamilyIdx, tagIdx, spec)
-		}
-	}
-
-	for fieldIdx, spec := range md.GetFields() {
-		ms.registerField(fieldIdx, spec)
-	}
-
-	return ms, nil
 }

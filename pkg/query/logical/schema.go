@@ -71,20 +71,41 @@ func (fs *TagSpec) Equal(other *TagSpec) bool {
 		fs.Spec.GetType() == other.Spec.GetType() && fs.Spec.GetName() == other.Spec.GetName()
 }
 
-// CommonSchema represents a sharable fields between independent schemas.
-// It provides common access methods at the same time.
-type CommonSchema struct {
-	IndexRules []*databasev1.IndexRule
-	TagMap     map[string]*TagSpec
-	EntityList []string
-}
+// TagSpecMap is a map of TapSpec implements TagSpecRegistry.
+type TagSpecMap map[string]*TagSpec
 
 // FindTagSpecByName finds TagSpec by its name in the registry.
-func (cs *CommonSchema) FindTagSpecByName(name string) *TagSpec {
-	if spec, ok := cs.TagMap[name]; ok {
+func (tagSpecMap TagSpecMap) FindTagSpecByName(name string) *TagSpec {
+	if spec, ok := tagSpecMap[name]; ok {
 		return spec
 	}
 	return nil
+}
+
+// RegisterTagFamilies registers the tag specs with a given slice of TagFamilySpec.
+func (tagSpecMap TagSpecMap) RegisterTagFamilies(tagFamilies []*databasev1.TagFamilySpec) {
+	for tagFamilyIdx, tagFamily := range tagFamilies {
+		for tagIdx, spec := range tagFamily.GetTags() {
+			tagSpecMap.RegisterTag(tagFamilyIdx, tagIdx, spec)
+		}
+	}
+}
+
+// RegisterTag registers the tag spec with given tagFamilyName, tagName and indexes.
+func (tagSpecMap TagSpecMap) RegisterTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
+	tagSpecMap[spec.GetName()] = &TagSpec{
+		TagIdx:       tagIdx,
+		TagFamilyIdx: tagFamilyIdx,
+		Spec:         spec,
+	}
+}
+
+// CommonSchema represents a sharable fields between independent schemas.
+// It provides common access methods at the same time.
+type CommonSchema struct {
+	TagSpecMap
+	IndexRules []*databasev1.IndexRule
+	EntityList []string
 }
 
 // ProjTags inits a dictionary for getting TagSpec by tag's name.
@@ -94,12 +115,12 @@ func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 	}
 	newCommonSchema := &CommonSchema{
 		IndexRules: cs.IndexRules,
-		TagMap:     make(map[string]*TagSpec),
+		TagSpecMap: make(map[string]*TagSpec),
 		EntityList: cs.EntityList,
 	}
 	for projFamilyIdx, refInFamily := range refs {
 		for projIdx, ref := range refInFamily {
-			newCommonSchema.TagMap[ref.Tag.getTagName()] = &TagSpec{
+			newCommonSchema.TagSpecMap[ref.Tag.getTagName()] = &TagSpec{
 				TagFamilyIdx: projFamilyIdx,
 				TagIdx:       projIdx,
 				Spec:         ref.Spec.Spec,
@@ -107,15 +128,6 @@ func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 		}
 	}
 	return newCommonSchema
-}
-
-// RegisterTag registers the tag spec with given tagFamilyName, tagName and indexes.
-func (cs *CommonSchema) RegisterTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
-	cs.TagMap[spec.GetName()] = &TagSpec{
-		TagIdx:       tagIdx,
-		TagFamilyIdx: tagFamilyIdx,
-		Spec:         spec,
-	}
 }
 
 // IndexDefined checks whether the field given is indexed.
@@ -148,7 +160,7 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	for i, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			if ts, ok := cs.TagMap[tag.getTagName()]; ok {
+			if ts, ok := cs.TagSpecMap[tag.getTagName()]; ok {
 				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			} else {
 				return nil, errors.Wrap(errTagNotDefined, tag.GetCompoundName())

@@ -306,7 +306,7 @@ func (t *topNStreamingProcessor) handleError() {
 type topNProcessorManager struct {
 	l            *logger.Logger
 	m            *measure
-	s            logical.Schema
+	s            logical.TagSpecRegistry
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
 	topNSchemas  []*databasev1.TopNAggregation
 	sync.RWMutex

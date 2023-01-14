@@ -23,11 +23,36 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const defaultLimit uint32 = 100
+
+// BuildSchema returns Schema loaded from the metadata repository.
+func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
+	md := measureSchema.GetSchema()
+	md.GetEntity()
+
+	ms := &schema{
+		common: &logical.CommonSchema{
+			IndexRules: measureSchema.GetIndexRules(),
+			TagSpecMap: make(map[string]*logical.TagSpec),
+			EntityList: md.GetEntity().GetTagNames(),
+		},
+		measure:  md,
+		fieldMap: make(map[string]*logical.FieldSpec),
+	}
+
+	ms.common.RegisterTagFamilies(md.GetTagFamilies())
+
+	for fieldIdx, spec := range md.GetFields() {
+		ms.registerField(fieldIdx, spec)
+	}
+
+	return ms, nil
+}
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
