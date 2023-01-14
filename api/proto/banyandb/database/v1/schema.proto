@@ -72,6 +72,7 @@ enum FieldType {
   FIELD_TYPE_STRING = 1;
   FIELD_TYPE_INT = 2;
   FIELD_TYPE_DATA_BINARY = 3;
+  FIELD_TYPE_FLOAT = 4;
 }
 
 enum EncodingMethod {
