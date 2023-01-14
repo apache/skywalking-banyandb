@@ -349,7 +349,7 @@ func (manager *topNProcessorManager) start() error {
 								},
 							},
 						},
-					}, g
+					},
 					Fields: []*databasev1.FieldSpec{
 						{
 							Name:      "value",
