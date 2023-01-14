@@ -351,12 +351,7 @@ func (manager *topNProcessorManager) start() error {
 							},
 						},
 					},
-					Fields: []*databasev1.FieldSpec{
-						{
-							Name:      "value",
-							FieldType: databasev1.FieldType_FIELD_TYPE_INT,
-						},
-					},
+					Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 				},
 			}
 			processorList[i] = processor.start()
