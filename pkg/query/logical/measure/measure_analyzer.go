@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package measure implements execution operations for querying measure data.
 package measure
 
 import (
