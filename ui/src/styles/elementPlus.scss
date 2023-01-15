@@ -22,7 +22,7 @@
 /* ====================
        button
 =======================*/
-.el-button {
+/* .el-button {
     height: 25px !important;
     border-radius: 1px !important;
     font-size: 12px !important;
@@ -63,7 +63,7 @@
         background-color: white !important;
         border: 1px solid #e4e7ed !important;
     }
-}
+} */
 
 /* =============
       el-tag
@@ -235,7 +235,12 @@
         height: 100% !important;
     }
 }
-
+.el-menu-item.is-active {
+    color: var(--color-main) !important;
+}
+.el-sub-menu.is-active {
+    --el-menu-active-color: var(--color-main) !important;
+}
 .navigation {
     border: 0px !important;
 }
