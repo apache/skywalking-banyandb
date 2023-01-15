@@ -39,7 +39,9 @@ import (
 
 var errMalformedElement = errors.New("element is malformed")
 
-func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues, value *measurev1.DataPointValue, isVirtualMeasure bool) error {
+func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues,
+	value *measurev1.DataPointValue, isVirtualMeasure bool,
+) error {
 	t := value.GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return errors.WithMessage(err, "writing stream")
