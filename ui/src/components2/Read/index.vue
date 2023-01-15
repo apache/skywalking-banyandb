@@ -254,7 +254,7 @@ function changeTagFamilies() {
         </el-card>
         <el-card shadow="always">
             <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-                element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable"  max-height=700 stripe border
+                element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable"  stripe border
                 highlight-current-row tooltip-effect="dark" empty-text="No data yet"
                 @selection-change="handleSelectionChange" :data="data.tableData">
                 <el-table-column type="selection" width="55">
