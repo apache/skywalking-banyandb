@@ -23,7 +23,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	_ "github.com/golang/mock/mockgen/model"
 )
 
 // ServiceRepo provides service subscripting and publishing.
