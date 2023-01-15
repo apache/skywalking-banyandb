@@ -157,7 +157,7 @@ function getTableData() {
     setTableParam()
     let paramList = param
     paramList.offset = data.queryInfo.pagenum
-    paramList.limit = 20
+    paramList.limit = data.queryInfo.pagesize
     paramList.metadata = data.resourceData.metadata
     getTableList(paramList)
         .then((res) => {
