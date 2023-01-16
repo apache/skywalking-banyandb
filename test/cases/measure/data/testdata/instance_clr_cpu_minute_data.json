@@ -1,0 +1,107 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "1"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "float": {
+          "value": 18.1
+        }
+      },
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "float": {
+          "value": 18.1
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "4"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "float": {
+          "value": 100.4
+        }
+      },
+      {
+        "int": {
+          "value": 2
+        }
+      },
+      {
+        "float": {
+          "value": 50.2
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "5"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "float": {
+          "value": 100.0
+        }
+      },
+      {
+        "int": {
+          "value": 3
+        }
+      },
+      {
+        "float": {
+          "value": 33.333
+        }
+      }
+    ]
+  }
+]

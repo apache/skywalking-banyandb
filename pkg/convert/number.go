@@ -19,6 +19,7 @@ package convert
 
 import (
 	"encoding/binary"
+	"math"
 )
 
 // Uint64ToBytes converts uint64 to bytes.
@@ -73,4 +74,16 @@ func BytesToUint64(b []byte) uint64 {
 // BytesToUint32 converts bytes to uint32.
 func BytesToUint32(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
+}
+
+// Float64ToBytes converts float64 to byes.
+func Float64ToBytes(f float64) []byte {
+	bs := make([]byte, 8)
+	binary.BigEndian.PutUint64(bs, math.Float64bits(f))
+	return bs
+}
+
+// BytesToFloat64 converts bytes to float64.
+func BytesToFloat64(b []byte) float64 {
+	return math.Float64frombits(binary.BigEndian.Uint64(b))
 }
