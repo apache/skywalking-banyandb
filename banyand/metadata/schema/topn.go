@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -59,6 +60,7 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
 			Name:  topNAggregation.GetMetadata().GetName(),
+			Time:  time.Now(),
 		},
 		Spec: topNAggregation,
 	})

@@ -19,9 +19,8 @@ package schema
 
 import (
 	"context"
-	"hash/crc32"
-
 	"google.golang.org/protobuf/proto"
+	"hash/crc32"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -63,6 +62,7 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
 			Group: indexRuleBinding.GetMetadata().GetGroup(),
+			Time:  time.Now(),
 		},
 		Spec: indexRuleBinding,
 	})
@@ -132,6 +132,7 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
 			Group: indexRule.GetMetadata().GetGroup(),
+			Time:  time.Now(),
 		},
 		Spec: indexRule,
 	})

@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -91,6 +92,7 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
 			Name: group.GetMetadata().GetName(),
+			Time: time.Now(),
 		},
 		Spec: group,
 	})

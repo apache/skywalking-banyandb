@@ -59,11 +59,13 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	name := measure.GetMetadata().GetName()
 	if err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
-			Name:  measure.GetMetadata().GetName(),
+			Name:  name,
+			Time:  time.Now(),
 		},
 		Spec: measure,
 	}); err != nil {

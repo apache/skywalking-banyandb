@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -75,6 +76,7 @@ func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev
 			Kind:  KindStream,
 			Group: stream.GetMetadata().GetGroup(),
 			Name:  stream.GetMetadata().GetName(),
+			Time:  time.Now(),
 		},
 		Spec: stream,
 	})
