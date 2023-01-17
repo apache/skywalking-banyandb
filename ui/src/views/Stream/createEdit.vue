@@ -18,19 +18,13 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-defineProps({
-    rightMenuList: Array
-})
+import StreamEditor from '@/components2/StreamEditor/index.vue'
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
-            </right-menu-item>
-        </div>
-    </div>
+  <div class="about">
+    <StreamEditor></StreamEditor>
+  </div>
 </template>
 
 <style lang="scss" scoped>

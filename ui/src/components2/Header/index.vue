@@ -18,21 +18,40 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-defineProps({
-    rightMenuList: Array
-})
+import Header from './components/header.vue'
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
-            </right-menu-item>
-        </div>
+    <div class="size">
+        <el-container>
+            <el-header>
+                <Header class="size"></Header>
+            </el-header>
+            <el-main>
+                <RouterView></RouterView>
+            </el-main>
+        </el-container>
     </div>
 </template>
 
-<style lang="scss" scoped>
 
+
+<style lang="scss" scoped>
+.el-container {
+  height: 100%;
+  padding: 0;
+  margin: 0;
+
+  .el-header {
+    background-color: #ffffff;
+    padding: 0;
+    margin: 0;
+  }
+
+  .el-main {
+    background-color: #eaedf1;
+    padding: 0;
+    margin: 0;
+  }
+}
 </style>

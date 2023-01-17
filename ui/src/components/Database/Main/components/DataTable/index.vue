@@ -174,7 +174,7 @@ function getTable() {
  * sort table data
  */
 function sortChange(object) {
-    console.log(object);
+    
 }
 /**
  * set table tags, set navigation select
