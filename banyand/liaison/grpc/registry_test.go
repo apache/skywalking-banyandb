@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -44,10 +45,13 @@ import (
 var _ = Describe("Registry", func() {
 	var gracefulStop func()
 	var conn *grpclib.ClientConn
+	var goods []gleak.Goroutine
 	meta := &commonv1.Metadata{
 		Group: "default",
 	}
+
 	BeforeEach(func() {
+		goods = gleak.Goroutines()
 		gracefulStop = setupForRegistry()
 		addr := "localhost:17912"
 		Eventually(
@@ -57,6 +61,13 @@ var _ = Describe("Registry", func() {
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	AfterEach(func() {
+		_ = conn.Close()
+		gracefulStop()
+		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+	})
+
 	It("manages the stream", func() {
 		client := databasev1.NewStreamRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
@@ -158,10 +169,6 @@ var _ = Describe("Registry", func() {
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
-	})
-	AfterEach(func() {
-		_ = conn.Close()
-		gracefulStop()
 	})
 })
 

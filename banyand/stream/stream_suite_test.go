@@ -72,6 +72,10 @@ func setUp() (*services, func()) {
 	// Init Discovery
 	repo := discovery.NewMockServiceRepo(ctrl)
 	repo.EXPECT().NodeID().AnyTimes()
+	repo.EXPECT().Name().AnyTimes()
+	stopCh := make(chan struct{})
+	repo.EXPECT().Serve().Return(stopCh).Times(1)
+	repo.EXPECT().GracefulStop().Do(func() { close(stopCh) }).Times(1)
 	// Both PreRun and Serve phases send events
 	repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 1)
 	repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 2)
