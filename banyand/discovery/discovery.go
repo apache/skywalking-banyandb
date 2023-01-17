@@ -30,13 +30,16 @@ import (
 //go:generate mockgen -destination=./discovery_mock.go -package=discovery github.com/apache/skywalking-banyandb/banyand/discovery ServiceRepo
 type ServiceRepo interface {
 	NodeID() string
+	Name() string
 	run.Unit
 	bus.Subscriber
 	bus.Publisher
+	run.Service
 }
 
 type repo struct {
-	local *bus.Bus
+	local  *bus.Bus
+	stopCh chan struct{}
 }
 
 func (r *repo) NodeID() string {
@@ -58,6 +61,18 @@ func (r *repo) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, err
 // NewServiceRepo return a new ServiceRepo.
 func NewServiceRepo(_ context.Context) (ServiceRepo, error) {
 	return &repo{
-		local: bus.NewBus(),
+		local:  bus.NewBus(),
+		stopCh: make(chan struct{}),
 	}, nil
+}
+
+func (r *repo) Serve() run.StopNotify {
+	return r.stopCh
+}
+
+func (r *repo) GracefulStop() {
+	r.local.Close()
+	if r.stopCh != nil {
+		close(r.stopCh)
+	}
 }
