@@ -65,7 +65,7 @@ function closeDetail() {
 </template>
 
 <style lang="scss">
-.el-card {
+/* .el-card {
     margin: 15px;
     padding: 0;
     height: 100%;
@@ -73,7 +73,7 @@ function closeDetail() {
 
 .el-card__body {
     padding: 0;
-}
+} */
 
 .drawer-right {
     -webkit-animation: rtl-drawer-in .3s 1ms;

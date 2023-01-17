@@ -18,21 +18,13 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-defineProps({
-    rightMenuList: Array
-})
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
-            </right-menu-item>
-        </div>
-    </div>
+    <div class="about">
+    <h1>This is the property page</h1>
+  </div>
 </template>
 
 <style lang="scss" scoped>
-
 </style>

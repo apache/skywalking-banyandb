@@ -18,50 +18,98 @@
  */
 
 import { createRouter, createWebHistory } from 'vue-router'
-import DashboardView from '../views/DashboardView.vue'
+import Header from '@/components2/Header/index.vue'
 import NotFoundView from '../views/NotFoundView.vue'
-import StreamView from '../views/StreamView.vue'
-import PropertyView from '../views/PropertyView.vue'
-import MeasureView from '../views/MeasureView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      redirect: '/dashboard'
+      redirect: '/banyandb'
     },
     {
-      path: '/dashboard',
-      name: 'Dashboard',
-      component: DashboardView,
+      path: '/banyandb',
+      component: Header,
+      name: 'banyandb',
+      redirect: '/banyandb/dashboard',
       meta: {
         keepAlive: false,
-      }
-    },
-    {
-      path: '/stream',
-      name: 'Stream',
-      component: StreamView,
-      meta: {
-        keepAlive: true,
-      }
-    },
-    {
-      path: '/measure',
-      name: 'Measure',
-      component: MeasureView,
-      meta: {
-        keepAlive: false,
-      }
-    },
-    {
-      path: '/property',
-      name: 'Property',
-      component: PropertyView,
-      meta: {
-        keepAlive: false,
-      }
+      },
+      children: [
+        {
+          path: '/banyandb/dashboard',
+          name: 'dashboard',
+          component: () => import('@/views/Dashboard/index.vue')
+        },
+        {
+          path: '/banyandb/stream',
+          name: 'streamHome',
+          redirect: '/banyandb/stream/start',
+          component: () => import('@/views/Stream/index.vue'),
+          children: [
+            {
+              path: '/banyandb/stream/start',
+              name: 'streamStart',
+              component: () => import('@/components2/Start/index.vue'),
+              meta: {
+                type: 'stream'
+              }
+            },
+            {
+              path: '/banyandb/stream/operator-read/:type/:operator/:group/:name',
+              name: 'stream',
+              component: () => import('@/views/Stream/stream.vue')
+            },
+            {
+              path: '/banyandb/stream/operator-create/:type/:operator/:group',
+              name: 'create-stream',
+              component: () => import('@/views/Stream/createEdit.vue')
+            },
+            {
+              path: '/banyandb/stream/operator-edit/:type/:operator/:group/:name',
+              name: 'edit-stream',
+              component: () => import('@/views/Stream/createEdit.vue')
+            }
+          ]
+        },
+        {
+          path: '/banyandb/measure',
+          name: 'measureHome',
+          redirect: '/banyandb/measure/start',
+          component: () => import('@/views/Measure/index.vue'),
+          children: [
+            {
+              path: '/banyandb/measure/start',
+              name: 'measureStart',
+              component: () => import('@/components2/Start/index.vue'),
+              meta: {
+                type: 'measure'
+              }
+            },
+            {
+              path: '/banyandb/measure/operator-read/:type/:operator/:group/:name',
+              name: 'measure',
+              component: () => import('@/views/Measure/measure.vue')
+            },
+            {
+              path: '/banyandb/measure/operator-create/:type/:operator/:group',
+              name: 'create-measure',
+              component: () => import('@/views/Measure/createEdit.vue')
+            },
+            {
+              path: '/banyandb/measure/operator-edit/:type/:operator/:group/:name',
+              name: 'edit-measure',
+              component: () => import('@/views/Stream/createEdit.vue')
+            }
+          ]
+        },
+        {
+          path: '/banyandb/property',
+          name: 'Property',
+          component: () => import('@/views/Property/index.vue')
+        }
+      ]
     },
     {
       // will match everything

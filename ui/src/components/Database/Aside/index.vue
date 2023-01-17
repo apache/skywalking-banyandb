@@ -505,27 +505,31 @@ $bus.on('handleRightItem', (index) => {
                 </el-sub-menu>
             </div>
         </el-menu>
-        <el-dialog title="Tips" v-model="data.dialogVisible" width="25%" center>
-            <span>Are you sure to delete this {{ data.rightClickType }}?</span>
-            <span slot="footer" class="dialog-footer">
+        <el-dialog title="Tips" v-model="data.dialogVisible" width="25%" center :show-close="false">
+            <div style="margin-bottom: 30px;">
+                <span :title="`Are you sure to delete this ${data.rightClickType}?`">Are you sure to delete this {{
+                        data.rightClickType
+                }}?</span>
+            </div>
+            <span slot="footer" class="dialog-footer footer">
                 <el-button @click="data.dialogVisible = false">cancel</el-button>
                 <el-button type="primary" @click="deleteGroupOrResources">delete</el-button>
             </span>
         </el-dialog>
-        <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible">
+        <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible" :show-close="false">
             <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
                 <el-form-item label="group name" label-width="120px" prop="name">
-                    <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off"
-                        style="width: 300px;"></el-input>
+                    <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off">
+                    </el-input>
                 </el-form-item>
                 <el-form-item label="group type" label-width="120px" prop="catalog">
-                    <el-select v-model="data.groupForm.catalog" style="width: 300px;" placeholder="please select">
+                    <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
                         <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
                         <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
                     </el-select>
                 </el-form-item>
             </el-form>
-            <div slot="footer" class="dialog-footer">
+            <div slot="footer" class="dialog-footer footer">
                 <el-button @click="cancelCreateEditDialog">cancel</el-button>
                 <el-button type="primary" @click="confirmForm">{{ data.setGroup }}
                 </el-button>
@@ -543,6 +547,12 @@ $bus.on('handleRightItem', (index) => {
     border-right: none;
     text-align: start;
     text-justify: middle;
+}
+
+.footer {
+    width: 100%;
+    display: flex;
+    justify-content: center;
 }
 
 .right-menu {

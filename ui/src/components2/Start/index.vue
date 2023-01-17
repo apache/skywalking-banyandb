@@ -18,18 +18,24 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-defineProps({
-    rightMenuList: Array
+import { reactive } from 'vue';
+import { useRoute } from 'vue-router'
+const route = useRoute()
+const data = reactive({
+    type: ''
 })
+
+// function
+function initData() {
+    data.type = route.meta.type
+}
+initData()
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
-            </right-menu-item>
-        </div>
+    <div class="size flex center column">
+        <div class="text-big text-placeholder-color text-family margin-top-bottom">Welcome to BanyanDB Manager!</div>
+        <div class="text-title text-placeholder-color text-famil">Please open the {{ data.type }} to start working!</div>
     </div>
 </template>
 
