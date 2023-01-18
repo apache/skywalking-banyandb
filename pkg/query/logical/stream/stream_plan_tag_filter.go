@@ -40,12 +40,11 @@ var (
 )
 
 type unresolvedTagFilter struct {
-	startTime         time.Time
-	endTime           time.Time
-	unresolvedOrderBy *logical.UnresolvedOrderBy
-	metadata          *commonv1.Metadata
-	criteria          *modelv1.Criteria
-	projectionTags    [][]*logical.Tag
+	startTime      time.Time
+	endTime        time.Time
+	metadata       *commonv1.Metadata
+	criteria       *modelv1.Criteria
+	projectionTags [][]*logical.Tag
 }
 
 func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -105,15 +104,7 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical
 			expr:              ctx.globalConditions[1].(logical.LiteralExpr),
 		}, nil
 	}
-
-	// resolve sub-plan with the projected view of streamSchema
-	orderBySubPlan, err := uis.unresolvedOrderBy.Analyze(ctx.s.ProjTags(ctx.projTagsRefs...))
-	if err != nil {
-		return nil, err
-	}
-
 	return &localIndexScan{
-		OrderBy:           orderBySubPlan,
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
 		projectionTagRefs: ctx.projTagsRefs,
@@ -124,16 +115,14 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical
 	}, nil
 }
 
-func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria,
-	orderBy *logical.UnresolvedOrderBy, projection ...[]*logical.Tag,
+func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria, projection [][]*logical.Tag,
 ) logical.UnresolvedPlan {
 	return &unresolvedTagFilter{
-		unresolvedOrderBy: orderBy,
-		startTime:         startTime,
-		endTime:           endTime,
-		metadata:          metadata,
-		criteria:          criteria,
-		projectionTags:    projection,
+		startTime:      startTime,
+		endTime:        endTime,
+		metadata:       metadata,
+		criteria:       criteria,
+		projectionTags: projection,
 	}
 }
 
