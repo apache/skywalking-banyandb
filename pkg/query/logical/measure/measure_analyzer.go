@@ -23,7 +23,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -75,10 +74,7 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 	}
 
 	// parse fields
-	plan, err := parseFields(criteria, metadata, s, groupByEntity)
-	if err != nil {
-		return nil, err
-	}
+	plan := parseFields(criteria, metadata, groupByEntity)
 
 	if criteria.GetGroupBy() != nil {
 		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
@@ -102,51 +98,30 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 		limitParameter = defaultLimit
 	}
 	plan = limit(plan, criteria.GetOffset(), limitParameter)
-
-	return plan.Analyze(s)
+	p, err := plan.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	rules := []logical.OptimizeRule{
+		logical.NewPushDownOrder(criteria.OrderBy),
+		logical.NewPushDownMaxSize(int(limitParameter + criteria.GetOffset())),
+	}
+	if err := logical.ApplyRules(p, rules...); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // parseFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition.
-func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema, groupByEntity bool) (logical.UnresolvedPlan, error) {
-	timeRange := criteria.GetTimeRange()
-
-	projTags := make([][]*logical.Tag, len(criteria.GetTagProjection().GetTagFamilies()))
-	for i, tagFamily := range criteria.GetTagProjection().GetTagFamilies() {
-		var projTagInFamily []*logical.Tag
-		for _, tagName := range tagFamily.GetTags() {
-			projTagInFamily = append(projTagInFamily, logical.NewTag(tagFamily.GetName(), tagName))
-		}
-		projTags[i] = projTagInFamily
-	}
-
+func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, groupByEntity bool) logical.UnresolvedPlan {
 	projFields := make([]*logical.Field, len(criteria.GetFieldProjection().GetNames()))
 	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
 		projFields[i] = logical.NewField(fieldNameProj)
 	}
-
-	entityList := s.EntityList()
-	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, len(entityList))
-	for idx, e := range entityList {
-		entityMap[e] = idx
-		// fill AnyEntry by default
-		entity[idx] = tsdb.AnyEntry
-	}
-	filter, entities, err := logical.BuildLocalFilter(criteria.GetCriteria(), s, entityMap, entity)
-	if err != nil {
-		return nil, err
-	}
-
-	// parse orderBy
-	queryOrder := criteria.GetOrderBy()
-	var unresolvedOrderBy *logical.UnresolvedOrderBy
-	if queryOrder != nil {
-		unresolvedOrderBy = logical.NewOrderBy(queryOrder.GetIndexRuleName(), queryOrder.GetSort())
-	}
-
+	timeRange := criteria.GetTimeRange()
 	return indexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		filter, entities, projTags, projFields, groupByEntity, unresolvedOrderBy), nil
+		logical.ToTags(criteria.GetTagProjection()), projFields, groupByEntity, criteria.GetCriteria())
 }

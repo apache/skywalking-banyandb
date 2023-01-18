@@ -180,6 +180,19 @@ func (t *Tag) getFamilyName() string {
 	return t.familyName
 }
 
+// ToTags converts a projection spec to Tag sets.
+func ToTags(projection *modelv1.TagProjection) [][]*Tag {
+	projTags := make([][]*Tag, len(projection.GetTagFamilies()))
+	for i, tagFamily := range projection.GetTagFamilies() {
+		var projTagInFamily []*Tag
+		for _, tagName := range tagFamily.GetTags() {
+			projTagInFamily = append(projTagInFamily, NewTag(tagFamily.GetName(), tagName))
+		}
+		projTags[i] = projTagInFamily
+	}
+	return projTags
+}
+
 // Field identity a field in a measure.
 type Field struct {
 	Name string
