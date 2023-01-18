@@ -18,21 +18,49 @@
 -->
 
 <script setup>
-import RightMenuItem from './components/right-menu-item.vue'
-defineProps({
-    rightMenuList: Array
+import Aside from '@/components2/Aside/index.vue'
+import TopNav from '@/components2/TopNav/index.vue'
+import { reactive } from 'vue';
+
+const data = reactive({
+  width: '200px'
 })
+
+function setWidth(width) {
+  data.width = width
+}
 </script>
 
 <template>
-    <div style="width: 100%;" class="border-radius-little">
-        <div style="width: 100%;" v-for="(item, index) in rightMenuList" :key="item.name">
-            <right-menu-item @handleRightItem="$emit('handleRightItem', index)" :icon="item.icon" :name="item.name">
-            </right-menu-item>
-        </div>
-    </div>
+  <div class="size">
+    <el-container>
+      <el-aside :width="data.width" class="bd-top flex box-shadow" style="position:relative; background-color: white;">
+        <Aside type="stream" @setWidth="setWidth"></Aside>
+      </el-aside>
+      <el-main>
+        <TopNav></TopNav>
+        <RouterView></RouterView>
+      </el-main>
+    </el-container>
+  </div>
 </template>
 
 <style lang="scss" scoped>
+.el-container {
+  height: 100%;
+  padding: 0;
+  margin: 0;
 
+  .el-header {
+    background-color: #ffffff;
+    padding: 0;
+    margin: 0;
+  }
+
+  .el-main {
+    background-color: #eaedf1;
+    padding: 0;
+    margin: 0;
+  }
+}
 </style>

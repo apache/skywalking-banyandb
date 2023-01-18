@@ -37,13 +37,10 @@ let data = reactive({
 })
 
 const tableData = computed(() => {
-    console.log('tableData')
     let tags = props.fileData.tagFamilies[data.tagFamily].tags
-    console.log(tags)
     let arr = tags.map((item) => {
         return { tags: item.name, type: item.type }
     })
-    console.log('arr', arr)
     return arr
 })
 watch(() => props.fileData, () => {
