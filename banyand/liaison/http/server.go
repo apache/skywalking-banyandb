@@ -26,6 +26,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+	"google.golang.org/grpc/credentials"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"go.uber.org/multierr"
@@ -44,6 +47,8 @@ import (
 var (
 	_ run.Config  = (*service)(nil)
 	_ run.Service = (*service)(nil)
+	errServerCert = errors.New("invalid server cert file")
+	errServerKey  = errors.New("invalid server key file")
 )
 
 // NewService return a http service.
@@ -60,17 +65,38 @@ type service struct {
 	l            *logger.Logger
 	srv          *http.Server
 	listenAddr   string
+	keyFile        string
+	certFile       string
+	tls            bool
+	creds    credentials.TransportCredentials
 	grpcAddr     string
 }
 
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
+	flagSet.BoolVarP(&p.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
+	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
+	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
 	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
 	return flagSet
 }
 
 func (p *service) Validate() error {
+	if !p.tls {
+		return nil
+	}
+	if p.certFile == "" {
+		return errServerCert
+	}
+	if p.keyFile == "" {
+		return errServerKey
+	}
+	creds, errTLS := credentials.NewServerTLSFromFile(p.certFile, p.keyFile)
+	if errTLS != nil {
+		return errors.Wrap(errTLS, "failed to load cert and key")
+	}
+	p.creds = creds
 	return nil
 }
 
@@ -100,6 +126,12 @@ func (p *service) PreRun() error {
 
 func (p *service) Serve() run.StopNotify {
 	var ctx context.Context
+	
+	// needs to be modified.
+	/*if p.tls {
+		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
+	}*/
+
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := []grpc.DialOption{
 		// TODO: add TLS

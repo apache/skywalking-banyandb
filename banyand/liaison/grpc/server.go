@@ -26,7 +26,6 @@ import (
 	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/validator"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -54,7 +53,6 @@ var (
 
 type server struct {
 	pipeline queue.Queue
-	creds    credentials.TransportCredentials
 	repo     discovery.ServiceRepo
 	stopCh   chan struct{}
 	*measureRegistryServer
@@ -69,10 +67,7 @@ type server struct {
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
 	addr           string
-	keyFile        string
-	certFile       string
 	maxRecvMsgSize int
-	tls            bool
 }
 
 // NewServer returns a new gRPC server.
@@ -151,9 +146,6 @@ func (s *server) Name() string {
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "the size of max receiving message")
-	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.certFile, "cert-file", "", "", "the TLS cert file")
-	fs.StringVarP(&s.keyFile, "key-file", "", "", "the TLS key file")
 	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
 	return fs
 }
@@ -162,20 +154,6 @@ func (s *server) Validate() error {
 	if s.addr == "" {
 		return errNoAddr
 	}
-	if !s.tls {
-		return nil
-	}
-	if s.certFile == "" {
-		return errServerCert
-	}
-	if s.keyFile == "" {
-		return errServerKey
-	}
-	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
-	if errTLS != nil {
-		return errors.Wrap(errTLS, "failed to load cert and key")
-	}
-	s.creds = creds
 	return nil
 }
 
