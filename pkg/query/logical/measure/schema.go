@@ -89,8 +89,10 @@ func (m *schema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
 	i := 0
 	for _, fr := range fieldRefs {
 		if spec, ok := m.fieldMap[fr.Field.Name]; ok {
-			spec.FieldIdx = i
-			newFieldMap[fr.Field.Name] = spec
+			newFieldMap[fr.Field.Name] = &logical.FieldSpec{
+				FieldIdx: i,
+				Spec:     spec.Spec,
+			}
 		}
 		i++
 	}

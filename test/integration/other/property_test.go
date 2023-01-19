@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -39,6 +40,7 @@ var _ = Describe("Property application", func() {
 	var deferFn func()
 	var conn *grpc.ClientConn
 	var client propertyv1.PropertyServiceClient
+	var goods []gleak.Goroutine
 
 	BeforeEach(func() {
 		var addr string
@@ -49,10 +51,12 @@ var _ = Describe("Property application", func() {
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		client = propertyv1.NewPropertyServiceClient(conn)
+		goods = gleak.Goroutines()
 	})
 	AfterEach(func() {
 		Expect(conn.Close()).To(Succeed())
 		deferFn()
+		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 	})
 	It("applies properties", func() {
 		md := &propertyv1.Metadata{

@@ -18,76 +18,12 @@
 -->
 
 <script setup>
-import HeaderComponent from './components/Header/index.vue'
-import RightMenuComponent from './components/Database/Aside/components/RightMenu/index.vue'
-import { computed } from '@vue/runtime-core'
-import stores from './stores/index'
-import { useRouter, useRoute } from 'vue-router'
-import { getCurrentInstance } from "@vue/runtime-core";
-
-const route = useRoute()
-const router = useRouter()
-const { menuState, header } = stores()
-const { proxy } = getCurrentInstance()
-const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
-const showRightMenu = computed(() => {
-  return menuState.showRightMenu
-})
-const left = computed(() => {
-  return menuState.left
-})
-const top = computed(() => {
-  return menuState.top
-})
-const rightMenuList = computed(() => {
-  return menuState.rightMenuList
-})
-let activePath = ""
-let show = true
-let showButton = true
-
-const initData = (() => {
-  let path = route.path
-  let name = route.name
-  if (name == "NotFound") {
-    show = false
-  } else {
-    activePath = path
-  }
-  if (name == "Stream" || name == "Measure") {
-    header.changeShowButton(true)
-  } else {
-    header.changeShowButton(false)
-  }
-})()
-
-const appMouseDown = () => {
-  menuState.changeShowRightMenu(false)
-}
-const handleRightItem = (index) => {
-  $bus.emit('handleRightItem', index)
-}
 </script>
 
 <template>
   <div id="app">
-    <div @mousedown="appMouseDown" style="width: 100%; height:100%">
-      <el-container>
-        <el-header v-if="show">
-          <header-component :active="activePath" :showButton="showButton"></header-component>
-        </el-header>
-        <el-main>
-          <keep-alive>
-            <router-view v-if="$route.meta.keepAlive" />
-          </keep-alive>
-          <router-view v-if="!$route.meta.keepAlive"></router-view>
-        </el-main>
-      </el-container>
-    </div>
-    <div v-show="showRightMenu" class="right-menu border-radius-little box-shadow"
-      :style="{ top: top + 'px', left: left + 'px' }">
-      <right-menu-component @handleRightItem="handleRightItem" :rightMenuList="rightMenuList">
-      </right-menu-component>
+    <div style="width: 100%; height:100%">
+      <RouterView></RouterView>
     </div>
   </div>
 </template>

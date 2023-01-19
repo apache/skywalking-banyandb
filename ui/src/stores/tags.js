@@ -18,6 +18,7 @@
  */
 
 import { defineStore } from "pinia"
+import { ElMessage } from 'element-plus'
 
 export default defineStore('tags', {
     state() {
@@ -31,7 +32,7 @@ export default defineStore('tags', {
             let result = this.tagsList.findIndex(item => item.metadata.group === val.metadata.group && item.metadata.type === val.metadata.type && item.metadata.name === val.metadata.name)
             if (result === -1) {
                 if (this.tagsList.length == 9) {
-                    Message({
+                    ElMessage({
                         message: "Open up to 9 files at the same time! Please close some files and try again!",
                         type: "warning"
                     })
