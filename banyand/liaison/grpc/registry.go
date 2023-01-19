@@ -442,9 +442,14 @@ func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 		return nil, err
 	}
 
+	sourceMeasure, err := ts.schemaRegistry.MeasureRegistry().GetMeasure(ctx, topNSchema.GetSourceMeasure())
+	if err != nil {
+		return nil, err
+	}
 	// create a "virtual" measure for TopN result
 	topNMeasure := &databasev1.Measure{
-		Metadata: topNSchema.Metadata,
+		Metadata: topNSchema.GetMetadata(),
+		Interval: sourceMeasure.GetInterval(),
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
 				Name: measure.TopNTagFamily,

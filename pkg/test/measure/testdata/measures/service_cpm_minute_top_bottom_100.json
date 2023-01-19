@@ -1,0 +1,35 @@
+{
+  "metadata": {
+    "name": "service_cpm_minute_top_bottom_100",
+    "group": "sw_metric"
+  },
+  "interval": "1m",
+  "tag_families": [
+    {
+      "name": "__topN__",
+      "tags": [
+        {
+          "name": "measureID",
+          "type": "TAG_TYPE_ID"
+        },
+        {
+          "name": "groupValues",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "measureID"
+    ]
+  },
+  "fields": [
+    {
+      "name": "value",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ]
+}
