@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -44,9 +45,11 @@ var (
 	connection *grpc.ClientConn
 	now        time.Time
 	deferFunc  func()
+	goods      []gleak.Goroutine
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
+	goods = gleak.Goroutines()
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: "warn",
@@ -97,4 +100,5 @@ var _ = SynchronizedAfterSuite(func() {
 	}
 }, func() {
 	deferFunc()
+	Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 })
