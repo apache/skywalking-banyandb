@@ -32,11 +32,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	apiData "github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
@@ -70,8 +73,8 @@ type topNStreamingProcessor struct {
 	m             *measure
 	streamingFlow flow.Flow
 	l             *logger.Logger
+	pipeline      queue.Queue
 	topNSchema    *databasev1.TopNAggregation
-	fakeMeasure   *databasev1.Measure
 	src           chan interface{}
 	in            chan flow.StreamRecord
 	errCh         <-chan error
@@ -166,40 +169,53 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	// 2. rankNumber
 	// 3. timeBucket
 	measureID := data[0].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
-	return t.m.write(t.fakeMeasure, shardID, tsdb.HashEntity(entity), entityValues, &measurev1.DataPointValue{
-		Timestamp: timestamppb.New(eventTime),
-		TagFamilies: []*modelv1.TagFamilyForWrite{
-			{
-				Tags: []*modelv1.TagValue{
-					// MeasureID
+	iwr := &measurev1.InternalWriteRequest{
+		Request: &measurev1.WriteRequest{
+			Metadata: t.topNSchema.GetMetadata(),
+			DataPoint: &measurev1.DataPointValue{
+				Timestamp: timestamppb.New(eventTime),
+				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
-						Value: &modelv1.TagValue_Id{
-							Id: &modelv1.ID{
-								Value: measureID,
+						Tags: []*modelv1.TagValue{
+							// MeasureID
+							{
+								Value: &modelv1.TagValue_Id{
+									Id: &modelv1.ID{
+										Value: measureID,
+									},
+								},
+							},
+							// GroupValues for merge in post processor
+							{
+								Value: &modelv1.TagValue_Str{
+									Str: &modelv1.Str{
+										Value: data[0].(string),
+									},
+								},
 							},
 						},
 					},
-					// GroupValues for merge in post processor
+				},
+				Fields: []*modelv1.FieldValue{
 					{
-						Value: &modelv1.TagValue_Str{
-							Str: &modelv1.Str{
-								Value: data[0].(string),
+						Value: &modelv1.FieldValue_Int{
+							Int: &modelv1.Int{
+								Value: fieldValue,
 							},
 						},
 					},
 				},
 			},
 		},
-		Fields: []*modelv1.FieldValue{
-			{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{
-						Value: fieldValue,
-					},
-				},
-			},
-		},
-	}, true)
+		ShardId:    uint32(shardID),
+		SeriesHash: tsdb.HashEntity(entity),
+	}
+	if t.l.Debug().Enabled() {
+		iwr.EntityValues = entityValues.Encode()
+	}
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
+	_, errWritePub := t.pipeline.Publish(apiData.TopicMeasureWrite, message)
+	return errWritePub
 }
 
 func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
@@ -266,6 +282,7 @@ func (t *topNStreamingProcessor) handleError() {
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
 	l            *logger.Logger
+	pipeline     queue.Queue
 	m            *measure
 	s            logical.TagSpecRegistry
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
@@ -334,25 +351,7 @@ func (manager *topNProcessorManager) start() error {
 				in:            make(chan flow.StreamRecord),
 				stopCh:        make(chan struct{}),
 				streamingFlow: streamingFlow,
-				fakeMeasure: &databasev1.Measure{
-					Metadata: topNSchema.Metadata,
-					TagFamilies: []*databasev1.TagFamilySpec{
-						{
-							Name: TopNTagFamily,
-							Tags: []*databasev1.TagSpec{
-								{
-									Name: "measureID",
-									Type: databasev1.TagType_TAG_TYPE_ID,
-								},
-								{
-									Name: "groupValues",
-									Type: databasev1.TagType_TAG_TYPE_STRING,
-								},
-							},
-						},
-					},
-					Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
-				},
+				pipeline:      manager.pipeline,
 			}
 			processorList[i] = processor.start()
 		}
