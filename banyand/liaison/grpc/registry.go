@@ -27,22 +27,10 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
-
-const (
-	// TopNTagFamily is the identity of a tag family which contains the topN calculated result.
-	TopNTagFamily = "__topN__"
-)
-
-// TopNValueFieldSpec denotes the field specification of the topN calculated result.
-var TopNValueFieldSpec = &databasev1.FieldSpec{
-	Name:              "value",
-	FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
-	EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
-	CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-}
 
 type streamRegistryServer struct {
 	databasev1.UnimplementedStreamRegistryServiceServer
@@ -459,7 +447,7 @@ func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 		Metadata: topNSchema.Metadata,
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: TopNTagFamily,
+				Name: measure.TopNTagFamily,
 				Tags: []*databasev1.TagSpec{
 					{
 						Name: "measureID",
@@ -472,7 +460,7 @@ func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 				},
 			},
 		},
-		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+		Fields: []*databasev1.FieldSpec{measure.TopNValueFieldSpec},
 	}
 	if err := ts.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, topNMeasure); err != nil {
 		return nil, err
