@@ -21,13 +21,11 @@ import (
 	"context"
 	"errors"
 
-	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
@@ -437,37 +435,7 @@ type topNAggregationRegistryServer struct {
 func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 	req *databasev1.TopNAggregationRegistryServiceCreateRequest,
 ) (*databasev1.TopNAggregationRegistryServiceCreateResponse, error) {
-	topNSchema := req.GetTopNAggregation()
-	if err := ts.schemaRegistry.TopNAggregationRegistry().CreateTopNAggregation(ctx, topNSchema); err != nil {
-		return nil, err
-	}
-
-	sourceMeasure, err := ts.schemaRegistry.MeasureRegistry().GetMeasure(ctx, topNSchema.GetSourceMeasure())
-	if err != nil {
-		return nil, err
-	}
-	// create a "virtual" measure for TopN result
-	topNMeasure := &databasev1.Measure{
-		Metadata: topNSchema.GetMetadata(),
-		Interval: sourceMeasure.GetInterval(),
-		TagFamilies: []*databasev1.TagFamilySpec{
-			{
-				Name: measure.TopNTagFamily,
-				Tags: []*databasev1.TagSpec{
-					{
-						Name: "measureID",
-						Type: databasev1.TagType_TAG_TYPE_ID,
-					},
-					{
-						Name: "groupValues",
-						Type: databasev1.TagType_TAG_TYPE_STRING,
-					},
-				},
-			},
-		},
-		Fields: []*databasev1.FieldSpec{measure.TopNValueFieldSpec},
-	}
-	if err := ts.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, topNMeasure); err != nil {
+	if err := ts.schemaRegistry.TopNAggregationRegistry().CreateTopNAggregation(ctx, req.GetTopNAggregation()); err != nil {
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceCreateResponse{}, nil
@@ -485,13 +453,12 @@ func (ts *topNAggregationRegistryServer) Update(ctx context.Context,
 func (ts *topNAggregationRegistryServer) Delete(ctx context.Context,
 	req *databasev1.TopNAggregationRegistryServiceDeleteRequest,
 ) (*databasev1.TopNAggregationRegistryServiceDeleteResponse, error) {
-	okTopNDeleted, errDelTopN := ts.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, req.GetMetadata())
-	okMeasureDeleted, errDelMeasure := ts.schemaRegistry.MeasureRegistry().DeleteMeasure(ctx, req.GetMetadata())
-	if err := multierr.Append(errDelTopN, errDelMeasure); err != nil {
+	ok, err := ts.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, req.GetMetadata())
+	if err != nil {
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceDeleteResponse{
-		Deleted: okTopNDeleted && okMeasureDeleted,
+		Deleted: ok,
 	}, nil
 }
 

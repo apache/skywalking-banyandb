@@ -25,7 +25,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -39,7 +38,7 @@ import (
 
 var errMalformedElement = errors.New("element is malformed")
 
-func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues,
+func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb.EntityValues,
 	value *measurev1.DataPointValue,
 ) error {
 	t := value.GetTimestamp().AsTime().Local()
@@ -50,7 +49,7 @@ func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity [
 	if fLen < 1 {
 		return errors.Wrap(errMalformedElement, "no tag family")
 	}
-	if fLen > len(sm.GetTagFamilies()) {
+	if fLen > len(s.schema.GetTagFamilies()) {
 		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
 	shard, err := s.databaseSupplier.SupplyTSDB().Shard(shardID)
@@ -73,18 +72,18 @@ func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity [
 	writeFn := func() (tsdb.Writer, error) {
 		builder := wp.WriterBuilder().Time(t)
 		for fi, family := range value.GetTagFamilies() {
-			spec := sm.GetTagFamilies()[fi]
+			spec := s.schema.GetTagFamilies()[fi]
 			bb, errMarshal := pbv1.EncodeFamily(spec, family)
 			if errMarshal != nil {
 				return nil, errMarshal
 			}
 			builder.Family(familyIdentity(spec.GetName(), pbv1.TagFlag), bb)
 		}
-		if len(value.GetFields()) > len(sm.GetFields()) {
+		if len(value.GetFields()) > len(s.schema.GetFields()) {
 			return nil, errors.Wrap(errMalformedElement, "fields number is more than expected")
 		}
 		for fi, fieldValue := range value.GetFields() {
-			fieldSpec := sm.GetFields()[fi]
+			fieldSpec := s.schema.GetFields()[fi]
 			fType, isNull := pbv1.FieldValueTypeConv(fieldValue)
 			if isNull {
 				s.l.Warn().RawJSON("written", logger.Proto(value)).Msg("ignore null field")
@@ -98,14 +97,14 @@ func (s *measure) write(sm *databasev1.Measure, shardID common.ShardID, entity [
 				s.l.Warn().RawJSON("written", logger.Proto(value)).Msg("ignore unknown field")
 				continue
 			}
-			builder.Family(familyIdentity(sm.GetFields()[fi].GetName(), pbv1.EncoderFieldFlag(fieldSpec, s.interval)), data)
+			builder.Family(familyIdentity(s.schema.GetFields()[fi].GetName(), pbv1.EncoderFieldFlag(fieldSpec, s.interval)), data)
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
 			return nil, errWrite
 		}
 		_, errWrite = writer.Write()
-		if e := s.l.Named(sm.GetMetadata().GetGroup(), sm.GetMetadata().GetName()).Debug(); e.Enabled() {
+		if e := s.l.Named(s.schema.GetMetadata().GetGroup(), s.schema.GetMetadata().GetName()).Debug(); e.Enabled() {
 			e.Time("ts", t).
 				Int("ts_nano", t.Nanosecond()).
 				RawJSON("data", logger.Proto(value)).
@@ -162,7 +161,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("cannot find measure definition")
 		return
 	}
-	err := stm.write(stm.schema, common.ShardID(writeEvent.GetShardId()),
+	err := stm.write(common.ShardID(writeEvent.GetShardId()),
 		writeEvent.SeriesHash, tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetDataPoint())
 	if err != nil {
 		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")

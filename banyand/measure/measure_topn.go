@@ -26,9 +26,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -37,6 +39,8 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -281,12 +285,13 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	l            *logger.Logger
-	pipeline     queue.Queue
-	m            *measure
-	s            logical.TagSpecRegistry
-	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
-	topNSchemas  []*databasev1.TopNAggregation
+	l              *logger.Logger
+	pipeline       queue.Queue
+	schemaRegistry metadata.Repo
+	m              *measure
+	s              logical.TagSpecRegistry
+	processorMap   map[*commonv1.Metadata][]*topNStreamingProcessor
+	topNSchemas    []*databasev1.TopNAggregation
 	sync.RWMutex
 }
 
@@ -314,9 +319,54 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 	}()
 }
 
+func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
+	m, err := manager.schemaRegistry.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return err
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: manager.m.schema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: TopNTagFamily,
+				Tags: []*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_ID,
+					},
+					{
+						Name: "group_values",
+						Type: databasev1.TagType_TAG_TYPE_STRING,
+					},
+				},
+			},
+		},
+		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+	}
+	if m == nil {
+		return manager.schemaRegistry.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, m,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return nil
+	}
+	// update
+	return manager.schemaRegistry.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
+}
+
 func (manager *topNProcessorManager) start() error {
 	interval := manager.m.interval
 	for _, topNSchema := range manager.topNSchemas {
+		if createErr := manager.createOrUpdateTopNMeasure(topNSchema); createErr != nil {
+			return createErr
+		}
 		sortDirections := make([]modelv1.Sort, 0, 2)
 		if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 			sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)

@@ -26,6 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
@@ -97,7 +98,9 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue) (*measure, error) {
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+	schemaRegistry metadata.Repo,
+) (*measure, error) {
 	m := &measure{
 		shardNum:   shardNum,
 		schema:     spec.schema,
@@ -121,12 +124,13 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 	tagMapSpec.RegisterTagFamilies(spec.schema.GetTagFamilies())
 
 	m.processorManager = &topNProcessorManager{
-		l:            l,
-		pipeline:     pipeline,
-		m:            m,
-		s:            tagMapSpec,
-		topNSchemas:  spec.topNAggregations,
-		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
+		l:              l,
+		pipeline:       pipeline,
+		schemaRegistry: schemaRegistry,
+		m:              m,
+		s:              tagMapSpec,
+		topNSchemas:    spec.topNAggregations,
+		processorMap:   make(map[*commonv1.Metadata][]*topNStreamingProcessor),
 	}
 
 	err := m.processorManager.start()
