@@ -24,6 +24,8 @@ html {
     --color-main: #6E38F7; /* main color */
     --el-color-primary: var(--color-main) !important;
     --el-border-color-hover: var(--color-main) !important;
+    --el-button-hover-bg-color: var(--color-main-background) !important;
+    --el-button-hover-border-color: var(--color-main) !important;
     --color-main-background: rgb(241, 235, 254);
     --color-background: #e7ebfc;
 

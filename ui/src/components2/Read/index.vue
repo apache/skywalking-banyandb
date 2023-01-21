@@ -125,7 +125,7 @@ watch(() => route, () => {
     data.group = route.params.group
     data.name = route.params.name
     data.type = route.params.type
-    if(data.group && data.name && data.type) {
+    if (data.group && data.name && data.type) {
         initData()
     }
 }, {
@@ -176,7 +176,7 @@ function setTableData(elements) {
         item.tagFamilies[0].tags.forEach(tag => {
             const index = tags.findIndex(item => item.name == tag.key)
             const type = tags[index].type
-            if(tag.value[tagType[type]] == null) {
+            if (tag.value[tagType[type]] == null) {
                 return dataItem[tag.key] = 'Null'
             }
             dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value') ? tag.value[tagType[type]].value : tag.value[tagType[type]]
@@ -222,24 +222,16 @@ function changeTagFamilies() {
             <el-row>
                 <el-col :span="12">
                     <div class="flex align-item-center" style="height: 30px; width: 100%;">
-                        <el-form :inline="true" style="height: 30px;">
-                            <el-form-item label="Tag Family">
-                                <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
-                                    placeholder="Please select">
-                                    <el-option v-for="item in data.options" :key="item.value" :label="item.label"
-                                        :value="item.value">
-                                    </el-option>
-                                </el-select>
-                            </el-form-item>
-                            <el-form-item label="Time Select">
-                                <el-date-picker v-model="data.timeValue" type="datetimerange" :shortcuts="shortcuts"
-                                    range-separator="to" start-placeholder="begin" end-placeholder="end" align="right">
-                                </el-date-picker>
-                            </el-form-item>
-                            <el-form-item>
-                                <el-button size="small" :icon="Search" color="#6E38F7" plain></el-button>
-                            </el-form-item>
-                        </el-form>
+                        <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
+                            placeholder="Please select">
+                            <el-option v-for="item in data.options" :key="item.value" :label="item.label"
+                                :value="item.value">
+                            </el-option>
+                        </el-select>
+                        <el-date-picker style="margin: 0 10px 0 10px" v-model="data.timeValue" type="datetimerange" :shortcuts="shortcuts"
+                            range-separator="to" start-placeholder="begin" end-placeholder="end" align="right">
+                        </el-date-picker>
+                        <el-button size="small" :icon="Search" color="#6E38F7" plain></el-button>
                     </div>
                 </el-col>
                 <el-col :span="12">
@@ -254,9 +246,9 @@ function changeTagFamilies() {
         </el-card>
         <el-card shadow="always">
             <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-                element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable"  stripe border
-                highlight-current-row tooltip-effect="dark" empty-text="No data yet"
-                @selection-change="handleSelectionChange" :data="data.tableData">
+                element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" stripe border highlight-current-row
+                tooltip-effect="dark" empty-text="No data yet" @selection-change="handleSelectionChange"
+                :data="data.tableData">
                 <el-table-column type="selection" width="55">
                 </el-table-column>
                 <el-table-column type="index" label="number" width="90">

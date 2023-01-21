@@ -21,18 +21,34 @@
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { reactive } from 'vue';
 import { useRoute } from 'vue-router'
+import TagEditor from './tagEditor.vue'
 const route = useRoute()
 
+const rules = {
+    group: [
+        {
+            required: true, message: 'Please enter the group', trigger: 'blur'
+        }
+    ],
+    name: [
+        {
+            required: true, message: 'Please select the name', trigger: 'blur'
+        }
+    ]
+}
+
 const data = reactive({
-    group: route.params.group,
-    name: route.params.group,
     type: route.params.type,
-    operator: route.params.operator
+    operator: route.params.operator,
+    form: {
+        group: route.params.group,
+        name: route.params.group
+    }
 })
 
 watch(() => route, () => {
-    data.group = route.params.group
-    data.name = route.params.name
+    data.form.group = route.params.group
+    data.form.name = route.params.name
     data.type = route.params.type
     data.operator = route.params.operator
     initData()
@@ -57,9 +73,9 @@ function initData() {
                                 <span class="text-bold">Type：</span>
                                 <span style="margin-right: 20px;">{{ data.type }}</span>
                                 <span class="text-bold">Group：</span>
-                                <span style="margin-right: 20px;">{{ data.group }}</span>
+                                <span style="margin-right: 20px;">{{ data.form.group }}</span>
                                 <span class="text-bold" v-if="data.name">Name：</span>
-                                <span style="margin-right: 20px;" v-if="data.name">{{ data.name }}</span>
+                                <span style="margin-right: 20px;" v-if="data.form.name">{{ data.name }}</span>
                                 <span class="text-bold">Operator：</span>
                                 <span>{{ data.operator }}</span>
                             </div>
@@ -67,13 +83,21 @@ function initData() {
                     </el-col>
                     <el-col :span="12">
                         <div class="flex align-item-center justify-end" style="height: 30px;">
-                            <el-button size="small" type="primary" color="#6E38F7" >submit</el-button>
+                            <el-button size="small" type="primary" color="#6E38F7">submit</el-button>
                         </div>
                     </el-col>
                 </el-row>
-
             </template>
-
+            <el-form ref="ruleForm" :model="data.form" label-width="80px" label-position="left" :rules="rules" :inline="true"
+                style="height: 30px;">
+                <el-form-item label="group" prop="group">
+                    <el-input clearable disabled v-model="data.form.group"></el-input>
+                </el-form-item>
+                <el-form-item label="name" prop="name">
+                    <el-input clearable v-model="data.form.name"></el-input>
+                </el-form-item>
+            </el-form>
+            <TagEditor></TagEditor>
         </el-card>
     </div>
 </template>
