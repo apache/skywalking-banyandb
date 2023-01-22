@@ -37,18 +37,13 @@ func BuildSchema(streamSchema stream.Stream) (logical.Schema, error) {
 	s := &schema{
 		common: &logical.CommonSchema{
 			IndexRules: streamSchema.GetIndexRules(),
-			TagMap:     make(map[string]*logical.TagSpec),
+			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: sm.GetEntity().GetTagNames(),
 		},
 		stream: sm,
 	}
 
-	// generate the streamSchema of the fields for the traceSeries
-	for tagFamilyIdx, tagFamily := range sm.GetTagFamilies() {
-		for tagIdx, spec := range tagFamily.GetTags() {
-			s.registerTag(tagFamilyIdx, tagIdx, spec)
-		}
-	}
+	s.common.RegisterTagFamilies(sm.GetTagFamilies())
 
 	return s, nil
 }

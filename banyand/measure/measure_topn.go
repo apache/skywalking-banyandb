@@ -26,23 +26,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	apiData "github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const (
@@ -56,8 +64,6 @@ var (
 	_ io.Closer = (*topNProcessorManager)(nil)
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 
-	errUnsupportedConditionValueType = errors.New("unsupported value type in the condition")
-
 	// TopNValueFieldSpec denotes the field specification of the topN calculated result.
 	TopNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
@@ -68,17 +74,17 @@ var (
 )
 
 type topNStreamingProcessor struct {
-	databaseSupplier tsdb.Supplier
-	streamingFlow    flow.Flow
-	l                *logger.Logger
-	topNSchema       *databasev1.TopNAggregation
-	src              chan interface{}
-	in               chan flow.StreamRecord
-	errCh            <-chan error
-	stopCh           chan struct{}
+	m             *measure
+	streamingFlow flow.Flow
+	l             *logger.Logger
+	pipeline      queue.Queue
+	topNSchema    *databasev1.TopNAggregation
+	src           chan interface{}
+	in            chan flow.StreamRecord
+	errCh         <-chan error
+	stopCh        chan struct{}
 	flow.ComponentState
 	interval      time.Duration
-	shardNum      uint32
 	sortDirection modelv1.Sort
 }
 
@@ -100,7 +106,8 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := t.writeStreamRecord(ctx, record); err != nil {
+			// nolint: contextcheck
+			if err := t.writeStreamRecord(record); err != nil {
 				t.l.Err(err).Msg("fail to write stream record")
 			}
 		case <-ctx.Done():
@@ -126,7 +133,7 @@ func (t *topNStreamingProcessor) Close() error {
 	return err
 }
 
-func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record flow.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
 	tuples, ok := record.Data().([]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
@@ -143,12 +150,12 @@ func (t *topNStreamingProcessor) writeStreamRecord(ctx context.Context, record f
 	for rankNum, tuple := range tuples {
 		fieldValue := tuple.V1.(int64)
 		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-		err = multierr.Append(err, t.writeData(ctx, eventTime, timeBucket, fieldValue, data, rankNum))
+		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(ctx context.Context, eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool
@@ -160,86 +167,59 @@ func (t *topNStreamingProcessor) writeData(ctx context.Context, eventTime time.T
 	if err != nil {
 		return err
 	}
-	shard, err := t.databaseSupplier.SupplyTSDB().Shard(shardID)
-	if err != nil {
-		return err
-	}
-	series, err := shard.Series().Get(tsdb.HashEntity(entity), entityValues)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	span, err := series.Create(ctx, eventTime)
-	if err != nil {
-		if span != nil {
-			_ = span.Close()
-		}
-		return err
-	}
+
 	// measureID is consist of three parts,
 	// 1. groupValues
 	// 2. rankNumber
 	// 3. timeBucket
 	measureID := data[0].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
-	writeFn := func() (tsdb.Writer, error) {
-		builder := span.WriterBuilder().Time(eventTime)
-		virtualTagFamily := &modelv1.TagFamilyForWrite{
-			Tags: []*modelv1.TagValue{
-				// MeasureID
-				{
-					Value: &modelv1.TagValue_Id{
-						Id: &modelv1.ID{
-							Value: measureID,
+	iwr := &measurev1.InternalWriteRequest{
+		Request: &measurev1.WriteRequest{
+			Metadata: t.topNSchema.GetMetadata(),
+			DataPoint: &measurev1.DataPointValue{
+				Timestamp: timestamppb.New(eventTime),
+				TagFamilies: []*modelv1.TagFamilyForWrite{
+					{
+						Tags: []*modelv1.TagValue{
+							// MeasureID
+							{
+								Value: &modelv1.TagValue_Id{
+									Id: &modelv1.ID{
+										Value: measureID,
+									},
+								},
+							},
+							// GroupValues for merge in post processor
+							{
+								Value: &modelv1.TagValue_Str{
+									Str: &modelv1.Str{
+										Value: data[0].(string),
+									},
+								},
+							},
 						},
 					},
 				},
-				// GroupValues for merge in post processor
-				{
-					Value: &modelv1.TagValue_Str{
-						Str: &modelv1.Str{
-							Value: data[0].(string),
+				Fields: []*modelv1.FieldValue{
+					{
+						Value: &modelv1.FieldValue_Int{
+							Int: &modelv1.Int{
+								Value: fieldValue,
+							},
 						},
 					},
 				},
 			},
-		}
-		payload, errMarshal := proto.Marshal(virtualTagFamily)
-		if errMarshal != nil {
-			return nil, errMarshal
-		}
-		builder.Family(familyIdentity(TopNTagFamily, pbv1.TagFlag), payload)
-		virtualFieldValue := &modelv1.FieldValue{
-			Value: &modelv1.FieldValue_Int{
-				Int: &modelv1.Int{
-					Value: fieldValue,
-				},
-			},
-		}
-		fieldData := encodeFieldValue(virtualFieldValue)
-		builder.Family(familyIdentity(TopNValueFieldSpec.GetName(), pbv1.EncoderFieldFlag(TopNValueFieldSpec, t.interval)), fieldData)
-		writer, errWrite := builder.Build()
-		if errWrite != nil {
-			return nil, errWrite
-		}
-		_, errWrite = writer.Write()
-		if e := t.l.Debug(); e.Enabled() {
-			e.Time("ts", eventTime).
-				Int("ts_nano", eventTime.Nanosecond()).
-				Uint64("series_id", uint64(series.ID())).
-				Stringer("series", series).
-				Uint64("item_id", uint64(writer.ItemID().ID)).
-				Int("shard_id", int(shardID)).
-				Msg("write measure")
-		}
-		return writer, errWrite
+		},
+		ShardId:    uint32(shardID),
+		SeriesHash: tsdb.HashEntity(entity),
 	}
-	_, err = writeFn()
-	if err != nil {
-		_ = span.Close()
-		return err
+	if t.l.Debug().Enabled() {
+		iwr.EntityValues = entityValues.Encode()
 	}
-	return span.Close()
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
+	_, errWritePub := t.pipeline.Publish(apiData.TopicMeasureWrite, message)
+	return errWritePub
 }
 
 func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
@@ -268,7 +248,7 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	id, err := partition.ShardID(e.Marshal(), t.shardNum)
+	id, err := partition.ShardID(e.Marshal(), t.m.shardNum)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -306,7 +286,10 @@ func (t *topNStreamingProcessor) handleError() {
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
 	l            *logger.Logger
+	pipeline     queue.Queue
+	repo         metadata.Repo
 	m            *measure
+	s            logical.TagSpecRegistry
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
 	topNSchemas  []*databasev1.TopNAggregation
 	sync.RWMutex
@@ -336,9 +319,54 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 	}()
 }
 
+func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
+	m, err := manager.repo.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return err
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: manager.m.schema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: TopNTagFamily,
+				Tags: []*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_ID,
+					},
+					{
+						Name: "group_values",
+						Type: databasev1.TagType_TAG_TYPE_STRING,
+					},
+				},
+			},
+		},
+		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+	}
+	if m == nil {
+		return manager.repo.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, m,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return nil
+	}
+	// update
+	return manager.repo.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
+}
+
 func (manager *topNProcessorManager) start() error {
 	interval := manager.m.interval
 	for _, topNSchema := range manager.topNSchemas {
+		if createErr := manager.createOrUpdateTopNMeasure(topNSchema); createErr != nil {
+			return createErr
+		}
 		sortDirections := make([]modelv1.Sort, 0, 2)
 		if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 			sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
@@ -363,18 +391,17 @@ func (manager *topNProcessorManager) start() error {
 				return innerErr
 			}
 			streamingFlow = streamingFlow.Map(mapper)
-
 			processor := &topNStreamingProcessor{
-				l:                manager.l,
-				shardNum:         manager.m.shardNum,
-				interval:         interval,
-				topNSchema:       topNSchema,
-				sortDirection:    sortDirection,
-				databaseSupplier: manager.m.databaseSupplier,
-				src:              srcCh,
-				in:               make(chan flow.StreamRecord),
-				stopCh:           make(chan struct{}),
-				streamingFlow:    streamingFlow,
+				m:             manager.m,
+				l:             manager.l,
+				interval:      interval,
+				topNSchema:    topNSchema,
+				sortDirection: sortDirection,
+				src:           srcCh,
+				in:            make(chan flow.StreamRecord),
+				stopCh:        make(chan struct{}),
+				streamingFlow: streamingFlow,
+				pipeline:      manager.pipeline,
 			}
 			processorList[i] = processor.start()
 		}
@@ -393,86 +420,20 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 		}, nil
 	}
 
-	f, err := manager.buildFilterForCriteria(criteria)
+	f, err := logical.BuildSimpleTagFilter(criteria)
 	if err != nil {
 		return nil, err
 	}
 
 	return func(_ context.Context, dataPoint any) bool {
-		tfs := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
-		return f.predicate(tfs)
+		tffws := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
+		ok, matchErr := f.Match(logical.TagFamiliesForWrite(tffws), manager.s)
+		if matchErr != nil {
+			manager.l.Err(matchErr).Msg("fail to match criteria")
+			return false
+		}
+		return ok
 	}, nil
-}
-
-func (manager *topNProcessorManager) buildFilterForCriteria(criteria *modelv1.Criteria) (conditionFilter, error) {
-	switch v := criteria.GetExp().(type) {
-	case *modelv1.Criteria_Condition:
-		return manager.buildFilterForCondition(v.Condition)
-	case *modelv1.Criteria_Le:
-		return manager.buildFilterForLogicalExpr(v.Le)
-	default:
-		return nil, errors.New("should not reach here")
-	}
-}
-
-// buildFilterForCondition builds a logical and composable filter for a logical expression which have underlying conditions,
-// or nested logical expressions as its children.
-func (manager *topNProcessorManager) buildFilterForLogicalExpr(logicalExpr *modelv1.LogicalExpression) (conditionFilter, error) {
-	left, lErr := manager.buildFilterForCriteria(logicalExpr.Left)
-	if lErr != nil {
-		return nil, lErr
-	}
-	right, rErr := manager.buildFilterForCriteria(logicalExpr.Right)
-	if rErr != nil {
-		return nil, rErr
-	}
-	return composeWithOp(left, right, logicalExpr.Op), nil
-}
-
-func composeWithOp(left, right conditionFilter, op modelv1.LogicalExpression_LogicalOp) conditionFilter {
-	if op == modelv1.LogicalExpression_LOGICAL_OP_AND {
-		return &andFilter{left, right}
-	}
-	return &orFilter{left, right}
-}
-
-// buildFilterForCondition builds a single, composable filter for a single condition.
-func (manager *topNProcessorManager) buildFilterForCondition(cond *modelv1.Condition) (conditionFilter, error) {
-	familyOffset, tagOffset, spec := pbv1.FindTagByName(manager.m.GetSchema().GetTagFamilies(), cond.GetName())
-	if spec == nil {
-		return nil, errors.New("fail to parse tag by name")
-	}
-	switch v := cond.GetValue().GetValue().(type) {
-	case *modelv1.TagValue_Int:
-		return &int64TagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Int.GetValue(),
-		}, nil
-	case *modelv1.TagValue_Str:
-		return &strTagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Str.GetValue(),
-		}, nil
-	case *modelv1.TagValue_Id:
-		return &idTagFilter{
-			TagLocator: partition.TagLocator{
-				FamilyOffset: familyOffset,
-				TagOffset:    tagOffset,
-			},
-			op:  cond.GetOp(),
-			val: v.Id.GetValue(),
-		}, nil
-	default:
-		return nil, errUnsupportedConditionValueType
-	}
 }
 
 func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (flow.UnaryFunc[any], error) {
@@ -485,6 +446,13 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
 			dataPoint := request.(*measurev1.DataPointValue)
+			if len(dataPoint.GetFields()) <= fieldIdx {
+				manager.l.Warn().Interface("point", dataPoint).
+					Str("fieldName", fieldName).
+					Int("len", len(dataPoint.GetFields())).
+					Int("fieldIdx", fieldIdx).
+					Msg("out of range")
+			}
 			return flow.Data{
 				// save string representation of group values as the key, i.e. v1
 				"",
@@ -516,93 +484,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			}),
 		}
 	}, nil
-}
-
-var (
-	_ conditionFilter = (*strTagFilter)(nil)
-	_ conditionFilter = (*int64TagFilter)(nil)
-)
-
-type conditionFilter interface {
-	predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool
-}
-
-type strTagFilter struct {
-	val string
-	partition.TagLocator
-	op modelv1.Condition_BinaryOp
-}
-
-func (f *strTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
-	strValue := tagFamilies[f.FamilyOffset].GetTags()[f.TagOffset].GetStr().GetValue()
-	switch f.op {
-	case modelv1.Condition_BINARY_OP_EQ:
-		return strValue == f.val
-	case modelv1.Condition_BINARY_OP_NE:
-		return strValue != f.val
-	default:
-		return false
-	}
-}
-
-type idTagFilter struct {
-	val string
-	partition.TagLocator
-	op modelv1.Condition_BinaryOp
-}
-
-func (f *idTagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
-	val := tagFamilies[f.FamilyOffset].GetTags()[f.TagOffset].GetId().GetValue()
-	switch f.op {
-	case modelv1.Condition_BINARY_OP_EQ:
-		return val == f.val
-	case modelv1.Condition_BINARY_OP_NE:
-		return val != f.val
-	default:
-		return false
-	}
-}
-
-type int64TagFilter struct {
-	partition.TagLocator
-	op  modelv1.Condition_BinaryOp
-	val int64
-}
-
-func (f *int64TagFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
-	val := tagFamilies[f.FamilyOffset].GetTags()[f.TagOffset].GetInt().GetValue()
-	switch f.op {
-	case modelv1.Condition_BINARY_OP_EQ:
-		return val == f.val
-	case modelv1.Condition_BINARY_OP_NE:
-		return val != f.val
-	case modelv1.Condition_BINARY_OP_GE:
-		return val >= f.val
-	case modelv1.Condition_BINARY_OP_GT:
-		return val > f.val
-	case modelv1.Condition_BINARY_OP_LE:
-		return val <= f.val
-	case modelv1.Condition_BINARY_OP_LT:
-		return val < f.val
-	default:
-		return false
-	}
-}
-
-type andFilter struct {
-	l, r conditionFilter
-}
-
-func (f *andFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
-	return f.l.predicate(tagFamilies) && f.r.predicate(tagFamilies)
-}
-
-type orFilter struct {
-	l, r conditionFilter
-}
-
-func (f *orFilter) predicate(tagFamilies []*modelv1.TagFamilyForWrite) bool {
-	return f.l.predicate(tagFamilies) || f.r.predicate(tagFamilies)
 }
 
 // groupTagsLocator can be used to locate tags within families.

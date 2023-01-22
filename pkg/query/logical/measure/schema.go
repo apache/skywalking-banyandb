@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+// errFieldNotDefined indicated the field is not defined in the measure schema.
 var errFieldNotDefined = errors.New("field is not defined")
 
 type schema struct {
@@ -41,6 +42,10 @@ func (m *schema) Scope() tsdb.Entry {
 
 func (m *schema) EntityList() []string {
 	return m.common.EntityList
+}
+
+func (m *schema) FindTagSpecByName(name string) *logical.TagSpec {
+	return m.common.FindTagSpecByName(name)
 }
 
 func (m *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
@@ -101,14 +106,9 @@ func (m *schema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
 func (m *schema) Equal(s2 logical.Schema) bool {
 	if other, ok := s2.(*schema); ok {
 		// TODO: add more equality checks
-		return cmp.Equal(other.common.TagMap, m.common.TagMap)
+		return cmp.Equal(other.common.TagSpecMap, m.common.TagSpecMap)
 	}
 	return false
-}
-
-// registerTag registers the tag spec with given tagFamilyIdx and tagIdx.
-func (m *schema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
-	m.common.RegisterTag(tagFamilyIdx, tagIdx, spec)
 }
 
 // registerField registers the field spec with given index.
