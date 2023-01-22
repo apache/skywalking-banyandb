@@ -35,17 +35,30 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ logical.Plan = (*localIndexScan)(nil)
+var (
+	_ logical.Plan          = (*localIndexScan)(nil)
+	_ logical.Sorter        = (*localIndexScan)(nil)
+	_ logical.VolumeLimiter = (*localIndexScan)(nil)
+)
 
 type localIndexScan struct {
-	schema logical.Schema
-	filter index.Filter
-	*logical.OrderBy
+	schema            logical.Schema
+	filter            index.Filter
+	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
 	l                 *logger.Logger
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
 	entities          []tsdb.Entity
+	maxElementSize    int
+}
+
+func (i *localIndexScan) Limit(max int) {
+	i.maxElementSize = max
+}
+
+func (i *localIndexScan) Sort(order *logical.OrderBy) {
+	i.order = order
 }
 
 func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
@@ -71,13 +84,13 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 		return nil, nil
 	}
 	var builders []logical.SeekerBuilder
-	if i.Index != nil {
+	if i.order.Index != nil {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.Index, i.Sort)
+			builder.OrderByIndex(i.order.Index, i.order.Sort)
 		})
 	} else {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByTime(i.Sort)
+			builder.OrderByTime(i.order.Sort)
 		})
 	}
 	if i.filter != nil {
@@ -103,7 +116,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 		return elems, nil
 	}
 
-	it := logical.NewItemIter(iters, i.Sort)
+	it := logical.NewItemIter(iters, i.order.Sort)
 	for it.HasNext() {
 		nextItem := it.Next()
 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
@@ -119,14 +132,17 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 			Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
 			TagFamilies: tagFamilies,
 		})
+		if len(elems) > i.maxElementSize {
+			break
+		}
 	}
 	return elems, nil
 }
 
 func (i *localIndexScan) String() string {
-	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; orderBy;%s",
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; orderBy=%s; limit=%d",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagRefs...), i.OrderBy)
+		i.filter, logical.FormatTagRefs(", ", i.projectionTagRefs...), i.order, i.maxElementSize)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {

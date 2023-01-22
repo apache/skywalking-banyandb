@@ -16,23 +16,39 @@
  * specific language governing permissions and limitations
  * under the License.
  */
- 
+
 @use './custom.scss' as *;
 
 /* ====================
        button
 =======================*/
-.el-button.nav-button {
-    height: 25px;
-    border-radius: 1px;
-    line-height: 28px;
-    font-size: 12px;
-    margin: 0;
-
+/* .el-button {
+    height: 25px !important;
+    border-radius: 1px !important;
+    font-size: 12px !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    --el-button-active-text-color: black !important;
+    --el-button-active-border-color: var(--el-border-color) !important;
+    --el-button-active-bg-color: white !important;
     &:hover {
         color: var(--color-main) !important;
         background-color: var(--color-main-background) !important;
         border: 1px solid var(--color-main) !important;
+    }
+    &:focus {
+        color: var(--color-main) !important;
+        background-color: var(--color-main-background) !important;
+        border: 1px solid var(--color-main) !important;
+    }
+}
+
+.el-button--danger {
+    &:hover {
+        color: var(--el-color-danger) !important;
+        background-color: #f5bebe !important;
+        border: 1px solid var(--el-color-danger) !important;
     }
 }
 
@@ -47,7 +63,7 @@
         background-color: white !important;
         border: 1px solid #e4e7ed !important;
     }
-}
+} */
 
 /* =============
       el-tag
@@ -73,6 +89,7 @@
             background-color: var(--color-main) !important;
         }
     }
+
     &:hover {
         background-color: var(--color-main-background) !important;
     }
@@ -119,13 +136,16 @@
     --el-select-input-focus-border-color: var(--color-main) !important;
     --el-select-border-color-hover: var(--color-main) !important;
 }
+
 .el-scrollbar__view.el-select-dropdown__list {
     margin: 0 !important;
     font-size: 12px !important;
+
     .el-select-dropdown__item.selected {
         font-size: 14px !important;
         color: var(--color-main);
     }
+
     .el-select-dropdown__item {
         font-size: 14px !important;
     }
@@ -140,6 +160,7 @@
     --el-input-border-radius: 1px !important;
     --el-input-focus-border-color: var(--color-main) !important;
     --el-input-clear-hover-color: var(--color-main) !important;
+
     .el-input__inner {
         height: 25px !important;
     }
@@ -151,6 +172,7 @@
 .el-date-editor {
     height: 25px !important;
     border-radius: 1px !important;
+
     .el-range-input {
         height: 21px !important;
     }
@@ -171,15 +193,19 @@
     --el-table-header-bg-color: #f2f5fc !important;
     --el-table-header-text-color: black !important
 }
+
 .el-table .sort-caret.ascending {
     border-bottom-color: var(--el-text-color-placeholder) !important;
 }
+
 .el-table .ascending .sort-caret.ascending {
     border-bottom-color: var(--color-main) !important;
 }
+
 .el-table .sort-caret.descending {
     border-top-color: var(--el-text-color-placeholder) !important;
 }
+
 .el-table .descending .sort-caret.descending {
     border-top-color: var(--color-main) !important;
 }
@@ -189,4 +215,41 @@
 ===================*/
 .el-card {
     border-radius: 0px !important;
+}
+
+/* ===============
+     left menu
+===================*/
+.el-sub-menu__title {
+    height: 48px !important;
+}
+
+.el-menu-item {
+    height: 45px !important;
+}
+
+.el-menu.el-menu--horizontal.el-menu-demo {
+    border: 0px !important;
+
+    .el-menu-item {
+        height: 100% !important;
+    }
+}
+.el-menu-item.is-active {
+    color: var(--color-main) !important;
+}
+.el-sub-menu.is-active {
+    --el-menu-active-color: var(--color-main) !important;
+}
+.navigation {
+    border: 0px !important;
+}
+
+/*==================
+    el-checkbox
+===================*/
+.el-checkbox {
+    --el-checkbox-checked-bg-color: var(--color-main) !important;
+    --el-checkbox-checked-input-border-color: var(--color-main) !important;
+    --el-checkbox-input-border-color-hover: var(--color-main) !important;
 }

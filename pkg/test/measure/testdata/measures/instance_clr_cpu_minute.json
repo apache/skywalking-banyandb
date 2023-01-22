@@ -1,0 +1,50 @@
+{
+  "entity": {
+    "tagNames": [
+      "entity_id"
+    ]
+  },
+  "fields": [
+    {
+      "compressionMethod": "COMPRESSION_METHOD_ZSTD",
+      "encodingMethod": "ENCODING_METHOD_GORILLA",
+      "fieldType": "FIELD_TYPE_FLOAT",
+      "name": "summation"
+    },
+    {
+      "compressionMethod": "COMPRESSION_METHOD_ZSTD",
+      "encodingMethod": "ENCODING_METHOD_GORILLA",
+      "fieldType": "FIELD_TYPE_INT",
+      "name": "count"
+    },
+    {
+      "compressionMethod": "COMPRESSION_METHOD_ZSTD",
+      "encodingMethod": "ENCODING_METHOD_GORILLA",
+      "fieldType": "FIELD_TYPE_FLOAT",
+      "name": "value"
+    }
+  ],
+  "interval": "1m",
+  "metadata": {
+    "group": "sw_metric",
+    "name": "instance_clr_cpu_minute"
+  },
+  "tagFamilies": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "indexedOnly": false,
+          "name": "service_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "indexedOnly": false,
+          "name": "entity_id",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

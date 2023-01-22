@@ -190,6 +190,15 @@ func DecodeFieldValue(fieldValue []byte, fieldSpec *databasev1.FieldSpec) (*mode
 				hex.EncodeToString(fieldValue), len(fieldValue))
 		}
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: convert.BytesToInt64(fieldValue)}}}, nil
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		if len(fieldValue) == 0 {
+			return zeroFieldValue, nil
+		}
+		if len(fieldValue) != 8 {
+			return nil, errors.WithMessagef(errMalformedField, "the length of encoded field value(float64) %s is %d, less than 8",
+				hex.EncodeToString(fieldValue), len(fieldValue))
+		}
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: convert.BytesToFloat64(fieldValue)}}}, nil
 	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: fieldValue}}, nil
 	}

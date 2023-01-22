@@ -19,6 +19,7 @@
 
 <script setup>
 import { watch, ref, reactive } from 'vue'
+import TagDialog from './TagDialog.vue'
 const rule = {
     name: [
         {
@@ -55,6 +56,8 @@ const props = defineProps({
 
 let data = reactive({
     dialogVisible: false,
+    tagDialogVisible: false,
+    operation: 'Add',
     form: {
         metadata: {
             group: '',
@@ -64,37 +67,26 @@ let data = reactive({
 })
 let rules = rule
 let tableData = [{
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
+    tags: [{
+        name: 'start_time',
+        type: 'TAG_TYPE_INT',
+        indexedOnly: false
+    }]
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }, {
-    tagFamilies: 'searchable',
     name: 'stream-ids',
-    type: 'String'
 }]
 const ruleForm = ref()
 const emit = defineEmits(['confirm', 'cancel'])
@@ -136,26 +128,82 @@ function objectSpanMethod({ row, column, rowIndex, columnIndex }) {
 
 <template>
     <div>
-        <el-dialog width="25%" center :title="`${operation} ${type}`" @close="cancelForm" v-model="data.dialogVisible">
+        <el-dialog width="35%" center :title="`${operation} ${type}`" :show-close="false" v-model="data.dialogVisible"
+            :align-center="true">
             <el-form ref="ruleForm" :rules="rules" :model="data.form.metadata" label-position="left">
                 <el-form-item label="group" label-width="100px" prop="group">
-                    <el-input disabled v-model="data.form.metadata.group" style="width: 300px;">
+                    <el-input disabled v-model="data.form.metadata.group">
                     </el-input>
                 </el-form-item>
                 <el-form-item label="name" label-width="100px" prop="name">
-                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name" style="width: 300px;">
+                    <el-input :disabled="operation == 'edit'" v-model="data.form.metadata.name">
                     </el-input>
                 </el-form-item>
+                <div class="flex justify-between justify-between opeartorTag">
+                    <div>
+                        <span>Tag Families</span>
+                    </div>
+                    <div style="width: 50%" class="flex justify-end">
+                        <el-button type="primary" size="small" @click="data.tagDialogVisible = true, data.operation = 'Add'">Add tag families
+                        </el-button>
+                        <el-button size="small">Batch deletion</el-button>
+                    </div>
+                </div>
+                <el-table :data="tableData" border>
+                    <el-table-column type="selection" width="55" />
+                    <!-- <el-table-column label="Tags" type="expand" width="60">
+                        <template #default="props">
+                            <div class="flex justify-end justify-between opeartorTag">
+                                <el-button type="primary" size="small">Add tag</el-button>
+                                <el-button size="small">Batch deletion</el-button>
+                            </div>
+                            <el-table :data="props.row.tags" border style="width: 95%; margin-left: 5%;">
+                                <el-table-column type="selection" width="55" />
+                                <el-table-column label="Name" prop="name" />
+                                <el-table-column label="Type" prop="type" />
+                                <el-table-column label="indexedOnly" prop="indexedOnly" />
+                                <el-table-column fixed="right" label="Operations" width="150">
+                                    <template #default>
+                                        <el-button size="small" @click="handleClick">Detele</el-button>
+                                        <el-button size="small">Edit</el-button>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                            <div style="width: 95%; margin-left: 5%;">
+                                <el-divider />
+                            </div>
+                        </template>
+                    </el-table-column> -->
+                    <el-table-column label="Name" prop="name"></el-table-column>
+                    <el-table-column fixed="right" label="Operations" width="150">
+                        <template #default>
+                            <el-button size="small" @click="handleClick">Detele</el-button>
+                            <el-button size="small" @click="data.tagDialogVisible = true, data.operation = 'Edit'">Edit
+                            </el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
             </el-form>
-            <div slot="footer" class="dialog-footer">
+            <div slot="footer" class="dialog-footer footer">
                 <el-button @click="cancelForm">cancel</el-button>
-                <el-button type="primary" @click="confirmForm">{{operation}}
+                <el-button type="primary" @click="confirmForm">{{ operation }}
                 </el-button>
             </div>
         </el-dialog>
     </div>
+    <tag-dialog :visible.sync="data.tagDialogVisible" @cancel="data.tagDialogVisible = false"
+        :group="data.form.metadata.group" :name="data.form.metadata.name" :operation="data.operation"></tag-dialog>
 </template>
 
 <style lang="scss" scoped>
+.footer {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
 
+.opeartorTag {
+    width: 100%;
+    height: 40px;
+}
 </style>

@@ -22,6 +22,7 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -38,6 +39,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 	var baseTime time.Time
 	var interval time.Duration
 	var conn *grpc.ClientConn
+	var goods []gleak.Goroutine
 
 	g.BeforeEach(func() {
 		var addr string
@@ -50,10 +52,12 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		baseTime = timestamp.NowMilli()
 		interval = 500 * time.Millisecond
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, interval)
+		goods = gleak.Goroutines()
 	})
 	g.AfterEach(func() {
 		gm.Expect(conn.Close()).To(gm.Succeed())
 		deferFn()
+		gm.Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 	})
 	g.It("queries service_cpm_minute by id after updating", func() {
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", baseTime, interval)

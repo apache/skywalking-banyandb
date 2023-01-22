@@ -45,7 +45,7 @@ type encoderPool struct {
 
 func newEncoderPool(name string, size int, l *logger.Logger) encoding.SeriesEncoderPool {
 	return &encoderPool{
-		intPool: encoding.NewIntEncoderPool(name, size, intervalFn),
+		intPool: encoding.NewEncoderPool(name, size, intervalFn),
 		l:       l,
 	}
 }
@@ -72,7 +72,7 @@ type decoderPool struct {
 
 func newDecoderPool(name string, size int, l *logger.Logger) encoding.SeriesDecoderPool {
 	return &decoderPool{
-		intPool: encoding.NewIntDecoderPool(name, size, intervalFn),
+		intPool: encoding.NewDecoderPool(name, size, intervalFn),
 		l:       l,
 	}
 }

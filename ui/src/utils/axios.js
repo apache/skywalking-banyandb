@@ -33,7 +33,7 @@ axiosService.interceptors.request.use(
          * TODO
          * Configuration before request
          */
-        // console.log(config)
+
         return config
     },
     error => {
@@ -41,7 +41,6 @@ axiosService.interceptors.request.use(
          * TODO
          * do some error handling
          */
-        console.log(error)
         return Promise.reject(error)
     }
 )
@@ -49,7 +48,6 @@ axiosService.interceptors.request.use(
 // re request
 function reRequest(err) {
     let againReq = new Promise((resolve) => {
-        console.log('request:' + err.config.url + 'Request failed, re request');
         resolve();
     })
     return againReq.then(() => {
@@ -65,8 +63,7 @@ axiosService.interceptors.response.use(
          * TODO
          * Data processing operation
          */
-        console.log('response', response)
-        if(response.status == 200) {
+        if (response.status == 200) {
             return Promise.resolve(response)
         } else {
             return Promise.reject(response)
@@ -77,11 +74,8 @@ axiosService.interceptors.response.use(
          * TODO
          * do some error handling
          */
-        console.log(error)
-        console.log(error.message)
         const resErr = error.data
-        console.log(resErr)
-        
+
         let msg = error.data && error.data.message ? error.data.message : error.message
         ElMessage({
             message: msg,

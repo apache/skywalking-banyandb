@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -32,11 +33,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	casesMeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
-	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
-	casesStream "github.com/apache/skywalking-banyandb/test/cases/stream"
-	casesStreamData "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	casesTopn "github.com/apache/skywalking-banyandb/test/cases/topn"
+	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
+	casesmeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
+	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
 func TestIntegrationColdQuery(t *testing.T) {
@@ -48,9 +49,11 @@ var (
 	connection *grpc.ClientConn
 	now        time.Time
 	deferFunc  func()
+	goods      []gleak.Goroutine
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
+	goods = gleak.Goroutines()
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
@@ -65,27 +68,28 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
 	interval := 500 * time.Millisecond
-	casesStreamData.Write(conn, "data.json", now, interval)
+	casesstreamdata.Write(conn, "data.json", now, interval)
 	interval = time.Minute
-	casesMeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
-	casesMeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
-	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(10*time.Second), interval)
-	casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
+	casesmeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
+	casesmeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
+	casesmeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
+	casesmeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", now.Add(10*time.Second), interval)
+	casesmeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
+	casesmeasureData.Write(conn, "instance_clr_cpu_minute", "sw_metric", "instance_clr_cpu_minute_data.json", now, interval)
 	Expect(conn.Close()).To(Succeed())
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	casesStream.SharedContext = helpers.SharedContext{
+	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}
-	casesMeasure.SharedContext = helpers.SharedContext{
+	casesmeasure.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}
-	casesTopn.SharedContext = helpers.SharedContext{
+	casestopn.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}
@@ -98,4 +102,5 @@ var _ = SynchronizedAfterSuite(func() {
 	}
 }, func() {
 	deferFunc()
+	Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
 })

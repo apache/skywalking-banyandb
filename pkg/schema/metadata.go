@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -520,6 +521,7 @@ func (g *group) LoadResource(name string) (Resource, bool) {
 }
 
 func (g *group) notify(resource Resource, action databasev1.Action) error {
+	defer ginkgo.GinkgoRecover()
 	now := time.Now()
 	nowPb := timestamppb.New(now)
 	entityLocator := resource.EntityLocator()

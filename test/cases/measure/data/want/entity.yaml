@@ -19,10 +19,6 @@ dataPoints:
   - tagFamilies:
     - name: default
       tags:
-      - key: id
-        value:
-          id:
-            value: "1"
       - key: service_id
         value:
           str:

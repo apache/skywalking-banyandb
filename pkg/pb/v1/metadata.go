@@ -57,10 +57,12 @@ func tagValueTypeConv(tagValue *modelv1.TagValue) (tagType databasev1.TagType, i
 }
 
 // FieldValueTypeConv recognizes the field type from its value.
-func FieldValueTypeConv(tagValue *modelv1.FieldValue) (tagType databasev1.FieldType, isNull bool) {
-	switch tagValue.GetValue().(type) {
+func FieldValueTypeConv(fieldValue *modelv1.FieldValue) (tagType databasev1.FieldType, isNull bool) {
+	switch fieldValue.GetValue().(type) {
 	case *modelv1.FieldValue_Int:
 		return databasev1.FieldType_FIELD_TYPE_INT, false
+	case *modelv1.FieldValue_Float:
+		return databasev1.FieldType_FIELD_TYPE_FLOAT, false
 	case *modelv1.FieldValue_Str:
 		return databasev1.FieldType_FIELD_TYPE_STRING, false
 	case *modelv1.FieldValue_BinaryData:
