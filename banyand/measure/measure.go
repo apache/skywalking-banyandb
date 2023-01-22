@@ -53,9 +53,30 @@ type measure struct {
 	group                  string
 	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
+	topNAggregations       []*databasev1.TopNAggregation
 	maxObservedModRevision int64
 	interval               time.Duration
 	shardNum               uint32
+}
+
+func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo) error {
+	if len(s.topNAggregations) == 0 {
+		return nil
+	}
+	tagMapSpec := logical.TagSpecMap{}
+	tagMapSpec.RegisterTagFamilies(s.schema.GetTagFamilies())
+
+	s.processorManager = &topNProcessorManager{
+		l:            s.l,
+		pipeline:     pipeline,
+		repo:         repo,
+		m:            s,
+		s:            tagMapSpec,
+		topNSchemas:  s.topNAggregations,
+		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
+	}
+
+	return s.processorManager.start()
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {
@@ -79,6 +100,9 @@ func (s *measure) EntityLocator() partition.EntityLocator {
 }
 
 func (s *measure) Close() error {
+	if s.processorManager == nil {
+		return nil
+	}
 	return s.processorManager.Close()
 }
 
@@ -98,14 +122,13 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
-	schemaRegistry metadata.Repo,
-) (*measure, error) {
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
 	m := &measure{
-		shardNum:   shardNum,
-		schema:     spec.schema,
-		indexRules: spec.indexRules,
-		l:          l,
+		shardNum:         shardNum,
+		schema:           spec.schema,
+		indexRules:       spec.indexRules,
+		topNAggregations: spec.topNAggregations,
+		l:                l,
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err
@@ -119,24 +142,6 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
-
-	tagMapSpec := logical.TagSpecMap{}
-	tagMapSpec.RegisterTagFamilies(spec.schema.GetTagFamilies())
-
-	m.processorManager = &topNProcessorManager{
-		l:              l,
-		pipeline:       pipeline,
-		schemaRegistry: schemaRegistry,
-		m:              m,
-		s:              tagMapSpec,
-		topNSchemas:    spec.topNAggregations,
-		processorMap:   make(map[*commonv1.Metadata][]*topNStreamingProcessor),
-	}
-
-	err := m.processorManager.start()
-	if err != nil {
-		return nil, err
-	}
 
 	return m, nil
 }

@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
@@ -43,7 +42,7 @@ type schemaRepo struct {
 }
 
 func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
-	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue,
+	dbOpts tsdb.DatabaseOpts, l *logger.Logger,
 ) schemaRepo {
 	return schemaRepo{
 		l:        l,
@@ -52,7 +51,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, dbOpts, l, pipeline),
+			newSupplier(path, metadata, dbOpts, l),
 			event.MeasureTopicShardEvent,
 			event.MeasureTopicEntityEvent,
 		),
@@ -188,18 +187,16 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 type supplier struct {
 	metadata metadata.Repo
 	l        *logger.Logger
-	pipeline queue.Queue
 	path     string
 	dbOpts   tsdb.DatabaseOpts
 }
 
-func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue) *supplier {
+func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
 	return &supplier{
 		path:     path,
 		dbOpts:   dbOpts,
 		metadata: metadata,
 		l:        l,
-		pipeline: pipeline,
 	}
 }
 
@@ -209,7 +206,7 @@ func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resource
 		schema:           measureSchema,
 		indexRules:       spec.IndexRules,
 		topNAggregations: spec.Aggregations,
-	}, s.l, s.pipeline, s.metadata)
+	}, s.l)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

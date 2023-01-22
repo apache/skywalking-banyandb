@@ -285,13 +285,13 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	l              *logger.Logger
-	pipeline       queue.Queue
-	schemaRegistry metadata.Repo
-	m              *measure
-	s              logical.TagSpecRegistry
-	processorMap   map[*commonv1.Metadata][]*topNStreamingProcessor
-	topNSchemas    []*databasev1.TopNAggregation
+	l            *logger.Logger
+	pipeline     queue.Queue
+	repo         metadata.Repo
+	m            *measure
+	s            logical.TagSpecRegistry
+	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
+	topNSchemas  []*databasev1.TopNAggregation
 	sync.RWMutex
 }
 
@@ -320,7 +320,7 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequ
 }
 
 func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
-	m, err := manager.schemaRegistry.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	m, err := manager.repo.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
 		return err
 	}
@@ -347,7 +347,7 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if m == nil {
-		return manager.schemaRegistry.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
+		return manager.repo.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
 	}
 	// compare with the old one
 	if cmp.Diff(newTopNMeasure, m,
@@ -358,7 +358,7 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		return nil
 	}
 	// update
-	return manager.schemaRegistry.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
+	return manager.repo.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
 }
 
 func (manager *topNProcessorManager) start() error {

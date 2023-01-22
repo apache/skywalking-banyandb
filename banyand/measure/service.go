@@ -105,7 +105,7 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l, s.pipeline)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			continue
@@ -144,6 +144,37 @@ func (s *service) Serve() run.StopNotify {
 	s.metadata.MeasureRegistry().
 		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
 			&s.schemaRepo)
+
+	// start TopN manager after registering handlers
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
+	cancel()
+
+	if err != nil {
+		s.l.Err(err).Msg("fail to list groups")
+		return s.stopCh
+	}
+
+	for _, g := range groups {
+		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+			continue
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		allMeasureSchemas, listErr := s.metadata.MeasureRegistry().
+			ListMeasure(ctx, schema.ListOpt{Group: g.GetMetadata().GetName()})
+		cancel()
+		if listErr != nil {
+			s.l.Err(listErr).Str("group", g.GetMetadata().GetName()).Msg("fail to list measures in the group")
+			continue
+		}
+		for _, measureSchema := range allMeasureSchemas {
+			if res, ok := s.schemaRepo.LoadResource(measureSchema.GetMetadata()); ok {
+				if startErr := res.(*measure).startSteamingManager(s.pipeline, s.metadata); startErr != nil {
+					s.l.Err(startErr).Str("measure", measureSchema.GetMetadata().GetName()).Msg("fail to start streaming manager")
+				}
+			}
+		}
+	}
 
 	return s.stopCh
 }
