@@ -30,7 +30,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -61,12 +61,17 @@ type service struct {
 	srv          *http.Server
 	listenAddr   string
 	grpcAddr     string
+	creds        credentials.TransportCredentials
+	keyFile      string
+	certFile     string
 }
 
 func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
 	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
+	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
+	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
 	return flagSet
 }
 
@@ -102,8 +107,7 @@ func (p *service) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := []grpc.DialOption{
-		// TODO: add TLS
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(p.creds),
 	}
 	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
@@ -130,7 +134,7 @@ func (p *service) Serve() run.StopNotify {
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
-		if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
+		if err := http.ListenAndServeTLS(p.listenAddr, p.certFile, p.keyFile, p.srv.Handler); err != http.ErrServerClosed {
 			p.l.Error().Err(err)
 		}
 		close(p.stopCh)
