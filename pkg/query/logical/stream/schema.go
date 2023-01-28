@@ -33,6 +33,10 @@ type schema struct {
 	common *logical.CommonSchema
 }
 
+func (s *schema) FindTagSpecByName(name string) *logical.TagSpec {
+	return s.common.FindTagSpecByName(name)
+}
+
 func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error) {
 	panic("no field for stream")
 }
@@ -52,14 +56,9 @@ func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 
 func (s *schema) Equal(s2 logical.Schema) bool {
 	if other, ok := s2.(*schema); ok {
-		return cmp.Equal(other.common.TagMap, s.common.TagMap)
+		return cmp.Equal(other.common.TagSpecMap, s.common.TagSpecMap)
 	}
 	return false
-}
-
-// registerTag registers the tag spec with given tagFamilyName, tagName and indexes.
-func (s *schema) registerTag(tagFamilyIdx, tagIdx int, spec *databasev1.TagSpec) {
-	s.common.RegisterTag(tagFamilyIdx, tagIdx, spec)
 }
 
 // CreateTagRef create TagRef to the given tags.

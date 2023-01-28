@@ -85,7 +85,8 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 			return nil, errFilter
 		}
 		if tagFilter != logical.DummyFilter {
-			plan = newTagFilter(s, plan, tagFilter)
+			// create tagFilter with a projected view
+			plan = newTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter)
 		}
 	}
 	return plan, err
@@ -167,7 +168,7 @@ func (t *tagFilterPlan) Execute(ec executor.StreamExecutionContext) ([]*streamv1
 	}
 	filteredElements := make([]*streamv1.Element, 0)
 	for _, e := range entities {
-		ok, err := t.tagFilter.Match(e.TagFamilies)
+		ok, err := t.tagFilter.Match(logical.TagFamilies(e.TagFamilies), t.s)
 		if err != nil {
 			return nil, err
 		}

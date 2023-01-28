@@ -36,18 +36,14 @@ func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
 	ms := &schema{
 		common: &logical.CommonSchema{
 			IndexRules: measureSchema.GetIndexRules(),
-			TagMap:     make(map[string]*logical.TagSpec),
+			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: md.GetEntity().GetTagNames(),
 		},
 		measure:  md,
 		fieldMap: make(map[string]*logical.FieldSpec),
 	}
 
-	for tagFamilyIdx, tagFamily := range md.GetTagFamilies() {
-		for tagIdx, spec := range tagFamily.GetTags() {
-			ms.registerTag(tagFamilyIdx, tagIdx, spec)
-		}
-	}
+	ms.common.RegisterTagFamilies(md.GetTagFamilies())
 
 	for fieldIdx, spec := range md.GetFields() {
 		ms.registerField(fieldIdx, spec)
