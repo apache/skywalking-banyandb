@@ -76,7 +76,7 @@ func (p *service) FlagSet() *run.FlagSet {
 	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
 	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
 	flagSet.StringVarP(&p.grpcCert, "grpc-cert-file", "", "", "the GRPC Certfile")
-	flagSet.BoolVarP(&p.tlsEnabled, "grpc-cert-file", "", false, "the tls enabling option")
+	flagSet.BoolVarP(&p.tlsEnabled, "tlsEnabled", "", false, "the tls enabling option")
 	return flagSet
 }
 
