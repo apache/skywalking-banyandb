@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -64,6 +65,8 @@ type service struct {
 	creds        credentials.TransportCredentials
 	keyFile      string
 	certFile     string
+	grpcCert     string
+	tlsEnabled   bool
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -72,10 +75,17 @@ func (p *service) FlagSet() *run.FlagSet {
 	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
 	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
 	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
+	flagSet.StringVarP(&p.grpcCert, "grpc-cert-file", "", "", "the GRPC Certfile")
+	flagSet.BoolVarP(&p.tlsEnabled, "grpc-cert-file", "", false, "the tls enabling option")
 	return flagSet
 }
 
 func (p *service) Validate() error {
+	creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
+	if errTLS != nil {
+		return errors.Wrap(errTLS, "failed to load cert and key")
+	}
+	p.creds = creds
 	return nil
 }
 
@@ -134,9 +144,16 @@ func (p *service) Serve() run.StopNotify {
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
-		if err := http.ListenAndServeTLS(p.listenAddr, p.certFile, p.keyFile, p.srv.Handler); err != http.ErrServerClosed {
-			p.l.Error().Err(err)
+		if p.tlsEnabled {
+			if err := p.srv.ListenAndServeTLS(p.certFile, p.keyFile); err != http.ErrServerClosed {
+				p.l.Error().Err(err)
+			}
+		} else {
+			if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
+				p.l.Error().Err(err)
+			}
 		}
+
 		close(p.stopCh)
 	}()
 	return p.stopCh
