@@ -128,6 +128,7 @@ message TopNAggregation {
   // ASC: bottomN
   // DESC: topN
   // UNSPECIFIED: topN + bottomN
+  // todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672
   model.v1.Sort field_value_sort = 4;
   // group_by_tag_names groups data points into statistical counters
   repeated string group_by_tag_names = 5;
@@ -185,7 +186,8 @@ message IndexRule {
 // Subject defines which stream or measure would generate indices
 message Subject {
   // catalog is where the subject belongs to
-  common.v1.Catalog catalog = 1 [(validate.rules).message.required = true];
+  // todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672
+  common.v1.Catalog catalog = 1;
   // name refers to a stream or measure in a particular catalog
   string name = 2 [(validate.rules).message.required = true];
 }
