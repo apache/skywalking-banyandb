@@ -117,7 +117,12 @@ func (p *service) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(p.creds),
+		opts := make([]grpc.DialOption, 0, 1)
+	if p.cerds == nil {
+		opts = append(opts, insecure.NewCredentials())
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(p.creds))
+	}
 	}
 	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
@@ -144,14 +149,14 @@ func (p *service) Serve() run.StopNotify {
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
+		var err error
 		if p.tlsEnabled {
-			if err := p.srv.ListenAndServeTLS(p.certFile, p.keyFile); err != http.ErrServerClosed {
-				p.l.Error().Err(err)
-			}
+			err = p.srv.ListenAndServeTLS(p.certFile, p.keyFile)
 		} else {
-			if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
-				p.l.Error().Err(err)
-			}
+			err = p.srv.ListenAndServe()
+		}
+		if err != http.ErrServerClosed {
+			p.l.Error().Err(err)
 		}
 
 		close(p.stopCh)
