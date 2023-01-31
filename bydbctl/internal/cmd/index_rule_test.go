@@ -73,7 +73,10 @@ resource_opts:
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
-  group: group1`))
+  group: group1
+tags: ["layer"]
+type: TYPE_INVERTED
+location: LOCATION_SERIES`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -102,7 +105,10 @@ metadata:
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
-  group: group1`))
+  group: group1
+tags: ["layer"]
+type: TYPE_INVERTED
+location: LOCATION_SERIES`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -139,7 +145,10 @@ metadata:
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name2
-  group: group1`))
+  group: group1
+tags: ["layer"]
+type: TYPE_INVERTED
+location: LOCATION_SERIES`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

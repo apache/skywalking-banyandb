@@ -85,7 +85,9 @@ tagFamilies:
   - name: searchable
     tags: 
       - name: trace_id
-        type: TAG_TYPE_STRING`))
+        type: TAG_TYPE_STRING
+entity:
+  tagNames: ["tag1"]`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -115,6 +117,11 @@ tagFamilies:
 metadata:
   name: name1
   group: group1
+tagFamilies:
+  - name: searchable
+    tags: 
+      - name: trace_id
+        type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
@@ -154,7 +161,14 @@ entity:
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name2
-  group: group1`))
+  group: group1
+tagFamilies:
+  - name: searchable
+    tags: 
+      - name: trace_id
+        type: TAG_TYPE_STRING
+entity:
+  tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -250,11 +264,13 @@ projection:
 metadata:
   name: sw
   group: default
-projection:
-  tagFamilies:
-    - name: searchable
-      tags:
-        - trace_id`))
+tagFamilies:
+  - name: searchable
+    tags:
+      - name: trace_id
+        type: TAG_TYPE_STRING
+entity:
+  tagNames: ["tag1"]`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())

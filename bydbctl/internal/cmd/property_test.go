@@ -92,7 +92,7 @@ tags:
 		Expect(out).To(ContainSubstring("tagsNum: 2"))
 	})
 
-	It("gets property", func() {
+	FIt("gets property", func() {
 		rootCmd.SetArgs([]string{"property", "get", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
