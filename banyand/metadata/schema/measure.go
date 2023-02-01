@@ -21,11 +21,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -59,11 +61,21 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if measure.UpdatedAt != nil {
+		measure.UpdatedAt = timestamppb.Now()
+	}
+	if measure.GetInterval() != "" {
+		_, timeError := timestamp.ParseDuration(measure.GetInterval())
+		if timeError != nil {
+			return errors.New("format of interval filed error")
+		}
+	}
+	name := measure.GetMetadata().GetName()
 	if err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
-			Name:  measure.GetMetadata().GetName(),
+			Name:  name,
 		},
 		Spec: measure,
 	}); err != nil {
@@ -126,6 +138,12 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if measure.GetInterval() != "" {
+		_, timeError := timestamp.ParseDuration(measure.GetInterval())
+		if timeError != nil {
+			return errors.New("format of interval filed error")
+		}
+	}
 	if err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,

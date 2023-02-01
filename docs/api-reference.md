@@ -989,7 +989,7 @@ Subject defines which stream or measure would generate indices
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  | catalog is where the subject belongs to |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  | catalog is where the subject belongs to todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672 |
 | name | [string](#string) |  | name refers to a stream or measure in a particular catalog |
 
 
@@ -1041,7 +1041,7 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of an aggregation |
 | source_measure | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | source_measure denotes the data source of this aggregation |
 | field_name | [string](#string) |  | field_name is the name of field used for ranking |
-| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields ASC: bottomN DESC: topN UNSPECIFIED: topN &#43; bottomN |
+| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields ASC: bottomN DESC: topN UNSPECIFIED: topN &#43; bottomN todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672 |
 | group_by_tag_names | [string](#string) | repeated | group_by_tag_names groups data points into statistical counters |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria select partial data points from measure |
 | counters_number | [int32](#int32) |  | counters_number sets the number of counters to be tracked. The default value is 1000 |
