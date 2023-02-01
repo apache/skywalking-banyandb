@@ -19,9 +19,9 @@ package schema
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -66,6 +66,9 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 }
 
 func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) error {
+	if stream.UpdatedAt != nil {
+		stream.UpdatedAt = timestamppb.Now()
+	}
 	group := stream.Metadata.GetGroup()
 	_, err := e.GetGroup(ctx, group)
 	if err != nil {
@@ -76,7 +79,6 @@ func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev
 			Kind:  KindStream,
 			Group: stream.GetMetadata().GetGroup(),
 			Name:  stream.GetMetadata().GetName(),
-			Time:  time.Now(),
 		},
 		Spec: stream,
 	})

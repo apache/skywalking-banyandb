@@ -24,7 +24,6 @@ import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
-
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
 option java_package = "org.apache.skywalking.banyandb.database.v1";
 
@@ -39,14 +38,14 @@ enum TagType {
 }
 
 message TagFamilySpec {
-  string name = 1 [(validate.rules).message.required = true];
+  string name = 1 [(validate.rules).string.min_len = 1];
   // tags defines accepted tags
   repeated TagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
 }
 
 message TagSpec {
-  string name = 1 [(validate.rules).message.required = true];
-  TagType type = 2 [(validate.rules).message.required = true];
+  string name = 1 [(validate.rules).string.min_len = 1];
+  TagType type = 2 [(validate.rules).enum.defined_only = true];
   // indexed_only indicates whether the tag is stored
   // True: It's indexed only, but not stored
   // False: it's stored and indexed
@@ -58,7 +57,7 @@ message Stream {
   // metadata is the identity of a trace series
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // tag_families
-  repeated TagFamilySpec tag_families = 2 [(validate.rules).message.required = true];
+  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated.min_items = 1];
   // entity indicates how to generate a series and shard a stream
   Entity entity = 3 [(validate.rules).message.required = true];
   // updated_at indicates when the stream is updated
@@ -90,13 +89,13 @@ enum CompressionMethod {
 // FieldSpec is the specification of field
 message FieldSpec {
   // name is the identity of a field
-  string name = 1 [(validate.rules).message.required = true];
+  string name = 1 [(validate.rules).string.min_len = 1];
   // field_type denotes the type of field value
-  FieldType field_type = 2 [(validate.rules).message.required = true];
+  FieldType field_type = 2 [(validate.rules).enum.defined_only = true];
   // encoding_method indicates how to encode data during writing
-  EncodingMethod encoding_method = 3 [(validate.rules).message.required = true];
+  EncodingMethod encoding_method = 3 [(validate.rules).enum.defined_only = true];
   // compression_method indicates how to compress data during writing
-  CompressionMethod compression_method = 4 [(validate.rules).message.required = true];
+  CompressionMethod compression_method = 4 [(validate.rules).enum.defined_only = true];
 }
 
 // Measure intends to store data point
@@ -104,7 +103,7 @@ message Measure {
   // metadata is the identity of a measure
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // tag_families are for filter measures
-  repeated TagFamilySpec tag_families = 2 [(validate.rules).message.required = true];
+  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated.min_items = 1];
   // fields denote measure values
   repeated FieldSpec fields = 3;
   // entity indicates which tags will be to generate a series and shard a measure
@@ -123,7 +122,7 @@ message TopNAggregation {
   // source_measure denotes the data source of this aggregation
   common.v1.Metadata source_measure = 2 [(validate.rules).message.required = true];
   // field_name is the name of field used for ranking
-  string field_name = 3 [(validate.rules).message.required = true];
+  string field_name = 3 [(validate.rules).string.min_len = 1];
   // field_value_sort indicates how to sort fields
   // ASC: bottomN
   // DESC: topN
@@ -150,7 +149,7 @@ message IndexRule {
   // tags are the combination that refers to an indexed object
   // If the elements in tags are more than 1, the object will generate a multi-tag index
   // Caveat: All tags in a multi-tag MUST have an identical IndexType
-  repeated string tags = 2 [(validate.rules).message.required = true];
+  repeated string tags = 2 [(validate.rules).repeated.min_items = 1];
   // Type determine the index structure under the hood
   enum Type {
     TYPE_UNSPECIFIED = 0;
@@ -158,14 +157,14 @@ message IndexRule {
     TYPE_INVERTED = 2;
   }
   // type is the IndexType of this IndexObject.
-  Type type = 3 [(validate.rules).message.required = true];
+  Type type = 3 [(validate.rules).enum.defined_only = true];
   enum Location {
     LOCATION_UNSPECIFIED = 0;
     LOCATION_SERIES = 1;
     LOCATION_GLOBAL = 2;
   }
   // location indicates where to store index.
-  Location location = 4 [(validate.rules).message.required = true];
+  Location location = 4 [(validate.rules).enum.defined_only = true];
   // updated_at indicates when the IndexRule is updated
   google.protobuf.Timestamp updated_at = 5;
   enum Analyzer {
@@ -189,7 +188,7 @@ message Subject {
   // todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672
   common.v1.Catalog catalog = 1;
   // name refers to a stream or measure in a particular catalog
-  string name = 2 [(validate.rules).message.required = true];
+  string name = 2 [(validate.rules).string.min_len = 1];
 }
 
 // IndexRuleBinding is a bridge to connect severalIndexRules to a subject
@@ -199,14 +198,14 @@ message IndexRuleBinding {
   // metadata is the identity of this binding
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // rules refers to the IndexRule
-  repeated string rules = 2 [(validate.rules).message.required = true];
+  repeated string rules = 2 [(validate.rules).repeated.min_items = 1];
   // subject indicates the subject of binding action
   Subject subject = 3 [(validate.rules).message.required = true];
   // begin_at_nanoseconds is the timestamp, after which the binding will be active
-  google.protobuf.Timestamp begin_at = 4 [(validate.rules).message.required = true];
+  google.protobuf.Timestamp begin_at = 4 [(validate.rules).timestamp.required = true];
   // expire_at_nanoseconds it the timestamp, after which the binding will be inactive
   // expire_at_nanoseconds must be larger than begin_at_nanoseconds
-  google.protobuf.Timestamp expire_at = 5 [(validate.rules).message.required = true];
+  google.protobuf.Timestamp expire_at = 5 [(validate.rules).timestamp.required = true];
   // updated_at indicates when the IndexRuleBinding is updated
   google.protobuf.Timestamp updated_at = 6;
 }

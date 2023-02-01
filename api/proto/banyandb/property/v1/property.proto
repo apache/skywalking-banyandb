@@ -32,7 +32,7 @@ message Metadata {
   // container is created when it receives the first property
   common.v1.Metadata container = 1 [(validate.rules).message.required = true];
   // id identifies a property
-  string id = 2 [(validate.rules).message.required = true];
+  string id = 2 [(validate.rules).string.min_len = 1];
 }
 
 // Property stores the user defined data
@@ -40,7 +40,7 @@ message Property {
   // metadata is the identity of a property
   Metadata metadata = 1 [(validate.rules).message.required = true];
   // tag stores the content of a property
-  repeated model.v1.Tag tags = 2 [(validate.rules).message.required = true];
+  repeated model.v1.Tag tags = 2 [(validate.rules).repeated.min_items = 1];
   // updated_at indicates when the property is updated
   google.protobuf.Timestamp updated_at = 3;
 }

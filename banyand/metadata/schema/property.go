@@ -20,9 +20,9 @@ package schema
 import (
 	"context"
 	"errors"
-	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -92,12 +92,14 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 	if getGroupErr != nil {
 		return false, 0, getGroupErr
 	}
+	if property.UpdatedAt != nil {
+		property.UpdatedAt = timestamppb.Now()
+	}
 	md := Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindProperty,
 			Group: group,
 			Name:  m.GetName(),
-			Time:  time.Now(),
 		},
 		Spec: property,
 	}

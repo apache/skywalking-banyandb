@@ -20,10 +20,10 @@ package schema
 
 import (
 	"context"
+	"io"
+
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -78,7 +78,6 @@ type TypeMeta struct {
 	Name  string
 	Group string
 	Kind  Kind
-	Time  time.Time
 }
 
 // Metadata wrap dedicated serialized resource and its TypeMeta.

@@ -59,13 +59,15 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 }
 
 func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+	if measure.UpdatedAt != nil {
+		measure.UpdatedAt = timestamppb.Now()
+	}
 	name := measure.GetMetadata().GetName()
 	if err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
 			Name:  name,
-			Time:  time.Now(),
 		},
 		Spec: measure,
 	}); err != nil {
@@ -94,7 +96,7 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 	for _, tfs := range measure.GetTagFamilies() {
 		for _, ts := range tfs.GetTags() {
 			if ts.Type == databasev1.TagType_TAG_TYPE_ID {
-				for _, e := range measure.Entity.TagNames {
+				for _, e := range measure.GetEntity().GetTagNames() {
 					if ts.Name == e {
 						continue
 					}

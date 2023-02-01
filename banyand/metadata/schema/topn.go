@@ -19,9 +19,9 @@ package schema
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -55,12 +55,14 @@ func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOp
 }
 
 func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
+	if topNAggregation.UpdatedAt != nil {
+		topNAggregation.UpdatedAt = timestamppb.Now()
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
 			Name:  topNAggregation.GetMetadata().GetName(),
-			Time:  time.Now(),
 		},
 		Spec: topNAggregation,
 	})
