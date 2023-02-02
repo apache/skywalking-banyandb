@@ -19,8 +19,8 @@ package schema
 
 import (
 	"context"
-	"errors"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -88,9 +88,8 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, error) {
 	m := transformKey(property.GetMetadata())
 	group := m.GetGroup()
-	_, getGroupErr := e.GetGroup(ctx, group)
-	if getGroupErr != nil {
-		return false, 0, getGroupErr
+	if _, getGroupErr := e.GetGroup(ctx, group); getGroupErr != nil {
+		return false, 0, errors.Wrap(getGroupErr, "group is not exist")
 	}
 	if property.UpdatedAt != nil {
 		property.UpdatedAt = timestamppb.Now()

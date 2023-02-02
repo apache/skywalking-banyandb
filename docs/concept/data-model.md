@@ -169,6 +169,16 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 `Property` is a standard key-value store. Users could store their metadata or items on a property and get a [sequential consistency](https://en.wikipedia.org/wiki/Consistency_model#Sequential_consistency) guarantee. BanyanDB's motivation for introducing such a particular structure is to support most APM scenarios that need to store critical data, especially for a distributed database cluster.
 
+We should create group before creating a property.
+
+Creating group.
+
+```yaml
+metadata:
+  name: sw
+```
+Creating property.
+
 ```yaml
 metadata:
   container:

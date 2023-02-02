@@ -65,17 +65,15 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 		measure.UpdatedAt = timestamppb.Now()
 	}
 	if measure.GetInterval() != "" {
-		_, timeError := timestamp.ParseDuration(measure.GetInterval())
-		if timeError != nil {
-			return errors.New("format of interval filed error")
+		if _, err := timestamp.ParseDuration(measure.GetInterval()); err != nil {
+			return errors.Wrap(err, "interval is malformed")
 		}
 	}
-	name := measure.GetMetadata().GetName()
 	if err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
-			Name:  name,
+			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
 	}); err != nil {
@@ -139,9 +137,8 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
 	if measure.GetInterval() != "" {
-		_, timeError := timestamp.ParseDuration(measure.GetInterval())
-		if timeError != nil {
-			return errors.New("format of interval filed error")
+		if _, err := timestamp.ParseDuration(measure.GetInterval()); err != nil {
+			return errors.Wrap(err, "interval is malformed")
 		}
 	}
 	if err := e.update(ctx, Metadata{
