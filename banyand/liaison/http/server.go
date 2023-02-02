@@ -32,6 +32,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -66,7 +67,7 @@ type service struct {
 	keyFile      string
 	certFile     string
 	grpcCert     string
-	tlsEnabled   bool
+	tls          bool
 }
 
 func (p *service) FlagSet() *run.FlagSet {
@@ -76,16 +77,18 @@ func (p *service) FlagSet() *run.FlagSet {
 	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
 	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
 	flagSet.StringVarP(&p.grpcCert, "grpc-cert-file", "", "", "the GRPC Certfile")
-	flagSet.BoolVarP(&p.tlsEnabled, "tlsEnabled", "", false, "the tls enabling option")
+	flagSet.BoolVarP(&p.tls, "tls", "", false, "the tls enabling option")
 	return flagSet
 }
 
 func (p *service) Validate() error {
-	creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
-	if errTLS != nil {
-		return errors.Wrap(errTLS, "failed to load cert and key")
+	if p.grpcCert != "" {
+		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
+		if errTLS != nil {
+			return errors.Wrap(errTLS, "failed to load the grpc cert")
+		}
+		p.creds = creds
 	}
-	p.creds = creds
 	return nil
 }
 
@@ -116,13 +119,11 @@ func (p *service) PreRun() error {
 func (p *service) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
-	opts := []grpc.DialOption{
-		opts := make([]grpc.DialOption, 0, 1)
-	if p.cerds == nil {
-		opts = append(opts, insecure.NewCredentials())
+	opts := make([]grpc.DialOption, 0, 1)
+	if p.creds == nil {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(p.creds))
-	}
 	}
 	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
@@ -150,7 +151,7 @@ func (p *service) Serve() run.StopNotify {
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
-		if p.tlsEnabled {
+		if p.tls {
 			err = p.srv.ListenAndServeTLS(p.certFile, p.keyFile)
 		} else {
 			err = p.srv.ListenAndServe()
