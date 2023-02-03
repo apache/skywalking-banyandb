@@ -46,6 +46,10 @@ import (
 var (
 	_ run.Config  = (*service)(nil)
 	_ run.Service = (*service)(nil)
+
+	errServerCert = errors.New("http: invalid server cert file")
+	errServerKey  = errors.New("http: invalid server key file")
+	errNoAddr     = errors.New("http: no address")
 )
 
 // NewService return a http service.
@@ -71,23 +75,35 @@ type service struct {
 }
 
 func (p *service) FlagSet() *run.FlagSet {
-	flagSet := run.NewFlagSet("")
+	flagSet := run.NewFlagSet("http")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
-	flagSet.StringVar(&p.grpcAddr, "grpc-addr", "localhost:17912", "the grpc addr")
-	flagSet.StringVarP(&p.certFile, "cert-file", "", "", "the TLS cert file")
-	flagSet.StringVarP(&p.keyFile, "key-file", "", "", "the TLS key file")
-	flagSet.StringVarP(&p.grpcCert, "grpc-cert-file", "", "", "the GRPC Certfile")
-	flagSet.BoolVarP(&p.tls, "tls", "", false, "the tls enabling option")
+	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
+	flagSet.StringVarP(&p.certFile, "http-cert-file", "", "", "the TLS cert file of http server")
+	flagSet.StringVarP(&p.keyFile, "http-key-file", "", "", "the TLS key file of http server")
+	flagSet.StringVarP(&p.grpcCert, "http-grpc-cert-file", "", "", "the grpc TLS cert file if grpc server enables tls")
+	flagSet.BoolVarP(&p.tls, "http-tls", "", false, "connection uses TLS if true, else plain HTTP")
 	return flagSet
 }
 
 func (p *service) Validate() error {
+	if p.listenAddr == "" {
+		return errNoAddr
+	}
 	if p.grpcCert != "" {
 		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
 		if errTLS != nil {
 			return errors.Wrap(errTLS, "failed to load the grpc cert")
 		}
 		p.creds = creds
+	}
+	if !p.tls {
+		return nil
+	}
+	if p.certFile == "" {
+		return errServerCert
+	}
+	if p.keyFile == "" {
+		return errServerKey
 	}
 	return nil
 }
