@@ -74,9 +74,15 @@ resource_opts:
 metadata:
   name: name1
   group: group1
+rules: [
+    "service_id",
+    "searchable_name"
+  ]
 subject:
   catalog: CATALOG_STREAM
-  name: stream1`))
+  name: stream1
+begin_at: 2021-04-15T01:30:15.01Z
+expire_at: 2121-04-15T01:30:15.01Z`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -107,9 +113,15 @@ subject:
 metadata:
   name: name1
   group: group1
+rules: [
+    "service_id",
+    "searchable_name"
+  ]
 subject:
   catalog: CATALOG_STREAM
-  name: stream2`))
+  name: stream2
+begin_at: 2021-04-15T01:30:15.01Z
+expire_at: 2121-04-15T01:30:15.01Z`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -148,9 +160,15 @@ subject:
 metadata:
   name: name2
   group: group1
+rules: [
+    "service_id",
+    "searchable_name"
+  ]
 subject:
   catalog: CATALOG_STREAM
-  name: stream2`))
+  name: stream2
+begin_at: 2021-04-15T01:30:15.01Z
+expire_at: 2121-04-15T01:30:15.01Z`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

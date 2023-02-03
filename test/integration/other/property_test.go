@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -50,6 +51,8 @@ var _ = Describe("Property application", func() {
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
+		gClient := databasev1.NewGroupRegistryServiceClient(conn)
+		gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{Group: &commonv1.Group{Metadata: &commonv1.Metadata{Name: "g"}}})
 		client = propertyv1.NewPropertyServiceClient(conn)
 		goods = gleak.Goroutines()
 	})
@@ -112,6 +115,8 @@ var _ = Describe("Property application", func() {
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
+		gClient := databasev1.NewGroupRegistryServiceClient(conn)
+		gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{Group: &commonv1.Group{Metadata: &commonv1.Metadata{Name: "g"}}})
 		client = propertyv1.NewPropertyServiceClient(conn)
 		md = &propertyv1.Metadata{
 			Container: &commonv1.Metadata{

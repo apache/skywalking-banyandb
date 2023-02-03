@@ -81,6 +81,19 @@ tags:
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
+		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
+		creatGroup := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: ui-template`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(creatGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
 		rootCmd.SetArgs([]string{"property", "apply", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(p1YAML))
 		out := capturer.CaptureStdout(func() {
