@@ -51,7 +51,7 @@ func Common(flags ...string) (string, string, func()) {
 	ff := []string{
 		"--addr=" + addr,
 		"--http-addr=" + httpAddr,
-		"--grpc-addr=" + addr,
+		"--http-grpc-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
