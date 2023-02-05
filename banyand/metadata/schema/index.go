@@ -22,6 +22,7 @@ import (
 	"hash/crc32"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -58,6 +59,9 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 }
 
 func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	if indexRuleBinding.UpdatedAt != nil {
+		indexRuleBinding.UpdatedAt = timestamppb.Now()
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
@@ -122,6 +126,9 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 }
 
 func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.UpdatedAt != nil {
+		indexRule.UpdatedAt = timestamppb.Now()
+	}
 	if indexRule.Metadata.Id == 0 {
 		buf := []byte(indexRule.Metadata.Group)
 		buf = append(buf, indexRule.Metadata.Name...)

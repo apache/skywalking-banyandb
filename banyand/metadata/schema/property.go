@@ -19,9 +19,10 @@ package schema
 
 import (
 	"context"
-	"errors"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -86,10 +87,17 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 
 func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, error) {
 	m := transformKey(property.GetMetadata())
+	group := m.GetGroup()
+	if _, getGroupErr := e.GetGroup(ctx, group); getGroupErr != nil {
+		return false, 0, errors.Wrap(getGroupErr, "group is not exist")
+	}
+	if property.UpdatedAt != nil {
+		property.UpdatedAt = timestamppb.Now()
+	}
 	md := Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindProperty,
-			Group: m.GetGroup(),
+			Group: group,
 			Name:  m.GetName(),
 		},
 		Spec: property,

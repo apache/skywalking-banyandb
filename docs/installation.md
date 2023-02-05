@@ -127,18 +127,25 @@ Usage:
    standalone [flags]
 
 Flags:
-  --addr string                          the address of banyand listens (default ":17912")
+      --addr string                          the address of banyand listens (default ":17912")
       --cert-file string                     the TLS cert file
       --etcd-listen-client-url string        A URL to listen on for client traffic (default "http://localhost:2379")
       --etcd-listen-peer-url string          A URL to listen on for peer traffic (default "http://localhost:2380")
-      --grpc-addr string                     the grpc addr (default "localhost:17912")
   -h, --help                                 help for standalone
       --http-addr string                     listen addr for http (default ":17913")
+      --http-cert-file string                the TLS cert file of http server
+      --http-grpc-addr string                http server redirect grpc requests to this address (default "localhost:17912")
+      --http-grpc-cert-file string           the grpc TLS cert file if grpc server enables tls
+      --http-key-file string                 the TLS key file of http server
+      --http-tls                             connection uses TLS if true, else plain HTTP
       --key-file string                      the TLS key file
-      --logging.env string                   the logging (default "dev")
-      --logging.level string                 the level of logging (default "info")
+      --logging.env string                   the logging (default "prod")
+      --logging.level string                 the root level of logging (default "info")
+      --logging.levels stringArray           the level logging of logging
+      --logging.modules stringArray          the specific module
       --max-recv-msg-size int                the size of max receiving message (default 10485760)
       --measure-block-mem-size int           block memory size (default 16777216)
+      --measure-idx-batch-wait-sec int       index batch wait in second (default 1)
       --measure-root-path string             the root path of database (default "/tmp")
       --measure-seriesmeta-mem-size int      series metadata memory size (default 1048576)
       --metadata-root-path string            the root path of metadata (default "/tmp")
@@ -148,8 +155,8 @@ Flags:
       --show-rungroup-units                  show rungroup units
       --stream-block-mem-size int            block memory size (default 8388608)
       --stream-global-index-mem-size int     global index memory size (default 2097152)
+      --stream-idx-batch-wait-sec int        index batch wait in second (default 1)
       --stream-root-path string              the root path of database (default "/tmp")
       --stream-seriesmeta-mem-size int       series metadata memory size (default 1048576)
       --tls                                  connection uses TLS if true, else plain TCP
-  -v, --version                              version for standalone
 ```

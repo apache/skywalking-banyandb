@@ -80,7 +80,14 @@ resource_opts:
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name1
-  group: group1`))
+  group: group1
+tag_families:
+  - name: default
+    tags:
+      - name: id
+        type: TAG_TYPE_ID
+entity:
+  tagNames: ["tag1"]`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -109,6 +116,11 @@ metadata:
 metadata:
   name: name1
   group: group1
+tag_families:
+  - name: default
+    tags:
+      - name: id
+        type: TAG_TYPE_ID
 entity:
   tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
@@ -148,7 +160,14 @@ entity:
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: name2
-  group: group1`))
+  group: group1
+tag_families:
+  - name: default
+    tags:
+      - name: id
+        type: TAG_TYPE_ID
+entity:
+  tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
