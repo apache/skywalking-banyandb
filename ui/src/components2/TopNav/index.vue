@@ -92,14 +92,14 @@ $bus.on('AddTabs', (tab) => {
     data.activeTabIndex = data.tabsList.length - 1
 })
 $bus.on('deleteGroup', (group) => {
-    data.tabsList.forEach(item, index => {
-        if (item.route.group === group) {
+    data.tabsList.forEach((item, index) => {
+        if (item.route.params.group === group) {
             removeTab(index)
         }
     })
 })
 $bus.on('deleteResource', (name) => {
-    data.tabsList.forEach(item, index => {
+    data.tabsList.forEach((item, index) => {
         if (item.route.name && item.route.name === name) {
             removeTab(index)
         }

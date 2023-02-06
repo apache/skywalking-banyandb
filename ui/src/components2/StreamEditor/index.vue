@@ -17,13 +17,23 @@
   ~ under the License.
 -->
 
-<script setup>
+<script lang="ts" setup>
 import { watch, getCurrentInstance } from '@vue/runtime-core'
-import { reactive } from 'vue';
-import { useRoute } from 'vue-router'
+import { reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router'
 import TagEditor from './tagEditor.vue'
-const route = useRoute()
+import type { FormInstance } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { createResources } from '@/api/index'
 
+const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
+const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
+
+const router = useRouter()
+const route = useRoute()
+const ruleFormRef = ref<FormInstance>()
+const tagEditorRef = ref()
 const rules = {
     group: [
         {
@@ -55,8 +65,90 @@ watch(() => route, () => {
 }, {
     immediate: true,
     deep: true
-})
-
+})/* let tableData = [{
+    name: 'stream-ids',
+    tags: [{
+        name: 'start_time',
+        type: 'TAG_TYPE_INT',
+        indexedOnly: false
+    }]
+}, */
+const submit = async (formEl: FormInstance | undefined) => {
+    if (!formEl) return
+    await formEl.validate((valid) => {
+        if (valid) {
+            const arr = tagEditorRef.value.getTagFamilies()
+            const tagFamilies = []
+            arr.forEach(item => {
+                const index = tagFamilies.findIndex(tagItem => {
+                    return tagItem.name == item.tagFamily
+                })
+                if (index >= 0) {
+                    let obj = {
+                        name: item.tag,
+                        type: item.type,
+                        indexedOnly: item.indexedOnly
+                    }
+                    return tagFamilies[index].tags.push(obj)
+                }
+                let obj = {
+                    name: item.tagFamily,
+                    tags: [
+                        {
+                            name: item.tag,
+                            type: item.type,
+                            indexedOnly: item.indexedOnly
+                        }
+                    ]
+                }
+                tagFamilies.push(obj)
+            })
+            const form = {
+                metadata: {
+                    group: data.form.group,
+                    name: data.form.name
+                },
+                tagFamilies: tagFamilies
+            }
+            $loadingCreate()
+            createResources('stream', { stream: form })
+                .then((res) => {
+                    if (res.status == 200) {
+                        ElMessage({
+                            message: 'Create succeeded',
+                            type: "success",
+                            duration: 5000
+                        })
+                        $bus.emit('refreshAside')
+                        $bus.emit('deleteGroup', data.form.group)
+                        openResourses()
+                    }
+                })
+                .finally(() => {
+                    $loadingClose()
+                })
+        }
+    })
+}
+function openResourses() {
+    const route = {
+        name: 'stream',
+        params: {
+            group: data.form.group,
+            name: data.form.name,
+            operator: 'read',
+            type: 'stream'
+        }
+    }
+    router.push(route)
+    const add = {
+        label: data.form.name,
+        type: 'Read',
+        route
+    }
+    $bus.emit('changeAside', data.form)
+    $bus.emit('AddTabs', add)
+}
 function initData() {
 
 }
@@ -74,8 +166,8 @@ function initData() {
                                 <span style="margin-right: 20px;">{{ data.type }}</span>
                                 <span class="text-bold">Group：</span>
                                 <span style="margin-right: 20px;">{{ data.form.group }}</span>
-                                <span class="text-bold" v-if="data.name">Name：</span>
-                                <span style="margin-right: 20px;" v-if="data.form.name">{{ data.name }}</span>
+                                <span class="text-bold" v-if="data.form.name">Name：</span>
+                                <span style="margin-right: 20px;" v-if="data.form.name">{{ data.form.name }}</span>
                                 <span class="text-bold">Operator：</span>
                                 <span>{{ data.operator }}</span>
                             </div>
@@ -83,13 +175,14 @@ function initData() {
                     </el-col>
                     <el-col :span="12">
                         <div class="flex align-item-center justify-end" style="height: 30px;">
-                            <el-button size="small" type="primary" color="#6E38F7">submit</el-button>
+                            <el-button size="small" type="primary" @click="submit(ruleFormRef)"
+                                color="#6E38F7">submit</el-button>
                         </div>
                     </el-col>
                 </el-row>
             </template>
-            <el-form ref="ruleForm" :model="data.form" label-width="80px" label-position="left" :rules="rules" :inline="true"
-                style="height: 30px;">
+            <el-form ref="ruleFormRef" :model="data.form" label-width="80px" label-position="left" :rules="rules"
+                :inline="true" style="height: 30px;">
                 <el-form-item label="group" prop="group">
                     <el-input clearable disabled v-model="data.form.group"></el-input>
                 </el-form-item>
@@ -97,7 +190,7 @@ function initData() {
                     <el-input clearable v-model="data.form.name"></el-input>
                 </el-form-item>
             </el-form>
-            <TagEditor></TagEditor>
+            <TagEditor ref="tagEditorRef"></TagEditor>
         </el-card>
     </div>
 </template>

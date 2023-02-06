@@ -22,6 +22,7 @@ import { reactive } from "@vue/reactivity"
 import { watch } from '@vue/runtime-core'
 import type { TableColumnCtx, FormInstance, FormRules } from 'element-plus'
 import { ref } from 'vue'
+
 const ruleFormRef = ref<FormInstance>()
 const data = reactive({
     tableData: [],
@@ -202,6 +203,12 @@ function openEditTagFamily(index) {
 function deleteTableData(index) {
     data.tableData.splice(index, 1)
 }
+function getTagFamilies() {
+    return data.tableData
+}
+defineExpose({
+    getTagFamilies
+})
 </script>
 
 <template>
