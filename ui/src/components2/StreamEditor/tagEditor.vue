@@ -19,7 +19,10 @@
 
 <script lang="ts" setup>
 import { reactive } from "@vue/reactivity"
-import type { TableColumnCtx } from 'element-plus'
+import { watch } from '@vue/runtime-core'
+import type { TableColumnCtx, FormInstance, FormRules } from 'element-plus'
+import { ref } from 'vue'
+const ruleFormRef = ref<FormInstance>()
 const data = reactive({
     tableData: [],
     dialogVisible: false,
@@ -28,11 +31,26 @@ const data = reactive({
         tag: '',
         type: 'TAG_TYPE_INT',
         indexedOnly: false
-    }
+    },
+    tagFamilyOptions: [],
+    tagOperator: 'Add',
+    tagEditIndex: -1
 })
-const tagFamilies = [
-    
-]
+watch(() => data.tableData, () => {
+    let set = new Set(data.tableData.map(item => {
+        return item.tagFamily
+    }))
+    let arr = Array.from(set)
+    data.tagFamilyOptions = arr.map(item => {
+        return {
+            label: item,
+            value: item
+        }
+    })
+}, {
+    immediate: true,
+    deep: true
+})
 const typeOptions = [
     {
         value: 'TAG_TYPE_INT',
@@ -71,6 +89,9 @@ const validateTag = (rule: any, value: any, callback: any) => {
             return item.tag == value
         })
         if (index >= 0) {
+            if (data.tagOperator == 'Edit' && data.tagEditIndex == index) {
+                return callback()
+            }
             return callback(new Error('The tag is exists'))
         }
         callback()
@@ -100,38 +121,6 @@ interface SpanMethodProps {
     rowIndex: number
     columnIndex: number
 }
-data.tableData = [
-    {
-        tagFamily: 'searchOnly',
-        tag: 'ID',
-        type: 'String',
-        indexedOnly: true
-    },
-    {
-        tagFamily: 'searchOnly',
-        tag: 'name',
-        type: 'String',
-        indexedOnly: true
-    },
-    {
-        tagFamily: 'searchOnly2',
-        tag: 'ID2',
-        type: 'String',
-        indexedOnly: true
-    },
-    {
-        tagFamily: 'searchOnly2',
-        tag: 'name2',
-        type: 'String',
-        indexedOnly: true
-    },
-    {
-        tagFamily: 'searchOnly2',
-        tag: 'type2',
-        type: 'String',
-        indexedOnly: true
-    }
-]
 const objectSpanMethod = ({
     row, column, rowIndex, columnIndex
 }: SpanMethodProps) => {
@@ -159,14 +148,65 @@ const objectSpanMethod = ({
         }
     }
 }
+const confirmForm = async (formEl: FormInstance | undefined) => {
+    if (!formEl) return
+    await formEl.validate((valid) => {
+        if (valid) {
+            if (data.tagOperator == 'Add') {
+                addTagFamily()
+            } else {
+                editTagFamily()
+            }
+            data.dialogVisible = false
+        }
+    })
+}
+function initForm() {
+    data.form = {
+        tagFamily: '',
+        tag: '',
+        type: 'TAG_TYPE_INT',
+        indexedOnly: false
+    }
+}
 function addTagFamily() {
+    const index = data.tableData.findIndex(item => {
+        return item.tagFamily == data.form.tagFamily
+    })
+    if (index < 0) {
+        data.tableData.push(data.form)
+        return initForm()
+    }
+    for (let i = data.tableData.length - 1; i >= 0; i--) {
+        if (data.tableData[i].tagFamily == data.form.tagFamily) {
+            data.tableData.splice(i + 1, 0, data.form)
+            break
+        }
+    }
+    initForm()
+}
+function editTagFamily() {
+    data.tableData[data.tagEditIndex] = data.form
+    initForm()
+}
+function openAddTagFamily() {
+    data.tagOperator = 'Add'
     data.dialogVisible = true
+}
+function openEditTagFamily(index) {
+    data.form = JSON.parse(JSON.stringify(data.tableData[index]))
+    data.tagEditIndex = index
+    data.tagOperator = 'Edit'
+    data.dialogVisible = true
+}
+function deleteTableData(index) {
+    data.tableData.splice(index, 1)
 }
 </script>
 
 <template>
     <el-button size="small" type="primary" color="#6E38F7" style="margin-top: 20px;"
-        @click="addTagFamily">Add</el-button>
+        @click="openAddTagFamily">Add</el-button>
     <el-table :data="data.tableData" :span-method="objectSpanMethod" style="width: 100%; margin-top: 20px;" border>
         <el-table-column label="Tag Family" prop="tagFamily"></el-table-column>
         <el-table-column label="Tag" prop="tag"></el-table-column>
@@ -174,16 +214,26 @@ function addTagFamily() {
         <el-table-column label="IndexedOnly" prop="indexedOnly"></el-table-column>
         <el-table-column label="Operator">
             <template #default="scope">
-                <el-button link type="primary" style="color:#409EFF !important">Edit</el-button>
-                <el-button link type="danger">Delete</el-button>
+                <el-button link type="primary" @click.prevent="openEditTagFamily(scope.$index)"
+                    style="color: var(--color-main); font-weight: bold;">Edit</el-button>
+                <el-popconfirm @confirm="deleteTableData(scope.$index)" title="Are you sure to delete this?">
+                    <template #reference>
+                        <el-button link type="danger" style="color: red;font-weight: bold;">Delete</el-button>
+                    </template>
+                </el-popconfirm>
             </template>
         </el-table-column>
     </el-table>
     <el-dialog v-model="data.dialogVisible" :close-on-click-modal="false" align-center title="Create Tag Family"
         width="30%">
-        <el-form ref="ruleForm" :rules="rules" :model="data.form" label-width="120" label-position="left">
+        <el-form ref="ruleFormRef" :rules="rules" :model="data.form" label-width="120" label-position="left">
             <el-form-item label="Tag Family" prop="tagFamily">
-                <el-input v-model="data.form.tagFamily"></el-input>
+                <el-select v-model="data.form.tagFamily" filterable allow-create default-first-option
+                    :reserve-keyword="false" placeholder="Choose tag family" style="width: 100%;"
+                    :disabled="data.tagOperator == 'Edit'">
+                    <el-option v-for="item in data.tagFamilyOptions" :key="item.value" :label="item.label"
+                        :value="item.value" />
+                </el-select>
             </el-form-item>
             <el-form-item label="Tag" prop="tag">
                 <el-input v-model="data.form.tag"></el-input>
@@ -199,8 +249,8 @@ function addTagFamily() {
         </el-form>
         <span class="dialog-footer">
             <div style="width:100%" class="flex center">
-                <el-button size="small" @click="data.dialogVisible = false">Cancel</el-button>
-                <el-button size="small" type="primary" color="#6E38F7" @click="data.dialogVisible = false">
+                <el-button size="small" @click="data.dialogVisible = false; initForm()">Cancel</el-button>
+                <el-button size="small" type="primary" color="#6E38F7" @click="confirmForm(ruleFormRef)">
                     Confirm
                 </el-button>
             </div>
