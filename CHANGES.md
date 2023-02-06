@@ -2,6 +2,29 @@
 
 Release Notes.
 
+## 0.3.0
+
+### Features
+
+- Support 64-bit float type.
+- Web Application.
+- Close components in tsdb gracefully.
+- Add TLS for the HTTP server.
+- Use the table builder to compress data.
+
+### Bugs
+
+- Open blocks concurrently.
+- Sync index writing and shard closing.
+- TimestampRange query throws an exception if no data in this time range.
+
+### Chores
+
+- Fixes issues related to leaked goroutines.
+- Add validations to APIs.
+
+For more details by referring to [milestone 0.3.0](https://github.com/apache/skywalking/issues?q=is%3Aissue+milestone%3A%22BanyanDB+-+0.3.0%22)
+
 ## 0.2.0
 
 ### Features
