@@ -217,7 +217,7 @@ function changeTagFamilies() {
                     <span style="margin-right: 20px;">{{ data.group }}</span>
                     <span class="text-bold">Name：</span>
                     <span style="margin-right: 20px;">{{ data.name }}</span>
-                    <span class="text-bold">Operator：</span>
+                    <span class="text-bold">Operation：</span>
                     <span>Read</span>
                 </div>
             </template>

@@ -162,13 +162,13 @@ function initData() {
                     <el-col :span="12">
                         <div class="flex align-item-center" style="height: 30px; width: 100%;">
                             <div class="flex" style="height: 30px;">
-                                <span class="text-bold">Type：</span>
+                                <span class="text-bold">Catalog：</span>
                                 <span style="margin-right: 20px;">{{ data.type }}</span>
                                 <span class="text-bold">Group：</span>
                                 <span style="margin-right: 20px;">{{ data.form.group }}</span>
                                 <span class="text-bold" v-if="data.form.name">Name：</span>
                                 <span style="margin-right: 20px;" v-if="data.form.name">{{ data.form.name }}</span>
-                                <span class="text-bold">Operator：</span>
+                                <span class="text-bold">Operation：</span>
                                 <span>{{ data.operator }}</span>
                             </div>
                         </div>

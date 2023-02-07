@@ -55,31 +55,31 @@ watch(() => data.tableData, () => {
 const typeOptions = [
     {
         value: 'TAG_TYPE_INT',
-        label: 'TAG_TYPE_INT'
+        label: 'INT'
     },
     {
         value: 'TAG_TYPE_STRING',
-        label: 'TAG_TYPE_STRING'
+        label: 'STRING'
     },
     {
         value: 'TAG_TYPE_INT_ARRAY',
-        label: 'TAG_TYPE_INT_ARRAY'
+        label: 'INT_ARRAY'
     },
     {
         value: 'TAG_TYPE_STRING_ARRAY',
-        label: 'TAG_TYPE_STRING_ARRAY'
+        label: 'STRING_ARRAY'
     },
     {
         value: 'TAG_TYPE_DATA_BINARY',
-        label: 'TAG_TYPE_DATA_BINARY'
+        label: 'DATA_BINARY'
     },
     {
         value: 'TAG_TYPE_ID',
-        label: 'TAG_TYPE_ID'
+        label: 'ID'
     },
     {
         value: 'TAG_TYPE_UNSPECIFIED',
-        label: 'TAG_TYPE_UNSPECIFIED'
+        label: 'UNSPECIFIED'
     }
 ]
 const validateTag = (rule: any, value: any, callback: any) => {
