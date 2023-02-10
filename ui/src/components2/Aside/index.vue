@@ -476,6 +476,9 @@ $bus.on('resetAside', () => {
         name: `${props.type}Start`
     })
 })
+$bus.on('refreshAside', () => {
+    getGroupLists()
+})
 
 getGroupLists()
 initActiveMenu()

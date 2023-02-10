@@ -92,18 +92,18 @@ $bus.on('AddTabs', (tab) => {
     data.activeTabIndex = data.tabsList.length - 1
 })
 $bus.on('deleteGroup', (group) => {
-    data.tabsList.forEach(item, index => {
-        if (item.route.group === group) {
-            removeTab(index)
+    for (let i = 0; i < data.tabsList.length; i++) {
+        if (data.tabsList[i].route.params.group && data.tabsList[i].route.params.group == group) {
+            removeTab(i)
         }
-    })
+    }
 })
 $bus.on('deleteResource', (name) => {
-    data.tabsList.forEach(item, index => {
-        if (item.route.name && item.route.name === name) {
-            removeTab(index)
+    for (let i = 0; i < data.tabsList.length; i++) {
+        if (data.tabsList[i].route.params.name && data.tabsList[i].route.params.name == name) {
+            removeTab(i)
         }
-    })
+    }
 })
 initData()
 </script>
@@ -144,6 +144,7 @@ initData()
         padding: 0 !important;
         margin: 0 !important;
     }
+
     .el-tabs__item.is-active {
         color: var(--color-main) !important;
         background-color: var(--color-main-background) !important;
@@ -152,6 +153,7 @@ initData()
         border-top-left-radius: 4px;
         border-top-right-radius: 4px;
     }
+
     .el-tabs__content {
         padding: 0 !important;
         margin: 0 !important;

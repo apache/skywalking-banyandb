@@ -22,9 +22,9 @@ import StreamEditor from '@/components2/StreamEditor/index.vue'
 </script>
 
 <template>
-  <div class="about">
-    <StreamEditor></StreamEditor>
-  </div>
+    <div class="about">
+        <StreamEditor></StreamEditor>
+    </div>
 </template>
 
 <style lang="scss" scoped>
