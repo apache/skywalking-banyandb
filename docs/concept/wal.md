@@ -1,56 +1,47 @@
-# Wal Format
+# Background
+
+The data is stored in memory first, then will be flushed to disk. During this time, if service downtime, the data in memory will lose.
+So the goal of the write-ahead logging(WAL) is to solve this problem. And WAL is designed as a dependent component.
+
+# Format
 
 ![](/assets/wal-format.jpg)
 
-Wal file consist of a series of WalEntry，WalEntry contain as follows:
+Wal file consists of a series of segments, which have their WAL buffer, and data in the WAL buffer flush to every segment by appending WAlEntry.
 
-- Length:8 bytes,means length of a WalEntry.
-- Series ID:8 bytes,the same as request Series ID.
-- Count:4 bytes,how many binary/timestamp in one WalEntry. 
+WAlEntry contains as follows:
+- Length:8 bytes, which means the length of a WalEntry.
+- Series ID:8 bytes, the same as request Series ID.
+- Count:4 bytes, how many binary/timestamps in one WalEntry.
 - Timestamp:8 bytes.
 - Binary Length:2 bytes.
-- Binary:value in write request.
+- Binary: value in the write request.
 
 # Write process
 
 ![](/assets/wal.jpg)
 
-When client send a request,the the request will be sent to the tsdb instance corresponding to the group.And when tsdb receives a write request, the following steps occur:
+The writing process in WAL is as follows:
 
-1. The write request is store in wal buffer .Request  in buffer will aggregate a WalEntry .For the performance reasons,we use compression algorithm snappy.
-2. WalEntry appended to the end of the WAL file in disk,It is batch write.
-3. The data buffer is updated.
-4. The write request is successful and return.
+1. Store in the WAL buffer, Requests with the same series ID will aggregate a WALEntry.
+2. When the buffer is full, the WALEntry will be flushed to the disk by batch write. For performance reasons, we use the compression algorithm snappy default. And WALEntry is appended to the end of the WAL file in the disk.
 
-BanyanDB support wal configuration，you can omit step 2 if there is a requirement for performance and data loss can be tolerated.Pay attention to it will cause losing data possibly.
-Even if you can close wal when node only used to data forwarding.
+When WAL is flushed to the disk, a callback will generate. You can choose to ignore this callback function to obtain higher performance, but it will cause the risk of losing data.
+
+# Read WAL
+When reading the WAL file, it needs to decompress first. You can get the size of a WALEntry by the length in the header of every WALEntry so that you can read all the WALEntries.
 
 # Rotation
-Because of the strict write order，The request record in wal file is the same as data buffer.So when data buffer flush in disk,wal file will delete and a new will create,and delete is logical delete,not delete really. 
+WAL supports rotation operation to switch among segments.
 
-# API
-`rotate()`
-
-This rotate API used to delete data which had been flush in disk.The following scenarios may use this API
-
-- Flush data buffer to disk.
-- Replay wal file when BanyanDB instance init. 
-
-`read()`
-
-This API used for read wal file.Corresponding to the following scenarios:
-
-- Replay wal file when init BanyanDB instance init.
-- Wal replicate.
+# Delete
+When the WAL file is invalid, it can be deleted.
 
 # configuration
 BanyanDB support configuration parameter：
 
 | Name | Default Value | Introduction |
 | --- | --- | --- |
-| wal | open | Open defaultly, close when value is close. |
-| wal_persistent | open | Open defaultly, you can set close if there is a requirement for performance and data loss can be tolerated. |
-| wal_compression | open | Compression defalutly,you can close it by using close value |
-| wal_file_size | 64MB | The size of wal file.We recommand set just to store data in data buffer. |
-| wal_buffer_size | 16kB | The size of wal buffer. |
-
+| wal_compression | true | Compression default, you can close it by using false value |
+| wal_file_size | 64MB | The size of the WAL file|
+| wal_buffer_size | 16kB | The size of WAL buffer. |
