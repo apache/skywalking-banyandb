@@ -27,22 +27,21 @@ The writing process in WAL is as follows:
 1. Firstly, the changes are first written to the write buffer. Those with the same series ID will go to the identical WALEntry.
 2. When the buffer is full, the WALEntry is created, then flushed to the disk. WAL can optionally use the compression algorithm snappy to compress the data on disk. Each WALEntry is appended to the tail of the WAL file on the disk.
 
-When WAL is flushed to the disk, it will return the value of write. You can choose to ignore this callback function to obtain higher performance, but it will cause the risk of losing data.
-
+When entries in the buffer are flushed to the disk, the callback function returned by the write operation is invoked. You can ignore this function to improve the writing performance, but it risks losing data.
 # Read WAL
-When reading the WAL file, it needs to decompress first. You can get the size of a WALEntry by the length in the header of every WALEntry so that you can read all the WALEntries.
+When reading the WAL file, if the compression option is configured in the writing process, the read operation will decompress the WAL file first. Getting the size of a WALEntry by the length in the header of every WALEntry so that all the WALEntries can be read.
 
 # Rotation
-WAL supports rotation operation to switch among segments.
+WAL supports rotation operation to switch among segments. When you call the rotation operation, the old segment will be closed and the new one will be created, and return all info of the old segment, you can use it to do other operations such as delete the old WAL segment.
 
 # Delete
-When the WAL file is invalid, it can be deleted.
+When the WAL segment is invalid, it can be deleted.
 
 # configuration
-BanyanDB support configuration parameter：
+BanyanDB WAL has the following ow configuration options:
 
 | Name | Default Value | Introduction |
 | --- | --- | --- |
-| wal_compression | true | Compression default, you can close it by using false value |
+| wal_compression | true | Compress the WAL entry or not |
 | wal_file_size | 64MB | The size of the WAL file|
 | wal_buffer_size | 16kB | The size of WAL buffer. |
