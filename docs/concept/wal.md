@@ -5,7 +5,7 @@ BanyanDB leverages the WAL to enhance the data buffer for schema resource writin
 
 # Format
 
-![](https://github.com/apache/skywalking-website/tree/master/static/doc-graph/banyandb/v0.4.0/wal-format.png)
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.4.0/wal-format.png)
 
 A segment refers to a block of data in the WAL file that contains a sequence of database changes. Once `rotate` is invoked, a new segment is created to continue logging subsequent changes.
 A "WALEntry" is a data unit representing a series of changes to a Series. Each WALEntry is written to a segment.
@@ -20,7 +20,7 @@ WAlEntry contains as follows:
 
 # Write process
 
-![](https://github.com/apache/skywalking-website/tree/master/static/doc-graph/banyandb/v0.4.0/wal.png)
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.4.0/wal.png)
 
 The writing process in WAL is as follows:
 
@@ -29,16 +29,16 @@ The writing process in WAL is as follows:
 
 When entries in the buffer are flushed to the disk, the callback function returned by the write operation is invoked. You can ignore this function to improve the writing performance, but it risks losing data.
 # Read WAL
-When reading the WAL file, if the compression option is configured in the writing process, the read operation will decompress the WAL file first. Getting the size of a WALEntry by the length in the header of every WALEntry so that all the WALEntries can be read.
+A client could read a single segment by a segment id. When opening the segment file, the reader will decompress the WAL file if the writing compresses the data.
 
 # Rotation
-WAL supports rotation operation to switch among segments. When you call the rotation operation, the old segment will be closed and the new one will be created, and return all info of the old segment, you can use it to do other operations such as delete the old WAL segment.
+WAL supports rotation operation to switch to a new segment. The operation closes the currently open segment and opens a new one, returning the closed segment details.
 
 # Delete
-When the WAL segment is invalid, it can be deleted.
+A client could delete a segment closed by the `rotate` operation.
 
 # configuration
-BanyanDB WAL has the following ow configuration options:
+BanyanDB WAL has the following configuration options:
 
 | Name | Default Value | Introduction |
 | --- | --- | --- |
