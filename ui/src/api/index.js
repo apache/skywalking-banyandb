@@ -88,3 +88,11 @@ export function createResources(type, data) {
         data: data
     })
 }
+
+export function editResources(type, group, name, data) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'put',
+        data: data
+    })
+}
