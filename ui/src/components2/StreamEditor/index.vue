@@ -24,7 +24,7 @@ import { useRoute, useRouter } from 'vue-router'
 import TagEditor from './tagEditor.vue'
 import type { FormInstance } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { createResources } from '@/api/index'
+import { createResources, editResources, getStreamOrMeasureList } from '@/api/index'
 
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
@@ -61,6 +61,7 @@ watch(() => route, () => {
     data.form.name = route.params.name
     data.type = route.params.type
     data.operator = route.params.operator
+    console.log('route', route)
     initData()
 }, {
     immediate: true,
@@ -111,11 +112,29 @@ const submit = async (formEl: FormInstance | undefined) => {
                 tagFamilies: tagFamilies
             }
             $loadingCreate()
+            if (data.operator == 'edit' && data.form.group && data.form.name) {
+                return editResources('stream', data.form.group, data.form.name, { stream: form })
+                    .then((res) => {
+                        if (res.status == 200) {
+                            ElMessage({
+                                message: 'Edit successed',
+                                type: "success",
+                                duration: 5000
+                            })
+                            $bus.emit('refreshAside')
+                            $bus.emit('deleteResource', data.form.name)
+                            openResourses()
+                        }
+                    })
+                    .finally(() => {
+                        $loadingClose()
+                    })
+            }
             createResources('stream', { stream: form })
                 .then((res) => {
                     if (res.status == 200) {
                         ElMessage({
-                            message: 'Create succeeded',
+                            message: 'Create successed',
                             type: "success",
                             duration: 5000
                         })
@@ -150,7 +169,36 @@ function openResourses() {
     $bus.emit('AddTabs', add)
 }
 function initData() {
-
+    if (data.operator == 'edit' && data.form.group && data.form.name) {
+        $loadingCreate()
+        getStreamOrMeasureList('stream', data.form.group)
+            .then(res => {
+                if (res.status == 200) {
+                    const index = res.data.stream.findIndex(item => {
+                        return item.metadata.group == data.form.group && item.metadata.name == data.form.name
+                    })
+                    if (index >= 0) {
+                        const tagFamilies = res.data.stream[index].tagFamilies
+                        const arr = []
+                        tagFamilies.forEach(item => {
+                            item.tags.forEach(tag => {
+                                let obj = {
+                                    tagFamily: item.name,
+                                    tag: tag.name,
+                                    type: tag.type,
+                                    indexedOnly: tag.indexedOnly
+                                }
+                                arr.push(obj)
+                            })
+                        })
+                        tagEditorRef.value.setTagFamilies(arr)
+                    }
+                }
+            })
+            .finally(() => {
+                $loadingClose()
+            })
+    }
 }
 </script>
 
