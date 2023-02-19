@@ -61,7 +61,6 @@ watch(() => route, () => {
     data.form.name = route.params.name
     data.type = route.params.type
     data.operator = route.params.operator
-    console.log('route', route)
     initData()
 }, {
     immediate: true,
