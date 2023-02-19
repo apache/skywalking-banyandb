@@ -206,8 +206,12 @@ function deleteTableData(index) {
 function getTagFamilies() {
     return data.tableData
 }
+function setTagFamilies(value) {
+    data.tableData = value
+}
 defineExpose({
-    getTagFamilies
+    getTagFamilies,
+    setTagFamilies
 })
 </script>
 
