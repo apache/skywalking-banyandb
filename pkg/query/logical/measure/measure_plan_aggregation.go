@@ -59,7 +59,8 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 		return nil, err
 	}
 	// check validity of aggregation fields
-	aggregationFieldRefs, err := prevPlan.Schema().CreateFieldRef(gba.aggregationField)
+	schema := prevPlan.Schema()
+	aggregationFieldRefs, err := schema.CreateFieldRef(gba.aggregationField)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +70,9 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 	fieldRef := aggregationFieldRefs[0]
 	switch fieldRef.Spec.Spec.FieldType {
 	case databasev1.FieldType_FIELD_TYPE_INT:
-		return newAggregationPlan[int64](gba, prevPlan, measureSchema, fieldRef)
+		return newAggregationPlan[int64](gba, prevPlan, schema, fieldRef)
 	case databasev1.FieldType_FIELD_TYPE_FLOAT:
-		return newAggregationPlan[float64](gba, prevPlan, measureSchema, fieldRef)
+		return newAggregationPlan[float64](gba, prevPlan, schema, fieldRef)
 	default:
 		return nil, errors.WithMessagef(errUnsupportedAggregationField, "field: %s", fieldRef.Spec.Spec)
 	}
