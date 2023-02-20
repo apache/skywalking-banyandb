@@ -18,19 +18,14 @@
 // Package wal (Write-ahead logging) is an independent component to ensure data reliability.
 package wal
 
-// Log stands for a write-ahead logging instance.
-type Log struct{}
-
 // Options for Write-ahead Logging.
 type Options struct{}
 
 // Segment stands for a segment instance of Write-ahead log.
-type Segment struct{}
+type Segment interface{}
 
-// Wal include exposed interfaces.
-type Wal interface {
-	// New creates a Log instance in the specified root directory.
-	New(path string, opts *Options) (*Log, error)
+// WAL includes exposed interfaces.
+type WAL interface {
 	// Write request to the WAL buffer.
 	// It will return synchronously when the request write in the WAL buffer,
 	// and trigger asynchronous callback when return when the buffer is flushed to disk successfully.
@@ -39,8 +34,13 @@ type Wal interface {
 	Read(index int) (*Segment, error)
 	// ReadAllSegments operation reads all segments.
 	ReadAllSegments() ([]*Segment, error)
-	// Rotation closes the open segment and opens a new one, returning the closed segment details.
-	Rotation() (*Segment, error)
+	// Rotate closes the open segment and opens a new one, returning the closed segment details.
+	Rotate() (*Segment, error)
 	// Delete the specified segment.
 	Delete(index int) error
+}
+
+// New creates a Log instance in the specified root directory.
+func New(_ string, _ *Options) (*WAL, error) {
+	return nil, nil
 }
