@@ -23,7 +23,7 @@ tagProjection:
   - name: "default"
     tags: ["entity_id"]
 fieldProjection:
-  names: ["total", "value"]
+  names: ["value"]
 groupBy:
   tagProjection:
     tagFamilies:
