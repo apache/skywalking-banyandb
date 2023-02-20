@@ -57,7 +57,8 @@ func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan,
 		return nil, err
 	}
 	// check validity of groupBy tags
-	groupByTagRefs, err := prevPlan.Schema().CreateTagRef(gba.groupBy...)
+	schema := prevPlan.Schema()
+	groupByTagRefs, err := schema.CreateTagRef(gba.groupBy...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan,
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
 		},
-		schema:          measureSchema,
+		schema:          schema,
 		groupByTagsRefs: groupByTagRefs,
 		groupByEntity:   gba.groupByEntity,
 	}, nil
