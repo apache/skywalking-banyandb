@@ -18,7 +18,7 @@
 // Package wal (Write-ahead logging) is an independent component to ensure data reliability.
 package wal
 
-// SegmentID identity a segment in a WAL.
+// SegmentID identities a segment in a WAL.
 type SegmentID uint64
 
 // Options for creating Write-ahead Logging.
