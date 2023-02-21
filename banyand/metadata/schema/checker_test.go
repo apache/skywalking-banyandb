@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func loadStream() *databasev1.Stream {
@@ -64,7 +65,7 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
