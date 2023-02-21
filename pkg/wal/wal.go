@@ -18,29 +18,37 @@
 // Package wal (Write-ahead logging) is an independent component to ensure data reliability.
 package wal
 
-// Options for Write-ahead Logging.
+// SegmentID identity a segment in a WAL.
+type SegmentID uint64
+
+// Options for creating Write-ahead Logging.
 type Options struct{}
 
-// Segment stands for a segment instance of Write-ahead log.
-type Segment interface{}
+// Segment allows reading underlying segments that hold WAl entities.
+type Segment interface {
+	GetSegmentID() SegmentID
+}
 
-// WAL includes exposed interfaces.
+// WAL denotes a Write-ahead logging.
+// Modules who want their data reliable could write data to an instance of WAL.
+// A WAL combines several segments, ingesting data on a single opened one.
+// Rotating the WAL will create a new segment, marking it as opened and persisting previous segments on the disk.
 type WAL interface {
-	// Write request to the WAL buffer.
-	// It will return synchronously when the request write in the WAL buffer,
-	// and trigger asynchronous callback when return when the buffer is flushed to disk successfully.
+	// Write a logging entity.
+	// It will return immediately when the data is written in the buffer,
+	// The returned function will be called when the entity is flushed on the persistent storage.
 	Write(data []byte) (func(), error)
-	// Read specified segment by index.
-	Read(index int) (*Segment, error)
-	// ReadAllSegments operation reads all segments.
+	// Read specified segment by SegmentID.
+	Read(segmentID SegmentID) (*Segment, error)
+	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
 	ReadAllSegments() ([]*Segment, error)
 	// Rotate closes the open segment and opens a new one, returning the closed segment details.
 	Rotate() (*Segment, error)
 	// Delete the specified segment.
-	Delete(index int) error
+	Delete(segmentID SegmentID) error
 }
 
-// New creates a Log instance in the specified root directory.
-func New(_ string, _ *Options) (*WAL, error) {
+// New creates a WAL instance in the specified path.
+func New(_ string, _ Options) (WAL, error) {
 	return nil, nil
 }
