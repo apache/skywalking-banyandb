@@ -65,7 +65,7 @@ var _ = Describe("Registry", func() {
 	AfterEach(func() {
 		_ = conn.Close()
 		gracefulStop()
-		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(gleak.Goroutines, testflags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 
 	It("manages the stream", func() {
