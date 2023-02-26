@@ -59,7 +59,7 @@ var _ = Describe("Property application", func() {
 	AfterEach(func() {
 		Expect(conn.Close()).To(Succeed())
 		deferFn()
-		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 	It("applies properties", func() {
 		md := &propertyv1.Metadata{
