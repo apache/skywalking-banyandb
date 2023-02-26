@@ -18,6 +18,12 @@
 // Package wal (Write-ahead logging) is an independent component to ensure data reliability.
 package wal
 
+import (
+	"time"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+)
+
 // SegmentID identities a segment in a WAL.
 type SegmentID uint64
 
@@ -37,7 +43,7 @@ type WAL interface {
 	// Write a logging entity.
 	// It will return immediately when the data is written in the buffer,
 	// The returned function will be called when the entity is flushed on the persistent storage.
-	Write(data []byte) (func(), error)
+	Write(seriesID common.SeriesID, timestamp time.Time, data []byte) (func(), error)
 	// Read specified segment by SegmentID.
 	Read(segmentID SegmentID) (*Segment, error)
 	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
