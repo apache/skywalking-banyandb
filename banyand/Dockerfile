@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.19 AS dev
+FROM golang:1.20 AS dev
 WORKDIR /app
 ENV GOOS="linux"
 ENV CGO_ENABLED=0
