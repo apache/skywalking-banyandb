@@ -47,7 +47,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-check-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
           restore-keys: |
             ${{ runner.os }}-check-tool-
       - uses: actions/setup-node@v3
@@ -93,7 +93,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-build-tool-${{ hashFiles('**/version.mk') }}
           restore-keys: |
             ${{ runner.os }}-build-tool-
       - uses: actions/setup-node@v3

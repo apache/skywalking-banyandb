@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.4.0
+
+### Chores
+
+- Bump go to 1.20.
+
 ## 0.3.1
 
 ### Bugs
