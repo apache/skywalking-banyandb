@@ -131,9 +131,12 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 	}
 	s.indexWriter.Write(m)
 	if s.processorManager != nil {
-		s.processorManager.onMeasureWrite(&measurev1.WriteRequest{
-			Metadata:  s.GetMetadata(),
-			DataPoint: value,
+		s.processorManager.onMeasureWrite(&measurev1.InternalWriteRequest{
+			Request: &measurev1.WriteRequest{
+				Metadata:  s.GetMetadata(),
+				DataPoint: value,
+			},
+			EntityValues: entityValues,
 		})
 	}
 	return err

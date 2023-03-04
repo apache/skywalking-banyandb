@@ -92,7 +92,7 @@ func NewEntity(length int) Entity {
 }
 
 // EntityValue represents the value of a tag which is a part of an entity.
-type EntityValue *modelv1.TagValue
+type EntityValue = *modelv1.TagValue
 
 // EntityValueToEntry transforms EntityValue to Entry.
 func EntityValueToEntry(ev EntityValue) (Entry, error) {
