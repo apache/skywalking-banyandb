@@ -274,6 +274,7 @@ func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 		sort:     sort,
 		aggrFunc: aggrFunc,
 		cache:    make(map[string]*aggregatorItem),
+		items:    make([]*aggregatorItem, 0, topN),
 	}
 	heap.Init(aggregator)
 	return aggregator
@@ -333,7 +334,7 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 	}
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
-		heap.Fix(aggr, item.index)
+		aggr.tryEnqueue(key, item)
 		return nil
 	}
 
@@ -351,20 +352,24 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 		aggr.cache[key] = item
 		heap.Push(aggr, item)
 	} else {
-		if lowest := aggr.items[0]; lowest != nil {
-			if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < val {
-				aggr.cache[key] = item
-				aggr.items[0] = item
-				heap.Fix(aggr, 0)
-			} else if aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > val {
-				aggr.cache[key] = item
-				aggr.items[0] = item
-				heap.Fix(aggr, 0)
-			}
-		}
+		aggr.tryEnqueue(key, item)
 	}
 
 	return nil
+}
+
+func (aggr *postAggregationProcessor) tryEnqueue(key string, item *aggregatorItem) {
+	if lowest := aggr.items[0]; lowest != nil {
+		if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val() {
+			aggr.cache[key] = item
+			aggr.items[0] = item
+			heap.Fix(aggr, 0)
+		} else if aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val() {
+			aggr.cache[key] = item
+			aggr.items[0] = item
+			heap.Fix(aggr, 0)
+		}
+	}
 }
 
 func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
