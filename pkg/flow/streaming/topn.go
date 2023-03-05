@@ -93,7 +93,7 @@ func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOp
 	}
 }
 
-// WithGroupKeyExtractor extract group key from the StreamRecord
+// WithGroupKeyExtractor extract group key from the StreamRecord.
 func WithGroupKeyExtractor(groupKeyExtractor func(flow.StreamRecord) string) TopNOption {
 	return func(aggregator *topNAggregatorGroup) {
 		aggregator.groupKeyExtractor = groupKeyExtractor

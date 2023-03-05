@@ -42,8 +42,8 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}}),
 	}
 	tests := []struct {
-		name     string
 		expected map[string][]*Tuple2
+		name     string
 		sort     TopNSort
 	}{
 		{

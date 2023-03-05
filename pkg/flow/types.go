@@ -137,6 +137,7 @@ func (sr StreamRecord) Data() interface{} {
 	return sr.data
 }
 
+// Equal checks if two StreamRecord are the same.
 func (sr StreamRecord) Equal(other StreamRecord) bool {
 	return sr.ts == other.ts && cmp.Equal(sr.data, other.data)
 }
