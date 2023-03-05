@@ -27,10 +27,10 @@
 import { onMounted, ref, watch } from 'vue'
 import CodeMirror from 'codemirror'
 import 'codemirror/lib/codemirror.css'
-import 'codemirror/mode/javascript/javascript.js'
 import 'codemirror/mode/yaml/yaml.js'
 import 'codemirror/mode/css/css.js'
 import 'codemirror/addon/lint/yaml-lint.js'
+import 'codemirror/theme/rubyblue.css'
 import jsYaml from 'js-yaml'
 window.jsyaml = jsYaml
 export default {
@@ -42,21 +42,20 @@ export default {
     },
     mode: {
       type: String,
-      default: 'javascript'
+      default: 'yaml'
     },
     lint: {
-      // codemirror仅支持html、css、json、javascript、yaml这几种，请手动引入，且需要下载相关插件，具体插件参考源码(node_modules/codemirror/addon/lint/)或官方文档
       type: Boolean,
-      default: false
+      default: true
     },
     readonly: {
       type: Boolean,
       default: false
-    },
+    },  
     // 主题
     theme: {
       type: String,
-      default: 'base16-dark' // 编辑器主题色
+      default: 'rubyblue' // 编辑器主题色
     },
     // 高亮选中行
     styleActiveLine: {
@@ -82,7 +81,7 @@ export default {
       }
     )
     const options = {
-      mode: props.mode,
+      mode:  'text/x-yaml',
       // 缩进格式
       tabSize: 2,
       // 主题，对应主题库 JS 需要提前引入
@@ -103,14 +102,15 @@ export default {
     const initialize = async () => {
       try {
       // 动态引入相关依赖
-        await import(`codemirror/theme/${props.theme}.css`)
+       /*  let theme = `codemirror/theme/${props.theme}.css`
+        await import(theme) */
         if (props.lint) {
           await import('codemirror/addon/lint/lint.js')
           await import('codemirror/addon/lint/lint.css')
         }
-        if (props.mode) {
+        /* if (props.mode) {
           await import(`codemirror/mode/${props.mode}/${props.mode}.js`)
-        }
+        } */
         if (props.autoRefresh) {
           await import('codemirror/addon/display/autorefresh')
         }

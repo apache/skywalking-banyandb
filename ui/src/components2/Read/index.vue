@@ -23,7 +23,8 @@ import { useRoute } from 'vue-router'
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { getStreamOrMeasure, getTableList } from '@/api/index'
 import { Search, RefreshRight } from '@element-plus/icons-vue'
-/* import CodeMirror from '@/components2/CodeMirror/index.vue' */
+import { jsonToYaml, yamlToJson } from '@/utils/yaml'
+import CodeMirror from '@/components2/CodeMirror/index.vue'
 
 const route = useRoute()
 
@@ -108,7 +109,7 @@ const data = reactive({
     },
     tableTags: [],
     tableData: [],
-    /* code: ref(`apiVersion: apps/v1
+    code: ref(`apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   annotations:
@@ -118,7 +119,7 @@ metadata:
   generation: 1
   labels:
     cattle.io/creator: norman
-    workload.user.cattle.io/workloadselector: daemonSet-default-asdf`) */
+    workload.user.cattle.io/workloadselector: daemonSet-default-asdf`)
 })
 
 watch(() => route, () => {
@@ -230,8 +231,9 @@ function changeTagFamilies() {
                                 :value="item.value">
                             </el-option>
                         </el-select>
-                        <el-date-picker style="margin: 0 10px 0 10px" v-model="data.timeValue" type="datetimerange" :shortcuts="shortcuts"
-                            range-separator="to" start-placeholder="begin" end-placeholder="end" align="right">
+                        <el-date-picker style="margin: 0 10px 0 10px" v-model="data.timeValue" type="datetimerange"
+                            :shortcuts="shortcuts" range-separator="to" start-placeholder="begin" end-placeholder="end"
+                            align="right">
                         </el-date-picker>
                         <el-button size="small" :icon="Search" color="#6E38F7" plain></el-button>
                     </div>
@@ -242,9 +244,8 @@ function changeTagFamilies() {
                     </div>
                 </el-col>
             </el-row>
-            <!--  <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true"
-                :readonly="true">
-            </CodeMirror> -->
+            <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
+            </CodeMirror>
         </el-card>
         <el-card shadow="always">
             <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
@@ -260,9 +261,8 @@ function changeTagFamilies() {
                 </el-table-column>
             </el-table>
             <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
-                @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum"
-                :page-sizes="[6, 12, 18, 24]" :page-size="data.queryInfo.pagesize"
-                layout="total, sizes, prev, pager, next, jumper" :total="data.total">
+                @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
+                :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
             </el-pagination>
         </el-card>
     </div>
