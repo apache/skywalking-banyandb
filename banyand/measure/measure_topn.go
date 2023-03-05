@@ -164,7 +164,8 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 }
 
 func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64,
-	data flow.Data, rankNum int) error {
+	data flow.Data, rankNum int,
+) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool

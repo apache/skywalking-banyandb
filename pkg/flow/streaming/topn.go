@@ -129,6 +129,9 @@ func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 func (t *topNAggregatorGroup) Snapshot() interface{} {
 	groupRanks := make(map[string][]*Tuple2)
 	for group, aggregator := range t.aggregatorGroup {
+		if !aggregator.dirty {
+			continue
+		}
 		aggregator.dirty = false
 		iter := aggregator.treeMap.Iterator()
 		items := make([]*Tuple2, 0, aggregator.currentTopNum)
