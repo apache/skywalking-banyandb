@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -143,17 +144,19 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.Sort, conditions []*modelv1.Condition) (tsdb.Entity, error) {
+func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.Sort,
+	conditions []*modelv1.Condition) (tsdb.Entity, error) {
+	if len(conditions) != 0 && len(conditions) != len(topNSchema.GetGroupByTagNames()) {
+		return nil, errors.New("invalid request: either no condition or full conditions must be given")
+	}
 	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, 1+1+len(topNSchema.GetGroupByTagNames()))
+	entity := make([]tsdb.Entry, 1+1+len(conditions))
 	// sortDirection
 	entity[0] = convert.Int64ToBytes(int64(sortDirection.Number()))
 	// rankNumber
 	entity[1] = tsdb.AnyEntry
 	for idx, tagName := range topNSchema.GetGroupByTagNames() {
 		entityMap[tagName] = idx + 2
-		// fill AnyEntry by default
-		entity[idx+2] = tsdb.AnyEntry
 	}
 	for _, pairQuery := range conditions {
 		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
@@ -174,6 +177,15 @@ func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.
 		}
 		return nil, errors.New("only groupBy tag name is supported")
 	}
+	if len(entity) > 2 {
+		// another sanity check if query is for non-NULL group
+		for idx, tagName := range topNSchema.GetGroupByTagNames() {
+			if entity[idx+2] == nil {
+				return nil, fmt.Errorf("condition for %s must be specified", tagName)
+			}
+		}
+	}
+
 	return entity, nil
 }
 

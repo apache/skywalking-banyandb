@@ -17,8 +17,8 @@
 
 lists:
 - items:
-  - name: entity_1
+  - name: str:{value:"svc_1"}.str:{value:"entity_3"}
     value:
       int:
-        value: "12"
+        value: "11"
   timestamp: "2022-10-17T12:54:00Z"

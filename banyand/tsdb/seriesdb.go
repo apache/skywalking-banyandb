@@ -404,6 +404,10 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 	errScan := s.seriesMetadata.Scan(prefix, prepend(path.seekKey, entityPrefix), kv.DefaultScanOpts, func(key []byte, getVal func() ([]byte, error)) error {
 		key = key[entityPrefixLen:]
 		comparableKey := make([]byte, len(key))
+		// avoid slice out of bound
+		if len(key) > len(path.mask) {
+			return nil
+		}
 		for i, b := range key {
 			comparableKey[i] = path.mask[i] & b
 		}

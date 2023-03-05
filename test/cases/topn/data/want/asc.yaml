@@ -17,37 +17,37 @@
 
 lists:
 - items:
-  - name: entity_1
+  - name: str:{value:"svc_1"}.str:{value:"entity_1"}
     value:
       int:
         value: "1"
   timestamp: "2022-10-17T12:49:00Z"
 - items:
-  - name: entity_2
+  - name: str:{value:"svc_2"}.str:{value:"entity_2"}
     value:
       int:
         value: "2"
   timestamp: "2022-10-17T12:50:00Z"
 - items:
-  - name: entity_2
+  - name: str:{value:"svc_1"}.str:{value:"entity_2"}
     value:
       int:
         value: "3"
   timestamp: "2022-10-17T12:51:00Z"
 - items:
-  - name: entity_3
+  - name: str:{value:"svc_2"}.str:{value:"entity_3"}
     value:
       int:
         value: "5"
   timestamp: "2022-10-17T12:52:00Z"
 - items:
-  - name: entity_1
+  - name: str:{value:"svc_3"}.str:{value:"entity_1"}
     value:
       int:
         value: "4"
   timestamp: "2022-10-17T12:53:00Z"
 - items:
-  - name: entity_1
+  - name: str:{value:"svc_1"}.str:{value:"entity_1"}
     value:
       int:
         value: "6"

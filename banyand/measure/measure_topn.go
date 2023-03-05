@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -157,17 +158,17 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 		for rankNum, tuple := range tuples {
 			fieldValue := tuple.V1.(int64)
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
+			err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, group, data, rankNum))
 		}
 	}
 	return err
 }
 
 func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64,
-	data flow.Data, rankNum int,
+	group string, data flow.Data, rankNum int,
 ) error {
 	var tagValues []*modelv1.TagValue
-	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
+	if len(t.topNSchema.GetGroupByTagNames()) > 0 && group != "" { // non-NULL group
 		var ok bool
 		if tagValues, ok = data[3].([]*modelv1.TagValue); !ok {
 			return errors.New("fail to extract tag values from topN result")
@@ -182,7 +183,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	// 1. groupValues
 	// 2. rankNumber
 	// 3. timeBucket
-	measureID := data[1].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
+	measureID := group + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
 	iwr := &measurev1.InternalWriteRequest{
 		Request: &measurev1.WriteRequest{
 			Metadata: t.topNSchema.GetMetadata(),
@@ -203,7 +204,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 							{
 								Value: &modelv1.TagValue_Str{
 									Str: &modelv1.Str{
-										Value: data[0].(string),
+										Value: data[0].(string), // TODO: how to store seriesID?
 									},
 								},
 							},
@@ -237,14 +238,15 @@ func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) tim
 }
 
 func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
-	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
+	if len(tagValues) != 0 && len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
 		return nil, nil, 0, errors.New("no enough tag values for the entity")
 	}
 	// entity prefix
 	// 1) source measure Name + topN aggregation Name
 	// 2) sort direction
 	// 3) rank number
-	entity := make(tsdb.EntityValues, 1+1+1+len(t.topNSchema.GetGroupByTagNames()))
+	// >4) group tag values if needed
+	entity := make(tsdb.EntityValues, 1+1+1+len(tagValues))
 	// entity prefix
 	entity[0] = tsdb.StrValue(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
@@ -516,7 +518,7 @@ func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLoc
 	for _, groupByName := range groupByNames {
 		fIdx, tIdx, spec := pbv1.FindTagByName(m.GetTagFamilies(), groupByName)
 		if spec == nil {
-			return nil, errors.New("tag is not found")
+			return nil, fmt.Errorf("tag %s is not found", groupByName)
 		}
 		groupTags = append(groupTags, partition.TagLocator{
 			FamilyOffset: fIdx,

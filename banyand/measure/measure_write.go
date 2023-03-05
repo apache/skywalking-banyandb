@@ -136,7 +136,7 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 				Metadata:  s.GetMetadata(),
 				DataPoint: value,
 			},
-			EntityValues: entityValues,
+			EntityValues: entityValues[1:],
 		})
 	}
 	return err
