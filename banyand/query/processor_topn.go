@@ -145,7 +145,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 }
 
 func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.Sort,
-	conditions []*modelv1.Condition) (tsdb.Entity, error) {
+	conditions []*modelv1.Condition,
+) (tsdb.Entity, error) {
 	if len(conditions) != 0 && len(conditions) != len(topNSchema.GetGroupByTagNames()) {
 		return nil, errors.New("invalid request: either no condition or full conditions must be given")
 	}
