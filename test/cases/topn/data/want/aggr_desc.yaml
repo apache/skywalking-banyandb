@@ -32,7 +32,8 @@ lists:
   - entity:
     - key: service_id
       value:
-        str: svc_1
+        str:
+          value: svc_1
     - key: entity_id
       value:
         str:
@@ -43,7 +44,8 @@ lists:
   - entity:
     - key: service_id
       value:
-        str: svc_3
+        str:
+          value: svc_3
     - key: entity_id
       value:
         str:
