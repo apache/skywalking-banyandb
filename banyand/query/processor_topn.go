@@ -131,7 +131,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 							Msg("fail to parse topN family")
 						return
 					}
-					_ = aggregator.put(tuple.V1.(string), tuple.V2.(int64), iter.Val().Time())
+					_ = aggregator.put(tuple.V1.([]*modelv1.TagValue), tuple.V2.(int64), iter.Val().Time())
 				}
 				_ = iter.Close()
 			}
@@ -139,7 +139,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 
 	now := time.Now().UnixNano()
-	resp = bus.NewMessage(bus.MessageID(now), aggregator.val())
+	resp = bus.NewMessage(bus.MessageID(now), aggregator.val(sourceMeasure.GetSchema().GetEntity().GetTagNames()))
 
 	return
 }
@@ -211,7 +211,7 @@ func parseTopNFamily(item tsdb.Item, interval time.Duration) (*streaming.Tuple2,
 	}
 	return &streaming.Tuple2{
 		// GroupValues
-		V1: tagFamily.GetTags()[1].GetStr().GetValue(),
+		V1: tagFamily.GetTags()[1:],
 		// FieldValue
 		V2: fieldValue.GetInt().GetValue(),
 	}, nil
@@ -251,13 +251,25 @@ var _ heap.Interface = (*postAggregationProcessor)(nil)
 type aggregatorItem struct {
 	int64Func aggregation.Func[int64]
 	key       string
+	values    tsdb.EntityValues
 	index     int
+}
+
+func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
+	tags := make([]*modelv1.Tag, len(n.values))
+	for i := 0; i < len(tags); i++ {
+		tags[i] = &modelv1.Tag{
+			Key:   tagNames[i],
+			Value: n.values[i],
+		}
+	}
+	return tags
 }
 
 // postProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type postProcessor interface {
-	put(key string, val int64, timestampMillis uint64) error
-	val() []*measurev1.TopNList
+	put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error
+	val([]string) []*measurev1.TopNList
 }
 
 func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) postProcessor {
@@ -327,11 +339,12 @@ func (aggr *postAggregationProcessor) Pop() any {
 	return item
 }
 
-func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
+func (aggr *postAggregationProcessor) put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
 	// update latest ts
 	if aggr.latestTimestamp < timestampMillis {
 		aggr.latestTimestamp = timestampMillis
 	}
+	key := entityValues.String()
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
 		aggr.tryEnqueue(key, item)
@@ -345,6 +358,7 @@ func (aggr *postAggregationProcessor) put(key string, val int64, timestampMillis
 	item := &aggregatorItem{
 		key:       key,
 		int64Func: aggrFunc,
+		values:    entityValues,
 	}
 	item.int64Func.In(val)
 
@@ -372,13 +386,13 @@ func (aggr *postAggregationProcessor) tryEnqueue(key string, item *aggregatorIte
 	}
 }
 
-func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
+func (aggr *postAggregationProcessor) val(tagNames []string) []*measurev1.TopNList {
 	topNItems := make([]*measurev1.TopNList_Item, aggr.Len())
 
 	for aggr.Len() > 0 {
 		item := heap.Pop(aggr).(*aggregatorItem)
 		topNItems[aggr.Len()] = &measurev1.TopNList_Item{
-			Name: item.key,
+			Entity: item.GetTags(tagNames),
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
 					Int: &modelv1.Int{Value: item.int64Func.Val()},
@@ -397,9 +411,21 @@ func (aggr *postAggregationProcessor) val() []*measurev1.TopNList {
 var _ flow.Element = (*nonAggregatorItem)(nil)
 
 type nonAggregatorItem struct {
-	key   string
-	val   int64
-	index int
+	key    string
+	values tsdb.EntityValues
+	val    int64
+	index  int
+}
+
+func (n *nonAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
+	tags := make([]*modelv1.Tag, len(n.values))
+	for i := 0; i < len(tags); i++ {
+		tags[i] = &modelv1.Tag{
+			Key:   tagNames[i],
+			Value: n.values[i],
+		}
+	}
+	return tags
 }
 
 func (n *nonAggregatorItem) GetIndex() int {
@@ -416,13 +442,13 @@ type postNonAggregationProcessor struct {
 	sort      modelv1.Sort
 }
 
-func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
+func (naggr *postNonAggregationProcessor) val(tagNames []string) []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.Len())
 		for idx, elem := range timeline.Values() {
 			items[idx] = &measurev1.TopNList_Item{
-				Name: elem.(*nonAggregatorItem).key,
+				Entity: elem.(*nonAggregatorItem).GetTags(tagNames),
 				Value: &modelv1.FieldValue{
 					Value: &modelv1.FieldValue_Int{
 						Int: &modelv1.Int{Value: elem.(*nonAggregatorItem).val},
@@ -448,16 +474,17 @@ func (naggr *postNonAggregationProcessor) val() []*measurev1.TopNList {
 	return topNLists
 }
 
-func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMillis uint64) error {
+func (naggr *postNonAggregationProcessor) put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
+	key := entityValues.String()
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
 		if timeline.Len() < int(naggr.topN) {
-			heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
+			heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})
 		} else {
 			if lowest := timeline.Peek(); lowest != nil {
 				if naggr.sort == modelv1.Sort_SORT_DESC && lowest.(*nonAggregatorItem).val < val {
-					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key})
+					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key, values: entityValues})
 				} else if naggr.sort != modelv1.Sort_SORT_DESC && lowest.(*nonAggregatorItem).val > val {
-					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key})
+					timeline.ReplaceLowest(&nonAggregatorItem{val: val, key: key, values: entityValues})
 				}
 			}
 		}
@@ -483,7 +510,7 @@ func (naggr *postNonAggregationProcessor) put(key string, val int64, timestampMi
 		}
 	}, false)
 	naggr.timelines[timestampMillis] = timeline
-	heap.Push(timeline, &nonAggregatorItem{val: val, key: key})
+	heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})
 
 	return nil
 }

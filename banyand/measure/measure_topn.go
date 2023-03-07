@@ -191,7 +191,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 				Timestamp: timestamppb.New(eventTime),
 				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
-						Tags: []*modelv1.TagValue{
+						Tags: append([]*modelv1.TagValue{
 							// MeasureID
 							{
 								Value: &modelv1.TagValue_Id{
@@ -200,15 +200,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 									},
 								},
 							},
-							// SeriesID for merge in post processor
-							{
-								Value: &modelv1.TagValue_Str{
-									Str: &modelv1.Str{
-										Value: data[0].(string), // TODO: how to store seriesID?
-									},
-								},
-							},
-						},
+						}, data[0].(tsdb.EntityValues)...),
 					},
 				},
 				Fields: []*modelv1.FieldValue{
@@ -344,6 +336,27 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		return err
 	}
 
+	tagNames := manager.m.GetSchema().GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range manager.m.GetSchema().GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
 	// create a new "derived" measure for TopN result
 	newTopNMeasure := &databasev1.Measure{
 		Metadata: topNSchema.GetMetadata(),
@@ -351,16 +364,12 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
 				Name: TopNTagFamily,
-				Tags: []*databasev1.TagSpec{
+				Tags: append([]*databasev1.TagSpec{
 					{
 						Name: "measure_id",
 						Type: databasev1.TagType_TAG_TYPE_ID,
 					},
-					{
-						Name: "group_values",
-						Type: databasev1.TagType_TAG_TYPE_STRING,
-					},
-				},
+				}, seriesSpecs...),
 			},
 		},
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
@@ -474,7 +483,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			}
 			return flow.Data{
 				// EntityValues as identity
-				dpWithEvs.entityValues.String(),
+				dpWithEvs.entityValues,
 				// save string representation of group values as the key, i.e. v1
 				"",
 				// field value as v2
@@ -493,7 +502,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		dpWithEvs := request.(*dataPointWithEntityValues)
 		return flow.Data{
 			// EntityValues as identity
-			dpWithEvs.entityValues.String(),
+			dpWithEvs.entityValues,
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
 				return stringify(dpWithEvs.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
