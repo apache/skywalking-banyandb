@@ -1,6 +1,6 @@
 # TimeSeries Database(TSDB)
 
-TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimizing performance and ensuring that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
+TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
 
 
 ## Shard
