@@ -8,7 +8,7 @@ TSDB is a time-series storage engine designed to store and query large volumes o
 In TSDB, the data in a group is partitioned into shards based on a configurable sharding scheme. Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
 
 
-[shard](./shard.png)
+[shard](https://skywalking.apache.org/doc-graph/banyandb/v0.4.0/tsdb-shard.png)
 
 * Buffer: It is typically implemented as an in-memory queue managed by a shard. When new time-series data is ingested into the system, it is added to the end of the queue, and when the buffer reaches a specific size, the data is flushed to disk in batches.
 * SST: When a bucket of buffer becomes full or reaches a certain size threshold, it is flushed to disk as a new Sorted String Table (SST) file. This process is known as compaction.
