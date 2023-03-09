@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.4.0
 
+### Features
+
+- Add TSDB concept document.
+
 ### Chores
 
 - Bump go to 1.20.
