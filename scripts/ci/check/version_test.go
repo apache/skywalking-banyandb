@@ -28,7 +28,7 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-const GoVersion = "1.19"
+const GoVersion = "1.20"
 
 func TestGoVersion(t *testing.T) {
 	goversion, err := exec.Command("go", "version").Output()

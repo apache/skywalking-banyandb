@@ -27,13 +27,13 @@ import (
 )
 
 type (
-	// SeriesID identity a series in a shard.
+	// SeriesID identities a series in a shard.
 	SeriesID uint64
 
-	// ShardID identity a shard in a tsdb.
+	// ShardID identities a shard in a tsdb.
 	ShardID uint32
 
-	// ItemID identity an item in a series.
+	// ItemID identities an item in a series.
 	ItemID uint64
 )
 

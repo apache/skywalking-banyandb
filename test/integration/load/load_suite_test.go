@@ -100,5 +100,5 @@ var _ = SynchronizedAfterSuite(func() {
 	}
 }, func() {
 	deferFunc()
-	Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 })

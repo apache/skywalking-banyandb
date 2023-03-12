@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.19 AS base
+FROM golang:1.20 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"

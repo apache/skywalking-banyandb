@@ -2,6 +2,27 @@
 
 Release Notes.
 
+## 0.4.0
+
+### Features
+
+- Add TSDB concept document.
+
+### Chores
+
+- Bump go to 1.20.
+
+## 0.3.1
+
+### Bugs
+
+- Fix the broken of schema chain.
+- Add a timeout to all go leaking checkers.
+
+### Chores
+
+- Bump golang.org/x/net from 0.2.0 to 0.7.0.
+
 ## 0.3.0
 
 ### Features

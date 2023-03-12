@@ -43,7 +43,7 @@ var _ = Describe("Metadata", func() {
 
 	AfterEach(func() {
 		deferFn()
-		Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 
 	Context("Manage group", func() {

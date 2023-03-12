@@ -64,7 +64,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 	g.AfterEach(func() {
 		gm.Expect(conn.Close()).To(gm.Succeed())
 		deferFn()
-		gm.Eventually(gleak.Goroutines).ShouldNot(gleak.HaveLeaked(goods))
+		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 	g.It("queries a tls server", func() {
 		gm.Eventually(func(innerGm gm.Gomega) {
