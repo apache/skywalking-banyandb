@@ -168,7 +168,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	group string, data flow.Data, rankNum int,
 ) error {
 	var tagValues []*modelv1.TagValue
-	if len(t.topNSchema.GetGroupByTagNames()) > 0 && group != "" { // non-NULL group
+	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool
 		if tagValues, ok = data[3].([]*modelv1.TagValue); !ok {
 			return errors.New("fail to extract tag values from topN result")
@@ -262,7 +262,6 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval)).
 		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
-		// TODO: control whether NULL group should be generated
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[2].(int64)

@@ -112,19 +112,9 @@ func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 		sortKey := t.sortKeyExtractor(item)
 		groupKey := t.groupKeyExtractor(item)
 		aggregator := t.getOrCreateGroup(groupKey)
-		// check
 		if aggregator.checkSortKeyInBufferRange(sortKey) {
 			aggregator.put(sortKey, item)
 			aggregator.doCleanUp()
-		}
-		// avoid duplicated NULL group
-		if groupKey != "" {
-			nullAggregator := t.getOrCreateGroup("")
-			// TODO: add an option to disable NULL group
-			if nullAggregator.checkSortKeyInBufferRange(sortKey) {
-				nullAggregator.put(sortKey, item)
-				nullAggregator.doCleanUp()
-			}
 		}
 	}
 }
