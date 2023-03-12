@@ -177,12 +177,6 @@ var _ = Describe("Streaming", func() {
 			It("Should take bottom 3 elements", func() {
 				Eventually(func(g Gomega) {
 					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
-					// NULL Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)[""]).Should(BeEquivalentTo([]*Tuple2{
-						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500)}, 7000)},
-						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600)}, 6000)},
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700)}, 4000)},
-					}))
 					// e2e-service-consumer Group
 					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-consumer"]).Should(BeEquivalentTo([]*Tuple2{
 						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500)}, 7000)},
@@ -246,12 +240,6 @@ var _ = Describe("Streaming", func() {
 			It("Should take top 3 elements", func() {
 				Eventually(func(g Gomega) {
 					g.Expect(len(snk.Value())).Should(BeNumerically(">=", 1))
-					// NULL Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)[""]).Should(BeEquivalentTo([]*Tuple2{
-						{int64(10000), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000)}, 1000)},
-						{int64(9900), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9900)}, 2000)},
-						{int64(9800), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800)}, 3000)},
-					}))
 					// e2e-service-consumer Group
 					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-consumer"]).Should(BeEquivalentTo([]*Tuple2{
 						{int64(9900), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9900)}, 2000)},

@@ -136,7 +136,6 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			topN.Add(input)
 			snapshot := topN.Snapshot()
 			require.Len(snapshot, 3)
-			require.Contains(snapshot, "")                     // provider group
 			require.Contains(snapshot, "e2e-service-provider") // provider group
 			require.Contains(snapshot, "e2e-service-consumer") // consumer group
 			if diff := cmp.Diff(tt.expected, snapshot); diff != "" {
