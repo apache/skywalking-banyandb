@@ -50,11 +50,6 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			name: "DESC",
 			sort: DESC,
 			expected: map[string][]*Tuple2{
-				"": {
-					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
-					{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
-					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
-				},
 				"e2e-service-provider": {
 					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
 					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
@@ -71,11 +66,6 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			name: "DESC by default",
 			sort: 0,
 			expected: map[string][]*Tuple2{
-				"": {
-					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
-					{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
-					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
-				},
 				"e2e-service-provider": {
 					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
 					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
@@ -92,11 +82,6 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			name: "ASC",
 			sort: ASC,
 			expected: map[string][]*Tuple2{
-				"": {
-					{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
-					{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
-					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
-				},
 				"e2e-service-consumer": {
 					{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
 					{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
@@ -135,7 +120,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			}
 			topN.Add(input)
 			snapshot := topN.Snapshot()
-			require.Len(snapshot, 3)
+			require.Len(snapshot, 2)
 			require.Contains(snapshot, "e2e-service-provider") // provider group
 			require.Contains(snapshot, "e2e-service-consumer") // consumer group
 			if diff := cmp.Diff(tt.expected, snapshot); diff != "" {
