@@ -25,13 +25,15 @@ import { getStreamOrMeasure, getTableList } from '@/api/index'
 import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { jsonToYaml, yamlToJson } from '@/utils/yaml'
 import CodeMirror from '@/components2/CodeMirror/index.vue'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 
-/* const yamlRef = ref() */
+const yamlRef = ref()
 
 // Loading
 const { proxy } = getCurrentInstance()
+const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 const tagType = {
@@ -103,23 +105,14 @@ const data = reactive({
     timeValue: null,
     loading: false,
     total: 100,
-    queryInfo: {
+    /* queryInfo: {
         pagenum: 1,
         pagesize: 100
-    },
+    }, */
     tableTags: [],
     tableData: [],
-    code: ref(`apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  annotations:
-    deprecated.daemonset.template.generation: "1"
-    field.cattle.io/creatorId: user-jsgrs
-  creationTimestamp: "2022-05-16T03:08:58Z"
-  generation: 1
-  labels:
-    cattle.io/creator: norman
-    workload.user.cattle.io/workloadselector: daemonSet-default-asdf`)
+    code: null,
+    codeStorage: []
 })
 
 watch(() => route, () => {
@@ -128,14 +121,48 @@ watch(() => route, () => {
     data.type = route.params.type
     data.tableData = []
     data.tableTags = []
+
     if (data.group && data.name && data.type) {
+        initCode()
         initData()
     }
 }, {
     immediate: true,
     deep: true
 })
-
+watch(() => data.code, () => {
+    let index = data.codeStorage.findIndex(item => {
+        return item.params.group == route.params.group && item.params.name == route.params.name
+    })
+    if (index >= 0) {
+        data.codeStorage[index].params.code = data.code
+    } else {
+        route.params.code = data.code
+        data.codeStorage.push(JSON.parse(JSON.stringify(route)))
+    }
+})
+function initCode() {
+    let index = data.codeStorage.findIndex(item => {
+        return item.params.group == route.params.group && item.params.name == route.params.name
+    })
+    if (index >= 0) {
+        data.code = data.codeStorage[index].params.code
+    } else {
+        data.code = ref(
+            `timeRange:
+  begin: null
+  end: null
+offset: 1
+limit: 10
+`)
+    }
+    /* orderBy:
+      indexRuleName: ""
+      sort:
+        SORT_UNSPECIFIED: ""
+        SORT_DESC: ""
+        SORT_ASC: "" */
+}
 function initData() {
     $loadingCreate()
     getStreamOrMeasure(data.type, data.group, data.name)
@@ -147,7 +174,7 @@ function initData() {
                     return { label: item.name, value: index }
                 })
                 data.tagFamily = 0
-                getTableData()
+                handleCodeData()
             }
         })
         .finally(() => {
@@ -159,8 +186,8 @@ function getTableData() {
     data.loading = true
     setTableParam()
     let paramList = param
-    paramList.offset = data.queryInfo.pagenum
-    paramList.limit = data.queryInfo.pagesize
+    /* paramList.offset = data.queryInfo.pagenum
+    paramList.limit = data.queryInfo.pagesize */
     paramList.metadata = data.resourceData.metadata
     getTableList(paramList)
         .then((res) => {
@@ -202,11 +229,51 @@ function changeTagFamilies() {
     data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags
     getTableData()
 }
-/* function btnClick() {
-    yamlRef.value.checkYaml(code).then(() => {
-        
+function handleCodeData() {
+    const json = yamlToJson(data.code).data
+    param.offset = json.offset ? json.offset : param.offset
+    param.limit = json.limit ? json.limit : param.limit
+    /* json.orderBy ? param.orderBy = json.orderBy : null */
+    delete param.timeRange
+    if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
+        param.timeRange = json.timeRange
+    } else if (json.timeRange.begin || json.timeRange.end) {
+        ElMessage({
+            dangerouslyUseHTMLString: true,
+            showClose: true,
+            message: 'Warning: Wrong time type',
+            type: 'warning',
+            duration: 5000
+        })
+    }
+    getTableData()
+}
+function searchTableData() {
+    yamlRef.value.checkYaml(data.code).then(() => {
+        handleCodeData()
     })
-} */
+        .catch((err) => {
+            ElMessage({
+                dangerouslyUseHTMLString: true,
+                showClose: true,
+                message: `<div>${err.message}</div>`,
+                type: 'error',
+                duration: 5000
+            })
+        })
+}
+function changeDatePicker() {
+    let json = yamlToJson(data.code)
+    if (!json.data.hasOwnProperty('timeRange')) {
+        json.data.timeRange = {
+            begin: "",
+            end: ""
+        }
+    }
+    json.data.timeRange.begin = data.timeValue ? data.timeValue[0] : null
+    json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null
+    data.code = jsonToYaml(json.data).data
+}
 </script>
 
 <template>
@@ -231,11 +298,11 @@ function changeTagFamilies() {
                                 :value="item.value">
                             </el-option>
                         </el-select>
-                        <el-date-picker style="margin: 0 10px 0 10px" v-model="data.timeValue" type="datetimerange"
-                            :shortcuts="shortcuts" range-separator="to" start-placeholder="begin" end-placeholder="end"
-                            align="right">
+                        <el-date-picker @change="changeDatePicker" style="margin: 0 10px 0 10px" v-model="data.timeValue"
+                            type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
+                            end-placeholder="end" align="right">
                         </el-date-picker>
-                        <el-button size="small" :icon="Search" color="#6E38F7" plain></el-button>
+                        <el-button size="small" :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
                     </div>
                 </el-col>
                 <el-col :span="12">
@@ -260,10 +327,10 @@ function changeTagFamilies() {
                     :label="item.name" :prop="item.name" show-overflow-tooltip>
                 </el-table-column>
             </el-table>
-            <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
-                @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
-                :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
-            </el-pagination>
+            <!-- <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
+                                        @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
+                                        :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
+                                    </el-pagination> -->
         </el-card>
     </div>
 </template>
