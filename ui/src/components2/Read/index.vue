@@ -236,8 +236,10 @@ function handleCodeData() {
     /* json.orderBy ? param.orderBy = json.orderBy : null */
     delete param.timeRange
     if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
+        data.timeValue = [json.timeRange.begin, json.timeRange.end]
         param.timeRange = json.timeRange
     } else if (json.timeRange.begin || json.timeRange.end) {
+        data.timeValue = []
         ElMessage({
             dangerouslyUseHTMLString: true,
             showClose: true,
@@ -245,6 +247,8 @@ function handleCodeData() {
             type: 'warning',
             duration: 5000
         })
+    } else {
+        data.timeValue = []
     }
     getTableData()
 }
