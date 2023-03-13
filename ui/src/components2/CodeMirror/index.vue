@@ -52,17 +52,14 @@ export default {
       type: Boolean,
       default: false
     },  
-    // 主题
     theme: {
       type: String,
-      default: 'rubyblue' // 编辑器主题色
+      default: 'rubyblue'
     },
-    // 高亮选中行
     styleActiveLine: {
       type: Boolean,
       default: true
     },
-    // 自动刷新
     autoRefresh: {
       type: Boolean,
       default: true
@@ -72,7 +69,6 @@ export default {
   setup(props, { emit }) {
     const textarea = ref(null)
     const code = ref(props.modelValue)
-    // 编辑器实例
     let coder
     watch(
       () => props.modelValue,
@@ -82,26 +78,19 @@ export default {
     )
     const options = {
       mode:  'text/x-yaml',
-      // 缩进格式
       tabSize: 2,
-      // 主题，对应主题库 JS 需要提前引入
       theme: props.theme,
-      // 行号码
       lineNumbers: true,
       line: true,
-      // extraKeys: {'Ctrl': 'autocomplete'},//自定义快捷键
       readOnly: props.readonly,
       lint: props.lint,
       gutters: ['CodeMirror-lint-markers'],
-      // 光标背景行高亮
       styleActiveLine: props.styleActiveLine,
-      // 自动刷新
       autoRefresh: props.autoRefresh,
       height: '500px'
     }
     const initialize = async () => {
       try {
-      // 动态引入相关依赖
        /*  let theme = `codemirror/theme/${props.theme}.css`
         await import(theme) */
         if (props.lint) {
@@ -119,7 +108,6 @@ export default {
         }
       } catch (e) {
       }
-      // 初始化编辑器实例，传入需要被实例化的文本域对象和默认配置
       coder = CodeMirror.fromTextArea(textarea.value, options)
       coder.on('blur', coder => {
         const newValue = coder.getValue()
