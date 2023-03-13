@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Add TSDB concept document.
+- [UI] Add YAML editor for inputting query criteria.
 
 ### Chores
 

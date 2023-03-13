@@ -388,6 +388,7 @@ ISC licenses
     glob-parent 5.1.2 ISC
     graceful-fs 4.2.10 ISC
     picocolors 1.0.0 ISC
+    yaml 2.2.1 ISC
 
 ========================================================================
 MIT licenses
@@ -426,6 +427,7 @@ MIT licenses
     binary-extensions 2.2.0 MIT
     braces 3.0.2 MIT
     chokidar 3.5.3 MIT
+    codemirror 5.59.1 MIT
     combined-stream 1.0.8 MIT
     csstype 2.6.21 MIT
     dayjs 1.11.7 MIT
@@ -441,6 +443,7 @@ MIT licenses
     is-extglob 2.1.1 MIT
     is-glob 4.0.3 MIT
     is-number 7.0.0 MIT
+    js-yaml 4.1.0 MIT
     jsonfile 6.1.0 MIT
     lodash 4.17.21 MIT
     lodash-es 4.17.21 MIT
@@ -462,3 +465,9 @@ MIT licenses
     universalify 2.0.0 MIT
     vue 3.2.45 MIT
     vue-router 4.1.6 MIT
+
+========================================================================
+Python-2.0 licenses
+========================================================================
+
+    argparse 2.0.1 Python-2.0
