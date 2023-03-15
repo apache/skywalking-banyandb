@@ -75,10 +75,10 @@ axiosService.interceptors.response.use(
          * do some error handling
          */
         const resErr = error.data
-
         let msg = error.data && error.data.message ? error.data.message : error.message
         ElMessage({
-            message: msg,
+            dangerouslyUseHTMLString: true,
+            message: `${msg}<br/>Error：${error.response.data.message}`,
             type: "error",
             duration: 3000
         })

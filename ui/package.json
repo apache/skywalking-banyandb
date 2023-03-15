@@ -12,14 +12,17 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.0.10",
     "axios": "^0.27.2",
+    "codemirror": "^5.59.1",
     "echarts": "^5.3.3",
     "element-plus": "^2.2.17",
+    "js-yaml": "^4.1.0",
     "jsonfile": "^6.1.0",
     "mitt": "^3.0.0",
     "pinia": "^2.0.21",
     "sass": "^1.54.9",
     "vue": "^3.2.38",
-    "vue-router": "^4.1.5"
+    "vue-router": "^4.1.5",
+    "yaml": "^2.2.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^3.0.3",
