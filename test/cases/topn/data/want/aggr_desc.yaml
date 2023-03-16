@@ -45,7 +45,7 @@ lists:
     - key: service_id
       value:
         str:
-          value: svc_3
+          value: ""
     - key: entity_id
       value:
         str:

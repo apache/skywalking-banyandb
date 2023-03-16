@@ -22,8 +22,8 @@ topN: 1
 fieldValueSort: 1
 agg: 2
 conditions:
-- name: http.uri
+- name: service_id
   op: 1
   value:
     str:
-      value: "GET:/metrics"
+      value: "svc_1"

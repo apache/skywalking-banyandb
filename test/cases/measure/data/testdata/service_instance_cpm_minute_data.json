@@ -17,11 +17,6 @@
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
@@ -56,11 +51,6 @@
           {
             "str": {
               "value": "svc_2"
-            }
-          },
-          {
-            "str": {
-              "value": "GET:/check"
             }
           }
         ]
@@ -97,11 +87,6 @@
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
@@ -137,11 +122,6 @@
             "str": {
               "value": "svc_2"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/user/:id"
-            }
           }
         ]
       }
@@ -175,7 +155,7 @@
           },
           {
             "str": {
-              "value": "svc_3"
+              "value": ""
             }
           }
         ]

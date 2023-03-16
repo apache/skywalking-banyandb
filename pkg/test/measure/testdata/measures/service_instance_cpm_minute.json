@@ -18,10 +18,6 @@
         {
           "name": "service_id",
           "type": "TAG_TYPE_STRING"
-        },
-        {
-          "name": "http.uri",
-          "type": "TAG_TYPE_STRING"
         }
       ]
     }

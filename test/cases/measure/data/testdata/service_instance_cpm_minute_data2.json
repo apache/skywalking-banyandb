@@ -17,11 +17,6 @@
             "str": {
               "value": "svc_2"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/check"
-            }
           }
         ]
       }
@@ -55,12 +50,7 @@
           },
           {
             "str": {
-              "value": "svc_3"
-            }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
+              "value": ""
             }
           }
         ]
