@@ -10,7 +10,7 @@
   "field_name": "value",
   "field_value_sort": 0,
   "group_by_tag_names": [
-    "service_id"
+    "http.uri"
   ],
   "counters_number": 1000,
   "lru_size": 10

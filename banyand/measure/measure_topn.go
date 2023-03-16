@@ -504,14 +504,14 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			dpWithEvs.entityValues,
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
-				return stringify(dpWithEvs.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
+				return stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
 			}), "|"),
 			// field value as v2
 			// TODO: we only support int64
 			dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 			// groupBy tag values as v3
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
-				return dpWithEvs.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
+				return extractTagValue(dpWithEvs.DataPointValue, locator)
 			}),
 		}
 	}, nil
@@ -536,6 +536,17 @@ func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLoc
 	return groupTags, nil
 }
 
+func extractTagValue(dpv *measurev1.DataPointValue, locator partition.TagLocator) *modelv1.TagValue {
+	if locator.FamilyOffset >= len(dpv.GetTagFamilies()) {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	}
+	tagFamily := dpv.GetTagFamilies()[locator.FamilyOffset]
+	if locator.TagOffset >= len(tagFamily.GetTags()) {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	}
+	return tagFamily.GetTags()[locator.TagOffset]
+}
+
 func stringify(tagValue *modelv1.TagValue) string {
 	switch v := tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Str:
@@ -553,7 +564,7 @@ func stringify(tagValue *modelv1.TagValue) string {
 	case *modelv1.TagValue_StrArray:
 		return strings.Join(v.StrArray.GetValue(), ",")
 	default:
-		return "<nil>"
+		return ""
 	}
 }
 
