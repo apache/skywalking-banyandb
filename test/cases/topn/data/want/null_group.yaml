@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+lists:
 - items:
   - entity:
     - key: service_id
@@ -43,7 +44,8 @@
   - entity:
     - key: service_id
       value:
-        str: {}
+        str:
+          value: ""
     - key: entity_id
       value:
         str:
