@@ -2468,7 +2468,7 @@ TopNList contains a series of topN items
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
+| entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated |  |
 | value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
 
 

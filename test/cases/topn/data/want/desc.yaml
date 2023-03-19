@@ -17,38 +17,158 @@
 
 lists:
 - items:
-  - name: entity_2
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: ""
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
     value:
       int:
         value: "10"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+    value:
+      int:
+        value: "1"
   timestamp: "2022-10-17T12:49:00Z"
 - items:
-  - name: entity_2
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
     value:
       int:
         value: "9"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_2
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+    value:
+      int:
+        value: "2"
   timestamp: "2022-10-17T12:50:00Z"
 - items:
-  - name: entity_2
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_4
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
     value:
       int:
         value: "8"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+    value:
+      int:
+        value: "3"
   timestamp: "2022-10-17T12:51:00Z"
 - items:
-  - name: entity_3
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
     value:
       int:
         value: "11"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_2
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
+    value:
+      int:
+        value: "5"
   timestamp: "2022-10-17T12:52:00Z"
 - items:
-  - name: entity_1
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_2
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
     value:
       int:
         value: "12"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: ""
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+    value:
+      int:
+        value: "4"
   timestamp: "2022-10-17T12:53:00Z"
 - items:
-  - name: entity_1
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: ""
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
     value:
       int:
         value: "7"
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
+    value:
+      int:
+        value: "6"
   timestamp: "2022-10-17T12:54:00Z"
