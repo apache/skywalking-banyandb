@@ -20,8 +20,8 @@ package streaming
 import (
 	"testing"
 
-	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
@@ -29,7 +29,7 @@ import (
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
 	input := []flow.StreamRecord{
-		// 1. string
+		// 1. group by values
 		// 2. number
 		// 3. slices of groupBy values
 		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}}),
@@ -42,35 +42,56 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 		flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}}),
 	}
 	tests := []struct {
+		expected map[string][]*Tuple2
 		name     string
-		expected []*Tuple2
 		sort     TopNSort
 	}{
 		{
 			name: "DESC",
 			sort: DESC,
-			expected: []*Tuple2{
-				{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
-				{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
-				{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+			expected: map[string][]*Tuple2{
+				"e2e-service-provider": {
+					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
+					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}})},
+				},
+				"e2e-service-consumer": {
+					{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
+					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9800, []interface{}{"e2e-service-consumer"}})},
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
+				},
 			},
 		},
 		{
 			name: "DESC by default",
 			sort: 0,
-			expected: []*Tuple2{
-				{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
-				{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
-				{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+			expected: map[string][]*Tuple2{
+				"e2e-service-provider": {
+					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
+					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}})},
+				},
+				"e2e-service-consumer": {
+					{int64(9900), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9900, []interface{}{"e2e-service-consumer"}})},
+					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9800, []interface{}{"e2e-service-consumer"}})},
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
+				},
 			},
 		},
 		{
 			name: "ASC",
 			sort: ASC,
-			expected: []*Tuple2{
-				{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
-				{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
-				{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
+			expected: map[string][]*Tuple2{
+				"e2e-service-consumer": {
+					{int64(9500), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9500, []interface{}{"e2e-service-consumer"}})},
+					{int64(9600), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9600, []interface{}{"e2e-service-consumer"}})},
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-consumer", 9700, []interface{}{"e2e-service-consumer"}})},
+				},
+				"e2e-service-provider": {
+					{int64(9700), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9700, []interface{}{"e2e-service-provider"}})},
+					{int64(9800), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 9800, []interface{}{"e2e-service-provider"}})},
+					{int64(10000), flow.NewStreamRecordWithoutTS(flow.Data{"e2e-service-provider", 10000, []interface{}{"e2e-service-provider"}})},
+				},
 			},
 		},
 	}
@@ -85,18 +106,26 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 			} else {
 				comparator = utils.Int64Comparator
 			}
-			topN := &topNAggregator{
-				cacheSize:  3,
-				sort:       tt.sort,
-				comparator: comparator,
-				treeMap:    treemap.NewWith(comparator),
+			topN := &topNAggregatorGroup{
+				cacheSize:       3,
+				sort:            tt.sort,
+				comparator:      comparator,
+				aggregatorGroup: make(map[string]*topNAggregator),
 				sortKeyExtractor: func(record flow.StreamRecord) int64 {
 					return int64(record.Data().(flow.Data)[1].(int))
 				},
+				groupKeyExtractor: func(record flow.StreamRecord) string {
+					return record.Data().(flow.Data)[0].(string)
+				},
 			}
 			topN.Add(input)
-			require.Len(topN.Snapshot(), 3)
-			require.Equal(tt.expected, topN.Snapshot())
+			snapshot := topN.Snapshot()
+			require.Len(snapshot, 2)
+			require.Contains(snapshot, "e2e-service-provider") // provider group
+			require.Contains(snapshot, "e2e-service-consumer") // consumer group
+			if diff := cmp.Diff(tt.expected, snapshot); diff != "" {
+				t.Errorf("Snapshot() mismatch (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

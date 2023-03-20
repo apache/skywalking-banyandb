@@ -1,0 +1,228 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "7"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          },
+          {
+            "str": {
+              "value": ""
+            }
+          },
+          {
+            "null": 0
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "int": {
+          "value": 10
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "8"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          },
+          {
+            "str": {
+              "value": "GET:/metrics"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "int": {
+          "value": 9
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "9"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_4"
+            }
+          },
+          {
+            "str": {
+              "value": "GET:/check"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "int": {
+          "value": 8
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "10"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_3"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "int": {
+          "value": 11
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "11"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 50
+        }
+      },
+      {
+        "int": {
+          "value": 12
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "id": {
+              "value": "12"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": ""
+            }
+          },
+          {
+            "null": 0
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 300
+        }
+      },
+      {
+        "int": {
+          "value": 7
+        }
+      }
+    ]
+  }
+]

@@ -16,7 +16,7 @@
 # under the License.
 
 metadata:
-  name: "service_cpm_minute_top_bottom_100"
+  name: "service_instance_cpm_minute_top_bottom_100"
   group: "sw_metric"
-topN: 1
+topN: 2
 fieldValueSort: 2

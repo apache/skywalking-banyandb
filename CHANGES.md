@@ -4,6 +4,12 @@ Release Notes.
 
 ## 0.4.0
 
+### Features
+
+- Add TSDB concept document.
+- [UI] Add YAML editor for inputting query criteria.
+- Refactor TopN to support `NULL` group while keeping seriesID from the source measure.
+
 ### Chores
 
 - Bump go to 1.20.

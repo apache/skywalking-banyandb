@@ -23,6 +23,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -134,6 +135,11 @@ func (sr StreamRecord) TimestampMillis() int64 {
 // Data returns the embedded data.
 func (sr StreamRecord) Data() interface{} {
 	return sr.data
+}
+
+// Equal checks if two StreamRecord are the same.
+func (sr StreamRecord) Equal(other StreamRecord) bool {
+	return sr.ts == other.ts && cmp.Equal(sr.data, other.data)
 }
 
 // Inlet represents a type that exposes one open input.
