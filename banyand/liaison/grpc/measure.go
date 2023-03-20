@@ -79,12 +79,10 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			continue
 		}
 		iwr := &measurev1.InternalWriteRequest{
-			Request:    writeRequest,
-			ShardId:    uint32(shardID),
-			SeriesHash: tsdb.HashEntity(entity),
-		}
-		if ms.log.Debug().Enabled() {
-			iwr.EntityValues = tagValues.Encode()
+			Request:      writeRequest,
+			ShardId:      uint32(shardID),
+			SeriesHash:   tsdb.HashEntity(entity),
+			EntityValues: tagValues.Encode(),
 		}
 		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
 		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)

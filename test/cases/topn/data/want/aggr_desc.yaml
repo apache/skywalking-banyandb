@@ -17,15 +17,39 @@
 
 lists:
 - items:
-  - name: entity_1
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_2
+    - key: entity_id
+      value:
+        str:
+          value: entity_1
     value:
       int:
         value: "12"
-  - name: entity_3
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
     value:
       int:
         value: "11"
-  - name: entity_2
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: ""
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
     value:
       int:
         value: "10"

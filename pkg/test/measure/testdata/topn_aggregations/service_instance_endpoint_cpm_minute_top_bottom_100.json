@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "service_instance_endpoint_cpm_minute_top_bottom_100",
+    "group": "sw_metric"
+  },
+  "source_measure": {
+    "name": "service_instance_endpoint_cpm_minute",
+    "group": "sw_metric"
+  },
+  "field_name": "value",
+  "field_value_sort": 0,
+  "group_by_tag_names": [
+    "http.uri"
+  ],
+  "counters_number": 1000,
+  "lru_size": 10
+}

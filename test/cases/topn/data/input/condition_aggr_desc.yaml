@@ -16,14 +16,14 @@
 # under the License.
 
 metadata:
-  name: "service_cpm_minute_top_bottom_100"
+  name: "service_instance_cpm_minute_top_bottom_100"
   group: "sw_metric"
 topN: 1
 fieldValueSort: 1
 agg: 2
 conditions:
-- name: entity_id
+- name: service_id
   op: 1
   value:
     str:
-      value: entity_1
+      value: "svc_1"
