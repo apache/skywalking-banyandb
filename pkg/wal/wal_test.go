@@ -48,8 +48,8 @@ func TestWAL(t *testing.T) {
 	// ReadALL test.
 	segments, _ := log.ReadAllSegments()
 	for index, segment := range segments {
-		segmentID := segment.GetSegmentID()
-		assert.Equal(t, int(segmentID), index+1)
+		id := segment.GetSegmentID()
+		assert.Equal(t, int(id), index+1)
 	}
 	// Delete test.
 	log.Delete(segmentID)
