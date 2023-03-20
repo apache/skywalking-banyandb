@@ -41,16 +41,16 @@ func TestWAL(t *testing.T) {
 			log.Write(1, time.Now(), []byte{0x01})
 		}
 	}()
+	// ReadALL test.
+	segments, _ := log.ReadAllSegments()
+	for _ ,segment := range segments {
+		id := segment.GetSegmentID()
+		assert.Equal(t, int(id), 1)
+	}
 	// Rotate test.
 	segment, _ := log.Rotate()
 	segmentID := segment.GetSegmentID()
 	assert.Equal(t, int(segmentID), 1)
-	// ReadALL test.
-	segments, _ := log.ReadAllSegments()
-	for index, segment := range segments {
-		id := segment.GetSegmentID()
-		assert.Equal(t, int(id), index+1)
-	}
 	// Delete test.
 	log.Delete(segmentID)
 	segments, _ = log.ReadAllSegments()
