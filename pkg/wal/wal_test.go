@@ -43,7 +43,7 @@ func TestWAL(t *testing.T) {
 	}()
 	// ReadALL test.
 	segments, _ := log.ReadAllSegments()
-	for _ ,segment := range segments {
+	for _, segment := range segments {
 		id := segment.GetSegmentID()
 		assert.Equal(t, int(id), 1)
 	}
