@@ -118,7 +118,9 @@ var _ = Describe("Buffer", func() {
 			}
 
 			buffer, err := tsdb.NewBuffer(log, 1024, 16, numShards, onFlushFn)
-			defer buffer.Close()
+			defer func() {
+				_ = buffer.Close()
+			}()
 			Expect(err).ToNot(HaveOccurred())
 
 			randInt := func() int {

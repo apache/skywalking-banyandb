@@ -135,7 +135,7 @@ func (b *Buffer) Read(key []byte, ts time.Time) ([]byte, bool) {
 }
 
 // Close gracefully closes the Buffer and ensures that all pending operations are completed.
-func (b *Buffer) Close() {
+func (b *Buffer) Close() error {
 	b.closerOnce.Do(func() {
 		b.entryCloser.Done()
 		b.entryCloser.CloseThenWait()
@@ -154,6 +154,7 @@ func (b *Buffer) Close() {
 		}
 		b.flushWaitGroup.Wait()
 	})
+	return nil
 }
 
 func (b *Buffer) getShardIndex(key []byte) uint64 {
