@@ -80,7 +80,7 @@ type segment struct {
 type logRequest struct {
 	timestamp time.Time
 	data      []byte
-	seriesID  common.SeriesID
+	seriesID  []byte
 }
 
 type logEntry struct {
@@ -118,7 +118,7 @@ type WAL interface {
 	// Write a logging entity.
 	// It will return immediately when the data is written in the buffer,
 	// The returned function will be called when the entity is flushed on the persistent storage.
-	Write(seriesID common.SeriesID, timestamp time.Time, data []byte) error
+	Write(seriesID []byte, timestamp time.Time, data []byte) error
 	// Read specified segment by SegmentID.
 	Read(segmentID SegmentID) (Segment, error)
 	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
@@ -169,24 +169,31 @@ func (log *Log) runFlushTask() {
 			select {
 			case request := <-log.writeChannel:
 				bufferSize += seriesIDLength + timestampLength + len(request.data)
-				log.buffer.write(request)
+				err := log.buffer.write(request)
+				if err != nil {
+					log.l.Error().Err(err).Msg("Fail to write to buffer")
+				}
 				if bufferSize > log.options.BufferSize {
 					// Clone buffer,avoiding to block write.
 					buf := log.buffer
+					flushCh := log.flushChannel
+					log.flushChannel = make(chan string)
 					// Clear buffer to receive Log request.
 					log.clearBuffer()
-					log.asyncBatchflush(buf)
+					log.asyncBatchflush(buf, flushCh)
 				}
 			case <-timer.C:
 				buf := log.buffer
+				flushCh := log.flushChannel
+				log.flushChannel = make(chan string)
 				log.clearBuffer()
-				log.asyncBatchflush(buf)
+				log.asyncBatchflush(buf, flushCh)
 			}
 		}
 	}()
 }
 
-func (log *Log) asyncBatchflush(buffer buffer) {
+func (log *Log) asyncBatchflush(buffer buffer, flushCh chan string) {
 	go func() {
 		// Convert to byte.
 		bytesBuffer := bytes.NewBuffer([]byte{})
@@ -231,15 +238,15 @@ func (log *Log) asyncBatchflush(buffer buffer) {
 		compressionData := snappy.Encode(nil, bytesBuffer.Bytes())
 		err := os.WriteFile(log.workSegment.path, compressionData, os.ModeAppend.Perm())
 		if err != nil {
-			log.flushChannel <- flushFailFlag
+			flushCh <- flushFailFlag
 			log.l.Error().Err(err).Msg("Write WAL segment error")
 		}
 		syncError := log.workSegment.file.Sync()
 		if syncError != nil {
-			log.flushChannel <- flushFailFlag
+			flushCh <- flushFailFlag
 			log.l.Error().Err(err).Msg("Can not sync WAL segment")
 		}
-		log.flushChannel <- flushSuccessFlag
+		flushCh <- flushSuccessFlag
 	}()
 }
 
@@ -304,7 +311,7 @@ func segmentName(index uint64) string {
 // Write a logging entity.
 // It will return immediately when the data is written in the buffer,
 // The returned function will be called when the entity is flushed on the persistent storage.
-func (log *Log) Write(seriesID common.SeriesID, timestamp time.Time, data []byte) error {
+func (log *Log) Write(seriesID []byte, timestamp time.Time, data []byte) error {
 	log.writeChannel <- logRequest{
 		seriesID:  seriesID,
 		timestamp: timestamp,
@@ -375,7 +382,9 @@ func (log *Log) Delete(segmentID SegmentID) error {
 // Close all of segments and stop WAL work.
 func (log *Log) Close() error {
 	buf := log.buffer
-	log.asyncBatchflush(buf)
+	flushCh := log.flushChannel
+	log.flushChannel = make(chan string)
+	log.asyncBatchflush(buf, flushCh)
 	err := log.workSegment.file.Close()
 	if err != nil {
 		return errors.Wrap(err, "Fail to close WAL segment")
@@ -475,7 +484,14 @@ func (segment *segment) parseLogEntries() error {
 	return nil
 }
 
-func (buffer *buffer) write(request logRequest) {
-	buffer.timestampMap[request.seriesID] = append(buffer.timestampMap[request.seriesID], request.timestamp)
-	buffer.valueMap[request.seriesID] = append(buffer.valueMap[request.seriesID], request.data...)
+func (buffer *buffer) write(request logRequest) error {
+	var seriesID common.SeriesID
+	buf := bytes.NewBuffer(request.seriesID)
+	err := binary.Write(buf, binary.LittleEndian, &seriesID)
+	if err != nil {
+		return errors.Wrap(err, "SeriesId fail to convert from byte")
+	}
+	buffer.timestampMap[seriesID] = append(buffer.timestampMap[seriesID], request.timestamp)
+	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
+	return nil
 }

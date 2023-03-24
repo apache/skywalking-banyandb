@@ -38,7 +38,7 @@ func TestWAL(t *testing.T) {
 	log, _ := New("test", options)
 	go func() {
 		for {
-			log.Write(1, time.Now(), []byte{0x01})
+			log.Write([]byte{0x01}, time.Now(), []byte{0x01})
 		}
 	}()
 	// ReadALL test.
