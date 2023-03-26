@@ -41,10 +41,9 @@ type windowedFlow struct {
 
 func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 	s.wa.(*tumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
-		topNAggrFunc := &topNAggregator{
+		topNAggrFunc := &topNAggregatorGroup{
 			cacheSize: topNum,
 			sort:      DESC,
-			dirty:     false,
 		}
 		// apply user customized options
 		for _, opt := range opts {
@@ -62,48 +61,103 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 				return utils.Int64Comparator(b, a)
 			}
 		}
-		topNAggrFunc.treeMap = treemap.NewWith(topNAggrFunc.comparator)
+		topNAggrFunc.aggregatorGroup = make(map[string]*topNAggregator)
 		return topNAggrFunc
 	}
 	return s.f
 }
 
-type topNAggregator struct {
-	treeMap          *treemap.Map
-	sortKeyExtractor func(flow.StreamRecord) int64
-	comparator       utils.Comparator
-	cacheSize        int
-	currentTopNum    int
-	sort             TopNSort
-	dirty            bool
+type topNAggregatorGroup struct {
+	aggregatorGroup   map[string]*topNAggregator
+	sortKeyExtractor  func(flow.StreamRecord) int64
+	groupKeyExtractor func(flow.StreamRecord) string
+	comparator        utils.Comparator
+	cacheSize         int
+	sort              TopNSort
 }
 
-// TopNOption is the option to set up a top-n aggregator.
-type TopNOption func(aggregator *topNAggregator)
+type topNAggregator struct {
+	*topNAggregatorGroup
+	treeMap       *treemap.Map
+	currentTopNum int
+	dirty         bool
+}
+
+// TopNOption is the option to set up a top-n aggregator group.
+type TopNOption func(aggregator *topNAggregatorGroup)
 
 // WithSortKeyExtractor sets a closure to extract the sorting key.
 func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
-	return func(aggregator *topNAggregator) {
+	return func(aggregator *topNAggregatorGroup) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
+	}
+}
+
+// WithGroupKeyExtractor extract group key from the StreamRecord.
+func WithGroupKeyExtractor(groupKeyExtractor func(flow.StreamRecord) string) TopNOption {
+	return func(aggregator *topNAggregatorGroup) {
+		aggregator.groupKeyExtractor = groupKeyExtractor
 	}
 }
 
 // OrderBy sets the sorting order.
 func OrderBy(sort TopNSort) TopNOption {
-	return func(aggregator *topNAggregator) {
+	return func(aggregator *topNAggregatorGroup) {
 		aggregator.sort = sort
 	}
 }
 
-func (t *topNAggregator) Add(input []flow.StreamRecord) {
+func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 	for _, item := range input {
 		sortKey := t.sortKeyExtractor(item)
-		// check
-		if t.checkSortKeyInBufferRange(sortKey) {
-			t.put(sortKey, item)
-			t.doCleanUp()
+		groupKey := t.groupKeyExtractor(item)
+		aggregator := t.getOrCreateGroup(groupKey)
+		if aggregator.checkSortKeyInBufferRange(sortKey) {
+			aggregator.put(sortKey, item)
+			aggregator.doCleanUp()
 		}
 	}
+}
+
+func (t *topNAggregatorGroup) Snapshot() interface{} {
+	groupRanks := make(map[string][]*Tuple2)
+	for group, aggregator := range t.aggregatorGroup {
+		if !aggregator.dirty {
+			continue
+		}
+		aggregator.dirty = false
+		iter := aggregator.treeMap.Iterator()
+		items := make([]*Tuple2, 0, aggregator.currentTopNum)
+		for iter.Next() {
+			list := iter.Value().([]interface{})
+			for _, item := range list {
+				items = append(items, &Tuple2{iter.Key(), item})
+			}
+		}
+		groupRanks[group] = items
+	}
+	return groupRanks
+}
+
+func (t *topNAggregatorGroup) Dirty() bool {
+	for _, aggregator := range t.aggregatorGroup {
+		if aggregator.dirty {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *topNAggregatorGroup) getOrCreateGroup(group string) *topNAggregator {
+	aggregator, groupExist := t.aggregatorGroup[group]
+	if groupExist {
+		return aggregator
+	}
+	t.aggregatorGroup[group] = &topNAggregator{
+		topNAggregatorGroup: t,
+		treeMap:             treemap.NewWith(t.comparator),
+	}
+	return t.aggregatorGroup[group]
 }
 
 func (t *topNAggregator) doCleanUp() {
@@ -146,23 +200,6 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 		return true
 	}
 	return t.currentTopNum < t.cacheSize
-}
-
-func (t *topNAggregator) Snapshot() interface{} {
-	t.dirty = false
-	iter := t.treeMap.Iterator()
-	items := make([]*Tuple2, 0, t.currentTopNum)
-	for iter.Next() {
-		list := iter.Value().([]interface{})
-		for _, item := range list {
-			items = append(items, &Tuple2{iter.Key(), item})
-		}
-	}
-	return items
-}
-
-func (t *topNAggregator) Dirty() bool {
-	return t.dirty
 }
 
 // Tuple2 is a tuple with 2 fields. Each field may be a separate type.

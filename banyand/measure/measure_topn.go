@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -72,6 +73,11 @@ var (
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 	}
 )
+
+type dataPointWithEntityValues struct {
+	*measurev1.DataPointValue
+	entityValues tsdb.EntityValues
+}
 
 type topNStreamingProcessor struct {
 	m             *measure
@@ -134,7 +140,7 @@ func (t *topNStreamingProcessor) Close() error {
 }
 
 func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
-	tuples, ok := record.Data().([]*streaming.Tuple2)
+	tuplesGroups, ok := record.Data().(map[string][]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
 	}
@@ -142,24 +148,29 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
 	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
-	if e := t.l.Debug(); e.Enabled() {
-		e.Str("TopN", t.topNSchema.GetMetadata().GetName()).
-			Int("rankNums", len(tuples)).
-			Msg("Write a tuple")
-	}
-	for rankNum, tuple := range tuples {
-		fieldValue := tuple.V1.(int64)
-		data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-		err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, data, rankNum))
+	for group, tuples := range tuplesGroups {
+		if e := t.l.Debug(); e.Enabled() {
+			e.Str("TopN", t.topNSchema.GetMetadata().GetName()).
+				Str("group", group).
+				Int("rankNums", len(tuples)).
+				Msg("Write tuples")
+		}
+		for rankNum, tuple := range tuples {
+			fieldValue := tuple.V1.(int64)
+			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
+			err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, group, data, rankNum))
+		}
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64, data flow.Data, rankNum int) error {
+func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64,
+	group string, data flow.Data, rankNum int,
+) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
 		var ok bool
-		if tagValues, ok = data[2].([]*modelv1.TagValue); !ok {
+		if tagValues, ok = data[3].([]*modelv1.TagValue); !ok {
 			return errors.New("fail to extract tag values from topN result")
 		}
 	}
@@ -172,7 +183,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	// 1. groupValues
 	// 2. rankNumber
 	// 3. timeBucket
-	measureID := data[0].(string) + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
+	measureID := group + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
 	iwr := &measurev1.InternalWriteRequest{
 		Request: &measurev1.WriteRequest{
 			Metadata: t.topNSchema.GetMetadata(),
@@ -180,7 +191,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 				Timestamp: timestamppb.New(eventTime),
 				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
-						Tags: []*modelv1.TagValue{
+						Tags: append([]*modelv1.TagValue{
 							// MeasureID
 							{
 								Value: &modelv1.TagValue_Id{
@@ -189,15 +200,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 									},
 								},
 							},
-							// GroupValues for merge in post processor
-							{
-								Value: &modelv1.TagValue_Str{
-									Str: &modelv1.Str{
-										Value: data[0].(string),
-									},
-								},
-							},
-						},
+						}, data[0].(tsdb.EntityValues)...),
 					},
 				},
 				Fields: []*modelv1.FieldValue{
@@ -227,14 +230,15 @@ func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) tim
 }
 
 func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
-	if len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
+	if len(tagValues) != 0 && len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
 		return nil, nil, 0, errors.New("no enough tag values for the entity")
 	}
 	// entity prefix
 	// 1) source measure Name + topN aggregation Name
 	// 2) sort direction
 	// 3) rank number
-	entity := make(tsdb.EntityValues, 1+1+1+len(t.topNSchema.GetGroupByTagNames()))
+	// >4) group tag values if needed
+	entity := make(tsdb.EntityValues, 1+1+1+len(tagValues))
 	// entity prefix
 	entity[0] = tsdb.StrValue(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
 		t.topNSchema.GetMetadata().GetName()))
@@ -260,9 +264,12 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
-				return record.Data().(flow.Data)[1].(int64)
+				return record.Data().(flow.Data)[2].(int64)
 			}),
 			orderBy(t.topNSchema.GetFieldValueSort()),
+			streaming.WithGroupKeyExtractor(func(record flow.StreamRecord) string {
+				return record.Data().(flow.Data)[1].(string)
+			}),
 		).To(t).Open()
 	go t.handleError()
 	return t
@@ -307,13 +314,16 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.WriteRequest) {
+func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.InternalWriteRequest) {
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
 		for _, processorList := range manager.processorMap {
 			for _, processor := range processorList {
-				processor.src <- flow.NewStreamRecordWithTimestampPb(request.GetDataPoint(), request.GetDataPoint().GetTimestamp())
+				processor.src <- flow.NewStreamRecordWithTimestampPb(&dataPointWithEntityValues{
+					request.GetRequest().GetDataPoint(),
+					request.GetEntityValues(),
+				}, request.GetRequest().GetDataPoint().GetTimestamp())
 			}
 		}
 	}()
@@ -325,6 +335,27 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		return err
 	}
 
+	tagNames := manager.m.GetSchema().GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range manager.m.GetSchema().GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
 	// create a new "derived" measure for TopN result
 	newTopNMeasure := &databasev1.Measure{
 		Metadata: topNSchema.GetMetadata(),
@@ -332,16 +363,12 @@ func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *datab
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
 				Name: TopNTagFamily,
-				Tags: []*databasev1.TagSpec{
+				Tags: append([]*databasev1.TagSpec{
 					{
 						Name: "measure_id",
 						Type: databasev1.TagType_TAG_TYPE_ID,
 					},
-					{
-						Name: "group_values",
-						Type: databasev1.TagType_TAG_TYPE_STRING,
-					},
-				},
+				}, seriesSpecs...),
 			},
 		},
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
@@ -425,8 +452,8 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 		return nil, err
 	}
 
-	return func(_ context.Context, dataPoint any) bool {
-		tffws := dataPoint.(*measurev1.DataPointValue).GetTagFamilies()
+	return func(_ context.Context, request any) bool {
+		tffws := request.(*dataPointWithEntityValues).GetTagFamilies()
 		ok, matchErr := f.Match(logical.TagFamiliesForWrite(tffws), manager.s)
 		if matchErr != nil {
 			manager.l.Err(matchErr).Msg("fail to match criteria")
@@ -445,20 +472,22 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	}
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
-			dataPoint := request.(*measurev1.DataPointValue)
-			if len(dataPoint.GetFields()) <= fieldIdx {
-				manager.l.Warn().Interface("point", dataPoint).
+			dpWithEvs := request.(*dataPointWithEntityValues)
+			if len(dpWithEvs.GetFields()) <= fieldIdx {
+				manager.l.Warn().Interface("point", dpWithEvs.DataPointValue).
 					Str("fieldName", fieldName).
-					Int("len", len(dataPoint.GetFields())).
+					Int("len", len(dpWithEvs.GetFields())).
 					Int("fieldIdx", fieldIdx).
 					Msg("out of range")
 			}
 			return flow.Data{
+				// EntityValues as identity
+				dpWithEvs.entityValues,
 				// save string representation of group values as the key, i.e. v1
 				"",
 				// field value as v2
 				// TODO: we only support int64
-				dataPoint.GetFields()[fieldIdx].GetInt().GetValue(),
+				dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 				// groupBy tag values as v3
 				nil,
 			}
@@ -469,18 +498,20 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		return nil, err
 	}
 	return func(_ context.Context, request any) any {
-		dataPoint := request.(*measurev1.DataPointValue)
+		dpWithEvs := request.(*dataPointWithEntityValues)
 		return flow.Data{
+			// EntityValues as identity
+			dpWithEvs.entityValues,
 			// save string representation of group values as the key, i.e. v1
 			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
-				return stringify(dataPoint.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset])
+				return stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
 			}), "|"),
 			// field value as v2
 			// TODO: we only support int64
-			dataPoint.GetFields()[fieldIdx].GetInt().GetValue(),
+			dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 			// groupBy tag values as v3
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
-				return dataPoint.GetTagFamilies()[locator.FamilyOffset].GetTags()[locator.TagOffset]
+				return extractTagValue(dpWithEvs.DataPointValue, locator)
 			}),
 		}
 	}, nil
@@ -495,7 +526,7 @@ func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLoc
 	for _, groupByName := range groupByNames {
 		fIdx, tIdx, spec := pbv1.FindTagByName(m.GetTagFamilies(), groupByName)
 		if spec == nil {
-			return nil, errors.New("tag is not found")
+			return nil, fmt.Errorf("tag %s is not found", groupByName)
 		}
 		groupTags = append(groupTags, partition.TagLocator{
 			FamilyOffset: fIdx,
@@ -503,6 +534,17 @@ func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLoc
 		})
 	}
 	return groupTags, nil
+}
+
+func extractTagValue(dpv *measurev1.DataPointValue, locator partition.TagLocator) *modelv1.TagValue {
+	if locator.FamilyOffset >= len(dpv.GetTagFamilies()) {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	}
+	tagFamily := dpv.GetTagFamilies()[locator.FamilyOffset]
+	if locator.TagOffset >= len(tagFamily.GetTags()) {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	}
+	return tagFamily.GetTags()[locator.TagOffset]
 }
 
 func stringify(tagValue *modelv1.TagValue) string {
@@ -522,7 +564,7 @@ func stringify(tagValue *modelv1.TagValue) string {
 	case *modelv1.TagValue_StrArray:
 		return strings.Join(v.StrArray.GetValue(), ",")
 	default:
-		return "<nil>"
+		return ""
 	}
 }
 

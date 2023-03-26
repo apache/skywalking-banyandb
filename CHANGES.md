@@ -8,6 +8,8 @@ Release Notes.
 
 - Add TSDB concept document.
 - [UI] Add YAML editor for inputting query criteria.
+- Refactor TopN to support `NULL` group while keeping seriesID from the source measure.
+- Add a sharded buffer to TSDB.
 
 ### Chores
 
