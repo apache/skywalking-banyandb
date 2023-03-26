@@ -201,7 +201,11 @@ function getTableData() {
     data.tableData = []
     data.loading = true
     setTableParam()
-    let paramList = param
+    let paramList = JSON.parse(JSON.stringify(param))
+    if(data.type == 'measure') {
+        paramList.tagProjection = paramList.projection
+        delete paramList.projection
+    }
     /* paramList.offset = data.queryInfo.pagenum
     paramList.limit = data.queryInfo.pagesize */
     paramList.metadata = data.resourceData.metadata
