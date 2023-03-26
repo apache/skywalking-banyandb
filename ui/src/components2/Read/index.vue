@@ -47,6 +47,15 @@ const tagType = {
 }
 const shortcuts = [
     {
+        text: 'Last 15 minutes',
+        value: () => {
+            const end = new Date()
+            const start = new Date()
+            start.setTime(start.getTime() - 900 * 1000)
+            return [start, end]
+        }
+    },
+    {
         text: 'Last week',
         value: () => {
             const end = new Date()
@@ -148,11 +157,16 @@ function initCode() {
     if (index >= 0) {
         data.code = data.codeStorage[index].params.code
     } else {
+        let timeRange = {
+            timeRange: {
+                begin: new Date(new Date() - 15),
+                end: new Date()
+            }
+        }
+        timeRange.timeRange.begin.setTime(timeRange.timeRange.begin.getTime() - 900 * 1000)
+        timeRange = jsonToYaml(timeRange).data
         data.code = ref(
-            `timeRange:
-  begin: null
-  end: null
-offset: 1
+            `${timeRange}offset: 1
 limit: 10
 orderBy:
   indexRuleName: ""
@@ -191,7 +205,7 @@ function getTableData() {
     /* paramList.offset = data.queryInfo.pagenum
     paramList.limit = data.queryInfo.pagesize */
     paramList.metadata = data.resourceData.metadata
-    getTableList(paramList)
+    getTableList(paramList, data.type)
         .then((res) => {
             if (res.status == 200) {
                 setTableData(res.data.elements)
@@ -337,9 +351,9 @@ function changeDatePicker() {
                 </el-table-column>
             </el-table>
             <!-- <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
-                                            @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
-                                            :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
-                                        </el-pagination> -->
+                                                    @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
+                                                    :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
+                                                </el-pagination> -->
         </el-card>
     </div>
 </template>
