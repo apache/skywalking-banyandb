@@ -26,6 +26,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/banyandb"
+	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/dgraph-io/badger/v3/y"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -47,6 +48,10 @@ type badgerTSS struct {
 	badger.TSet
 	db     *badger.DB
 	dbOpts badger.Options
+}
+
+func (b *badgerTSS) Handover(skl *skl.Skiplist) error {
+	return b.db.HandoverIterator(skl.NewUniIterator(false))
 }
 
 func (b *badgerTSS) Stats() (s observability.Statistics) {

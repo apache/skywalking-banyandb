@@ -25,6 +25,7 @@ import (
 	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/dgraph-io/badger/v3/y"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -105,7 +106,7 @@ func NewBuffer(log *logger.Logger, flushSize, writeConcurrency, numShards int, o
 
 // Write adds a key-value pair with a timestamp to the appropriate shard bucket in the buffer.
 func (b *Buffer) Write(key, value []byte, timestamp time.Time) {
-	if !b.entryCloser.AddRunning() {
+	if b == nil || !b.entryCloser.AddRunning() {
 		return
 	}
 	defer b.entryCloser.Done()
@@ -119,6 +120,10 @@ func (b *Buffer) Write(key, value []byte, timestamp time.Time) {
 
 // Read retrieves the value associated with the given key and timestamp from the appropriate shard bucket in the buffer.
 func (b *Buffer) Read(key []byte, ts time.Time) ([]byte, bool) {
+	if b == nil || !b.entryCloser.AddRunning() {
+		return nil, false
+	}
+	defer b.entryCloser.Done()
 	keyWithTS := y.KeyWithTs(key, uint64(ts.UnixNano()))
 	index := b.getShardIndex(key)
 	epoch := uint64(ts.UnixNano())
@@ -155,6 +160,25 @@ func (b *Buffer) Close() error {
 		b.flushWaitGroup.Wait()
 	})
 	return nil
+}
+
+// Stats returns the statistics for the buffer.
+func (b *Buffer) Stats() ([]string, []observability.Statistics) {
+	names := make([]string, b.numShards)
+	stats := make([]observability.Statistics, b.numShards)
+	for i := 0; i < b.numShards; i++ {
+		names[i] = fmt.Sprintf("buffer-%d", i)
+		var size, maxSize int64
+		for _, l := range b.buckets[i].getAll() {
+			size += l.MemSize()
+			maxSize += int64(b.buckets[i].size)
+		}
+		stats[i] = observability.Statistics{
+			MemBytes:    size,
+			MaxMemBytes: maxSize,
+		}
+	}
+	return names, stats
 }
 
 func (b *Buffer) getShardIndex(key []byte) uint64 {

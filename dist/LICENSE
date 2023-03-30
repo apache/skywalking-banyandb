@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/badger/v3 v3.0.0-20221227124922-b88a2f7d336f Apache-2.0
+    github.com/SkyAPM/badger/v3 v3.0.0-20230329010346-dfdf57f0581b Apache-2.0
     github.com/blevesearch/segment v0.9.0 Apache-2.0
     github.com/blevesearch/vellum v1.0.7 Apache-2.0
     github.com/coreos/go-semver v0.3.0 Apache-2.0

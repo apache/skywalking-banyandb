@@ -25,6 +25,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/options"
+	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -76,15 +77,6 @@ type Store interface {
 	Reader
 }
 
-// TimeSeriesWriter allows writing to a time-series storage.
-type TimeSeriesWriter interface {
-	// Put a value with a timestamp/version
-	Put(key, val []byte, ts uint64) error
-	// PutAsync a value with a timestamp/version asynchronously.
-	// Injected "f" func will notice the result of value write.
-	PutAsync(key, val []byte, ts uint64, f func(error)) error
-}
-
 // TimeSeriesReader allows retrieving data from a time-series storage.
 type TimeSeriesReader interface {
 	// Get a value by its key and timestamp/version
@@ -95,7 +87,7 @@ type TimeSeriesReader interface {
 type TimeSeriesStore interface {
 	observability.Observable
 	io.Closer
-	TimeSeriesWriter
+	Handover(skl *skl.Skiplist) error
 	TimeSeriesReader
 }
 
@@ -191,6 +183,7 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 	if btss.dbOpts.MemTableSize < 8<<20 {
 		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
 	}
+	btss.dbOpts = btss.dbOpts.WithInTable()
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
 	if err != nil {
