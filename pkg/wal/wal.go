@@ -37,6 +37,7 @@ import (
 const (
 	segmentNamePrefix   = "seg"
 	segmentNameSuffix   = ".wal"
+	batchWriteLength    = 8
 	entryLength         = 8
 	seriesIDLength      = 8
 	countLength         = 4
@@ -61,6 +62,7 @@ type Log struct {
 	flushChannel    chan string
 	path            string
 	options         Options
+	closeFlag       bool
 }
 
 // Options for creating Write-ahead Logging.
@@ -73,7 +75,7 @@ type Options struct {
 type segment struct {
 	file       *os.File
 	path       string
-	logEntries []*logEntry
+	logEntries []LogEntry
 	segmentID  SegmentID
 }
 
@@ -95,6 +97,7 @@ type logEntry struct {
 type buffer struct {
 	timestampMap map[common.SeriesID][]time.Time
 	valueMap     map[common.SeriesID][]byte
+	size         int
 }
 
 // DefaultOptions for Open().
@@ -107,7 +110,14 @@ var DefaultOptions = &Options{
 // Segment allows reading underlying segments that hold WAl entities.
 type Segment interface {
 	GetSegmentID() SegmentID
-	GetLogEntries() []*logEntry
+	GetLogEntries() []LogEntry
+}
+
+// LogEntry used for attain detail value of WAL entry.
+type LogEntry interface {
+	GetSeriesID() common.SeriesID
+	GetTimestamp() []time.Time
+	GetBinary() []byte
 }
 
 // WAL denotes a Write-ahead logging.
@@ -176,18 +186,20 @@ func (log *Log) runFlushTask() {
 				if bufferSize > log.options.BufferSize {
 					// Clone buffer,avoiding to block write.
 					buf := log.buffer
-					flushCh := log.flushChannel
-					log.flushChannel = make(chan string)
 					// Clear buffer to receive Log request.
-					log.clearBuffer()
-					log.asyncBatchflush(buf, flushCh)
+					log.newBuffer()
+					if log.closeFlag {
+						return
+					}
+					log.asyncBatchflush(buf, log.flushChannel)
 				}
 			case <-timer.C:
 				buf := log.buffer
-				flushCh := log.flushChannel
-				log.flushChannel = make(chan string)
-				log.clearBuffer()
-				log.asyncBatchflush(buf, flushCh)
+				log.newBuffer()
+				if log.closeFlag {
+					return
+				}
+				log.asyncBatchflush(buf, log.flushChannel)
 			}
 		}
 	}()
@@ -196,7 +208,12 @@ func (log *Log) runFlushTask() {
 func (log *Log) asyncBatchflush(buffer buffer, flushCh chan string) {
 	go func() {
 		// Convert to byte.
+		var err error
 		bytesBuffer := bytes.NewBuffer([]byte{})
+		err = binary.Write(bytesBuffer, binary.LittleEndian, int64(log.buffer.size))
+		if err != nil {
+			log.l.Error().Err(err).Msg("EntryLength fail to convert to byte")
+		}
 		for seriesID, timestamp := range buffer.timestampMap {
 			count := 0
 			var timeBytes []byte
@@ -207,7 +224,6 @@ func (log *Log) asyncBatchflush(buffer buffer, flushCh chan string) {
 			}
 			count /= timestampLength
 			entryLength := seriesIDLength + count + len(timeBytes) + binaryLength + len(buffer.valueMap[seriesID])
-			var err error
 			err = binary.Write(bytesBuffer, binary.LittleEndian, int64(entryLength))
 			if err != nil {
 				log.l.Error().Err(err).Msg("EntryLength fail to convert to byte")
@@ -236,27 +252,33 @@ func (log *Log) asyncBatchflush(buffer buffer, flushCh chan string) {
 
 		// Compression and flush.
 		compressionData := snappy.Encode(nil, bytesBuffer.Bytes())
-		err := os.WriteFile(log.workSegment.path, compressionData, os.ModeAppend.Perm())
+		err = os.WriteFile(log.workSegment.path, compressionData, os.ModePerm)
 		if err != nil {
+			if log.closeFlag {
+				return
+			}
 			flushCh <- flushFailFlag
 			log.l.Error().Err(err).Msg("Write WAL segment error")
 		}
 		syncError := log.workSegment.file.Sync()
 		if syncError != nil {
+			if log.closeFlag {
+				return
+			}
 			flushCh <- flushFailFlag
-			log.l.Error().Err(err).Msg("Can not sync WAL segment")
+			log.l.Error().Err(syncError).Msg("Can not sync WAL segment")
+		}
+		if log.closeFlag {
+			return
 		}
 		flushCh <- flushSuccessFlag
 	}()
 }
 
-func (log *Log) clearBuffer() {
-	for si := range log.buffer.timestampMap {
-		delete(log.buffer.timestampMap, si)
-	}
-	for si := range log.buffer.valueMap {
-		delete(log.buffer.valueMap, si)
-	}
+func (log *Log) newBuffer() {
+	log.buffer.timestampMap = make(map[common.SeriesID][]time.Time)
+	log.buffer.valueMap = make(map[common.SeriesID][]byte)
+	log.buffer.size = 0
 }
 
 func (log *Log) load() error {
@@ -280,6 +302,10 @@ func (log *Log) load() error {
 			segmentID: SegmentID(segmentID),
 			path:      filepath.Join(log.path, segmentName(segmentID)),
 		}
+		_, err = os.OpenFile(segment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+		if err != nil {
+			return errors.Wrap(err, "Open WAL segment error")
+		}
 		if segment.parseLogEntries() != nil {
 			return errors.New("Fail to parse log entries")
 		}
@@ -297,9 +323,18 @@ func (log *Log) load() error {
 	} else {
 		log.workSegment = log.segmentIndexMap[workSegmentID]
 	}
-	log.workSegment.file, err = os.OpenFile(log.workSegment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModeAppend.Perm())
+	log.workSegment.file, err = os.OpenFile(log.workSegment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
 	if err != nil {
 		return errors.Wrap(err, "Open WAL segment error")
+	}
+
+	log.closeFlag = false
+	log.flushChannel = make(chan string)
+	log.writeChannel = make(chan logRequest)
+	log.buffer = buffer{
+		timestampMap: make(map[common.SeriesID][]time.Time),
+		valueMap:     make(map[common.SeriesID][]byte),
+		size:         0,
 	}
 	return nil
 }
@@ -357,7 +392,7 @@ func (log *Log) Rotate() (Segment, error) {
 		path:      filepath.Join(log.path, segmentName(uint64(segmentID))),
 	}
 	var err error
-	segment.file, err = os.OpenFile(segment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModeAppend.Perm())
+	segment.file, err = os.OpenFile(segment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
 	if err != nil {
 		return nil, errors.Wrap(err, "Open WAL segment error")
 	}
@@ -382,9 +417,10 @@ func (log *Log) Delete(segmentID SegmentID) error {
 // Close all of segments and stop WAL work.
 func (log *Log) Close() error {
 	buf := log.buffer
-	flushCh := log.flushChannel
-	log.flushChannel = make(chan string)
-	log.asyncBatchflush(buf, flushCh)
+	log.asyncBatchflush(buf, log.flushChannel)
+	close(log.writeChannel)
+	log.closeFlag = true
+	close(log.flushChannel)
 	err := log.workSegment.file.Close()
 	if err != nil {
 		return errors.Wrap(err, "Fail to close WAL segment")
@@ -396,7 +432,7 @@ func (segment *segment) GetSegmentID() SegmentID {
 	return segment.segmentID
 }
 
-func (segment *segment) GetLogEntries() []*logEntry {
+func (segment *segment) GetLogEntries() []LogEntry {
 	return segment.logEntries
 }
 
@@ -406,8 +442,11 @@ func (segment *segment) parseLogEntries() error {
 	if err != nil {
 		return errors.Wrap(err, "Fail to read WAL segment")
 	}
-	var logEntries []*logEntry
+	var logEntries []LogEntry
+	oldPos := 0
 	pos := 0
+	parsebatchWriteLenFlag := true
+	var batchWriteLen int64
 	var data []byte
 	var buffer *bytes.Buffer
 	var length int64
@@ -416,28 +455,45 @@ func (segment *segment) parseLogEntries() error {
 	var timestamp []time.Time
 	var binaryLen int16
 	for {
-		if len(filebytes) <= pos+entryLength {
-			break
+		if parsebatchWriteLenFlag {
+			if len(filebytes) <= batchWriteLength {
+				break
+			}
+			data = filebytes[pos : pos+batchWriteLength]
+			buffer = bytes.NewBuffer(data)
+			err = binary.Write(buffer, binary.LittleEndian, &batchWriteLen)
+			if err != nil {
+				return errors.Wrap(err, "BatchWriteLength fail to convert from byte")
+			}
+			if len(filebytes) <= int(batchWriteLen) {
+				break
+			}
+			pos += batchWriteLength
+			oldPos = pos
+			parsebatchWriteLenFlag = false
 		}
+
 		// Parse entryLength.
 		data = filebytes[pos : pos+entryLength]
 		buffer = bytes.NewBuffer(data)
 		err = binary.Write(buffer, binary.LittleEndian, &length)
 		if err != nil {
-			return errors.Wrap(err, "Entrylength fail to convert from byte")
+			return errors.Wrap(err, "EntryLength fail to convert from byte")
 		}
 		pos += int(entryLength)
 		if len(filebytes) < pos+int(length) {
 			break
 		}
+
 		// Parse seriesID.
 		data = filebytes[pos : pos+seriesIDLength]
 		buffer = bytes.NewBuffer(data)
 		err = binary.Write(buffer, binary.LittleEndian, &seriesID)
 		if err != nil {
-			return errors.Wrap(err, "SeriesId fail to convert from byte")
+			return errors.Wrap(err, "SeriesID fail to convert from byte")
 		}
 		pos += seriesIDLength
+
 		// Parse count.
 		data = filebytes[pos : pos+countLength]
 		buffer = bytes.NewBuffer(data)
@@ -446,6 +502,7 @@ func (segment *segment) parseLogEntries() error {
 			return errors.Wrap(err, "Count fail to convert from byte")
 		}
 		pos += countLength
+
 		// Parse timestamp.
 		for i := 0; i <= int(count); i++ {
 			timeStr := string(filebytes[pos : pos+timestampLength])
@@ -456,6 +513,7 @@ func (segment *segment) parseLogEntries() error {
 			timestamp = append(timestamp, time)
 			pos += timestampLength
 		}
+
 		// Parse binary Length.
 		data = filebytes[pos : pos+binaryLength]
 		buffer = bytes.NewBuffer(data)
@@ -464,6 +522,7 @@ func (segment *segment) parseLogEntries() error {
 			return errors.Wrap(err, "Binary Length fail to convert from byte")
 		}
 		pos += binaryLength
+
 		// Parse value.
 		data = filebytes[pos : pos+int(binaryLen)]
 		logEntry := &logEntry{
@@ -474,14 +533,30 @@ func (segment *segment) parseLogEntries() error {
 			binaryLength: binaryLen,
 			binary:       data,
 		}
+
 		logEntries = append(logEntries, logEntry)
 		pos += int(binaryLen)
 		if pos == len(filebytes) {
 			break
 		}
+		if pos-oldPos == int(batchWriteLen) {
+			parsebatchWriteLenFlag = true
+		}
 	}
 	segment.logEntries = logEntries
 	return nil
+}
+
+func (logEntry *logEntry) GetSeriesID() common.SeriesID {
+	return logEntry.seriesID
+}
+
+func (logEntry *logEntry) GetTimestamp() []time.Time {
+	return logEntry.timestamp
+}
+
+func (logEntry *logEntry) GetBinary() []byte {
+	return logEntry.binary
 }
 
 func (buffer *buffer) write(request logRequest) error {
@@ -490,6 +565,11 @@ func (buffer *buffer) write(request logRequest) error {
 	err := binary.Write(buf, binary.LittleEndian, &seriesID)
 	if err != nil {
 		return errors.Wrap(err, "SeriesId fail to convert from byte")
+	}
+	if buffer.timestampMap[seriesID] == nil {
+		buffer.size += seriesIDLength + timestampLength + len(request.data)
+	} else {
+		buffer.size += timestampLength + len(request.data)
 	}
 	buffer.timestampMap[seriesID] = append(buffer.timestampMap[seriesID], request.timestamp)
 	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
