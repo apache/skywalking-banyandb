@@ -27,7 +27,7 @@ EXPOSE 2345
 
 ENTRYPOINT ["air"]
 
-FROM golang:1.19 AS base
+FROM golang:1.20 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"

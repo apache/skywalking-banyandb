@@ -60,7 +60,7 @@ func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 	s.curry(mtBytes).WithLabelValues("series").Set(float64(seriesStat.MemBytes))
 	s.curry(maxMtBytes).WithLabelValues("series").Set(float64(seriesStat.MaxMemBytes))
 	segStats := observability.Statistics{}
-	blockStats := newBlockStat()
+	blockStats := make(map[string]observability.Statistics)
 	for _, seg := range s.segmentController.segments() {
 		segStat := seg.Stats()
 		segStats.MaxMemBytes += segStat.MaxMemBytes
@@ -75,6 +75,8 @@ func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 				if ok {
 					bsc.MaxMemBytes += bs.MaxMemBytes
 					bsc.MemBytes += bs.MemBytes
+				} else {
+					blockStats[names[i]] = bs
 				}
 			}
 		}
@@ -94,12 +96,4 @@ func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
 		"database": s.position.Database,
 		"shard":    s.position.Shard,
 	})
-}
-
-func newBlockStat() map[string]*observability.Statistics {
-	return map[string]*observability.Statistics{
-		componentMain:              {},
-		componentSecondInvertedIdx: {},
-		componentSecondLSMIdx:      {},
-	}
 }

@@ -378,8 +378,10 @@ func (b *block) stats() (names []string, stats []observability.Statistics) {
 		return
 	}
 	bnn, bss := b.buffer.Stats()
-	names = append(names, bnn...)
-	stats = append(stats, bss...)
+	if bnn != nil {
+		names = append(names, bnn...)
+		stats = append(stats, bss...)
+	}
 	names = append(names, componentSecondInvertedIdx, componentSecondLSMIdx)
 	stats = append(stats, b.invertedIndex.Stats(), b.lsmIndex.Stats())
 	return names, stats

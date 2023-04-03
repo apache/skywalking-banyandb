@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/dgraph-io/badger/v3/y"
@@ -31,7 +32,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const defaultSize = 1 << 20 // 1MB
+const (
+	defaultSize = 1 << 20 // 1MB
+	nodeAlign   = int(unsafe.Sizeof(uint64(0))) - 1
+)
 
 type operation struct {
 	key   []byte
@@ -54,8 +58,8 @@ type bufferShardBucket struct {
 	log            *logger.Logger
 	immutables     []*skl.Skiplist
 	index          int
-	flushSize      int
-	size           int
+	capacity       int
+	volume         int
 	mutex          sync.RWMutex
 }
 
@@ -73,10 +77,6 @@ type Buffer struct {
 
 // NewBuffer creates a new Buffer instance with the given parameters.
 func NewBuffer(log *logger.Logger, flushSize, writeConcurrency, numShards int, onFlushFn onFlush) (*Buffer, error) {
-	size := flushSize
-	if size < defaultSize {
-		size = defaultSize
-	}
 	buckets := make([]bufferShardBucket, numShards)
 	buffer := &Buffer{
 		buckets:     buckets,
@@ -90,9 +90,8 @@ func NewBuffer(log *logger.Logger, flushSize, writeConcurrency, numShards int, o
 	for i := 0; i < numShards; i++ {
 		buckets[i] = bufferShardBucket{
 			index:          i,
-			size:           size,
-			mutable:        skl.NewSkiplist(int64(size)),
-			flushSize:      flushSize,
+			capacity:       flushSize,
+			mutable:        skl.NewSkiplist(int64(flushSize)),
 			writeCh:        make(chan operation, writeConcurrency),
 			flushCh:        make(chan flushEvent, 1),
 			writeWaitGroup: &buffer.writeWaitGroup,
@@ -164,6 +163,9 @@ func (b *Buffer) Close() error {
 
 // Stats returns the statistics for the buffer.
 func (b *Buffer) Stats() ([]string, []observability.Statistics) {
+	if b == nil || !b.entryCloser.AddRunning() {
+		return nil, nil
+	}
 	names := make([]string, b.numShards)
 	stats := make([]observability.Statistics, b.numShards)
 	for i := 0; i < b.numShards; i++ {
@@ -171,7 +173,7 @@ func (b *Buffer) Stats() ([]string, []observability.Statistics) {
 		var size, maxSize int64
 		for _, l := range b.buckets[i].getAll() {
 			size += l.MemSize()
-			maxSize += int64(b.buckets[i].size)
+			maxSize += int64(b.buckets[i].capacity)
 		}
 		stats[i] = observability.Statistics{
 			MemBytes:    size,
@@ -217,21 +219,24 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 	go func() {
 		defer bsb.writeWaitGroup.Done()
 		for op := range bsb.writeCh {
-			bsb.mutex.Lock()
-			if bsb.mutable.MemSize() >= int64(bsb.flushSize) {
+			k := y.KeyWithTs(op.key, op.epoch)
+			v := y.ValueStruct{Value: op.value}
+			bsb.volume += len(k) + int(v.EncodedSize()) + skl.MaxNodeSize + nodeAlign
+			if bsb.volume >= bsb.capacity || bsb.mutable.MemSize() >= int64(bsb.capacity) {
 				select {
 				case bsb.flushCh <- flushEvent{data: bsb.mutable}:
 				default:
 				}
+				bsb.mutex.Lock()
 				bsb.swap()
+				bsb.mutex.Unlock()
 			}
-			bsb.mutex.Unlock()
-			bsb.mutable.Put(y.KeyWithTs(op.key, op.epoch), y.ValueStruct{Value: op.value, Version: op.epoch})
+			bsb.mutable.Put(k, v)
 		}
 	}()
 }
 
 func (bsb *bufferShardBucket) swap() {
 	bsb.immutables = append(bsb.immutables, bsb.mutable)
-	bsb.mutable = skl.NewSkiplist(int64(bsb.size))
+	bsb.mutable = skl.NewSkiplist(int64(bsb.capacity))
 }
