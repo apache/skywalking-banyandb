@@ -59,7 +59,6 @@ type bufferShardBucket struct {
 	immutables     []*skl.Skiplist
 	index          int
 	capacity       int
-	volume         int
 	mutex          sync.RWMutex
 }
 
@@ -172,6 +171,9 @@ func (b *Buffer) Stats() ([]string, []observability.Statistics) {
 		names[i] = fmt.Sprintf("buffer-%d", i)
 		var size, maxSize int64
 		for _, l := range b.buckets[i].getAll() {
+			if l == nil {
+				continue
+			}
 			size += l.MemSize()
 			maxSize += int64(b.buckets[i].capacity)
 		}
@@ -218,15 +220,17 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 	}()
 	go func() {
 		defer bsb.writeWaitGroup.Done()
+		volume := 0
 		for op := range bsb.writeCh {
 			k := y.KeyWithTs(op.key, op.epoch)
 			v := y.ValueStruct{Value: op.value}
-			bsb.volume += len(k) + int(v.EncodedSize()) + skl.MaxNodeSize + nodeAlign
-			if bsb.volume >= bsb.capacity || bsb.mutable.MemSize() >= int64(bsb.capacity) {
+			volume += len(k) + int(v.EncodedSize()) + skl.MaxNodeSize + nodeAlign
+			if volume >= bsb.capacity || bsb.mutable.MemSize() >= int64(bsb.capacity) {
 				select {
 				case bsb.flushCh <- flushEvent{data: bsb.mutable}:
 				default:
 				}
+				volume = 0
 				bsb.mutex.Lock()
 				bsb.swap()
 				bsb.mutex.Unlock()

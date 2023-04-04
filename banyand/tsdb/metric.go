@@ -18,8 +18,10 @@
 package tsdb
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -50,10 +52,15 @@ func init() {
 	)
 }
 
-func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
+func (s *shard) stat(_ time.Time, _ *logger.Logger) (r bool) {
+	r = true
 	defer func() {
 		if r := recover(); r != nil {
-			s.l.Warn().Interface("r", r).Msg("recovered")
+			err, ok := r.(error)
+			if !ok {
+				err = fmt.Errorf("%v", r)
+			}
+			s.l.Warn().Err(errors.WithStack(err)).Msg("recovered")
 		}
 	}()
 	seriesStat := s.seriesDatabase.Stats()
@@ -87,7 +94,7 @@ func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 		s.curry(mtBytes).WithLabelValues(name).Set(float64(bs.MemBytes))
 		s.curry(maxMtBytes).WithLabelValues(name).Set(float64(bs.MaxMemBytes))
 	}
-	return true
+	return
 }
 
 func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
