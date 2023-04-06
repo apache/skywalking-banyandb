@@ -18,8 +18,10 @@
 package tsdb
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -50,17 +52,22 @@ func init() {
 	)
 }
 
-func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
+func (s *shard) stat(_ time.Time, _ *logger.Logger) (r bool) {
+	r = true
 	defer func() {
 		if r := recover(); r != nil {
-			s.l.Warn().Interface("r", r).Msg("recovered")
+			err, ok := r.(error)
+			if !ok {
+				err = fmt.Errorf("%v", r)
+			}
+			s.l.Warn().Err(errors.WithStack(err)).Msg("recovered")
 		}
 	}()
 	seriesStat := s.seriesDatabase.Stats()
 	s.curry(mtBytes).WithLabelValues("series").Set(float64(seriesStat.MemBytes))
 	s.curry(maxMtBytes).WithLabelValues("series").Set(float64(seriesStat.MaxMemBytes))
 	segStats := observability.Statistics{}
-	blockStats := newBlockStat()
+	blockStats := make(map[string]observability.Statistics)
 	for _, seg := range s.segmentController.segments() {
 		segStat := seg.Stats()
 		segStats.MaxMemBytes += segStat.MaxMemBytes
@@ -75,6 +82,8 @@ func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 				if ok {
 					bsc.MaxMemBytes += bs.MaxMemBytes
 					bsc.MemBytes += bs.MemBytes
+				} else {
+					blockStats[names[i]] = bs
 				}
 			}
 		}
@@ -85,7 +94,7 @@ func (s *shard) stat(_ time.Time, _ *logger.Logger) bool {
 		s.curry(mtBytes).WithLabelValues(name).Set(float64(bs.MemBytes))
 		s.curry(maxMtBytes).WithLabelValues(name).Set(float64(bs.MaxMemBytes))
 	}
-	return true
+	return
 }
 
 func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
@@ -94,12 +103,4 @@ func (s *shard) curry(gv *prometheus.GaugeVec) *prometheus.GaugeVec {
 		"database": s.position.Database,
 		"shard":    s.position.Shard,
 	})
-}
-
-func newBlockStat() map[string]*observability.Statistics {
-	return map[string]*observability.Statistics{
-		componentMain:              {},
-		componentSecondInvertedIdx: {},
-		componentSecondLSMIdx:      {},
-	}
 }

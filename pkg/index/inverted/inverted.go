@@ -165,6 +165,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	fk := fieldKey.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -210,6 +211,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	fk := field.Key.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -242,6 +244,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	analyzer := analyzers[fieldKey.Analyzer]
 	fk := fieldKey.MarshalIndexRule()
 	query := bluge.NewBooleanQuery()

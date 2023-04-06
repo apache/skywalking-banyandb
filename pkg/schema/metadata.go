@@ -34,6 +34,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -196,7 +197,7 @@ func (sr *schemaRepo) Watcher() {
 							err = sr.deleteResource(evt.Metadata)
 						}
 					}
-					if err != nil {
+					if err != nil && !errors.Is(err, schema.ErrClosed) {
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
 						select {
 						case sr.eventCh <- evt:
