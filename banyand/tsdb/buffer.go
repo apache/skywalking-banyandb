@@ -125,7 +125,9 @@ func (b *Buffer) Read(key []byte, ts time.Time) ([]byte, bool) {
 	keyWithTS := y.KeyWithTs(key, uint64(ts.UnixNano()))
 	index := b.getShardIndex(key)
 	epoch := uint64(ts.UnixNano())
-	for _, bk := range b.buckets[index].getAll() {
+	ll, deferFn := b.buckets[index].getAll()
+	defer deferFn()
+	for _, bk := range ll {
 		value := bk.Get(keyWithTS)
 		if value.Meta == 0 && value.Value == nil {
 			continue
@@ -167,16 +169,21 @@ func (b *Buffer) Stats() ([]string, []observability.Statistics) {
 	}
 	names := make([]string, b.numShards)
 	stats := make([]observability.Statistics, b.numShards)
-	for i := 0; i < b.numShards; i++ {
-		names[i] = fmt.Sprintf("buffer-%d", i)
-		var size, maxSize int64
-		for _, l := range b.buckets[i].getAll() {
+	size := func(bucket *bufferShardBucket) (size int64, maxSize int64) {
+		ll, deferFn := bucket.getAll()
+		defer deferFn()
+		for _, l := range ll {
 			if l == nil {
 				continue
 			}
 			size += l.MemSize()
-			maxSize += int64(b.buckets[i].capacity)
+			maxSize += int64(bucket.capacity)
 		}
+		return
+	}
+	for i := 0; i < b.numShards; i++ {
+		names[i] = fmt.Sprintf("buffer-%d", i)
+		size, maxSize := size(&b.buckets[i])
 		stats[i] = observability.Statistics{
 			MemBytes:    size,
 			MaxMemBytes: maxSize,
@@ -189,7 +196,7 @@ func (b *Buffer) getShardIndex(key []byte) uint64 {
 	return convert.Hash(key) % uint64(b.numShards)
 }
 
-func (bsb *bufferShardBucket) getAll() []*skl.Skiplist {
+func (bsb *bufferShardBucket) getAll() ([]*skl.Skiplist, func()) {
 	bsb.mutex.RLock()
 	defer bsb.mutex.RUnlock()
 	allList := make([]*skl.Skiplist, len(bsb.immutables)+1)
@@ -200,7 +207,11 @@ func (bsb *bufferShardBucket) getAll() []*skl.Skiplist {
 		allList[i+1] = bsb.immutables[last-i]
 		bsb.immutables[last-i].IncrRef()
 	}
-	return allList
+	return allList, func() {
+		for _, l := range allList {
+			l.DecrRef()
+		}
+	}
 }
 
 func (bsb *bufferShardBucket) start(onFlushFn onFlush) {

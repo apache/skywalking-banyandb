@@ -284,29 +284,15 @@ func (b *block) delegate(ctx context.Context) (blockDelegate, error) {
 }
 
 func (b *block) incRef() bool {
-loop:
 	if b.Closed() {
 		return false
 	}
-	r := b.ref.Load()
-	if b.ref.CompareAndSwap(r, r+1) {
-		return true
-	}
-	runtime.Gosched()
-	goto loop
+	b.ref.Add(1)
+	return true
 }
 
 func (b *block) Done() {
-loop:
-	r := b.ref.Load()
-	if r < 1 {
-		return
-	}
-	if b.ref.CompareAndSwap(r, r-1) {
-		return
-	}
-	runtime.Gosched()
-	goto loop
+	b.ref.Add(-1)
 }
 
 func (b *block) waitDone(stopped *atomic.Bool) <-chan struct{} {

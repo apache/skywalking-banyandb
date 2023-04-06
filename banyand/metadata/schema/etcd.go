@@ -200,7 +200,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
 	if !e.closer.AddRunning() {
-		return errClosed
+		return ErrClosed
 	}
 	defer e.closer.Done()
 	resp, err := e.client.Get(ctx, key)
@@ -229,7 +229,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // Otherwise, it will return ErrGRPCResourceNotFound.
 func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
 	if !e.closer.AddRunning() {
-		return errClosed
+		return ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
@@ -281,7 +281,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) erro
 // Otherwise, it will return ErrGRPCAlreadyExists.
 func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
 	if !e.closer.AddRunning() {
-		return errClosed
+		return ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
@@ -314,7 +314,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) erro
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
 	if !e.closer.AddRunning() {
-		return nil, errClosed
+		return nil, ErrClosed
 	}
 	defer e.closer.Done()
 	resp, err := e.client.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
@@ -343,7 +343,7 @@ func listPrefixesForEntity(group, entityPrefix string) string {
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
 	if !e.closer.AddRunning() {
-		return false, errClosed
+		return false, ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
