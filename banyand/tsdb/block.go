@@ -35,7 +35,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -161,7 +160,7 @@ func (b *block) options(ctx context.Context) {
 		Logger:       b.l.Named(componentSecondInvertedIdx),
 		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
 	}
-	lsmMemSize := bufferSize / 8
+	lsmMemSize := bufferSize / 4
 	if lsmMemSize < defaultKVMemorySize {
 		lsmMemSize = defaultKVMemorySize
 	}
@@ -210,7 +209,7 @@ func (b *block) openBuffer() (err error) {
 	if b.buffer != nil {
 		return nil
 	}
-	if b.buffer, err = NewBuffer(b.l, int(b.openOpts.bufferSize/defaultNumBufferShards),
+	if b.buffer, err = NewBuffer(b.l, b.position, int(b.openOpts.bufferSize/defaultNumBufferShards),
 		defaultWriteConcurrency, defaultNumBufferShards, b.flush); err != nil {
 		return err
 	}
@@ -356,21 +355,6 @@ func (b *block) Closed() bool {
 
 func (b *block) String() string {
 	return fmt.Sprintf("BlockID-%s-%s", b.segSuffix, b.suffix)
-}
-
-func (b *block) stats() (names []string, stats []observability.Statistics) {
-	if b.Closed() {
-		stats = make([]observability.Statistics, 0)
-		return
-	}
-	bnn, bss := b.buffer.Stats()
-	if bnn != nil {
-		names = append(names, bnn...)
-		stats = append(stats, bss...)
-	}
-	names = append(names, componentSecondInvertedIdx, componentSecondLSMIdx)
-	stats = append(stats, b.invertedIndex.Stats(), b.lsmIndex.Stats())
-	return names, stats
 }
 
 func (b *block) Get(key []byte, ts uint64) ([]byte, error) {

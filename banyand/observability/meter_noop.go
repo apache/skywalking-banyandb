@@ -1,3 +1,6 @@
+//go:build !prometheus
+// +build !prometheus
+
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,9 +18,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package observability provides metrics, profiling, and etc.
 package observability
 
-import "errors"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+)
 
-var errNoAddr = errors.New("no address")
+// NewMeterProvider returns a meter.Provider based on the given scope.
+func NewMeterProvider(_ meter.Scope) meter.Provider {
+	return meter.NoopProvider{}
+}

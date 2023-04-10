@@ -22,6 +22,8 @@ catalog:
     path: "/installation"
   - name: "Clients"
     path: "/clients"
+  - name: "Observability"
+    path: "/observability"
   - name: "Concept"
     catalog:
       - name: "Data Model"

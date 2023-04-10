@@ -21,8 +21,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
@@ -55,19 +53,16 @@ type Position struct {
 	Shard    string
 	Segment  string
 	Block    string
-	KV       string
 }
 
-// Labels converts Position to Prom Labels.
-func (p Position) Labels() prometheus.Labels {
-	return prometheus.Labels{
-		"module":   p.Module,
-		"database": p.Database,
-		"shard":    p.Shard,
-		"seg":      p.Segment,
-		"block":    p.Block,
-		"kv":       p.KV,
-	}
+// LabelNames returns the label names of Position.
+func LabelNames() []string {
+	return []string{"module", "database", "shard", "seg", "block"}
+}
+
+// LabelValues returns the label values of Position.
+func (p Position) LabelValues() []string {
+	return []string{p.Module, p.Database, p.Shard, p.Segment, p.Block}
 }
 
 // SetPosition sets a position returned from fn to attach it to ctx, then return a new context.
