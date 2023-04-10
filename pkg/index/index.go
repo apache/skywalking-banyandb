@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
@@ -205,7 +204,6 @@ type Searcher interface {
 
 // Store is an abstract of a index repository.
 type Store interface {
-	observability.Observable
 	io.Closer
 	Writer
 	Searcher

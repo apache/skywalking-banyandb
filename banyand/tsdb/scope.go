@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 )
 
 var _ Shard = (*scopedShard)(nil)
@@ -72,10 +71,6 @@ var _ SeriesDatabase = (*scopedSeriesDatabase)(nil)
 type scopedSeriesDatabase struct {
 	delegated SeriesDatabase
 	scope     Entry
-}
-
-func (sdd *scopedSeriesDatabase) Stats() observability.Statistics {
-	return sdd.delegated.Stats()
 }
 
 func (sdd *scopedSeriesDatabase) Close() error {

@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -120,10 +119,6 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	}
 	s.run()
 	return s, nil
-}
-
-func (s *store) Stats() observability.Statistics {
-	return observability.Statistics{}
 }
 
 func (s *store) Close() error {

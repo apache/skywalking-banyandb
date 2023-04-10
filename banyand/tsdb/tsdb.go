@@ -36,6 +36,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -64,7 +65,9 @@ var (
 	errInvalidShardID = errors.New("invalid shard id")
 	errOpenDatabase   = errors.New("fails to open the database")
 
-	optionsKey = contextOptionsKey{}
+	optionsKey   = contextOptionsKey{}
+	meterStorage = observability.RootScope.SubScope("storage")
+	meterTSDB    = meterStorage.SubScope("tsdb")
 )
 
 type contextOptionsKey struct{}

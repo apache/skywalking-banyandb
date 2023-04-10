@@ -29,7 +29,6 @@ import (
 	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/dgraph-io/badger/v3/y"
 
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -54,23 +53,11 @@ func (b *badgerTSS) Handover(skl *skl.Skiplist) error {
 	return b.db.HandoverIterator(skl.NewUniIterator(false))
 }
 
-func (b *badgerTSS) Stats() (s observability.Statistics) {
-	return badgerStats(b.db)
-}
-
 func (b *badgerTSS) Close() error {
 	if b.db != nil && !b.db.IsClosed() {
 		return b.db.Close()
 	}
 	return nil
-}
-
-func badgerStats(db *badger.DB) (s observability.Statistics) {
-	stat := db.Stats()
-	return observability.Statistics{
-		MemBytes:    stat.MemBytes,
-		MaxMemBytes: db.Opts().MemTableSize,
-	}
 }
 
 type mergedIter struct {
@@ -126,10 +113,6 @@ func (i mergedIter) Value() y.ValueStruct {
 type badgerDB struct {
 	db     *badger.DB
 	dbOpts badger.Options
-}
-
-func (b *badgerDB) Stats() observability.Statistics {
-	return badgerStats(b.db)
 }
 
 func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error {

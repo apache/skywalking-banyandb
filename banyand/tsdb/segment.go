@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -135,11 +134,4 @@ func (s *segment) delete(ctx context.Context) error {
 
 func (s *segment) String() string {
 	return "SegID-" + s.suffix
-}
-
-func (s *segment) Stats() observability.Statistics {
-	if s.globalIndex == nil {
-		return observability.Statistics{}
-	}
-	return s.globalIndex.Stats()
 }
