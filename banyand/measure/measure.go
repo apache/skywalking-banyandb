@@ -122,7 +122,8 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, repo metadata.Repo,
+	pipeline queue.Queue) (*measure, error) {
 	m := &measure{
 		shardNum:         shardNum,
 		schema:           spec.schema,
@@ -142,6 +143,11 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
+
+	if startErr := m.startSteamingManager(pipeline, repo); startErr != nil {
+		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
+			Msg("fail to start streaming manager")
+	}
 
 	return m, nil
 }
