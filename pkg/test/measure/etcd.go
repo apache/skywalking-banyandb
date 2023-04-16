@@ -21,14 +21,19 @@ package measure
 import (
 	"context"
 	"embed"
+	"fmt"
 	"path"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
@@ -66,11 +71,78 @@ func PreloadSchema(e schema.Registry) error {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
-		return e.CreateTopNAggregation(context.TODO(), topN)
+		return multierr.Append(e.CreateTopNAggregation(context.TODO(), topN), createOrUpdateTopNMeasure(e, topN))
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
+}
+
+func createOrUpdateTopNMeasure(reg schema.Registry, topNSchema *databasev1.TopNAggregation) error {
+	oldTopNSchema, err := reg.GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return err
+	}
+
+	sourceMeasureSchema, err := reg.GetMeasure(context.Background(), &commonv1.Metadata{
+		Group: topNSchema.GetSourceMeasure().GetGroup(),
+		Name:  topNSchema.GetSourceMeasure().GetName(),
+	})
+	if err != nil {
+		return err
+	}
+
+	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: sourceMeasureSchema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: measure.TopNTagFamily,
+				Tags: append([]*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_ID,
+					},
+				}, seriesSpecs...),
+			},
+		},
+		Fields: []*databasev1.FieldSpec{measure.TopNValueFieldSpec},
+	}
+	if oldTopNSchema == nil {
+		return reg.CreateMeasure(context.Background(), newTopNMeasure)
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, oldTopNSchema,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return nil
+	}
+	// update
+	return reg.UpdateMeasure(context.Background(), newTopNMeasure)
 }
 
 func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T) error) error {
