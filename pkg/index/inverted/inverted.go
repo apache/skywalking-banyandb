@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -122,10 +121,6 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 	return s, nil
 }
 
-func (s *store) Stats() observability.Statistics {
-	return observability.Statistics{}
-}
-
 func (s *store) Close() error {
 	s.closer.CloseThenWait()
 	return s.writer.Close()
@@ -165,6 +160,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	fk := fieldKey.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -210,6 +206,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	fk := field.Key.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -242,6 +239,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 	analyzer := analyzers[fieldKey.Analyzer]
 	fk := fieldKey.MarshalIndexRule()
 	query := bluge.NewBooleanQuery()

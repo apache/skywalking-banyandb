@@ -23,7 +23,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -34,10 +33,6 @@ var _ index.Store = (*store)(nil)
 type store struct {
 	lsm kv.Store
 	l   *logger.Logger
-}
-
-func (s *store) Stats() observability.Statistics {
-	return s.lsm.Stats()
 }
 
 func (s *store) Close() error {

@@ -25,9 +25,9 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/options"
+	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -70,19 +70,9 @@ type Reader interface {
 
 // Store is a common kv storage with auto-generated key.
 type Store interface {
-	observability.Observable
 	io.Closer
 	writer
 	Reader
-}
-
-// TimeSeriesWriter allows writing to a time-series storage.
-type TimeSeriesWriter interface {
-	// Put a value with a timestamp/version
-	Put(key, val []byte, ts uint64) error
-	// PutAsync a value with a timestamp/version asynchronously.
-	// Injected "f" func will notice the result of value write.
-	PutAsync(key, val []byte, ts uint64, f func(error)) error
 }
 
 // TimeSeriesReader allows retrieving data from a time-series storage.
@@ -93,9 +83,8 @@ type TimeSeriesReader interface {
 
 // TimeSeriesStore is time series storage.
 type TimeSeriesStore interface {
-	observability.Observable
 	io.Closer
-	TimeSeriesWriter
+	Handover(skl *skl.Skiplist) error
 	TimeSeriesReader
 }
 
@@ -171,7 +160,6 @@ type Iterable interface {
 
 // IndexStore allows writing and reading index format data.
 type IndexStore interface {
-	observability.Observable
 	Iterable
 	Reader
 	Close() error
@@ -191,6 +179,7 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 	if btss.dbOpts.MemTableSize < 8<<20 {
 		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
 	}
+	btss.dbOpts = btss.dbOpts.WithInTable()
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
 	if err != nil {

@@ -24,12 +24,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
 	_ run.Service = (*metricService)(nil)
 	_ run.Config  = (*metricService)(nil)
+
+	// RootScope is the root scope for all metrics.
+	RootScope = meter.NewHierarchicalScope("banyandb", "_")
 )
 
 // NewMetricService returns a metric service.

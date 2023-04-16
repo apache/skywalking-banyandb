@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/robfig/cron/v3"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -107,9 +106,6 @@ func OpenShard(ctx context.Context, id common.ShardID,
 	position := shardCtx.Value(common.PositionKey)
 	if position != nil {
 		s.position = position.(common.Position)
-	}
-	if err := scheduler.Register("stat", cron.Descriptor, "@every 5s", s.stat); err != nil {
-		return nil, err
 	}
 	retentionTask := newRetentionTask(s.segmentController, ttl)
 	if err := scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {

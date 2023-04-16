@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -77,8 +78,7 @@ func newStandaloneCmd() *cobra.Command {
 	metricSvc := observability.NewMetricService()
 	httpServer := http.NewService()
 
-	// Meta the run Group units.
-	g.Register(
+	units := []run.Unit{
 		new(signal.Handler),
 		repo,
 		pipeline,
@@ -87,10 +87,15 @@ func newStandaloneCmd() *cobra.Command {
 		streamSvc,
 		q,
 		tcp,
-		metricSvc,
-		profSvc,
 		httpServer,
-	)
+		profSvc,
+	}
+	_, noMetricProvider := observability.NewMeterProvider(observability.RootScope).(meter.NoopProvider)
+	if !noMetricProvider {
+		units = append(units, metricSvc)
+	}
+	// Meta the run Group units.
+	g.Register(units...)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{
 		Use:     "standalone",

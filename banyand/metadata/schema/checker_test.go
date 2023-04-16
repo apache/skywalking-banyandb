@@ -133,7 +133,7 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines()).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
@@ -188,7 +188,7 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines()).ShouldNot(gleak.HaveLeaked(goods))
+			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {

@@ -34,7 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -248,7 +247,6 @@ func prepend(src []byte, entry []byte) []byte {
 
 // SeriesDatabase allows retrieving series.
 type SeriesDatabase interface {
-	observability.Observable
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
 	Get(key []byte, entityValues EntityValues) (Series, error)
@@ -487,10 +485,6 @@ func (s *seriesDB) create(ctx context.Context, ts time.Time) (blockDelegate, err
 
 func (s *seriesDB) context() context.Context {
 	return context.WithValue(context.Background(), logger.ContextKey, s.l)
-}
-
-func (s *seriesDB) Stats() observability.Statistics {
-	return s.seriesMetadata.Stats()
 }
 
 func (s *seriesDB) Close() error {

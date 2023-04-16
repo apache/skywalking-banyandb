@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -50,7 +51,7 @@ var _ = Describe("Buffer", func() {
 	Context("Write and Read", func() {
 		BeforeEach(func() {
 			var err error
-			buffer, err = tsdb.NewBuffer(log, 1024*1024, 16, 4, func(shardIndex int, skl *skl.Skiplist) error {
+			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024*1024, 16, 4, func(shardIndex int, skl *skl.Skiplist) error {
 				return nil
 			})
 			Expect(err).ToNot(HaveOccurred())
@@ -117,7 +118,7 @@ var _ = Describe("Buffer", func() {
 				}(ch)
 			}
 
-			buffer, err := tsdb.NewBuffer(log, 1024, 16, numShards, onFlushFn)
+			buffer, err := tsdb.NewBuffer(log, common.Position{}, 1024, 16, numShards, onFlushFn)
 			defer func() {
 				_ = buffer.Close()
 			}()

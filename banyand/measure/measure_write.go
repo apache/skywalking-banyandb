@@ -185,9 +185,9 @@ func encodeFieldValue(fieldValue *modelv1.FieldValue) []byte {
 	case *modelv1.FieldValue_Float:
 		return convert.Float64ToBytes(fieldValue.GetFloat().GetValue())
 	case *modelv1.FieldValue_Str:
-		return []byte(fieldValue.GetStr().Value)
+		return []byte(fieldValue.GetStr().GetValue())
 	case *modelv1.FieldValue_BinaryData:
-		return fieldValue.GetBinaryData()
+		return bytes.Clone(fieldValue.GetBinaryData())
 	}
 	return nil
 }
