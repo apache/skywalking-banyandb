@@ -147,7 +147,6 @@ func (sr *schemaRepo) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggre
 		Group: topNSchema.GetSourceMeasure().GetGroup(),
 		Name:  topNSchema.GetSourceMeasure().GetName(),
 	})
-
 	if err != nil {
 		return err
 	}
@@ -267,10 +266,10 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	metadata metadata.Repo
+	pipeline queue.Queue
 	l        *logger.Logger
 	path     string
 	dbOpts   tsdb.DatabaseOpts
-	pipeline queue.Queue
 }
 
 func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue) *supplier {
@@ -289,7 +288,7 @@ func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resource
 		schema:           measureSchema,
 		indexRules:       spec.IndexRules,
 		topNAggregations: spec.Aggregations,
-	}, s.l, s.metadata, s.pipeline)
+	}, s.l, s.pipeline)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

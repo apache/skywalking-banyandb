@@ -38,7 +38,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -291,7 +290,6 @@ func (t *topNStreamingProcessor) handleError() {
 type topNProcessorManager struct {
 	l            *logger.Logger
 	pipeline     queue.Queue
-	repo         metadata.Repo
 	m            *measure
 	s            logical.TagSpecRegistry
 	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
