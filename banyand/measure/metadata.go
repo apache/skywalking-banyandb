@@ -19,9 +19,13 @@ package measure
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"fmt"
 	"path"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
@@ -30,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
@@ -116,6 +121,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
+		// createOrUpdate TopN schemas in advance
+		err := sr.createOrUpdateTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation))
+		if err != nil {
+			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
+			return
+		}
+		// reload source measure
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
@@ -123,6 +135,74 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		})
 	default:
 	}
+}
+
+func (sr *schemaRepo) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
+	oldTopNSchema, err := sr.metadata.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return err
+	}
+
+	sourceMeasureSchema, err := sr.metadata.MeasureRegistry().GetMeasure(context.Background(), &commonv1.Metadata{
+		Group: topNSchema.GetSourceMeasure().GetGroup(),
+		Name:  topNSchema.GetSourceMeasure().GetName(),
+	})
+
+	if err != nil {
+		return err
+	}
+
+	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: sourceMeasureSchema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: TopNTagFamily,
+				Tags: append([]*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_ID,
+					},
+				}, seriesSpecs...),
+			},
+		},
+		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+	}
+	if oldTopNSchema == nil {
+		return sr.metadata.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, oldTopNSchema,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return nil
+	}
+	// update
+	return sr.metadata.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {

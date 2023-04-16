@@ -59,7 +59,7 @@ type measure struct {
 	shardNum               uint32
 }
 
-func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo) error {
+func (s *measure) startSteamingManager(pipeline queue.Queue) error {
 	if len(s.topNAggregations) == 0 {
 		return nil
 	}
@@ -69,7 +69,6 @@ func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo)
 	s.processorManager = &topNProcessorManager{
 		l:            s.l,
 		pipeline:     pipeline,
-		repo:         repo,
 		m:            s,
 		s:            tagMapSpec,
 		topNSchemas:  s.topNAggregations,
@@ -144,7 +143,7 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		IndexRules: spec.indexRules,
 	})
 
-	if startErr := m.startSteamingManager(pipeline, repo); startErr != nil {
+	if startErr := m.startSteamingManager(pipeline); startErr != nil {
 		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
 			Msg("fail to start streaming manager")
 	}

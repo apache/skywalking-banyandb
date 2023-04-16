@@ -27,11 +27,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
-	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -41,7 +39,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -329,71 +326,9 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.InternalW
 	}()
 }
 
-func (manager *topNProcessorManager) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
-	m, err := manager.repo.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
-	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return err
-	}
-
-	tagNames := manager.m.GetSchema().GetEntity().GetTagNames()
-	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
-
-	for _, tagName := range tagNames {
-		var found bool
-		for _, fSpec := range manager.m.GetSchema().GetTagFamilies() {
-			for _, tSpec := range fSpec.GetTags() {
-				if tSpec.GetName() == tagName {
-					seriesSpecs = append(seriesSpecs, tSpec)
-					found = true
-					goto CHECK
-				}
-			}
-		}
-
-	CHECK:
-		if !found {
-			return fmt.Errorf("fail to find tag spec %s", tagName)
-		}
-	}
-
-	// create a new "derived" measure for TopN result
-	newTopNMeasure := &databasev1.Measure{
-		Metadata: topNSchema.GetMetadata(),
-		Interval: manager.m.schema.GetInterval(),
-		TagFamilies: []*databasev1.TagFamilySpec{
-			{
-				Name: TopNTagFamily,
-				Tags: append([]*databasev1.TagSpec{
-					{
-						Name: "measure_id",
-						Type: databasev1.TagType_TAG_TYPE_ID,
-					},
-				}, seriesSpecs...),
-			},
-		},
-		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
-	}
-	if m == nil {
-		return manager.repo.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
-	}
-	// compare with the old one
-	if cmp.Diff(newTopNMeasure, m,
-		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
-		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-		protocmp.Transform()) == "" {
-		return nil
-	}
-	// update
-	return manager.repo.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
-}
-
 func (manager *topNProcessorManager) start() error {
 	interval := manager.m.interval
 	for _, topNSchema := range manager.topNSchemas {
-		if createErr := manager.createOrUpdateTopNMeasure(topNSchema); createErr != nil {
-			return createErr
-		}
 		sortDirections := make([]modelv1.Sort, 0, 2)
 		if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 			sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
