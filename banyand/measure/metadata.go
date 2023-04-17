@@ -243,6 +243,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		}
 	case schema.KindIndexRule:
 	case schema.KindTopNAggregation:
+		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
+		if err != nil {
+			sr.l.Error().Err(err).Msg("fail to remove topN measure")
+			return
+		}
 		// we should update instead of delete
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
@@ -251,6 +256,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		})
 	default:
 	}
+}
+
+func (sr *schemaRepo) removeTopNMeasure(metadata *commonv1.Metadata) error {
+	_, err := sr.metadata.MeasureRegistry().DeleteMeasure(context.Background(), metadata)
+	return err
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
