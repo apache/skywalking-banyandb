@@ -60,6 +60,11 @@ func (b *badgerTSS) Close() error {
 	return nil
 }
 
+func (b *badgerTSS) SizeOnDisk() int64 {
+	lsmSize, vlogSize := b.db.Size()
+	return lsmSize + vlogSize
+}
+
 type mergedIter struct {
 	delegated Iterator
 	data      []byte
@@ -143,6 +148,11 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 		}
 	}
 	return nil
+}
+
+func (b *badgerDB) SizeOnDisk() int64 {
+	lsmSize, vlogSize := b.db.Size()
+	return lsmSize + vlogSize
 }
 
 var _ Iterator = (*iterator)(nil)

@@ -73,6 +73,7 @@ type Store interface {
 	io.Closer
 	writer
 	Reader
+	SizeOnDisk() int64
 }
 
 // TimeSeriesReader allows retrieving data from a time-series storage.
@@ -86,6 +87,7 @@ type TimeSeriesStore interface {
 	io.Closer
 	Handover(skl *skl.Skiplist) error
 	TimeSeriesReader
+	SizeOnDisk() int64
 }
 
 // TimeSeriesOptions sets an options for creating a TimeSeriesStore.
@@ -163,6 +165,7 @@ type IndexStore interface {
 	Iterable
 	Reader
 	Close() error
+	SizeOnDisk() int64
 }
 
 // OpenTimeSeriesStore creates a new TimeSeriesStore.

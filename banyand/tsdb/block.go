@@ -28,6 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/pkg/errors"
@@ -35,11 +36,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -53,9 +56,16 @@ const (
 	maxBlockAge             = time.Hour
 	defaultWriteConcurrency = 1000
 	defaultNumBufferShards  = 2
+	itemIDLength            = unsafe.Sizeof(common.ItemID(0))
 )
 
-var errBlockClosingInterrupted = errors.New("interrupt to close the block")
+var (
+	blockMeterProvider          = observability.NewMeterProvider(meterTSDB.SubScope("block"))
+	blockOpenedTimeSecondsGauge = blockMeterProvider.Gauge("opened_time_seconds", common.LabelNames()...)
+	blockReferencesGauge        = blockMeterProvider.Gauge("refs", common.LabelNames()...)
+
+	errBlockClosingInterrupted = errors.New("interrupt to close the block")
+)
 
 type block struct {
 	invertedIndex index.Store
@@ -125,10 +135,7 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 	b.Reporter = bucket.NewTimeBasedReporter(b.String(), opts.timeRange, clock, opts.scheduler)
 	b.closed.Store(true)
 	b.options(ctx)
-	position := ctx.Value(common.PositionKey)
-	if position != nil {
-		b.position = position.(common.Position)
-	}
+	b.position = common.GetPosition(ctx)
 
 	return b, nil
 }
@@ -202,6 +209,7 @@ func (b *block) open() (err error) {
 	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
 	b.ref.Store(0)
 	b.closed.Store(false)
+	blockOpenedTimeSecondsGauge.Set(float64(time.Now().Unix()), b.position.LabelValues()...)
 	return nil
 }
 
@@ -287,11 +295,13 @@ func (b *block) incRef() bool {
 		return false
 	}
 	b.ref.Add(1)
+	blockReferencesGauge.Set(float64(b.ref.Load()), b.position.LabelValues()...)
 	return true
 }
 
 func (b *block) Done() {
 	b.ref.Add(-1)
+	blockReferencesGauge.Set(float64(b.ref.Load()), b.position.LabelValues()...)
 }
 
 func (b *block) waitDone(stopped *atomic.Bool) <-chan struct{} {
@@ -336,6 +346,9 @@ func (b *block) close(ctx context.Context) (err error) {
 	}
 	for _, closer := range b.closableLst {
 		err = multierr.Append(err, closer.Close())
+	}
+	for _, g := range []meter.Gauge{blockOpenedTimeSecondsGauge, blockReferencesGauge} {
+		g.Delete(b.position.LabelValues()...)
 	}
 	return err
 }
@@ -416,24 +429,55 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 		d.delegate.lock.Lock()
 		if err := d.delegate.openBuffer(); err != nil {
 			d.delegate.lock.Unlock()
+			receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "main", "true")...)
 			return err
 		}
 		d.delegate.lock.Unlock()
 	}
 	d.delegate.buffer.Write(key, val, ts)
+	receivedBytesCounter.Inc(float64(len(key)+len(val)), append(d.delegate.position.ShardLabelValues(), "main")...)
+	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "main", "false")...)
 	return nil
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	return d.delegate.lsmIndex.Write([]index.Field{field}, id)
+	if err := d.delegate.lsmIndex.Write([]index.Field{field}, id); err != nil {
+		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "primary", "true")...)
+		return err
+	}
+	receivedBytesCounter.Inc(float64(len(field.Marshal())+int(itemIDLength)), append(d.delegate.position.ShardLabelValues(), "primary")...)
+	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "primary", "false")...)
+	return nil
 }
 
 func (d *bDelegate) writeLSMIndex(fields []index.Field, id common.ItemID) error {
-	return d.delegate.lsmIndex.Write(fields, id)
+	total := 0
+	for _, f := range fields {
+		total += len(f.Marshal())
+	}
+
+	if err := d.delegate.lsmIndex.Write(fields, id); err != nil {
+		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_lsm", "true")...)
+		return err
+	}
+	receivedBytesCounter.Inc(float64(total+int(itemIDLength)), append(d.delegate.position.ShardLabelValues(), "local_lsm")...)
+	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_lsm", "false")...)
+	return nil
 }
 
 func (d *bDelegate) writeInvertedIndex(fields []index.Field, id common.ItemID) error {
-	return d.delegate.invertedIndex.Write(fields, id)
+	total := 0
+	for _, f := range fields {
+		total += len(f.Marshal())
+	}
+
+	if err := d.delegate.invertedIndex.Write(fields, id); err != nil {
+		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_inverted", "true")...)
+		return err
+	}
+	receivedBytesCounter.Inc(float64(total+int(itemIDLength)), append(d.delegate.position.ShardLabelValues(), "local_inverted")...)
+	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_inverted", "false")...)
+	return nil
 }
 
 func (d *bDelegate) contains(ts time.Time) bool {

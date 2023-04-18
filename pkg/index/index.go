@@ -207,6 +207,7 @@ type Store interface {
 	io.Closer
 	Writer
 	Searcher
+	SizeOnDisk() int64
 }
 
 // GetSearcher returns a searcher associated with input index rule type.

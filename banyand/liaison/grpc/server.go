@@ -21,14 +21,18 @@ package grpc
 import (
 	"context"
 	"net"
+	"runtime/debug"
 	"time"
 
-	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/validator"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
+	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/validator"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -37,6 +41,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -184,9 +189,31 @@ func (s *server) Serve() run.StopNotify {
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
+	grpcPanicRecoveryHandler := func(p any) (err error) {
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
+
+		return status.Errorf(codes.Internal, "%s", p)
+	}
+
+	unaryMetrics, streamMetrics := observability.MetricsServerInterceptor()
+	streamChain := []grpclib.StreamServerInterceptor{
+		grpc_validator.StreamServerInterceptor(),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+	}
+	if streamMetrics != nil {
+		streamChain = append(streamChain, streamMetrics)
+	}
+	unaryChain := []grpclib.UnaryServerInterceptor{
+		grpc_validator.UnaryServerInterceptor(),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+	}
+	if unaryMetrics != nil {
+		unaryChain = append(unaryChain, unaryMetrics)
+	}
+
 	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize),
-		grpclib.UnaryInterceptor(grpc_validator.UnaryServerInterceptor()),
-		grpclib.StreamInterceptor(grpc_validator.StreamServerInterceptor()),
+		grpclib.ChainUnaryInterceptor(unaryChain...),
+		grpclib.ChainStreamInterceptor(streamChain...),
 	)
 	s.ser = grpclib.NewServer(opts...)
 

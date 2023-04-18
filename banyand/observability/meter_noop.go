@@ -21,10 +21,24 @@
 package observability
 
 import (
+	"google.golang.org/grpc"
+
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
+// NewMetricService returns a metric service.
+func NewMetricService() run.Service {
+	MetricsCollector.collect()
+	return nil
+}
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
 func NewMeterProvider(_ meter.Scope) meter.Provider {
 	return meter.NoopProvider{}
+}
+
+// MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
+func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+	return nil, nil
 }
