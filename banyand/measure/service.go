@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -122,6 +124,11 @@ func (s *service) PreRun() error {
 			return innerErr
 		}
 		for _, measureSchema := range allMeasureSchemas {
+			// sanity check before calling StoreResource
+			// since StoreResource may be called inside the event loop
+			if checkErr := s.sanityCheck(measureSchema); checkErr != nil {
+				return checkErr
+			}
 			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
 				return innerErr
 			}
@@ -134,6 +141,22 @@ func (s *service) PreRun() error {
 		return err
 	}
 	return nil
+}
+
+func (s *service) sanityCheck(measureSchema *databasev1.Measure) error {
+	var topNAggrs []*databasev1.TopNAggregation
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctx, measureSchema.GetMetadata())
+	if err != nil || len(topNAggrs) == 0 {
+		return err
+	}
+
+	for _, topNAggr := range topNAggrs {
+		err = multierr.Append(err, createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr))
+	}
+
+	return err
 }
 
 func (s *service) Serve() run.StopNotify {

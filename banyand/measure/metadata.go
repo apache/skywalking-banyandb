@@ -122,7 +122,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		}
 	case schema.KindTopNAggregation:
 		// createOrUpdate TopN schemas in advance
-		err := sr.createOrUpdateTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation))
+		err := createOrUpdateTopNMeasure(sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
 		if err != nil {
 			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
 			return
@@ -137,13 +137,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	}
 }
 
-func (sr *schemaRepo) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggregation) error {
-	oldTopNSchema, err := sr.metadata.MeasureRegistry().GetMeasure(context.TODO(), topNSchema.GetMetadata())
+func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) error {
+	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(context.TODO(), topNSchema.GetMetadata())
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
 		return err
 	}
 
-	sourceMeasureSchema, err := sr.metadata.MeasureRegistry().GetMeasure(context.Background(), &commonv1.Metadata{
+	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), &commonv1.Metadata{
 		Group: topNSchema.GetSourceMeasure().GetGroup(),
 		Name:  topNSchema.GetSourceMeasure().GetName(),
 	})
@@ -190,7 +190,7 @@ func (sr *schemaRepo) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggre
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		return sr.metadata.MeasureRegistry().CreateMeasure(context.Background(), newTopNMeasure)
+		return measureSchemaRegistry.CreateMeasure(context.Background(), newTopNMeasure)
 	}
 	// compare with the old one
 	if cmp.Diff(newTopNMeasure, oldTopNSchema,
@@ -201,7 +201,7 @@ func (sr *schemaRepo) createOrUpdateTopNMeasure(topNSchema *databasev1.TopNAggre
 		return nil
 	}
 	// update
-	return sr.metadata.MeasureRegistry().UpdateMeasure(context.Background(), newTopNMeasure)
+	return measureSchemaRegistry.UpdateMeasure(context.Background(), newTopNMeasure)
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
