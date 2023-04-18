@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -105,7 +107,7 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l, s.pipeline)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			continue
@@ -122,6 +124,11 @@ func (s *service) PreRun() error {
 			return innerErr
 		}
 		for _, measureSchema := range allMeasureSchemas {
+			// sanity check before calling StoreResource
+			// since StoreResource may be called inside the event loop
+			if checkErr := s.sanityCheck(gp, measureSchema); checkErr != nil {
+				return checkErr
+			}
 			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
 				return innerErr
 			}
@@ -136,6 +143,29 @@ func (s *service) PreRun() error {
 	return nil
 }
 
+func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databasev1.Measure) error {
+	var topNAggrs []*databasev1.TopNAggregation
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctx, measureSchema.GetMetadata())
+	if err != nil || len(topNAggrs) == 0 {
+		return err
+	}
+
+	for _, topNAggr := range topNAggrs {
+		topNMeasure, innerErr := createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr)
+		err = multierr.Append(err, innerErr)
+		if topNMeasure != nil {
+			_, storeErr := group.StoreResource(topNMeasure)
+			if storeErr != nil {
+				err = multierr.Append(err, storeErr)
+			}
+		}
+	}
+
+	return err
+}
+
 func (s *service) Serve() run.StopNotify {
 	_ = s.schemaRepo.NotifyAll()
 	// run a serial watcher
@@ -144,37 +174,6 @@ func (s *service) Serve() run.StopNotify {
 	s.metadata.MeasureRegistry().
 		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
 			&s.schemaRepo)
-
-	// start TopN manager after registering handlers
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
-	cancel()
-
-	if err != nil {
-		s.l.Err(err).Msg("fail to list groups")
-		return s.stopCh
-	}
-
-	for _, g := range groups {
-		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
-			continue
-		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		allMeasureSchemas, listErr := s.metadata.MeasureRegistry().
-			ListMeasure(ctx, schema.ListOpt{Group: g.GetMetadata().GetName()})
-		cancel()
-		if listErr != nil {
-			s.l.Err(listErr).Str("group", g.GetMetadata().GetName()).Msg("fail to list measures in the group")
-			continue
-		}
-		for _, measureSchema := range allMeasureSchemas {
-			if res, ok := s.schemaRepo.LoadResource(measureSchema.GetMetadata()); ok {
-				if startErr := res.(*measure).startSteamingManager(s.pipeline, s.metadata); startErr != nil {
-					s.l.Err(startErr).Str("measure", measureSchema.GetMetadata().GetName()).Msg("fail to start streaming manager")
-				}
-			}
-		}
-	}
 
 	return s.stopCh
 }
