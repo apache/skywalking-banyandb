@@ -122,7 +122,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		}
 	case schema.KindTopNAggregation:
 		// createOrUpdate TopN schemas in advance
-		err := createOrUpdateTopNMeasure(sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
+		_, err := createOrUpdateTopNMeasure(sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
 		if err != nil {
 			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
 			return
@@ -137,15 +137,15 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	}
 }
 
-func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) error {
+func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
 	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(context.TODO(), topNSchema.GetMetadata())
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return err
+		return nil, err
 	}
 
 	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), topNSchema.GetSourceMeasure())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
@@ -165,7 +165,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 
 	CHECK:
 		if !found {
-			return fmt.Errorf("fail to find tag spec %s", tagName)
+			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
 		}
 	}
 
@@ -187,7 +187,10 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		return measureSchemaRegistry.CreateMeasure(context.Background(), newTopNMeasure)
+		if innerErr := measureSchemaRegistry.CreateMeasure(context.Background(), newTopNMeasure); innerErr != nil {
+			return nil, innerErr
+		}
+		return newTopNMeasure, nil
 	}
 	// compare with the old one
 	if cmp.Diff(newTopNMeasure, oldTopNSchema,
@@ -195,10 +198,13 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
 		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
 		protocmp.Transform()) == "" {
-		return nil
+		return oldTopNSchema, nil
 	}
 	// update
-	return measureSchemaRegistry.UpdateMeasure(context.Background(), newTopNMeasure)
+	if err = measureSchemaRegistry.UpdateMeasure(context.Background(), newTopNMeasure); err != nil {
+		return nil, err
+	}
+	return newTopNMeasure, nil
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {

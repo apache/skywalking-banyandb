@@ -126,7 +126,7 @@ func (s *service) PreRun() error {
 		for _, measureSchema := range allMeasureSchemas {
 			// sanity check before calling StoreResource
 			// since StoreResource may be called inside the event loop
-			if checkErr := s.sanityCheck(measureSchema); checkErr != nil {
+			if checkErr := s.sanityCheck(gp, measureSchema); checkErr != nil {
 				return checkErr
 			}
 			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
@@ -143,7 +143,7 @@ func (s *service) PreRun() error {
 	return nil
 }
 
-func (s *service) sanityCheck(measureSchema *databasev1.Measure) error {
+func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databasev1.Measure) error {
 	var topNAggrs []*databasev1.TopNAggregation
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -153,7 +153,14 @@ func (s *service) sanityCheck(measureSchema *databasev1.Measure) error {
 	}
 
 	for _, topNAggr := range topNAggrs {
-		err = multierr.Append(err, createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr))
+		topNMeasure, innerErr := createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr)
+		err = multierr.Append(err, innerErr)
+		if topNMeasure != nil {
+			_, storeErr := group.StoreResource(topNMeasure)
+			if storeErr != nil {
+				err = multierr.Append(err, storeErr)
+			}
+		}
 	}
 
 	return err
