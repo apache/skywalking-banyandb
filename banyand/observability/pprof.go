@@ -27,8 +27,8 @@ import (
 )
 
 var (
-	_ run.Service = (*metricService)(nil)
-	_ run.Config  = (*metricService)(nil)
+	_ run.Service = (*pprofService)(nil)
+	_ run.Config  = (*pprofService)(nil)
 )
 
 // NewProfService returns a pprof service.

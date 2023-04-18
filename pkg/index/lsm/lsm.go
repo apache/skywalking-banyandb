@@ -47,6 +47,10 @@ func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
 	return err
 }
 
+func (s *store) SizeOnDisk() int64 {
+	return s.lsm.SizeOnDisk()
+}
+
 // StoreOpts wraps options to create the lsm repository.
 type StoreOpts struct {
 	Logger       *logger.Logger

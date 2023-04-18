@@ -147,23 +147,44 @@ type indexWriter struct {
 }
 
 func (i *indexWriter) WriteLSMIndex(fields []index.Field) (err error) {
+	total := 0
 	for _, field := range fields {
 		if i.scope != nil {
 			field.Key.SeriesID = GlobalSeriesID(i.scope)
 		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.marshal(), uint64(i.ts.UnixNano())))
+		bb := field.Marshal()
+		ibb := i.itemID.marshal()
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(bb, ibb, uint64(i.ts.UnixNano())))
+		total += len(bb) + len(ibb) + 8
 	}
-	return err
+	if err != nil {
+		receivedNumCounter.Inc(1, append(i.seg.position.ShardLabelValues(), "global_lsm", "true")...)
+		return err
+	}
+	receivedNumCounter.Inc(1, append(i.seg.position.ShardLabelValues(), "global_lsm", "false")...)
+	receivedBytesCounter.Inc(float64(total), append(i.seg.position.ShardLabelValues(), "global_lsm")...)
+	return nil
 }
 
 func (i *indexWriter) WriteInvertedIndex(fields []index.Field) (err error) {
+	total := 0
 	for _, field := range fields {
 		if i.scope != nil {
 			field.Key.SeriesID = GlobalSeriesID(i.scope)
 		}
-		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(field.Marshal(), i.itemID.marshal(), uint64(i.ts.UnixNano())))
+		bb := field.Marshal()
+		ibb := i.itemID.marshal()
+		err = multierr.Append(err, i.seg.globalIndex.PutWithVersion(bb, ibb, uint64(i.ts.UnixNano())))
+		total += len(bb) + len(ibb) + 8
 	}
-	return err
+
+	if err != nil {
+		receivedNumCounter.Inc(1, append(i.seg.position.ShardLabelValues(), "global_inverted", "true")...)
+		return err
+	}
+	receivedNumCounter.Inc(1, append(i.seg.position.ShardLabelValues(), "global_inverted", "false")...)
+	receivedBytesCounter.Inc(float64(total), append(i.seg.position.ShardLabelValues(), "global_inverted")...)
+	return nil
 }
 
 // GlobalSeriesID encodes Entry to common.SeriesID.

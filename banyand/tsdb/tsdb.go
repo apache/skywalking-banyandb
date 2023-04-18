@@ -239,10 +239,11 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 	if opts.TTL.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "ttl is absent")
 	}
+	p := common.GetPosition(ctx)
 	db := &database{
 		location:    opts.Location,
 		shardNum:    opts.ShardNum,
-		logger:      logger.Fetch(ctx, "tsdb"),
+		logger:      logger.Fetch(ctx, p.Database),
 		segmentSize: opts.SegmentInterval,
 		blockSize:   opts.BlockInterval,
 		ttl:         opts.TTL,

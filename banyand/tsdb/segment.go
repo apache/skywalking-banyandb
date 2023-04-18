@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -39,6 +40,7 @@ type segment struct {
 	l                   *logger.Logger
 	blockController     *blockController
 	blockManageStrategy *bucket.Strategy
+	position            common.Position
 	timestamp.TimeRange
 	path      string
 	suffix    string
@@ -60,6 +62,7 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 		path:      path,
 		suffix:    suffix,
 		TimeRange: timeRange,
+		position:  common.GetPosition(ctx),
 	}
 	l := logger.Fetch(ctx, s.String())
 	s.l = l

@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -28,21 +29,23 @@ import (
 // Provider is a prometheus provider.
 type provider struct {
 	scope meter.Scope
+	reg   prometheus.Registerer
 }
 
 // NewProvider creates a new prometheus provider with given meter.Scope.
-func NewProvider(scope meter.Scope) meter.Provider {
+func NewProvider(scope meter.Scope, reg prometheus.Registerer) meter.Provider {
 	return &provider{
 		scope: scope,
+		reg:   reg,
 	}
 }
 
 // Counter returns a prometheus counter.
 func (p *provider) Counter(name string, labels ...string) meter.Counter {
 	return &counter{
-		counter: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        name,
-			Help:        name,
+		counter: promauto.With(p.reg).NewCounterVec(prometheus.CounterOpts{
+			Name:        p.scope.GetNamespace() + "_" + name,
+			Help:        p.scope.GetNamespace() + "_" + name,
 			ConstLabels: convertLabels(p.scope.GetLabels()),
 		}, labels),
 	}
@@ -51,9 +54,9 @@ func (p *provider) Counter(name string, labels ...string) meter.Counter {
 // Gauge returns a prometheus gauge.
 func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
 	return &gauge{
-		gauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name:        name,
-			Help:        name,
+		gauge: promauto.With(p.reg).NewGaugeVec(prometheus.GaugeOpts{
+			Name:        p.scope.GetNamespace() + "_" + name,
+			Help:        p.scope.GetNamespace() + "_" + name,
 			ConstLabels: convertLabels(p.scope.GetLabels()),
 		}, labels),
 	}
@@ -62,9 +65,9 @@ func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
 // Histogram returns a prometheus histogram.
 func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...string) meter.Histogram {
 	return &histogram{
-		histogram: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        name,
-			Help:        name,
+		histogram: promauto.With(p.reg).NewHistogramVec(prometheus.HistogramOpts{
+			Name:        p.scope.GetNamespace() + "_" + name,
+			Help:        p.scope.GetNamespace() + "_" + name,
 			ConstLabels: convertLabels(p.scope.GetLabels()),
 			Buckets:     buckets,
 		}, labels),

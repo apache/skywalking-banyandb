@@ -21,6 +21,8 @@ package inverted
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"log"
 	"math"
 	"time"
@@ -160,7 +162,6 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
 	fk := fieldKey.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -193,7 +194,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if err != nil {
 		return nil, err
 	}
-	result := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm)
+	result := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
 	return &result, nil
 }
 
@@ -206,7 +207,6 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
 	fk := field.Key.MarshalIndexRule()
 	var query bluge.Query
 	shouldDecodeTerm := true
@@ -222,12 +222,14 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
 		err = multierr.Append(err, list.Union(iter.Val().Value))
 	}
-	err = multierr.Append(err, iter.Close())
 	return list, err
 }
 
@@ -239,7 +241,6 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
 	analyzer := analyzers[fieldKey.Analyzer]
 	fk := fieldKey.MarshalIndexRule()
 	query := bluge.NewBooleanQuery()
@@ -252,12 +253,14 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, false)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, false, reader)
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
 		err = multierr.Append(err, list.Union(iter.Val().Value))
 	}
-	err = multierr.Append(err, iter.Close())
 	return list, err
 }
 
@@ -272,6 +275,11 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	err = multierr.Append(err, iter.Close())
 	return
+}
+
+func (s *store) SizeOnDisk() int64 {
+	_, bytes := s.writer.DirectoryStats()
+	return int64(bytes)
 }
 
 func (s *store) run() {
@@ -352,6 +360,7 @@ func (s *store) flush() {
 type blugeMatchIterator struct {
 	delegated        search.DocumentMatchIterator
 	err              error
+	closer           io.Closer
 	current          *index.PostingValue
 	agg              *index.PostingValue
 	fieldKey         string
@@ -359,11 +368,12 @@ type blugeMatchIterator struct {
 	closed           bool
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool, closer io.Closer) blugeMatchIterator {
 	return blugeMatchIterator{
 		delegated:        delegated,
 		fieldKey:         fieldKey,
 		shouldDecodeTerm: shouldDecodeTerm,
+		closer:           closer,
 	}
 }
 
@@ -450,5 +460,5 @@ func (bmi *blugeMatchIterator) Val() *index.PostingValue {
 
 func (bmi *blugeMatchIterator) Close() error {
 	bmi.closed = true
-	return bmi.err
+	return errors.Join(bmi.err, bmi.closer.Close())
 }
