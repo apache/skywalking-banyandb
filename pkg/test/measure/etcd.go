@@ -72,6 +72,7 @@ func PreloadSchema(e schema.Registry) error {
 	}
 	return nil
 }
+
 func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T) error) error {
 	entries, err := store.ReadDir(dir)
 	if err != nil {

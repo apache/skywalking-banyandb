@@ -143,10 +143,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 		return err
 	}
 
-	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), &commonv1.Metadata{
-		Group: topNSchema.GetSourceMeasure().GetGroup(),
-		Name:  topNSchema.GetSourceMeasure().GetName(),
-	})
+	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), topNSchema.GetSourceMeasure())
 	if err != nil {
 		return err
 	}
