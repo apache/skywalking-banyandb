@@ -23,7 +23,7 @@ import Read from '@/components2/Read/index.vue'
 
 <template>
   <div>
-    <!-- <Read></Read> -->
+    <Read></Read>
   </div>
 </template>
 

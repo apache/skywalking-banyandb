@@ -354,10 +354,6 @@ function changeDatePicker() {
                     :label="item.name" :prop="item.name" show-overflow-tooltip>
                 </el-table-column>
             </el-table>
-            <!-- <el-pagination v-if="data.tableData.length > 0" class="margin-top-bottom" @size-change="handleSizeChange"
-                                                    @current-change="handleCurrentChange" :current-page="data.queryInfo.pagenum" :page-sizes="[6, 12, 18, 24]"
-                                                    :page-size="data.queryInfo.pagesize" layout="total, sizes, prev, pager, next, jumper" :total="data.total">
-                                                </el-pagination> -->
         </el-card>
     </div>
 </template>
