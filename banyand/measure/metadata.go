@@ -19,8 +19,13 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/event"
@@ -29,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
@@ -42,7 +48,7 @@ type schemaRepo struct {
 }
 
 func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
-	dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue,
 ) schemaRepo {
 	return schemaRepo{
 		l:        l,
@@ -51,7 +57,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, dbOpts, l),
+			newSupplier(path, metadata, dbOpts, l, pipeline),
 			event.MeasureTopicShardEvent,
 			event.MeasureTopicEntityEvent,
 		),
@@ -115,6 +121,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
+		// createOrUpdate TopN schemas in advance
+		_, err := createOrUpdateTopNMeasure(sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
+		if err != nil {
+			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
+			return
+		}
+		// reload source measure
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
@@ -122,6 +135,76 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		})
 	default:
 	}
+}
+
+func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
+	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(context.TODO(), topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return nil, err
+	}
+
+	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), topNSchema.GetSourceMeasure())
+	if err != nil {
+		return nil, err
+	}
+
+	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: sourceMeasureSchema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: TopNTagFamily,
+				Tags: append([]*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_ID,
+					},
+				}, seriesSpecs...),
+			},
+		},
+		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+	}
+	if oldTopNSchema == nil {
+		if innerErr := measureSchemaRegistry.CreateMeasure(context.Background(), newTopNMeasure); innerErr != nil {
+			return nil, innerErr
+		}
+		return newTopNMeasure, nil
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, oldTopNSchema,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return oldTopNSchema, nil
+	}
+	// update
+	if err = measureSchemaRegistry.UpdateMeasure(context.Background(), newTopNMeasure); err != nil {
+		return nil, err
+	}
+	return newTopNMeasure, nil
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
@@ -163,6 +246,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		}
 	case schema.KindIndexRule:
 	case schema.KindTopNAggregation:
+		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
+		if err != nil {
+			sr.l.Error().Err(err).Msg("fail to remove topN measure")
+			return
+		}
 		// we should update instead of delete
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
@@ -171,6 +259,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		})
 	default:
 	}
+}
+
+func (sr *schemaRepo) removeTopNMeasure(metadata *commonv1.Metadata) error {
+	_, err := sr.metadata.MeasureRegistry().DeleteMeasure(context.Background(), metadata)
+	return err
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
@@ -186,17 +279,19 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	metadata metadata.Repo
+	pipeline queue.Queue
 	l        *logger.Logger
 	path     string
 	dbOpts   tsdb.DatabaseOpts
 }
 
-func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
+func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue) *supplier {
 	return &supplier{
 		path:     path,
 		dbOpts:   dbOpts,
 		metadata: metadata,
 		l:        l,
+		pipeline: pipeline,
 	}
 }
 
@@ -206,7 +301,7 @@ func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resource
 		schema:           measureSchema,
 		indexRules:       spec.IndexRules,
 		topNAggregations: spec.Aggregations,
-	}, s.l)
+	}, s.l, s.pipeline)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -240,10 +335,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	if opts.TTL, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.Ttl); err != nil {
 		return nil, err
 	}
+
 	return tsdb.OpenDatabase(
-		context.WithValue(context.Background(), common.PositionKey, common.Position{
-			Module:   "measure",
-			Database: name,
+		common.SetPosition(context.Background(), func(p common.Position) common.Position {
+			p.Module = "measure"
+			p.Database = name
+			return p
 		}),
 		opts)
 }

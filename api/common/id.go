@@ -40,8 +40,8 @@ func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
-// PositionKey is a context key to store the module position.
-var PositionKey = contextPositionKey{}
+// positionKey is a context key to store the module position.
+var positionKey = contextPositionKey{}
 
 type contextPositionKey struct{}
 
@@ -60,21 +60,40 @@ func LabelNames() []string {
 	return []string{"module", "database", "shard", "seg", "block"}
 }
 
+// ShardLabelNames returns the label names of Position. It is used for shard level metrics.
+func ShardLabelNames() []string {
+	return []string{"module", "database", "shard"}
+}
+
 // LabelValues returns the label values of Position.
 func (p Position) LabelValues() []string {
 	return []string{p.Module, p.Database, p.Shard, p.Segment, p.Block}
 }
 
+// ShardLabelValues returns the label values of Position. It is used for shard level metrics.
+func (p Position) ShardLabelValues() []string {
+	return []string{p.Module, p.Database, p.Shard}
+}
+
 // SetPosition sets a position returned from fn to attach it to ctx, then return a new context.
 func SetPosition(ctx context.Context, fn func(p Position) Position) context.Context {
-	val := ctx.Value(PositionKey)
+	val := ctx.Value(positionKey)
 	var p Position
 	if val == nil {
 		p = Position{}
 	} else {
 		p = val.(Position)
 	}
-	return context.WithValue(ctx, PositionKey, fn(p))
+	return context.WithValue(ctx, positionKey, fn(p))
+}
+
+// GetPosition returns the position from ctx.
+func GetPosition(ctx context.Context) Position {
+	val := ctx.Value(positionKey)
+	if val == nil {
+		return Position{}
+	}
+	return val.(Position)
 }
 
 // Error wraps a error msg.

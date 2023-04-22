@@ -88,3 +88,7 @@ func (sdd *scopedSeriesDatabase) GetByID(id common.SeriesID) (Series, error) {
 func (sdd *scopedSeriesDatabase) List(ctx context.Context, path Path) (SeriesList, error) {
 	return sdd.delegated.List(ctx, path.prepend(sdd.scope))
 }
+
+func (sdd *scopedSeriesDatabase) SizeOnDisk() int64 {
+	return sdd.delegated.SizeOnDisk()
+}

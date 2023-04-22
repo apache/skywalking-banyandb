@@ -1,6 +1,3 @@
-//go:build !prometheus
-// +build !prometheus
-
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -9,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -21,24 +18,34 @@
 package observability
 
 import (
-	"google.golang.org/grpc"
-
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"sync"
 )
 
-// NewMetricService returns a metric service.
-func NewMetricService() run.Service {
-	MetricsCollector.collect()
-	return nil
+// MetricsCollector is a global metrics collector.
+var MetricsCollector = Collector{
+	getters: make(map[string]MetricsGetter),
 }
 
-// NewMeterProvider returns a meter.Provider based on the given scope.
-func NewMeterProvider(_ meter.Scope) meter.Provider {
-	return meter.NoopProvider{}
+// MetricsGetter is a function that collects metrics.
+type MetricsGetter func()
+
+// Collector is a metrics collector.
+type Collector struct {
+	getters map[string]MetricsGetter
+	gMux    sync.RWMutex
 }
 
-// MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
-func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
-	return nil, nil
+// Register registers a metrics getter.
+func (c *Collector) Register(name string, getter MetricsGetter) {
+	c.gMux.Lock()
+	defer c.gMux.Unlock()
+	c.getters[name] = getter
+}
+
+func (c *Collector) collect() {
+	c.gMux.RLock()
+	defer c.gMux.RUnlock()
+	for _, getter := range c.getters {
+		getter()
+	}
 }

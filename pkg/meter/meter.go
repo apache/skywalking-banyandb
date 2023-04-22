@@ -26,6 +26,9 @@ type (
 	LabelPairs map[string]string
 )
 
+// DefBuckets is the default buckets for histograms.
+var DefBuckets = Buckets{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
+
 // Merge merges the given label pairs with the current label pairs.
 func (p LabelPairs) Merge(other LabelPairs) LabelPairs {
 	result := make(LabelPairs, len(p)+len(other))
@@ -53,49 +56,53 @@ type Scope interface {
 	GetLabels() LabelPairs
 }
 
+// Instrument is the interface for a metric.
+type Instrument interface {
+	// Delete the metric with the given label values.
+	Delete(labelValues ...string) bool
+}
+
 // Counter is a metric that represents a single numerical value that only ever goes up.
 type Counter interface {
+	Instrument
 	Inc(delta float64, labelValues ...string)
 }
 
 // Gauge is a metric that represents a single numerical value that can arbitrarily go up and down.
 type Gauge interface {
+	Instrument
 	Set(value float64, labelValues ...string)
 	Add(delta float64, labelValues ...string)
 }
 
 // Histogram is a metric that represents the statistical distribution of a set of values.
 type Histogram interface {
+	Instrument
 	Observe(value float64, labelValues ...string)
 }
 
-type noopCounter struct{}
+type noopInstrument struct{}
 
-func (noopCounter) Inc(_ float64, _ ...string) {}
-
-type noopGauge struct{}
-
-func (noopGauge) Set(_ float64, _ ...string) {}
-func (noopGauge) Add(_ float64, _ ...string) {}
-
-type noopHistogram struct{}
-
-func (noopHistogram) Observe(_ float64, _ ...string) {}
+func (noopInstrument) Inc(_ float64, _ ...string)     {}
+func (noopInstrument) Set(_ float64, _ ...string)     {}
+func (noopInstrument) Add(_ float64, _ ...string)     {}
+func (noopInstrument) Observe(_ float64, _ ...string) {}
+func (noopInstrument) Delete(_ ...string) bool        { return false }
 
 // NoopProvider is a no-op implementation of the Provider interface.
 type NoopProvider struct{}
 
 // Counter returns a no-op implementation of the Counter interface.
 func (NoopProvider) Counter(_ string, _ ...string) Counter {
-	return noopCounter{}
+	return noopInstrument{}
 }
 
 // Gauge returns a no-op implementation of the Gauge interface.
 func (NoopProvider) Gauge(_ string, _ ...string) Gauge {
-	return noopGauge{}
+	return noopInstrument{}
 }
 
 // Histogram returns a no-op implementation of the Histogram interface.
 func (NoopProvider) Histogram(_ string, _ Buckets, _ ...string) Histogram {
-	return noopHistogram{}
+	return noopInstrument{}
 }

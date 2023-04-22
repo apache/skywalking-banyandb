@@ -26,7 +26,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
@@ -59,7 +58,7 @@ type measure struct {
 	shardNum               uint32
 }
 
-func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo) error {
+func (s *measure) startSteamingManager(pipeline queue.Queue) error {
 	if len(s.topNAggregations) == 0 {
 		return nil
 	}
@@ -69,7 +68,6 @@ func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo)
 	s.processorManager = &topNProcessorManager{
 		l:            s.l,
 		pipeline:     pipeline,
-		repo:         repo,
 		m:            s,
 		s:            tagMapSpec,
 		topNSchemas:  s.topNAggregations,
@@ -122,7 +120,8 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+) (*measure, error) {
 	m := &measure{
 		shardNum:         shardNum,
 		schema:           spec.schema,
@@ -142,6 +141,11 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
+
+	if startErr := m.startSteamingManager(pipeline); startErr != nil {
+		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
+			Msg("fail to start streaming manager")
+	}
 
 	return m, nil
 }

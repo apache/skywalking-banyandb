@@ -11,6 +11,8 @@ Release Notes.
 - Refactor TopN to support `NULL` group while keeping seriesID from the source measure.
 - Add a sharded buffer to TSDB to replace Badger's memtable. Badger KV only provides SST.
 - Add a meter system to control the internal metrics.
+- Add multiple metrics for measuring the storage subsystem.
+- Refactor callback of TopNAggregation schema event to avoid deadlock and reload issue.
 
 ### Chores
 

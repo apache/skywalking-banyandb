@@ -67,17 +67,18 @@ type flushEvent struct {
 type onFlush func(shardIndex int, skl *skl.Skiplist) error
 
 type bufferShardBucket struct {
-	mutable        *skl.Skiplist
-	writeCh        chan operation
-	flushCh        chan flushEvent
-	writeWaitGroup *sync.WaitGroup
-	flushWaitGroup *sync.WaitGroup
-	log            *logger.Logger
-	immutables     []*skl.Skiplist
-	labelValues    []string
-	index          int
-	capacity       int
-	mutex          sync.RWMutex
+	mutable          *skl.Skiplist
+	writeCh          chan operation
+	flushCh          chan flushEvent
+	writeWaitGroup   *sync.WaitGroup
+	flushWaitGroup   *sync.WaitGroup
+	log              *logger.Logger
+	immutables       []*skl.Skiplist
+	labelValues      []string
+	shardLabelValues []string
+	index            int
+	capacity         int
+	mutex            sync.RWMutex
 }
 
 // Buffer is an exported struct that represents a buffer composed of multiple shard buckets.
@@ -106,15 +107,16 @@ func NewBuffer(log *logger.Logger, position common.Position, flushSize, writeCon
 	buffer.flushWaitGroup.Add(numShards)
 	for i := 0; i < numShards; i++ {
 		buckets[i] = bufferShardBucket{
-			index:          i,
-			capacity:       flushSize,
-			mutable:        skl.NewSkiplist(int64(flushSize)),
-			writeCh:        make(chan operation, writeConcurrency),
-			flushCh:        make(chan flushEvent, 1),
-			writeWaitGroup: &buffer.writeWaitGroup,
-			flushWaitGroup: &buffer.flushWaitGroup,
-			log:            buffer.log.Named(fmt.Sprintf("shard-%d", i)),
-			labelValues:    append(position.LabelValues(), fmt.Sprintf("%d", i)),
+			index:            i,
+			capacity:         flushSize,
+			mutable:          skl.NewSkiplist(int64(flushSize)),
+			writeCh:          make(chan operation, writeConcurrency),
+			flushCh:          make(chan flushEvent, 1),
+			writeWaitGroup:   &buffer.writeWaitGroup,
+			flushWaitGroup:   &buffer.flushWaitGroup,
+			log:              buffer.log.Named(fmt.Sprintf("shard-%d", i)),
+			labelValues:      append(position.LabelValues(), fmt.Sprintf("%d", i)),
+			shardLabelValues: position.ShardLabelValues(),
 		}
 		buckets[i].start(onFlushFn)
 		maxBytes.Set(float64(flushSize), buckets[i].labelValues...)
@@ -206,23 +208,34 @@ func (bsb *bufferShardBucket) getAll() ([]*skl.Skiplist, func()) {
 
 func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 	go func() {
+		defer func() {
+			for _, g := range []meter.Gauge{maxBytes, immutableBytes, mutableBytes} {
+				g.Delete(bsb.labelValues...)
+			}
+		}()
 		defer bsb.flushWaitGroup.Done()
 		for event := range bsb.flushCh {
 			oldSkipList := event.data
 			memSize := oldSkipList.MemSize()
+			t1 := time.Now()
 			for {
 				if err := onFlushFn(bsb.index, oldSkipList); err != nil {
 					bsb.log.Err(err).Msg("flushing immutable buffer failed. Retrying...")
+					flushNum.Inc(1, append(bsb.labelValues[:2], "true")...)
 					time.Sleep(time.Second)
 					continue
 				}
 				break
 			}
+			flushLatency.Observe(time.Since(t1).Seconds(), bsb.shardLabelValues...)
+			immutableBytes.Add(float64(-memSize), bsb.labelValues...)
+			flushBytes.Inc(float64(memSize), bsb.shardLabelValues...)
+			flushNum.Inc(1, append(bsb.shardLabelValues, "false")...)
+
 			bsb.mutex.Lock()
 			bsb.immutables = bsb.immutables[1:]
 			bsb.mutex.Unlock()
 			oldSkipList.DecrRef()
-			immutableBytes.Add(float64(-memSize), bsb.labelValues...)
 		}
 	}()
 	go func() {
@@ -259,6 +272,6 @@ func (bsb *bufferShardBucket) triggerFlushing() {
 
 func (bsb *bufferShardBucket) swap() {
 	bsb.immutables = append(bsb.immutables, bsb.mutable)
-	bsb.mutable = skl.NewSkiplist(int64(bsb.capacity))
 	immutableBytes.Add(float64(bsb.mutable.MemSize()), bsb.labelValues...)
+	bsb.mutable = skl.NewSkiplist(int64(bsb.capacity))
 }

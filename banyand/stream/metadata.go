@@ -220,9 +220,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 		return nil, err
 	}
 	return tsdb.OpenDatabase(
-		context.WithValue(context.Background(), common.PositionKey, common.Position{
-			Module:   "stream",
-			Database: name,
+		common.SetPosition(context.Background(), func(p common.Position) common.Position {
+			p.Module = "stream"
+			p.Database = name
+			return p
 		}),
 		opts)
 }
