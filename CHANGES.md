@@ -13,6 +13,7 @@ Release Notes.
 - Add a meter system to control the internal metrics.
 - Add multiple metrics for measuring the storage subsystem.
 - Refactor callback of TopNAggregation schema event to avoid deadlock and reload issue.
+- Fix max ModRevision computation with inclusion of `TopNAggregation`
 
 ### Chores
 
