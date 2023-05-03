@@ -42,7 +42,7 @@ Get operation gets a group's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl get -g sw_metric
+$ bydbctl group get -g sw_metric
 ```
 
 ## Update operation
@@ -79,7 +79,7 @@ Delete operation deletes a group's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl delete -g sw_metric
+$ bydbctl group delete -g sw_metric
 ```
 
 ## List operation
