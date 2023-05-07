@@ -145,6 +145,13 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.Metadata.Id == 0 {
+		existingIndexRule, err := e.GetIndexRule(ctx, indexRule.Metadata)
+		if err != nil {
+			return err
+		}
+		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
