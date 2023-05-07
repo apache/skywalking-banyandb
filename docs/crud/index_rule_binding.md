@@ -89,7 +89,7 @@ Update operation update an index rule binding's schema.
 ### Examples updating
 
 ```shell
-$ bydbctl indexRuleBinding create -f - <<EOF
+$ bydbctl indexRuleBinding update -f - <<EOF
 metadata:
   name: stream_binding
   group: sw_stream
