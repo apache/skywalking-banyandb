@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -89,11 +90,14 @@ func (g *topOp) Schema() logical.Schema {
 	return g.Input.Schema()
 }
 
-func (g *topOp) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *topOp) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
 	g.topNStream.Purge()
 	for iter.Next() {
 		dpp := iter.Current()

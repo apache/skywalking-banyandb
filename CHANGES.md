@@ -14,10 +14,17 @@ Release Notes.
 - Add multiple metrics for measuring the storage subsystem.
 - Refactor callback of TopNAggregation schema event to avoid deadlock and reload issue.
 - Fix max ModRevision computation with inclusion of `TopNAggregation`
+- Enhance meter performance
+- Reduce logger creation frequency
+
+### Bugs
+
+- Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
 
 ### Chores
 
 - Bump go to 1.20.
+- Set KV's minimum memtable size to 8MB
 
 ## 0.3.1
 

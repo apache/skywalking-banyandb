@@ -83,10 +83,6 @@ spec:
         - "standalone"
         - "--measure-idx-batch-wait-sec=30"
         - "--logging.level=warn"
-        - "--logging.modules=measure.measure-default.service_cpm_minute"
-        - "--logging.levels=debug"
-        - "--logging.modules=query.measure.measure-default.service_cpm_minute"
-        - "--logging.levels=debug"
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 5
@@ -100,8 +96,8 @@ spec:
           timeoutSeconds: 10
         resources:
           limits:
-            memory: "29G"
-            cpu: "7"
+            memory: "8G"
+            cpu: "4"
         ports:
         - containerPort: 17912
         - containerPort: 17913
@@ -129,6 +125,13 @@ spec:
           mountPath: /tmp/measure
         - name:  stream
           mountPath: /tmp/stream
+      nodeSelector:
+        group: banyandb
+      tolerations:
+      - effect: NoSchedule
+        key: group
+        operator: Equal
+        value: banyandb
       volumes:
         - name: metadata
           persistentVolumeClaim:

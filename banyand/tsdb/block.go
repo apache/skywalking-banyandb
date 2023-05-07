@@ -167,7 +167,7 @@ func (b *block) options(ctx context.Context) {
 		Logger:       b.l.Named(componentSecondInvertedIdx),
 		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
 	}
-	lsmMemSize := bufferSize / 4
+	lsmMemSize := bufferSize / 2
 	if lsmMemSize < defaultKVMemorySize {
 		lsmMemSize = defaultKVMemorySize
 	}

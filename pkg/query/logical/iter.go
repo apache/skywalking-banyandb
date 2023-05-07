@@ -19,6 +19,9 @@ package logical
 
 import (
 	"container/heap"
+	"io"
+
+	"go.uber.org/multierr"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -30,6 +33,7 @@ var _ ItemIterator = (*itemIter)(nil)
 type ItemIterator interface {
 	HasNext() bool
 	Next() tsdb.Item
+	io.Closer
 }
 
 var _ heap.Interface = (*containerHeap)(nil)
@@ -98,7 +102,6 @@ func (it *itemIter) init() {
 //	Then we call SliceStable sort to sort the deq.
 func (it *itemIter) pushIterator(iter tsdb.Iterator) {
 	if !iter.Next() {
-		_ = iter.Close()
 		return
 	}
 	heap.Push(it.h, &container{
@@ -120,4 +123,12 @@ func (it *itemIter) Next() tsdb.Item {
 	it.pushIterator(c.iter)
 
 	return c.item
+}
+
+// Close closes all underlying iterators.
+func (it *itemIter) Close() (err error) {
+	for _, iter := range it.iters {
+		err = multierr.Append(err, iter.Close())
+	}
+	return err
 }

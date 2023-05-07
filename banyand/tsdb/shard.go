@@ -40,7 +40,7 @@ import (
 const (
 	defaultBlockQueueSize    = 4
 	defaultMaxBlockQueueSize = 64
-	defaultKVMemorySize      = 1 << 20
+	defaultKVMemorySize      = 8 << 20
 )
 
 var (

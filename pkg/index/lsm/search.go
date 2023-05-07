@@ -64,7 +64,10 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	return newFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm,
+	if !s.closer.AddRunning() {
+		return nil, errors.New("lsm index store is closed")
+	}
+	return newFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm, s.closer,
 		func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			pv := &index.PostingValue{
 				Term:  term,

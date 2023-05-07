@@ -23,6 +23,7 @@ import (
 	"io"
 	"time"
 
+	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -61,21 +62,21 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) (elements []*streamv1.Element, err error) {
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
-		shards, err := ec.Shards(e)
-		if err != nil {
-			return nil, err
+		shards, errInternal := ec.Shards(e)
+		if errInternal != nil {
+			return nil, errInternal
 		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(context.WithValue(
+			sl, errInternal := shard.Series().List(context.WithValue(
 				context.Background(),
 				logger.ContextKey,
 				i.l,
 			), tsdb.NewPath(e))
-			if err != nil {
-				return nil, err
+			if errInternal != nil {
+				return nil, errInternal
 			}
 			seriesList = seriesList.Merge(sl)
 		}
@@ -98,16 +99,16 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 			b.Filter(i.filter)
 		})
 	}
-	iters, closers, innerErr := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	if err != nil {
+		return nil, err
+	}
 	if len(closers) > 0 {
 		defer func(closers []io.Closer) {
 			for _, c := range closers {
-				_ = c.Close()
+				err = multierr.Append(err, c.Close())
 			}
 		}(closers)
-	}
-	if innerErr != nil {
-		return nil, innerErr
 	}
 
 	var elems []*streamv1.Element
@@ -117,6 +118,9 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv
 	}
 
 	it := logical.NewItemIter(iters, i.order.Sort)
+	defer func() {
+		err = multierr.Append(err, it.Close())
+	}()
 	for it.HasNext() {
 		nextItem := it.Next()
 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
