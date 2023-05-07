@@ -33,8 +33,9 @@ func TestStore_MatchTerm(t *testing.T) {
 	tester := assert.New(t)
 	path, fn := setUp(require.New(t))
 	s, err := NewStore(StoreOpts{
-		Path:   path,
-		Logger: logger.GetLogger("test"),
+		Path:         path,
+		Logger:       logger.GetLogger("test"),
+		MemTableSize: 1, // invalid size
 	})
 	defer func() {
 		tester.NoError(s.Close())

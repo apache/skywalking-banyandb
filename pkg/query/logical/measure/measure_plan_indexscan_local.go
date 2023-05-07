@@ -122,21 +122,21 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
-		shards, err := ec.Shards(e)
-		if err != nil {
-			return nil, err
+		shards, errInternal := ec.Shards(e)
+		if errInternal != nil {
+			return nil, errInternal
 		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(context.WithValue(
+			sl, errInternal := shard.Series().List(context.WithValue(
 				context.Background(),
 				logger.ContextKey,
 				i.l,
 			), tsdb.NewPath(e))
-			if err != nil {
-				return nil, err
+			if errInternal != nil {
+				return nil, errInternal
 			}
 			seriesList = seriesList.Merge(sl)
 		}
@@ -159,16 +159,16 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 			b.Filter(i.filter)
 		})
 	}
-	iters, closers, innerErr := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	if err != nil {
+		return nil, err
+	}
 	if len(closers) > 0 {
 		defer func(closers []io.Closer) {
 			for _, c := range closers {
-				_ = c.Close()
+				err = multierr.Append(err, c.Close())
 			}
 		}(closers)
-	}
-	if innerErr != nil {
-		return nil, innerErr
 	}
 
 	if len(iters) == 0 {
@@ -257,7 +257,7 @@ func (ism *indexScanIterator) Current() []*measurev1.DataPoint {
 }
 
 func (ism *indexScanIterator) Close() error {
-	return ism.err
+	return multierr.Combine(ism.err, ism.inner.Close())
 }
 
 var _ executor.MIterator = (*seriesIterator)(nil)

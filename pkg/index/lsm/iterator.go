@@ -20,6 +20,7 @@ package lsm
 import (
 	"bytes"
 	"math"
+	"sync"
 
 	"go.uber.org/multierr"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type compositePostingValueFn = func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error)
@@ -43,8 +45,10 @@ type fieldIteratorTemplate struct {
 	delegated *delegateIterator
 	cur       *index.PostingValue
 	fn        compositePostingValueFn
+	closer    *run.Closer
 	seekKey   []byte
 	termRange index.RangeOpts
+	closeOnce sync.Once
 	init      bool
 	reverse   bool
 }
@@ -83,12 +87,16 @@ func (f *fieldIteratorTemplate) Val() *index.PostingValue {
 	return f.cur
 }
 
-func (f *fieldIteratorTemplate) Close() error {
-	return multierr.Append(f.err, f.delegated.Close())
+func (f *fieldIteratorTemplate) Close() (err error) {
+	f.closeOnce.Do(func() {
+		defer f.closer.Done()
+		err = multierr.Combine(f.err, f.delegated.Close())
+	})
+	return err
 }
 
 func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, iterable kv.Iterable,
-	fn compositePostingValueFn,
+	closer *run.Closer, fn compositePostingValueFn,
 ) *fieldIteratorTemplate {
 	if termRange.Upper == nil {
 		termRange.Upper = defaultUpper
@@ -120,6 +128,7 @@ func newFieldIteratorTemplate(l *logger.Logger, fieldKey index.FieldKey, termRan
 		fn:        fn,
 		reverse:   reverse,
 		seekKey:   field.Marshal(),
+		closer:    closer,
 	}
 }
 
@@ -191,7 +200,6 @@ func (di *delegateIterator) Valid() bool {
 	di.curField, err = parseKey(di.fieldKey, di.Key())
 	if err != nil {
 		di.l.Error().Err(err).Msg("fail to parse field from key")
-		di.Close()
 		return false
 	}
 	if !bytes.Equal(di.curField.Key.Marshal(), di.fieldKeyBytes) {
@@ -200,7 +208,6 @@ func (di *delegateIterator) Valid() bool {
 				Uint32("index_rule_id", di.fieldKey.IndexRuleID).
 				Msg("reached the limitation of the field(series_id+index_rule_id)")
 		}
-		di.Close()
 		return false
 	}
 	return true
@@ -208,5 +215,5 @@ func (di *delegateIterator) Valid() bool {
 
 func (di *delegateIterator) Close() error {
 	di.closed = true
-	return nil
+	return di.delegated.Close()
 }

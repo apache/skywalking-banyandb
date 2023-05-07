@@ -50,6 +50,9 @@ tagFamilies:
     tags: 
       - name: trace_id
         type: TAG_TYPE_STRING
+entity:
+  tagNames:
+    - stream_id
 EOF
 ```
 
@@ -60,7 +63,7 @@ Get(Read) operation get a stream's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl get -g default -n sw
+$ bydbctl stream get -g default -n sw
 ```
 
 ## Update operation
@@ -80,6 +83,9 @@ tagFamilies:
     tags: 
       - name: trace_id
         type: TAG_TYPE_STRING
+entity:
+  tagNames:    
+    - stream_id
 EOF
 
 ```
@@ -92,7 +98,7 @@ Delete operation delete a stream's schema.
 
 `bydbctl` is the command line tool to delete a stream in this example.
 ```shell
-$ bydbctl delete -g default -n sw
+$ bydbctl stream delete -g default -n sw
 ```
 
 ## List operation

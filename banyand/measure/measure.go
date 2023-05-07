@@ -22,6 +22,7 @@ package measure
 
 import (
 	"context"
+	"math"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -31,8 +32,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -89,6 +90,10 @@ func (s *measure) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
+func (s *measure) GetTopN() []*databasev1.TopNAggregation {
+	return s.topNAggregations
+}
+
 func (s *measure) MaxObservedModRevision() int64 {
 	return s.maxObservedModRevision
 }
@@ -107,7 +112,7 @@ func (s *measure) Close() error {
 func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
-	s.maxObservedModRevision = pbv1.ParseMaxModRevision(s.indexRules)
+	s.maxObservedModRevision = int64(math.Max(float64(resourceSchema.ParseMaxModRevision(s.indexRules)), float64(resourceSchema.ParseMaxModRevision(s.topNAggregations))))
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}

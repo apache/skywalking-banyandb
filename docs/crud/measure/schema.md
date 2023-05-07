@@ -76,7 +76,7 @@ Get(Read) operation gets a measure's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl get -g sw_metric -n service_cpm_minute
+$ bydbctl measure get -g sw_metric -n service_cpm_minute
 ```
 
 ## Update operation
@@ -95,6 +95,9 @@ tagFamilies:
     tags: 
       - name: trace_id
         type: TAG_TYPE_STRING
+entity:
+  tag_names:
+    - entity_id
 EOF
 ```
 
@@ -105,7 +108,7 @@ Delete operation removes a measure's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl delete -g sw_metric -n service_cpm_minute
+$ bydbctl measure delete -g sw_metric -n service_cpm_minute
 ```
 
 ## List operation

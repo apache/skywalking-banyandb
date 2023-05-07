@@ -21,6 +21,7 @@ package schema
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -93,6 +93,7 @@ type ResourceSpec struct {
 // Resource allows access metadata from a local cache.
 type Resource interface {
 	GetIndexRules() []*databasev1.IndexRule
+	GetTopN() []*databasev1.TopNAggregation
 	MaxObservedModRevision() int64
 	EntityLocator() partition.EntityLocator
 	ResourceSchema
@@ -452,8 +453,14 @@ func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
 		if errIndexRules != nil {
 			return nil, errIndexRules
 		}
-		if len(idxRules) == len(preResource.GetIndexRules()) {
-			maxModRevision := pbv1.ParseMaxModRevision(idxRules)
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		topNAggrs, errTopN := g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
+		cancel()
+		if errTopN != nil {
+			return nil, errTopN
+		}
+		if len(idxRules) == len(preResource.GetIndexRules()) && len(topNAggrs) == len(preResource.GetTopN()) {
+			maxModRevision := int64(math.Max(float64(ParseMaxModRevision(idxRules)), float64(ParseMaxModRevision(topNAggrs))))
 			if preResource.MaxObservedModRevision() >= maxModRevision {
 				return preResource, nil
 			}
@@ -552,4 +559,15 @@ func (g *group) close() (err error) {
 	}
 	g.mapMutex.RUnlock()
 	return multierr.Append(err, g.SupplyTSDB().Close())
+}
+
+// ParseMaxModRevision gives the max revision from resources' metadata.
+func ParseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {
+	maxRevisionForIdxRules = int64(0)
+	for _, idxRule := range indexRules {
+		if idxRule.GetMetadata().GetModRevision() > maxRevisionForIdxRules {
+			maxRevisionForIdxRules = idxRule.GetMetadata().GetModRevision()
+		}
+	}
+	return
 }

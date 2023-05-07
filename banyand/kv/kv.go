@@ -40,6 +40,8 @@ var (
 		PrefetchSize:   100,
 		PrefetchValues: true,
 	}
+
+	defaultKVMemorySize = 8 << 20
 )
 
 type writer interface {
@@ -179,8 +181,8 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 	// Put all values into LSM
 	btss.dbOpts = btss.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
 	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
-	if btss.dbOpts.MemTableSize < 8<<20 {
-		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
+	if btss.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
+		btss.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
 	btss.dbOpts = btss.dbOpts.WithInTable()
 	var err error
@@ -231,9 +233,8 @@ func OpenStore(path string, options ...StoreOptions) (Store, error) {
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
-	if bdb.dbOpts.MemTableSize > 0 && bdb.dbOpts.MemTableSize < 8<<20 {
-		bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
+	if bdb.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
+		bdb.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
 
 	var err error
