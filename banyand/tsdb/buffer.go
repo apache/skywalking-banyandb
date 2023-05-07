@@ -233,7 +233,9 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 			flushNum.Inc(1, append(bsb.shardLabelValues, "false")...)
 
 			bsb.mutex.Lock()
-			bsb.immutables = bsb.immutables[1:]
+			if len(bsb.immutables) > 0 {
+				bsb.immutables = bsb.immutables[1:]
+			}
 			bsb.mutex.Unlock()
 			oldSkipList.DecrRef()
 		}
