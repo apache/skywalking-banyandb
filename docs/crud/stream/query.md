@@ -27,7 +27,7 @@ e.g. "start = 2022-11-09T12:04:00Z", so "end = start + 30 minutes = 2022-11-09T1
 
 ## Examples
 
-To retrieve elements in a stream named `sw` between `2022-10-15T22:32:48Z` and `2022-10-15T23:32:48Z` could use the below command. These elements also choose a tag `trace_id` which lives in a family named `searchable` and another tag `data_binary` belongs to family `data`.
+To retrieve elements in a stream named `sw` between `2022-10-15T22:32:48Z` and `2022-10-15T23:32:48Z` could use the below command. These elements also choose a tag `trace_id` which lives in a family named `searchable`.
 
 ```shell
 $ bydbctl stream query -f - <<EOF
@@ -38,8 +38,6 @@ projection:
   tagFamilies:
   - name: "searchable"
     tags: ["trace_id"]
-  - name: "data"
-    tags: ["data_binary"]
 timeRange:
   begin: 2022-10-15T22:32:48+08:00
   end: 2022-10-15T23:32:48+08:00
@@ -57,8 +55,6 @@ projection:
   tagFamilies:
   - name: "searchable"
     tags: ["trace_id"]
-  - name: "data"
-    tags: ["data_binary"]
 EOF
 ```
 
