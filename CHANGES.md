@@ -20,6 +20,7 @@ Release Notes.
 ### Bugs
 
 - Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
+- Fix resource corrupts caused by update indexRule operation
 
 ### Chores
 
