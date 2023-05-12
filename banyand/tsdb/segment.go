@@ -90,7 +90,7 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 			if s.globalIndex, err = kv.OpenStore(
 				indexPath,
 				kv.StoreWithLogger(s.l),
-				kv.StoreWithMemTableSize(memSize),
+				kv.StoreWithMemTableSize(int64(memSize)),
 			); err != nil {
 				return nil, err
 			}

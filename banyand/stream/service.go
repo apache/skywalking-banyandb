@@ -72,10 +72,13 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
+	s.dbOpts.BlockMemSize = 8 << 20
+	s.dbOpts.SeriesMemSize = 1 << 20
+	s.dbOpts.GlobalIndexMemSize = 2 << 20
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
-	flagS.Int64Var(&s.dbOpts.BlockMemSize, "stream-block-mem-size", 8<<20, "block memory size")
-	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", 1<<20, "series metadata memory size")
-	flagS.Int64Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", 2<<20, "global index memory size")
+	flagS.Var(&s.dbOpts.BlockMemSize, "stream-block-mem-size", "block memory size")
+	flagS.Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", "series metadata memory size")
+	flagS.Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", "global index memory size")
 	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "stream-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
 }

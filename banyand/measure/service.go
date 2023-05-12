@@ -82,8 +82,10 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
-	flagS.Int64Var(&s.dbOpts.BlockMemSize, "measure-block-mem-size", 16<<20, "block memory size")
-	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", 1<<20, "series metadata memory size")
+	s.dbOpts.BlockMemSize = 16 << 20
+	s.dbOpts.SeriesMemSize = 1 << 20
+	flagS.Var(&s.dbOpts.BlockMemSize, "measure-block-mem-size", "block memory size")
+	flagS.Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", "series metadata memory size")
 	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "measure-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
 }

@@ -48,7 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const defaultRecvSize = 1024 * 1024 * 10
+const defaultRecvSize = 10 << 20
 
 var (
 	errServerCert = errors.New("invalid server cert file")
@@ -76,7 +76,7 @@ type server struct {
 	addr           string
 	keyFile        string
 	certFile       string
-	maxRecvMsgSize int
+	maxRecvMsgSize run.Bytes
 	tls            bool
 }
 
@@ -155,7 +155,8 @@ func (s *server) Name() string {
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "the size of max receiving message")
+	s.maxRecvMsgSize = defaultRecvSize
+	fs.VarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", "the size of max receiving message")
 	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
 	fs.StringVarP(&s.certFile, "cert-file", "", "", "the TLS cert file")
 	fs.StringVarP(&s.keyFile, "key-file", "", "", "the TLS key file")
@@ -211,7 +212,7 @@ func (s *server) Serve() run.StopNotify {
 		unaryChain = append(unaryChain, unaryMetrics)
 	}
 
-	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize),
+	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
 		grpclib.ChainStreamInterceptor(streamChain...),
 	)

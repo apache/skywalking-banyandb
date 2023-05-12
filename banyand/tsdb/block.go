@@ -25,11 +25,13 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
+	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -63,6 +65,25 @@ var (
 	blockMeterProvider          = observability.NewMeterProvider(meterTSDB.SubScope("block"))
 	blockOpenedTimeSecondsGauge = blockMeterProvider.Gauge("opened_time_seconds", common.LabelNames()...)
 	blockReferencesGauge        = blockMeterProvider.Gauge("refs", common.LabelNames()...)
+
+	blockCompressedSize     = blockMeterProvider.Gauge("compressed_size", append(common.LabelNames(), "from", "to")...)
+	blockUncompressedSize   = blockMeterProvider.Gauge("uncompressed_size", append(common.LabelNames(), "from", "to")...)
+	blockCompressedBlockNum = blockMeterProvider.Gauge("compressed_block_num", append(common.LabelNames(), "from", "to")...)
+	blockCompressedEntryNum = blockMeterProvider.Gauge("compressed_entry_num", append(common.LabelNames(), "from", "to")...)
+	blockEncodedSize        = blockMeterProvider.Gauge("encoded_size", append(common.LabelNames(), "from", "to")...)
+	blockUnencodedSize      = blockMeterProvider.Gauge("unencoded_size", append(common.LabelNames(), "from", "to")...)
+	blockEncodedBlockNum    = blockMeterProvider.Gauge("encoded_block_num", append(common.LabelNames(), "from", "to")...)
+	blockEncodedEntryNum    = blockMeterProvider.Gauge("encoded_entry_num", append(common.LabelNames(), "from", "to")...)
+	blockCompactionMap      = map[badger.TableBuilderSizeKeyType]meter.Gauge{
+		badger.TableBuilderSizeKeyCompressedSize:     blockCompressedSize,
+		badger.TableBuilderSizeKeyUncompressedSize:   blockUncompressedSize,
+		badger.TableBuilderSizeKeyCompressedBlockNum: blockCompressedBlockNum,
+		badger.TableBuilderSizeKeyCompressedEntryNum: blockCompressedEntryNum,
+		badger.TableBuilderSizeKeyEncodedSize:        blockEncodedSize,
+		badger.TableBuilderSizeKeyUnEncodedSize:      blockUnencodedSize,
+		badger.TableBuilderSizeKeyEncodedBlockNum:    blockEncodedBlockNum,
+		badger.TableBuilderSizeKeyEncodedEntryNum:    blockEncodedEntryNum,
+	}
 
 	errBlockClosingInterrupted = errors.New("interrupt to close the block")
 )
@@ -157,7 +178,7 @@ func (b *block) options(ctx context.Context) {
 	if options.BlockMemSize < 1 {
 		bufferSize = defaultBufferSize
 	} else {
-		bufferSize = options.BlockMemSize
+		bufferSize = int64(options.BlockMemSize)
 	}
 	b.openOpts.bufferSize = bufferSize
 	b.openOpts.store = append(b.openOpts.store, kv.TSSWithMemTableSize(bufferSize), kv.TSSWithLogger(b.l.Named(componentMain)))
@@ -167,7 +188,7 @@ func (b *block) options(ctx context.Context) {
 		Logger:       b.l.Named(componentSecondInvertedIdx),
 		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
 	}
-	lsmMemSize := bufferSize / 2
+	lsmMemSize := bufferSize / 4
 	if lsmMemSize < defaultKVMemorySize {
 		lsmMemSize = defaultKVMemorySize
 	}
@@ -210,6 +231,20 @@ func (b *block) open() (err error) {
 	b.ref.Store(0)
 	b.closed.Store(false)
 	blockOpenedTimeSecondsGauge.Set(float64(time.Now().Unix()), b.position.LabelValues()...)
+	plv := b.position.LabelValues()
+	observability.MetricsCollector.Register(strings.Join(plv, "-"), func() {
+		stats := b.sst.CollectStats()
+		stats.TableBuilderSize.Range(func(label interface{}, value interface{}) bool {
+			key := label.(badger.TableBuilderSizeKey)
+			counter := value.(*atomic.Int64)
+			from, to := getLevelLabels(key.FromLevel, key.ToLevel)
+			labelValues := append(b.position.LabelValues(), from, to)
+			if block, ok := blockCompactionMap[key.Type]; ok {
+				block.Set(float64(counter.Load()), labelValues...)
+			}
+			return true
+		})
+	})
 	return nil
 }
 
@@ -344,6 +379,18 @@ func (b *block) close(ctx context.Context) (err error) {
 	if b.buffer != nil {
 		err = multierr.Append(err, b.buffer.Close())
 	}
+	plv := b.position.LabelValues()
+	observability.MetricsCollector.Unregister(strings.Join(plv, "-"))
+	stats := b.sst.CollectStats()
+	stats.TableBuilderSize.Range(func(label interface{}, value interface{}) bool {
+		key := label.(badger.TableBuilderSizeKey)
+		from, to := getLevelLabels(key.FromLevel, key.ToLevel)
+		labelValues := append(b.position.LabelValues(), from, to)
+		if block, ok := blockCompactionMap[key.Type]; ok {
+			block.Delete(labelValues...)
+		}
+		return true
+	})
 	for _, closer := range b.closableLst {
 		err = multierr.Append(err, closer.Close())
 	}
@@ -491,4 +538,15 @@ func (d *bDelegate) String() string {
 func (d *bDelegate) Close() error {
 	d.delegate.Done()
 	return nil
+}
+
+func getLevelLabels(fromLevel, toLevel int) (string, string) {
+	from := fmt.Sprintf("l%d", fromLevel)
+	to := fmt.Sprintf("l%d", toLevel)
+
+	if fromLevel < 0 {
+		from = "mem"
+	}
+
+	return from, to
 }

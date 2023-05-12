@@ -41,7 +41,7 @@ var (
 		PrefetchValues: true,
 	}
 
-	defaultKVMemorySize = 8 << 20
+	defaultKVMemorySize = 4 << 20
 )
 
 type writer interface {
@@ -90,6 +90,7 @@ type TimeSeriesStore interface {
 	Handover(skl *skl.Skiplist) error
 	TimeSeriesReader
 	SizeOnDisk() int64
+	CollectStats() *badger.Statistics
 }
 
 // TimeSeriesOptions sets an options for creating a TimeSeriesStore.
@@ -184,6 +185,9 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 	if btss.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
 		btss.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
+	if btss.dbOpts.MemTableSize < 8<<20 {
+		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
+	}
 	btss.dbOpts = btss.dbOpts.WithInTable()
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
@@ -235,6 +239,9 @@ func OpenStore(path string, options ...StoreOptions) (Store, error) {
 	}
 	if bdb.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
 		bdb.dbOpts.MemTableSize = int64(defaultKVMemorySize)
+	}
+	if bdb.dbOpts.MemTableSize < 8<<20 {
+		bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
 	}
 
 	var err error

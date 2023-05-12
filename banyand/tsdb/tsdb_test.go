@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -116,6 +117,9 @@ func openDatabase(ctx context.Context, t *require.Assertions, path string) (db D
 		})
 	t.NoError(err)
 	t.NotNil(db)
+	shard, err := db.CreateShardsAndGetByID(0)
+	t.NoError(err)
+	t.Equal(common.ShardID(0), shard.ID())
 	return db
 }
 

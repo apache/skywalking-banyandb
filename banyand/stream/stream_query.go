@@ -74,6 +74,9 @@ func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	}
 	shard, err := db.Shard(common.ShardID(shardID))
 	if err != nil {
+		if errors.Is(err, tsdb.ErrUnknownShard) {
+			return []tsdb.Shard{}, nil
+		}
 		return nil, err
 	}
 	return []tsdb.Shard{tsdb.NewScopedShard(tsdb.Entry(s.name), shard)}, nil
