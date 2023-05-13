@@ -68,7 +68,8 @@ var (
 	ErrUnknownShard = errors.New("unknown shard")
 	errOpenDatabase = errors.New("fails to open the database")
 
-	optionsKey   = contextOptionsKey{}
+	// OptionsKey is the key of options in context.
+	OptionsKey   = contextOptionsKey{}
 	meterStorage = observability.RootScope.SubScope("storage")
 	meterTSDB    = meterStorage.SubScope("tsdb")
 )
@@ -103,13 +104,11 @@ var _ Database = (*database)(nil)
 
 // DatabaseOpts wraps options to create a tsdb.
 type DatabaseOpts struct {
-	EncodingMethod     EncodingMethod
+	TSTableFactory     TSTableFactory
 	Location           string
-	CompressionMethod  CompressionMethod
 	SegmentInterval    IntervalRule
 	BlockInterval      IntervalRule
 	TTL                IntervalRule
-	BlockMemSize       run.Bytes
 	BlockInvertedIndex InvertedIndexOpts
 	SeriesMemSize      run.Bytes
 	GlobalIndexMemSize run.Bytes
@@ -291,7 +290,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
-	thisContext = context.WithValue(thisContext, optionsKey, opts)
+	thisContext = context.WithValue(thisContext, OptionsKey, opts)
 	db.shardCreationCtx = thisContext
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)

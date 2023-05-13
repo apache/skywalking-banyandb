@@ -56,15 +56,17 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo    schemaRepo
-	writeListener bus.MessageListener
-	metadata      metadata.Repo
-	pipeline      queue.Queue
-	repo          discovery.ServiceRepo
-	l             *logger.Logger
-	stopCh        chan struct{}
-	root          string
-	dbOpts        tsdb.DatabaseOpts
+	schemaRepo             schemaRepo
+	writeListener          bus.MessageListener
+	metadata               metadata.Repo
+	pipeline               queue.Queue
+	repo                   discovery.ServiceRepo
+	l                      *logger.Logger
+	stopCh                 chan struct{}
+	root                   string
+	dbOpts                 tsdb.DatabaseOpts
+	BlockEncoderBufferSize run.Bytes
+	BlockBufferSize        run.Bytes
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -82,9 +84,11 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
-	s.dbOpts.BlockMemSize = 16 << 20
+	s.BlockEncoderBufferSize = 12 << 20
+	s.BlockBufferSize = 4 << 20
 	s.dbOpts.SeriesMemSize = 1 << 20
-	flagS.Var(&s.dbOpts.BlockMemSize, "measure-block-mem-size", "block memory size")
+	flagS.Var(&s.BlockEncoderBufferSize, "measure-encoder-buffer-size", "block fields buffer size")
+	flagS.Var(&s.BlockBufferSize, "measure-buffer-size", "block buffer size")
 	flagS.Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", "series metadata memory size")
 	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "measure-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
@@ -109,7 +113,8 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l, s.pipeline)
+	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts,
+		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			continue

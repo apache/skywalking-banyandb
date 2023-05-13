@@ -32,7 +32,6 @@ import (
 	"unsafe"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -49,16 +48,12 @@ import (
 )
 
 const (
-	componentMain              = "main"
 	componentSecondInvertedIdx = "inverted"
 	componentSecondLSMIdx      = "lsm"
 
-	defaultBufferSize       = 8 << 20
-	defaultEnqueueTimeout   = 500 * time.Millisecond
-	maxBlockAge             = time.Hour
-	defaultWriteConcurrency = 1000
-	defaultNumBufferShards  = 2
-	itemIDLength            = unsafe.Sizeof(common.ItemID(0))
+	defaultEnqueueTimeout  = 500 * time.Millisecond
+	defaultNumBufferShards = 2
+	itemIDLength           = unsafe.Sizeof(common.ItemID(0))
 )
 
 var (
@@ -89,36 +84,33 @@ var (
 )
 
 type block struct {
+	openOpts      openOpts
 	invertedIndex index.Store
-	sst           kv.TimeSeriesStore
+	tsTable       TSTable
 	queue         bucket.Queue
 	bucket.Reporter
 	clock            timestamp.Clock
 	lsmIndex         index.Store
+	closeBufferTimer *time.Timer
 	closed           *atomic.Bool
-	buffer           *Buffer
+	ref              *atomic.Int32
 	l                *logger.Logger
 	deleted          *atomic.Bool
-	ref              *atomic.Int32
-	closeBufferTimer *time.Timer
 	position         common.Position
 	timestamp.TimeRange
 	segSuffix   string
 	suffix      string
 	path        string
 	closableLst []io.Closer
-	openOpts    openOpts
 	lock        sync.RWMutex
 	segID       SectionID
 	blockID     SectionID
 }
 
 type openOpts struct {
-	storePath  string
-	inverted   inverted.StoreOpts
-	lsm        lsm.StoreOpts
-	store      []kv.TimeSeriesOptions
-	bufferSize int64
+	tsTableFactory TSTableFactory
+	inverted       inverted.StoreOpts
+	lsm            lsm.StoreOpts
 }
 
 type blockOpts struct {
@@ -151,52 +143,42 @@ func newBlock(ctx context.Context, opts blockOpts) (b *block, err error) {
 		closed:    &atomic.Bool{},
 		deleted:   &atomic.Bool{},
 		queue:     opts.queue,
+		position:  common.GetPosition(ctx),
 	}
-	b.l = logger.Fetch(ctx, b.String())
+	l := logger.Fetch(ctx, b.String())
+	b.openOpts, err = options(ctx, opts.path, l)
+	if err != nil {
+		return nil, err
+	}
+	b.l = l
 	b.Reporter = bucket.NewTimeBasedReporter(b.String(), opts.timeRange, clock, opts.scheduler)
 	b.closed.Store(true)
-	b.options(ctx)
-	b.position = common.GetPosition(ctx)
-
 	return b, nil
 }
 
-func (b *block) options(ctx context.Context) {
+func options(ctx context.Context, root string, l *logger.Logger) (openOpts, error) {
 	var options DatabaseOpts
-	o := ctx.Value(optionsKey)
-	if o != nil {
-		options = o.(DatabaseOpts)
+	o := ctx.Value(OptionsKey)
+	if o == nil {
+		return openOpts{}, errors.New("database options not found")
 	}
-	if options.EncodingMethod.EncoderPool != nil && options.EncodingMethod.DecoderPool != nil {
-		b.openOpts.store = append(b.openOpts.store, kv.TSSWithEncoding(options.EncodingMethod.EncoderPool,
-			options.EncodingMethod.DecoderPool, options.EncodingMethod.ChunkSizeInBytes))
-	}
-	if options.CompressionMethod.Type == CompressionTypeZSTD {
-		b.openOpts.store = append(b.openOpts.store, kv.TSSWithZSTDCompression(options.CompressionMethod.ChunkSizeInBytes))
-	}
-	var bufferSize int64
-	if options.BlockMemSize < 1 {
-		bufferSize = defaultBufferSize
-	} else {
-		bufferSize = int64(options.BlockMemSize)
-	}
-	b.openOpts.bufferSize = bufferSize
-	b.openOpts.store = append(b.openOpts.store, kv.TSSWithMemTableSize(bufferSize), kv.TSSWithLogger(b.l.Named(componentMain)))
-	b.openOpts.storePath = path.Join(b.path, componentMain)
-	b.openOpts.inverted = inverted.StoreOpts{
-		Path:         path.Join(b.path, componentSecondInvertedIdx),
-		Logger:       b.l.Named(componentSecondInvertedIdx),
+	options = o.(DatabaseOpts)
+	var opts openOpts
+	opts.inverted = inverted.StoreOpts{
+		Path:         path.Join(root, componentSecondInvertedIdx),
+		Logger:       l.Named(componentSecondInvertedIdx),
 		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
 	}
-	lsmMemSize := bufferSize / 4
-	if lsmMemSize < defaultKVMemorySize {
-		lsmMemSize = defaultKVMemorySize
+	opts.lsm = lsm.StoreOpts{
+		Path:         path.Join(root, componentSecondLSMIdx),
+		Logger:       l.Named(componentSecondLSMIdx),
+		MemTableSize: defaultKVMemorySize,
 	}
-	b.openOpts.lsm = lsm.StoreOpts{
-		Path:         path.Join(b.path, componentSecondLSMIdx),
-		Logger:       b.l.Named(componentSecondLSMIdx),
-		MemTableSize: lsmMemSize,
+	opts.tsTableFactory = options.TSTableFactory
+	if opts.tsTableFactory == nil {
+		return opts, errors.New("ts table factory is nil")
 	}
+	return opts, nil
 }
 
 func (b *block) openSafely() (err error) {
@@ -212,15 +194,11 @@ func (b *block) openSafely() (err error) {
 }
 
 func (b *block) open() (err error) {
-	if b.isActive() {
-		if err = b.openBuffer(); err != nil {
-			return err
-		}
-	}
-	if b.sst, err = kv.OpenTimeSeriesStore(b.openOpts.storePath, b.openOpts.store...); err != nil {
+	if b.tsTable, err = b.openOpts.tsTableFactory.NewTSTable(BlockExpiryTracker{ttl: b.End, clock: b.clock},
+		b.path, b.position, b.l); err != nil {
 		return err
 	}
-	b.closableLst = append(b.closableLst, b.sst)
+	b.closableLst = append(b.closableLst, b.tsTable)
 	if b.invertedIndex, err = inverted.NewStore(b.openOpts.inverted); err != nil {
 		return err
 	}
@@ -233,7 +211,7 @@ func (b *block) open() (err error) {
 	blockOpenedTimeSecondsGauge.Set(float64(time.Now().Unix()), b.position.LabelValues()...)
 	plv := b.position.LabelValues()
 	observability.MetricsCollector.Register(strings.Join(plv, "-"), func() {
-		stats := b.sst.CollectStats()
+		stats := b.tsTable.CollectStats()
 		stats.TableBuilderSize.Range(func(label interface{}, value interface{}) bool {
 			key := label.(badger.TableBuilderSizeKey)
 			counter := value.(*atomic.Int64)
@@ -246,52 +224,6 @@ func (b *block) open() (err error) {
 		})
 	})
 	return nil
-}
-
-func (b *block) openBuffer() (err error) {
-	if b.buffer != nil {
-		return nil
-	}
-	if b.buffer, err = NewBuffer(b.l, b.position, int(b.openOpts.bufferSize/defaultNumBufferShards),
-		defaultWriteConcurrency, defaultNumBufferShards, b.flush); err != nil {
-		return err
-	}
-	now := b.clock.Now()
-	max := b.maxTime()
-	closeAfter := max.Sub(now)
-	// TODO: we should move inactive write buffer to segment or shard.
-	if now.After(max) {
-		closeAfter = maxBlockAge
-	}
-	// create a timer to close buffer
-	b.closeBufferTimer = time.AfterFunc(closeAfter, func() {
-		if b.l.Debug().Enabled() {
-			b.l.Debug().Msg("closing buffer")
-		}
-		b.lock.Lock()
-		defer b.lock.Unlock()
-		if b.buffer == nil {
-			return
-		}
-		if err := b.buffer.Close(); err != nil {
-			b.l.Error().Err(err).Msg("close buffer error")
-		}
-		b.buffer = nil
-	})
-	return nil
-}
-
-func (b *block) isActive() bool {
-	return !b.clock.Now().After(b.maxTime())
-}
-
-func (b *block) maxTime() time.Time {
-	return b.End.Add(maxBlockAge)
-}
-
-func (b *block) flush(shardIndex int, skl *skl.Skiplist) error {
-	b.l.Info().Int("shard", shardIndex).Msg("flushing buffer")
-	return b.sst.Handover(skl)
 }
 
 func (b *block) delegate(ctx context.Context) (blockDelegate, error) {
@@ -376,12 +308,9 @@ func (b *block) close(ctx context.Context) (err error) {
 	if b.closeBufferTimer != nil {
 		b.closeBufferTimer.Stop()
 	}
-	if b.buffer != nil {
-		err = multierr.Append(err, b.buffer.Close())
-	}
 	plv := b.position.LabelValues()
 	observability.MetricsCollector.Unregister(strings.Join(plv, "-"))
-	stats := b.sst.CollectStats()
+	stats := b.tsTable.CollectStats()
 	stats.TableBuilderSize.Range(func(label interface{}, value interface{}) bool {
 		key := label.(badger.TableBuilderSizeKey)
 		from, to := getLevelLabels(key.FromLevel, key.ToLevel)
@@ -418,10 +347,7 @@ func (b *block) String() string {
 }
 
 func (b *block) Get(key []byte, ts uint64) ([]byte, error) {
-	if v, ok := b.buffer.Read(key, time.Unix(0, int64(ts))); ok {
-		return v, nil
-	}
-	return b.sst.Get(key, ts)
+	return b.tsTable.Get(key, time.Unix(0, int64(ts)))
 }
 
 type blockDelegate interface {
@@ -471,19 +397,12 @@ func (d *bDelegate) identity() (segID SectionID, blockID SectionID) {
 }
 
 func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
-	// On-demand open buffer
-	if d.delegate.buffer == nil {
-		d.delegate.lock.Lock()
-		if err := d.delegate.openBuffer(); err != nil {
-			d.delegate.lock.Unlock()
-			receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "main", "true")...)
-			return err
-		}
-		d.delegate.lock.Unlock()
+	if err := d.delegate.tsTable.Put(key, val, ts); err != nil {
+		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "tst", "true")...)
+		return err
 	}
-	d.delegate.buffer.Write(key, val, ts)
-	receivedBytesCounter.Inc(float64(len(key)+len(val)), append(d.delegate.position.ShardLabelValues(), "main")...)
-	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "main", "false")...)
+	receivedBytesCounter.Inc(float64(len(key)+len(val)), append(d.delegate.position.ShardLabelValues(), "tst")...)
+	receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "tst", "false")...)
 	return nil
 }
 

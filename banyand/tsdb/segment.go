@@ -79,7 +79,7 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 	if err != nil {
 		return nil, err
 	}
-	o := ctx.Value(optionsKey)
+	o := ctx.Value(OptionsKey)
 	if o != nil {
 		options := o.(DatabaseOpts)
 		if options.EnableGlobalIndex {
