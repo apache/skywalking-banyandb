@@ -86,7 +86,7 @@ Update operation changes a measure's schema.
 ### Examples of updating
 
 ```shell
-$ bydbctl measure create -f - <<EOF
+$ bydbctl measure update -f - <<EOF
 metadata:
   name: service_cpm_minute
   group: sw_metric

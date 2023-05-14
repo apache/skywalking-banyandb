@@ -74,7 +74,7 @@ Update operation update a stream's schema.
 
 `bydbctl` is the command line tool to update a stream in this example.
 ```shell
-$ bydbctl stream create -f - <<EOF
+$ bydbctl stream update -f - <<EOF
 metadata:
   name: sw
   group: default

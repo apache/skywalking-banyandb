@@ -20,11 +20,13 @@ Release Notes.
 ### Bugs
 
 - Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
+- Fix resource corrupts caused by update indexRule operation
 
 ### Chores
 
 - Bump go to 1.20.
 - Set KV's minimum memtable size to 8MB
+- [docs] Fix docs crud examples error
 
 ## 0.3.1
 
