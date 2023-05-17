@@ -28,13 +28,23 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-const GoVersion = "1.20"
+const (
+	GoVersion = "1.20"
+	CpuType   = "64"
+)
 
 func TestGoVersion(t *testing.T) {
 	goversion, err := exec.Command("go", "version").Output()
 	require.NoError(t, err)
 
-	currentVersion := strings.Split(string(goversion), " ")[2][2:]
+	splited_output := strings.Split(string(goversion), " ")
+
+	types := splited_output[3][1:]
+	
+	ok := strings.Contains(types, CpuType)
+	require.True(t, ok, "CPU type not supported, current[%s], want[%s bit Go release]", types, CpuType)
+
+	currentVersion := splited_output[2][2:]
 
 	currentMajorMinor, currentPatch := splitVersion(currentVersion)
 	expectedMajorMinor, expectedPatch := splitVersion(GoVersion)
