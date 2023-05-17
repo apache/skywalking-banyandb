@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,19 +36,20 @@ const (
 )
 
 func TestGoVersion(t *testing.T) {
-	goversion, err := exec.Command("go", "version").Output()
-	require.NoError(t, err)
-
-	splited_output := strings.Split(string(goversion), " ")
-
-	types := splited_output[3][1:]
+	types := runtime.GOARCH
 	
 	ok := strings.Contains(types, CpuType)
 	require.True(t, ok, "CPU type not supported, current[%s], want[%s bit Go release]", types, CpuType)
 
-	currentVersion := splited_output[2][2:]
+	currentVersion := runtime.Version()
+	versionRegex := regexp.MustCompile(`go(\d+\.\d+\.\d)`)
+	matches := versionRegex.FindStringSubmatch(currentVersion)
 
-	currentMajorMinor, currentPatch := splitVersion(currentVersion)
+	require.GreaterOrEqual(t, len(matches), 2)
+
+	versionNumber := matches[1]
+
+	currentMajorMinor, currentPatch := splitVersion(versionNumber)
 	expectedMajorMinor, expectedPatch := splitVersion(GoVersion)
 
 	require.Equal(t, currentMajorMinor, expectedMajorMinor,
