@@ -32,14 +32,13 @@ import (
 
 const (
 	GoVersion = "1.20"
-	CPUType   = "64"
+	CPUType   = 8
 )
 
 func TestGoVersion(t *testing.T) {
-	types := runtime.GOARCH
-
-	ok := strings.Contains(types, CPUType)
-	require.True(t, ok, "CPU type not supported, current[%s], want[%s bit Go release]", types, CPUType)
+	// the value of ptr will be 8 for 64 bit system and 4 for 32 bit system
+	ptr := 4 << (^uintptr(0) >> 63)
+	require.Equal(t, CPUType, ptr, "This CPU architectue is not supported, should be 64 bits Go version")
 
 	currentVersion := runtime.Version()
 	versionRegex := regexp.MustCompile(`go(\d+\.\d+\.\d)`)
