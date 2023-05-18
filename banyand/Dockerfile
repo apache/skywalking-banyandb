@@ -27,7 +27,7 @@ EXPOSE 2345
 
 ENTRYPOINT ["air"]
 
-FROM golang:1.19 AS base
+FROM golang:1.20 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"
@@ -39,14 +39,14 @@ FROM base AS builder
 
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out make -C banyand all
+            BUILD_DIR=/out BUILD_TAGS=prometheus make -C banyand banyand-server-static
 
 FROM alpine:edge AS certs
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 
 FROM busybox:stable-glibc
 
-COPY --from=builder /out/banyand-server /banyand-server
+COPY --from=builder /out/banyand-server-static /banyand-server
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 EXPOSE 17912

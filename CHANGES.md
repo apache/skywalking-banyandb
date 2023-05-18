@@ -9,11 +9,24 @@ Release Notes.
 - Add TSDB concept document.
 - [UI] Add YAML editor for inputting query criteria.
 - Refactor TopN to support `NULL` group while keeping seriesID from the source measure.
-- Add a sharded buffer to TSDB.
+- Add a sharded buffer to TSDB to replace Badger's memtable. Badger KV only provides SST.
+- Add a meter system to control the internal metrics.
+- Add multiple metrics for measuring the storage subsystem.
+- Refactor callback of TopNAggregation schema event to avoid deadlock and reload issue.
+- Fix max ModRevision computation with inclusion of `TopNAggregation`
+- Enhance meter performance
+- Reduce logger creation frequency
+
+### Bugs
+
+- Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
+- Fix resource corrupts caused by update indexRule operation
 
 ### Chores
 
 - Bump go to 1.20.
+- Set KV's minimum memtable size to 8MB
+- [docs] Fix docs crud examples error
 
 ## 0.3.1
 

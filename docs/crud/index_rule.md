@@ -64,7 +64,7 @@ Get(Read) operation gets an index rule's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl get -g sw_stream -n trace_id
+$ bydbctl indexRule get -g sw_stream -n trace_id
 ```
 
 ## Update operation
@@ -95,7 +95,7 @@ Delete operation deletes an index rule's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl indexRuleBind delete -g sw_stream -n trace_id
+$ bydbctl indexRule delete -g sw_stream -n trace_id
 ```
 
 ## List operation

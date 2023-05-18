@@ -84,13 +84,13 @@ Delete operation delete a property.
 ### Examples of deleting
 
 ```shell
-$ bydbctl property delete -g sw -n ui_template --id General-Service.
+$ bydbctl property delete -g sw -n ui_template --id General-Service
 ```
 
 The delete operation could remove specific tags instead of the whole property.
 
 ```shell
-$ bydbctl property delete -g sw -n ui_template --id General-Service --tags state.
+$ bydbctl property delete -g sw -n ui_template --id General-Service --tags state
 ```
 
 ## List operation

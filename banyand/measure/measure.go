@@ -22,18 +22,18 @@ package measure
 
 import (
 	"context"
+	"math"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -59,7 +59,7 @@ type measure struct {
 	shardNum               uint32
 }
 
-func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo) error {
+func (s *measure) startSteamingManager(pipeline queue.Queue) error {
 	if len(s.topNAggregations) == 0 {
 		return nil
 	}
@@ -69,7 +69,6 @@ func (s *measure) startSteamingManager(pipeline queue.Queue, repo metadata.Repo)
 	s.processorManager = &topNProcessorManager{
 		l:            s.l,
 		pipeline:     pipeline,
-		repo:         repo,
 		m:            s,
 		s:            tagMapSpec,
 		topNSchemas:  s.topNAggregations,
@@ -91,6 +90,10 @@ func (s *measure) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
+func (s *measure) GetTopN() []*databasev1.TopNAggregation {
+	return s.topNAggregations
+}
+
 func (s *measure) MaxObservedModRevision() int64 {
 	return s.maxObservedModRevision
 }
@@ -109,7 +112,7 @@ func (s *measure) Close() error {
 func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
-	s.maxObservedModRevision = pbv1.ParseMaxModRevision(s.indexRules)
+	s.maxObservedModRevision = int64(math.Max(float64(resourceSchema.ParseMaxModRevision(s.indexRules)), float64(resourceSchema.ParseMaxModRevision(s.topNAggregations))))
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
@@ -122,7 +125,8 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger) (*measure, error) {
+func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+) (*measure, error) {
 	m := &measure{
 		shardNum:         shardNum,
 		schema:           spec.schema,
@@ -142,6 +146,11 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 		Families:   spec.schema.TagFamilies,
 		IndexRules: spec.indexRules,
 	})
+
+	if startErr := m.startSteamingManager(pipeline); startErr != nil {
+		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
+			Msg("fail to start streaming manager")
+	}
 
 	return m, nil
 }

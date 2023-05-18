@@ -18,6 +18,7 @@
 package timestamp
 
 import (
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -90,7 +91,7 @@ func (s *Scheduler) Register(name string, options cron.ParseOption, expr string,
 	} else {
 		clock = s.clock
 	}
-	t := newTask(s.l.Named(name), clock, schedule, action)
+	t := newTask(s.l.Named(name), name, clock, schedule, action)
 	s.tasks[name] = t
 	go func() {
 		t.run()
@@ -146,11 +147,13 @@ type task struct {
 	closer   *run.Closer
 	l        *logger.Logger
 	action   SchedulerAction
+	name     string
 }
 
-func newTask(l *logger.Logger, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
+func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
 	return &task{
 		l:        l,
+		name:     name,
 		clock:    clock,
 		schedule: schedule,
 		action:   action,
@@ -161,26 +164,34 @@ func newTask(l *logger.Logger, clock clock.Clock, schedule cron.Schedule, action
 func (t *task) run() {
 	defer t.closer.Done()
 	now := t.clock.Now()
-	t.l.Info().Time("now", now).Msg("start")
+	t.l.Info().Str("name", t.name).Time("now", now).Msg("start")
 	for {
 		next := t.schedule.Next(now)
 		d := next.Sub(now)
 		if e := t.l.Debug(); e.Enabled() {
-			e.Time("now", now).Time("next", next).Dur("dur", d).Msg("schedule to")
+			e.Str("name", t.name).Time("now", now).Time("next", next).Dur("dur", d).Msg("schedule to")
 		}
 		timer := t.clock.Timer(d)
 		select {
 		case now = <-timer.C:
 			if e := t.l.Debug(); e.Enabled() {
-				e.Time("now", now).Msg("wake")
+				e.Str("name", t.name).Time("now", now).Msg("wake")
 			}
-			if !t.action(now, t.l) {
-				t.l.Info().Msg("action stops the task")
+			if !func() (ret bool) {
+				defer func() {
+					if r := recover(); r != nil {
+						t.l.Error().Str("name", t.name).Interface("panic", r).Str("stack", string(debug.Stack())).Msg("panic")
+						ret = true
+					}
+				}()
+				return t.action(now, t.l)
+			}() {
+				t.l.Info().Str("name", t.name).Msg("action stops the task")
 				return
 			}
 		case <-t.closer.CloseNotify():
 			timer.Stop()
-			t.l.Info().Msg("closed")
+			t.l.Info().Str("name", t.name).Msg("closed")
 			return
 		}
 	}

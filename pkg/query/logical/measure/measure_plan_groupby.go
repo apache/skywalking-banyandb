@@ -23,6 +23,7 @@ import (
 
 	"github.com/cespare/xxhash"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -115,11 +116,15 @@ func (g *groupBy) sort(ec executor.MeasureExecutionContext) (executor.MIterator,
 	return newGroupSortIterator(iter, g.groupByTagsRefs), nil
 }
 
-func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *groupBy) hash(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
+
 	groupMap := make(map[uint64][]*measurev1.DataPoint)
 	groupLst := make([]uint64, 0)
 	for iter.Next() {
@@ -140,9 +145,6 @@ func (g *groupBy) hash(ec executor.MeasureExecutionContext) (executor.MIterator,
 			group = append(group, dp)
 			groupMap[key] = group
 		}
-	}
-	if err = iter.Close(); err != nil {
-		return nil, err
 	}
 	return newGroupIterator(groupMap, groupLst), nil
 }
@@ -262,7 +264,7 @@ func (gmi *groupSortIterator) Current() []*measurev1.DataPoint {
 
 func (gmi *groupSortIterator) Close() error {
 	gmi.closed = true
-	return gmi.err
+	return multierr.Combine(gmi.err, gmi.iter.Close())
 }
 
 func (gmi *groupSortIterator) nextDP() (*measurev1.DataPoint, bool) {

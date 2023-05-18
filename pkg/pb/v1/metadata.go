@@ -72,14 +72,3 @@ func FieldValueTypeConv(fieldValue *modelv1.FieldValue) (tagType databasev1.Fiel
 	}
 	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, false
 }
-
-// ParseMaxModRevision parses the index rule's max revision field from its metadata.
-func ParseMaxModRevision(indexRules []*databasev1.IndexRule) (maxRevisionForIdxRules int64) {
-	maxRevisionForIdxRules = int64(0)
-	for _, idxRule := range indexRules {
-		if idxRule.GetMetadata().GetModRevision() > maxRevisionForIdxRules {
-			maxRevisionForIdxRules = idxRule.GetMetadata().GetModRevision()
-		}
-	}
-	return
-}

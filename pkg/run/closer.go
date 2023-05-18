@@ -22,6 +22,8 @@ import (
 	"sync"
 )
 
+var dummyCloserChan <-chan struct{}
+
 // Closer can close a goroutine then wait for it to stop.
 type Closer struct {
 	ctx     context.Context
@@ -41,6 +43,9 @@ func NewCloser(initial int) *Closer {
 
 // AddRunning adds a running task.
 func (c *Closer) AddRunning() bool {
+	if c == nil {
+		return false
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	if c.closed {
@@ -52,16 +57,25 @@ func (c *Closer) AddRunning() bool {
 
 // CloseNotify receives a signal from Close.
 func (c *Closer) CloseNotify() <-chan struct{} {
+	if c == nil {
+		return dummyCloserChan
+	}
 	return c.ctx.Done()
 }
 
 // Done notifies that one task is done.
 func (c *Closer) Done() {
+	if c == nil {
+		return
+	}
 	c.waiting.Done()
 }
 
 // CloseThenWait closes all tasks then waits till they are done.
 func (c *Closer) CloseThenWait() {
+	if c == nil {
+		return
+	}
 	c.cancel()
 	c.lock.Lock()
 	c.closed = true
@@ -71,6 +85,9 @@ func (c *Closer) CloseThenWait() {
 
 // Closed returns whether the Closer is closed.
 func (c *Closer) Closed() bool {
+	if c == nil {
+		return true
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return c.closed

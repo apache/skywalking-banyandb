@@ -21,14 +21,3 @@ package observability
 import "errors"
 
 var errNoAddr = errors.New("no address")
-
-// Statistics represents a sample of a module.
-type Statistics struct {
-	MemBytes    int64
-	MaxMemBytes int64
-}
-
-// Observable allows sampling.
-type Observable interface {
-	Stats() Statistics
-}

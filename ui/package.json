@@ -22,7 +22,7 @@
     "sass": "^1.54.9",
     "vue": "^3.2.38",
     "vue-router": "^4.1.5",
-    "yaml": "^2.2.1"
+    "yaml": "^2.2.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^3.0.3",

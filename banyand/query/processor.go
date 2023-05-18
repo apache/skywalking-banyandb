@@ -74,9 +74,8 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	sl := p.log.Named("stream", queryCriteria.Metadata.Group, queryCriteria.Metadata.Name)
-	if e := sl.Debug(); e.Enabled() {
-		e.RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
+	if p.log.Debug().Enabled() {
+		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
 
 	meta := queryCriteria.GetMetadata()
@@ -98,13 +97,13 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	if e := sl.Debug(); e.Enabled() {
-		e.Str("plan", plan.String()).Msg("query plan")
+	if p.log.Debug().Enabled() {
+		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
 
 	entities, err := plan.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
-		sl.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
+		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
 		return
 	}

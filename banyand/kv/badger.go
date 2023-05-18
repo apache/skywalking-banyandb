@@ -26,9 +26,9 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/banyandb"
+	"github.com/dgraph-io/badger/v3/skl"
 	"github.com/dgraph-io/badger/v3/y"
 
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -49,8 +49,8 @@ type badgerTSS struct {
 	dbOpts badger.Options
 }
 
-func (b *badgerTSS) Stats() (s observability.Statistics) {
-	return badgerStats(b.db)
+func (b *badgerTSS) Handover(skl *skl.Skiplist) error {
+	return b.db.HandoverIterator(skl.NewUniIterator(false))
 }
 
 func (b *badgerTSS) Close() error {
@@ -60,12 +60,9 @@ func (b *badgerTSS) Close() error {
 	return nil
 }
 
-func badgerStats(db *badger.DB) (s observability.Statistics) {
-	stat := db.Stats()
-	return observability.Statistics{
-		MemBytes:    stat.MemBytes,
-		MaxMemBytes: db.Opts().MemTableSize,
-	}
+func (b *badgerTSS) SizeOnDisk() int64 {
+	lsmSize, vlogSize := b.db.Size()
+	return lsmSize + vlogSize
 }
 
 type mergedIter struct {
@@ -123,10 +120,6 @@ type badgerDB struct {
 	dbOpts badger.Options
 }
 
-func (b *badgerDB) Stats() observability.Statistics {
-	return badgerStats(b.db)
-}
-
 func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchSize = opt.PrefetchSize
@@ -155,6 +148,11 @@ func (b *badgerDB) Scan(prefix, seekKey []byte, opt ScanOpts, f ScanFunc) error 
 		}
 	}
 	return nil
+}
+
+func (b *badgerDB) SizeOnDisk() int64 {
+	lsmSize, vlogSize := b.db.Size()
+	return lsmSize + vlogSize
 }
 
 var _ Iterator = (*iterator)(nil)

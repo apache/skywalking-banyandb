@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -135,6 +136,11 @@ func ExecuteForShard(l *logger.Logger, series tsdb.SeriesList, timeRange timesta
 			return iters, nil
 		}()
 		if err != nil {
+			if len(closers) > 0 {
+				for _, closer := range closers {
+					err = multierr.Append(err, closer.Close())
+				}
+			}
 			return nil, nil, err
 		}
 		if len(itersInSeries) > 0 {

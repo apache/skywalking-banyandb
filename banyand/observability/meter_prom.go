@@ -1,3 +1,6 @@
+//go:build prometheus
+// +build prometheus
+
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -18,18 +21,28 @@
 package observability
 
 import (
+	"context"
 	"net/http"
 	"time"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"google.golang.org/grpc"
 )
 
 var (
 	_ run.Service = (*metricService)(nil)
 	_ run.Config  = (*metricService)(nil)
+
+	reg = prometheus.NewRegistry()
 )
 
 // NewMetricService returns a metric service.
@@ -44,6 +57,7 @@ type metricService struct {
 	svr        *http.Server
 	closer     *run.Closer
 	listenAddr string
+	scheduler  *timestamp.Scheduler
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -65,13 +79,28 @@ func (p *metricService) Name() string {
 
 func (p *metricService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
+
+	reg.MustRegister(prometheus.NewGoCollector())
+	reg.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+
+	clock, _ := timestamp.GetClock(context.TODO())
+	p.scheduler = timestamp.NewScheduler(p.l, clock)
+	p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(now time.Time, logger *logger.Logger) bool {
+		MetricsCollector.collect()
+		return true
+	})
+
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", promhttp.HandlerFor(
+		reg,
+		promhttp.HandlerOpts{},
+	))
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
 		Handler:           mux,
 	}
+
 	go func() {
 		defer p.closer.Done()
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start metric server")
@@ -81,6 +110,27 @@ func (p *metricService) Serve() run.StopNotify {
 }
 
 func (p *metricService) GracefulStop() {
-	_ = p.svr.Close()
+	if p.scheduler != nil {
+		p.scheduler.Close()
+	}
+	if p.svr != nil {
+		_ = p.svr.Close()
+	}
 	p.closer.CloseThenWait()
+}
+
+// NewMeterProvider returns a meter.Provider based on the given scope.
+func NewMeterProvider(scope meter.Scope) meter.Provider {
+	return prom.NewProvider(scope, reg)
+}
+
+// MetricsServerInterceptor returns a server interceptor for metrics.
+func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+	srvMetrics := grpcprom.NewServerMetrics(
+		grpcprom.WithServerHandlingTimeHistogram(
+			grpcprom.WithHistogramBuckets([]float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120}),
+		),
+	)
+	reg.MustRegister(srvMetrics)
+	return srvMetrics.UnaryServerInterceptor(), srvMetrics.StreamServerInterceptor()
 }

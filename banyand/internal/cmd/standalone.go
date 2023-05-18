@@ -77,8 +77,7 @@ func newStandaloneCmd() *cobra.Command {
 	metricSvc := observability.NewMetricService()
 	httpServer := http.NewService()
 
-	// Meta the run Group units.
-	g.Register(
+	units := []run.Unit{
 		new(signal.Handler),
 		repo,
 		pipeline,
@@ -87,10 +86,14 @@ func newStandaloneCmd() *cobra.Command {
 		streamSvc,
 		q,
 		tcp,
-		metricSvc,
-		profSvc,
 		httpServer,
-	)
+		profSvc,
+	}
+	if metricSvc != nil {
+		units = append(units, metricSvc)
+	}
+	// Meta the run Group units.
+	g.Register(units...)
 	logging := logger.Logging{}
 	standaloneCmd := &cobra.Command{
 		Use:     "standalone",

@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 )
 
 var _ Shard = (*scopedShard)(nil)
@@ -74,10 +73,6 @@ type scopedSeriesDatabase struct {
 	scope     Entry
 }
 
-func (sdd *scopedSeriesDatabase) Stats() observability.Statistics {
-	return sdd.delegated.Stats()
-}
-
 func (sdd *scopedSeriesDatabase) Close() error {
 	return nil
 }
@@ -92,4 +87,8 @@ func (sdd *scopedSeriesDatabase) GetByID(id common.SeriesID) (Series, error) {
 
 func (sdd *scopedSeriesDatabase) List(ctx context.Context, path Path) (SeriesList, error) {
 	return sdd.delegated.List(ctx, path.prepend(sdd.scope))
+}
+
+func (sdd *scopedSeriesDatabase) SizeOnDisk() int64 {
+	return sdd.delegated.SizeOnDisk()
 }

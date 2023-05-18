@@ -21,26 +21,53 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/robfig/cron/v3"
+	"github.com/shirou/gopsutil/v3/disk"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
 	defaultBlockQueueSize    = 4
 	defaultMaxBlockQueueSize = 64
-	defaultKVMemorySize      = 1 << 20
+	defaultKVMemorySize      = 8 << 20
 )
 
-var _ Shard = (*shard)(nil)
+var (
+	_ Shard = (*shard)(nil)
+
+	shardProvider   = observability.NewMeterProvider(meterTSDB.SubScope("shard"))
+	diskStateGetter = disk.UsageWithContext
+
+	diskStateGauge       meter.Gauge
+	flushBytes           meter.Counter
+	flushNum             meter.Counter
+	flushLatency         meter.Histogram
+	receivedBytesCounter meter.Counter
+	receivedNumCounter   meter.Counter
+	onDiskBytesGauge     meter.Gauge
+)
+
+func init() {
+	labelNames := common.ShardLabelNames()
+	diskStateGauge = shardProvider.Gauge("disk_state", append(labelNames, "kind")...)
+	flushBytes = shardProvider.Counter("flush_bytes", labelNames...)
+	flushNum = shardProvider.Counter("flush_num", append(labelNames, "is_error")...)
+	flushLatency = shardProvider.Histogram("flush_latency", meter.DefBuckets, labelNames...)
+	receivedBytesCounter = shardProvider.Counter("received_bytes", append(labelNames, "kind")...)
+	receivedNumCounter = shardProvider.Counter("received_num", append(labelNames, "kind", "is_error")...)
+	onDiskBytesGauge = shardProvider.Gauge("on_disk_bytes", append(labelNames, "kind")...)
+}
 
 type shard struct {
 	seriesDatabase        SeriesDatabase
@@ -104,17 +131,27 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		return nil, err
 	}
 	s.segmentManageStrategy.Run()
-	position := shardCtx.Value(common.PositionKey)
-	if position != nil {
-		s.position = position.(common.Position)
-	}
-	if err := scheduler.Register("stat", cron.Descriptor, "@every 5s", s.stat); err != nil {
-		return nil, err
-	}
+	s.position = common.GetPosition(shardCtx)
 	retentionTask := newRetentionTask(s.segmentController, ttl)
 	if err := scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {
 		return nil, err
 	}
+	plv := s.position.ShardLabelValues()
+	observability.MetricsCollector.Register(strings.Join(plv, "-"), func() {
+		if stat, err := diskStateGetter(ctx, path); err != nil {
+			s.l.Error().Err(err).Msg("get disk usage stat")
+		} else {
+			diskStateGauge.Set(stat.UsedPercent, append(plv, "used_percent")...)
+			diskStateGauge.Set(float64(stat.Free), append(plv, "free")...)
+			diskStateGauge.Set(float64(stat.Total), append(plv, "total")...)
+			diskStateGauge.Set(float64(stat.Used), append(plv, "used")...)
+			diskStateGauge.Set(float64(stat.InodesUsed), append(plv, "inodes_used")...)
+			diskStateGauge.Set(float64(stat.InodesFree), append(plv, "inodes_free")...)
+			diskStateGauge.Set(float64(stat.InodesTotal), append(plv, "inodes_total")...)
+			diskStateGauge.Set(stat.InodesUsedPercent, append(plv, "inodes_used_percent")...)
+		}
+		s.collectSizeOnDisk(plv)
+	})
 	return s, nil
 }
 
@@ -128,6 +165,34 @@ func (s *shard) Series() SeriesDatabase {
 
 func (s *shard) Index() IndexDatabase {
 	return s.indexDatabase
+}
+
+func (s *shard) collectSizeOnDisk(labelsValues []string) {
+	var globalIndex, localLSM, localInverted, main int64
+	for _, seg := range s.segmentController.segments() {
+		if seg.globalIndex != nil {
+			globalIndex += seg.globalIndex.SizeOnDisk()
+		}
+		for _, b := range seg.blockController.blocks() {
+			if b.Closed() {
+				continue
+			}
+			if b.sst != nil {
+				main += b.sst.SizeOnDisk()
+			}
+			if b.lsmIndex != nil {
+				localLSM += b.lsmIndex.SizeOnDisk()
+			}
+			if b.invertedIndex != nil {
+				localInverted += b.invertedIndex.SizeOnDisk()
+			}
+		}
+	}
+	onDiskBytesGauge.Set(float64(s.seriesDatabase.SizeOnDisk()), append(labelsValues, "series")...)
+	onDiskBytesGauge.Set(float64(globalIndex), append(labelsValues, "global_index")...)
+	onDiskBytesGauge.Set(float64(localLSM), append(labelsValues, "local_lsm")...)
+	onDiskBytesGauge.Set(float64(localInverted), append(labelsValues, "local_inverted")...)
+	onDiskBytesGauge.Set(float64(main), append(labelsValues, "main")...)
 }
 
 func (s *shard) State() (shardState ShardState) {

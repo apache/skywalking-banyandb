@@ -228,7 +228,6 @@ func (ami *aggAllIterator[N]) Next() bool {
 	if ami.result != nil || ami.err != nil {
 		return false
 	}
-	defer ami.prev.Close()
 	var resultDp *measurev1.DataPoint
 	for ami.prev.Next() {
 		group := ami.prev.Current()
@@ -275,5 +274,5 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
 }
 
 func (ami *aggAllIterator[N]) Close() error {
-	return nil
+	return ami.prev.Close()
 }
