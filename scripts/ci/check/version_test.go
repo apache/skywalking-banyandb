@@ -38,7 +38,7 @@ const (
 func TestGoVersion(t *testing.T) {
 	// the value of ptr will be 8 for 64 bit system and 4 for 32 bit system
 	ptr := 4 << (^uintptr(0) >> 63)
-	require.Equal(t, CPUType, ptr, "This CPU architectue is not supported, should be 64 bits Go version")
+	require.Equal(t, CPUType, ptr, "This CPU architectue is not supported, it should be a 64 bits Go version")
 
 	currentVersion := runtime.Version()
 	versionRegex := regexp.MustCompile(`go(\d+\.\d+\.\d)`)
