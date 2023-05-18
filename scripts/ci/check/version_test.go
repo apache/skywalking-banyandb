@@ -37,7 +37,7 @@ const (
 
 func TestGoVersion(t *testing.T) {
 	types := runtime.GOARCH
-	
+
 	ok := strings.Contains(types, CPUType)
 	require.True(t, ok, "CPU type not supported, current[%s], want[%s bit Go release]", types, CPUType)
 
