@@ -27,6 +27,7 @@ Release Notes.
 - Bump go to 1.20.
 - Set KV's minimum memtable size to 8MB
 - [docs] Fix docs crud examples error
+- Modified `TestGoVersion` to check for CPU architecture and Go Version
 
 ## 0.3.1
 
