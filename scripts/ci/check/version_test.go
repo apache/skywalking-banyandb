@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -28,15 +30,25 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-const GoVersion = "1.20"
+const (
+	GoVersion = "1.20"
+	CPUType   = 8
+)
 
 func TestGoVersion(t *testing.T) {
-	goversion, err := exec.Command("go", "version").Output()
-	require.NoError(t, err)
+	// the value of ptr will be 8 for 64 bit system and 4 for 32 bit system
+	ptr := 4 << (^uintptr(0) >> 63)
+	require.Equal(t, CPUType, ptr, "This CPU architectue is not supported, it should be a 64 bits Go version")
 
-	currentVersion := strings.Split(string(goversion), " ")[2][2:]
+	currentVersion := runtime.Version()
+	versionRegex := regexp.MustCompile(`go(\d+\.\d+\.\d)`)
+	matches := versionRegex.FindStringSubmatch(currentVersion)
 
-	currentMajorMinor, currentPatch := splitVersion(currentVersion)
+	require.GreaterOrEqual(t, len(matches), 2)
+
+	versionNumber := matches[1]
+
+	currentMajorMinor, currentPatch := splitVersion(versionNumber)
 	expectedMajorMinor, expectedPatch := splitVersion(GoVersion)
 
 	require.Equal(t, currentMajorMinor, expectedMajorMinor,
