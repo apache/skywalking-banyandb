@@ -212,7 +212,12 @@ function getTableData() {
     getTableList(paramList, data.type)
         .then((res) => {
             if (res.status == 200) {
-                setTableData(res.data.elements)
+                if(data.type == 'stream') {
+                    setTableData(res.data.elements)
+                } else {
+                    setTableData(res.data.dataPoints)
+                }
+                
             }
         })
         .catch(() => {
