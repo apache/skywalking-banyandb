@@ -32,8 +32,6 @@ const maxBlockAge = time.Hour
 
 // TSTable is time series table.
 type TSTable interface {
-	// OpenBuffer opens a buffer for writing.
-	OpenBuffer() error
 	// Put a value with a timestamp/version
 	Put(key, val []byte, ts time.Time) error
 	// Get a value by its key and timestamp/version

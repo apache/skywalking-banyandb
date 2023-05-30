@@ -57,7 +57,7 @@ func (t *tsTable) SizeOnDisk() int64 {
 	return t.sst.SizeOnDisk()
 }
 
-func (t *tsTable) OpenBuffer() (err error) {
+func (t *tsTable) openBuffer() (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	if t.buffer != nil {
@@ -116,7 +116,7 @@ func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 		t.buffer.Write(key, val, ts)
 	}
 
-	if err := t.OpenBuffer(); err != nil {
+	if err := t.openBuffer(); err != nil {
 		return err
 	}
 	t.buffer.Write(key, val, ts)
@@ -150,7 +150,7 @@ func (ttf *tsTableFactory) NewTSTable(blockExpiryTracker tsdb.BlockExpiryTracker
 		BlockExpiryTracker: &blockExpiryTracker,
 	}
 	if table.IsActive() {
-		if err := table.OpenBuffer(); err != nil {
+		if err := table.openBuffer(); err != nil {
 			return nil, fmt.Errorf("failed to open buffer: %w", err)
 		}
 	}

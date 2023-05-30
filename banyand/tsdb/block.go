@@ -51,9 +51,8 @@ const (
 	componentSecondInvertedIdx = "inverted"
 	componentSecondLSMIdx      = "lsm"
 
-	defaultEnqueueTimeout  = 500 * time.Millisecond
-	defaultNumBufferShards = 2
-	itemIDLength           = unsafe.Sizeof(common.ItemID(0))
+	defaultEnqueueTimeout = 500 * time.Millisecond
+	itemIDLength          = unsafe.Sizeof(common.ItemID(0))
 )
 
 var (

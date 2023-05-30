@@ -16,6 +16,8 @@ Release Notes.
 - Fix max ModRevision computation with inclusion of `TopNAggregation`
 - Enhance meter performance
 - Reduce logger creation frequency
+- Add units to memory flags
+- Introduce TSTable to customize the block's structure 
 
 ### Bugs
 

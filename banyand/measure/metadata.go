@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
@@ -324,11 +325,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts.TSTableFactory = &tsTableFactory{
 		bufferSize:        s.bufferSize,
 		encoderBufferSize: s.encoderBufferSize,
-		encoderPool:       encoding.NewEncoderPool(name, intChunkSize, intervalFn),
-		decoderPool:       encoding.NewDecoderPool(name, intChunkSize, intervalFn),
+		encoderPool:       encoding.NewEncoderPool(name, intChunkNum, intervalFn),
+		decoderPool:       encoding.NewDecoderPool(name, intChunkNum, intervalFn),
 		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 		encodingChunkSize: intChunkSize,
-		encodingChunkNum:  intChunkNum,
 		plainChunkSize:    plainChunkSize,
 	}
 
@@ -350,4 +350,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 			return p
 		}),
 		opts)
+}
+
+func intervalFn(key []byte) time.Duration {
+	_, interval, err := pbv1.DecodeFieldFlag(key)
+	if err != nil {
+		panic(err)
+	}
+	return interval
 }
