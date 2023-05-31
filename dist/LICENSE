@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/badger/v3 v3.0.0-20230329010346-dfdf57f0581b Apache-2.0
+    github.com/SkyAPM/badger/v3 v3.0.0-20230511223516-583c6a825854 Apache-2.0
     github.com/blevesearch/segment v0.9.0 Apache-2.0
     github.com/blevesearch/vellum v1.0.7 Apache-2.0
     github.com/coreos/go-semver v0.3.0 Apache-2.0
@@ -398,7 +398,7 @@ ISC licenses
     glob-parent 5.1.2 ISC
     graceful-fs 4.2.10 ISC
     picocolors 1.0.0 ISC
-    yaml 2.2.1 ISC
+    yaml 2.2.2 ISC
 
 ========================================================================
 MIT licenses
