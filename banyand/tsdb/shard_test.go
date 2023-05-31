@@ -72,7 +72,10 @@ var _ = Describe("Shard", func() {
 		It("generates several segments and blocks", func() {
 			By("open 4 blocks")
 			var err error
-			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+			shard, err = tsdb.OpenShard(context.WithValue(timestamp.SetClock(context.Background(), clock),
+				tsdb.OptionsKey, tsdb.DatabaseOpts{
+					TSTableFactory: tsdb.NewByPassTSTableFactory(),
+				}), common.ShardID(0), tmp,
 				tsdb.IntervalRule{
 					Unit: tsdb.DAY,
 					Num:  1,
@@ -412,7 +415,10 @@ var _ = Describe("Shard", func() {
 		})
 		It("retention", func() {
 			var err error
-			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+			shard, err = tsdb.OpenShard(context.WithValue(timestamp.SetClock(context.Background(), clock),
+				tsdb.OptionsKey, tsdb.DatabaseOpts{
+					TSTableFactory: tsdb.NewByPassTSTableFactory(),
+				}), common.ShardID(0), tmp,
 				tsdb.IntervalRule{
 					Unit: tsdb.DAY,
 					Num:  1,
@@ -532,7 +538,10 @@ var _ = Describe("Shard", func() {
 			clock.Set(time.Date(1970, 0o1, 0o1, 1, 0, 0, 0, time.Local))
 			By("open 1 block")
 			var err error
-			shard, err = tsdb.OpenShard(timestamp.SetClock(context.Background(), clock), common.ShardID(0), tmp,
+			shard, err = tsdb.OpenShard(context.WithValue(timestamp.SetClock(context.Background(), clock),
+				tsdb.OptionsKey, tsdb.DatabaseOpts{
+					TSTableFactory: tsdb.NewByPassTSTableFactory(),
+				}), common.ShardID(0), tmp,
 				tsdb.IntervalRule{
 					Unit: tsdb.DAY,
 					Num:  1,

@@ -64,7 +64,7 @@ func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.
 	if fLen > len(sm.TagFamilies) {
 		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
-	shard, err := s.db.SupplyTSDB().Shard(shardID)
+	shard, err := s.db.SupplyTSDB().CreateShardsAndGetByID(shardID)
 	if err != nil {
 		return err
 	}

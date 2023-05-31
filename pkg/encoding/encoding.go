@@ -18,12 +18,6 @@
 // Package encoding implements encoding/decoding data points.
 package encoding
 
-import (
-	"github.com/apache/skywalking-banyandb/banyand/observability"
-)
-
-var encodingScope = observability.RootScope.SubScope("encoding")
-
 // SeriesEncoderPool allows putting and getting SeriesEncoder.
 type SeriesEncoderPool interface {
 	Get(metadata []byte, buffer BufferWriter) SeriesEncoder
