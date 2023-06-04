@@ -61,7 +61,7 @@ jobs:
             ${{ runner.os }}-build-tool-
       - uses: actions/setup-node@v3
         with:
-          node-version: 16.15
+          node-version: 18.16
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
       - name: Install Go

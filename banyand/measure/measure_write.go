@@ -52,7 +52,7 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 	if fLen > len(s.schema.GetTagFamilies()) {
 		return errors.Wrap(errMalformedElement, "tag family number is more than expected")
 	}
-	shard, err := s.databaseSupplier.SupplyTSDB().Shard(shardID)
+	shard, err := s.databaseSupplier.SupplyTSDB().CreateShardsAndGetByID(shardID)
 	if err != nil {
 		return err
 	}

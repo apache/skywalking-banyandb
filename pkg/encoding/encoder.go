@@ -26,9 +26,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 var (
@@ -45,33 +43,20 @@ var (
 	errNoData       = errors.New("there is no data")
 )
 
-type metrics struct {
-	rawSizeCounter      meter.Counter
-	encodingSizeCounter meter.Counter
-	itemsNumCounter     meter.Counter
-}
-
 type encoderPoolDelegator struct {
-	metrics metrics
-	pool    *sync.Pool
-	fn      ParseInterval
-	name    string
-	size    int
+	pool *sync.Pool
+	fn   ParseInterval
+	name string
+	size int
 }
 
 // NewEncoderPool returns a SeriesEncoderPool which provides int-based xor encoders.
 func NewEncoderPool(name string, size int, fn ParseInterval) SeriesEncoderPool {
-	provider := observability.NewMeterProvider(encodingScope.ConstLabels(meter.LabelPairs{"name": name}))
 	return &encoderPoolDelegator{
 		name: name,
 		pool: &encoderPool,
 		size: size,
 		fn:   fn,
-		metrics: metrics{
-			rawSizeCounter:      provider.Counter("raw_size"),
-			encodingSizeCounter: provider.Counter("encoding_size"),
-			itemsNumCounter:     provider.Counter("items_num"),
-		},
 	}
 }
 
@@ -80,7 +65,6 @@ func (b *encoderPoolDelegator) Get(metadata []byte, buffer BufferWriter) SeriesE
 	encoder.name = b.name
 	encoder.size = b.size
 	encoder.fn = b.fn
-	encoder.metrics = &b.metrics
 	encoder.Reset(metadata, buffer)
 	return encoder
 }
@@ -134,7 +118,6 @@ type encoder struct {
 	bw        *Writer
 	values    *XOREncoder
 	fn        ParseInterval
-	metrics   *metrics
 	name      string
 	interval  time.Duration
 	startTime uint64
@@ -175,8 +158,6 @@ func (ie *encoder) Append(ts uint64, value []byte) {
 	ie.bw.WriteBool(l > 0)
 	ie.values.Write(convert.BytesToUint64(value))
 	ie.num++
-	ie.metrics.itemsNumCounter.Inc(1)
-	ie.metrics.rawSizeCounter.Inc(float64(l + 8))
 }
 
 func (ie *encoder) IsFull() bool {
@@ -198,8 +179,6 @@ func (ie *encoder) Encode() error {
 	buffWriter := NewPacker(ie.buff)
 	buffWriter.PutUint64(ie.startTime)
 	buffWriter.PutUint16(uint16(ie.num))
-	bb := buffWriter.Bytes()
-	ie.metrics.encodingSizeCounter.Inc(float64(len(bb)))
 	return nil
 }
 

@@ -42,7 +42,7 @@ type schemaRepo struct {
 }
 
 func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
-	dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+	bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
 ) schemaRepo {
 	return schemaRepo{
 		l:        l,
@@ -51,7 +51,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, dbOpts, l),
+			newSupplier(path, metadata, bufferSize, dbOpts, l),
 			event.StreamTopicShardEvent,
 			event.StreamTopicEntityEvent,
 		),
@@ -171,18 +171,20 @@ func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata metadata.Repo
-	l        *logger.Logger
-	path     string
-	dbOpts   tsdb.DatabaseOpts
+	metadata   metadata.Repo
+	l          *logger.Logger
+	path       string
+	dbOpts     tsdb.DatabaseOpts
+	bufferSize int64
 }
 
-func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
+func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
 	return &supplier{
-		path:     path,
-		dbOpts:   dbOpts,
-		metadata: metadata,
-		l:        l,
+		path:       path,
+		bufferSize: bufferSize,
+		dbOpts:     dbOpts,
+		metadata:   metadata,
+		l:          l,
 	}
 }
 
@@ -205,9 +207,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts := s.dbOpts
 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
-	opts.CompressionMethod = tsdb.CompressionMethod{
-		Type:             tsdb.CompressionTypeZSTD,
-		ChunkSizeInBytes: chunkSize,
+	opts.TSTableFactory = &tsTableFactory{
+		bufferSize:        s.bufferSize,
+		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+		chunkSize:         chunkSize,
 	}
 	var err error
 	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {

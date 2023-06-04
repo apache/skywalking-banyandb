@@ -161,7 +161,7 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ref tsdb.GlobalItemID, value
 			}
 		}
 		for shardID, rules := range fields {
-			shard, err := s.db.SupplyTSDB().Shard(common.ShardID(shardID))
+			shard, err := s.db.SupplyTSDB().CreateShardsAndGetByID(common.ShardID(shardID))
 			if err != nil {
 				return err
 			}

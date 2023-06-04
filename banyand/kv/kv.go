@@ -41,7 +41,7 @@ var (
 		PrefetchValues: true,
 	}
 
-	defaultKVMemorySize = 8 << 20
+	defaultKVMemorySize = 4 << 20
 )
 
 type writer interface {
@@ -90,6 +90,7 @@ type TimeSeriesStore interface {
 	Handover(skl *skl.Skiplist) error
 	TimeSeriesReader
 	SizeOnDisk() int64
+	CollectStats() *badger.Statistics
 }
 
 // TimeSeriesOptions sets an options for creating a TimeSeriesStore.
@@ -110,12 +111,14 @@ func TSSWithLogger(l *logger.Logger) TimeSeriesOptions {
 func TSSWithEncoding(encoderPool encoding.SeriesEncoderPool, decoderPool encoding.SeriesDecoderPool, chunkSize int) TimeSeriesOptions {
 	return func(store TimeSeriesStore) {
 		if btss, ok := store.(*badgerTSS); ok {
-			btss.dbOpts = btss.dbOpts.WithKeyBasedEncoder(
-				&encoderPoolDelegate{
-					encoderPool,
-				}, &decoderPoolDelegate{
-					decoderPool,
-				}, chunkSize)
+			btss.dbOpts = btss.dbOpts.
+				WithKeyBasedEncoder(
+					&encoderPoolDelegate{
+						encoderPool,
+					}, &decoderPoolDelegate{
+						decoderPool,
+					}, chunkSize).
+				WithSameKeyBlock()
 		}
 	}
 }
@@ -127,7 +130,7 @@ func TSSWithZSTDCompression(chunkSize int) TimeSeriesOptions {
 			btss.dbOpts = btss.dbOpts.
 				WithCompression(options.ZSTD).
 				WithBlockSize(chunkSize).
-				WithSameKeyBlock()
+				WithZSTDCompressionLevel(3)
 		}
 	}
 }
@@ -179,12 +182,20 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 		opt(btss)
 	}
 	// Put all values into LSM
-	btss.dbOpts = btss.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
-	btss.dbOpts = btss.dbOpts.WithVLogPercentile(1.0)
+	btss.dbOpts = btss.dbOpts.
+		WithNumVersionsToKeep(math.MaxUint32).
+		WithVLogPercentile(1.0).
+		WithInTable().
+		WithMaxLevels(2).
+		WithBaseTableSize(10 << 20).
+		WithBaseLevelSize(math.MaxInt64)
 	if btss.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
 		btss.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
-	btss.dbOpts = btss.dbOpts.WithInTable()
+	if btss.dbOpts.MemTableSize < 8<<20 {
+		btss.dbOpts = btss.dbOpts.WithValueThreshold(1 << 10)
+	}
+	btss.dbOpts.LmaxCompaction = true
 	var err error
 	btss.db, err = badger.Open(btss.dbOpts)
 	if err != nil {
@@ -227,15 +238,23 @@ func StoreWithMemTableSize(size int64) StoreOptions {
 
 // OpenStore creates a new Store.
 // nolint: contextcheck
-func OpenStore(path string, options ...StoreOptions) (Store, error) {
+func OpenStore(path string, opts ...StoreOptions) (Store, error) {
 	bdb := new(badgerDB)
 	bdb.dbOpts = badger.DefaultOptions(path)
-	for _, opt := range options {
+	for _, opt := range opts {
 		opt(bdb)
 	}
 	if bdb.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
 		bdb.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
+	if bdb.dbOpts.MemTableSize < 8<<20 {
+		bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
+	}
+	bdb.dbOpts = bdb.dbOpts.
+		WithBaseTableSize(5 << 20).
+		WithBaseLevelSize(25 << 20).
+		WithCompression(options.ZSTD).
+		WithZSTDCompressionLevel(1)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)
@@ -266,10 +285,13 @@ func OpenIndexStore(path string, options ...IndexOptions) (IndexStore, error) {
 	for _, opt := range options {
 		opt(bdb)
 	}
-	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32)
-	bdb.dbOpts = bdb.dbOpts.WithNumCompactors(2)
-	bdb.dbOpts = bdb.dbOpts.WithMemTableSize(2 << 20)
-	bdb.dbOpts = bdb.dbOpts.WithValueThreshold(1 << 10)
+	bdb.dbOpts = bdb.dbOpts.WithNumVersionsToKeep(math.MaxUint32).
+		WithNumCompactors(2).
+		WithMemTableSize(2 << 20).
+		WithMaxLevels(2).
+		WithBaseTableSize(2 << 20).
+		WithBaseLevelSize(math.MaxInt64).
+		WithValueThreshold(1 << 10)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)

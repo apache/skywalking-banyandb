@@ -15,44 +15,37 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package convert_test
 
 import (
-	"sync"
+	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-// MetricsCollector is a global metrics collector.
-var MetricsCollector = Collector{
-	getters: make(map[string]MetricsGetter),
-}
+func TestParseSize(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"0B", 0},
+		{"1KB", 1000},
+		{"1MB", 1000 * 1000},
+		{"1GB", 1000 * 1000 * 1000},
+		{"1KiB", 1 << 10},
+		{"1MiB", 1 << 20},
+		{"1GiB", 1 << 30},
+		{"1.5Gi", int64(1.5 * float64(1<<30))},
+		{"1024 M", 1024 * 1000 * 1000},
+		{"42 Ki", 42 * (1 << 10)},
+	}
 
-// MetricsGetter is a function that collects metrics.
-type MetricsGetter func()
-
-// Collector is a metrics collector.
-type Collector struct {
-	getters map[string]MetricsGetter
-	gMux    sync.RWMutex
-}
-
-// Register registers a metrics getter.
-func (c *Collector) Register(name string, getter MetricsGetter) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	c.getters[name] = getter
-}
-
-// Unregister unregisters a metrics getter.
-func (c *Collector) Unregister(name string) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	delete(c.getters, name)
-}
-
-func (c *Collector) collect() {
-	c.gMux.RLock()
-	defer c.gMux.RUnlock()
-	for _, getter := range c.getters {
-		getter()
+	for _, test := range tests {
+		result, err := convert.ParseSize(test.input)
+		if err != nil {
+			t.Errorf("Failed to parse size for input %q: %v", test.input, err)
+		} else if result != test.expected {
+			t.Errorf("Incorrect result for input %q: expected %d, got %d", test.input, test.expected, result)
+		}
 	}
 }

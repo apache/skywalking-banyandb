@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -40,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -62,10 +64,12 @@ const (
 )
 
 var (
-	errInvalidShardID = errors.New("invalid shard id")
-	errOpenDatabase   = errors.New("fails to open the database")
+	// ErrUnknownShard indicates that the shard is not found.
+	ErrUnknownShard = errors.New("unknown shard")
+	errOpenDatabase = errors.New("fails to open the database")
 
-	optionsKey   = contextOptionsKey{}
+	// OptionsKey is the key of options in context.
+	OptionsKey   = contextOptionsKey{}
 	meterStorage = observability.RootScope.SubScope("storage")
 	meterTSDB    = meterStorage.SubScope("tsdb")
 )
@@ -80,6 +84,7 @@ type Supplier interface {
 // Database allows listing and getting shard details.
 type Database interface {
 	io.Closer
+	CreateShardsAndGetByID(id common.ShardID) (Shard, error)
 	Shards() []Shard
 	Shard(id common.ShardID) (Shard, error)
 }
@@ -99,16 +104,14 @@ var _ Database = (*database)(nil)
 
 // DatabaseOpts wraps options to create a tsdb.
 type DatabaseOpts struct {
-	EncodingMethod     EncodingMethod
+	TSTableFactory     TSTableFactory
 	Location           string
-	CompressionMethod  CompressionMethod
 	SegmentInterval    IntervalRule
 	BlockInterval      IntervalRule
 	TTL                IntervalRule
-	BlockMemSize       int64
 	BlockInvertedIndex InvertedIndexOpts
-	SeriesMemSize      int64
-	GlobalIndexMemSize int64
+	SeriesMemSize      run.Bytes
+	GlobalIndexMemSize run.Bytes
 	ShardNum           uint32
 	EnableGlobalIndex  bool
 }
@@ -189,28 +192,60 @@ type ShardState struct {
 }
 
 type database struct {
-	logger      *logger.Logger
-	location    string
-	sLst        []Shard
-	segmentSize IntervalRule
-	blockSize   IntervalRule
-	ttl         IntervalRule
-	sync.Mutex
-	shardNum uint32
+	shardCreationCtx context.Context
+	logger           *logger.Logger
+	location         string
+	sLst             []Shard
+	segmentSize      IntervalRule
+	blockSize        IntervalRule
+	ttl              IntervalRule
+	sync.RWMutex
+	shardNum           uint32
+	shardCreationState uint32
+}
+
+func (d *database) CreateShardsAndGetByID(id common.ShardID) (Shard, error) {
+	if atomic.LoadUint32(&d.shardCreationState) != 0 {
+		return d.shard(id)
+	}
+	d.Lock()
+	defer d.Unlock()
+	if atomic.LoadUint32(&d.shardCreationState) != 0 {
+		return d.shard(id)
+	}
+	loadedShardsNum := len(d.sLst)
+	if loadedShardsNum < int(d.shardNum) {
+		_, err := createDatabase(d, loadedShardsNum)
+		if err != nil {
+			return nil, errors.WithMessage(err, "create the database failed")
+		}
+	}
+	atomic.StoreUint32(&d.shardCreationState, 1)
+	return d.shard(id)
 }
 
 func (d *database) Shards() []Shard {
+	d.RLock()
+	defer d.RUnlock()
 	return d.sLst
 }
 
 func (d *database) Shard(id common.ShardID) (Shard, error) {
+	d.RLock()
+	defer d.RUnlock()
+	return d.shard(id)
+}
+
+func (d *database) shard(id common.ShardID) (Shard, error) {
 	if uint(id) >= uint(len(d.sLst)) {
-		return nil, errInvalidShardID
+		return nil, ErrUnknownShard
 	}
 	return d.sLst[id], nil
 }
 
 func (d *database) Close() error {
+	d.Lock()
+	defer d.Unlock()
 	var err error
 	for _, s := range d.sLst {
 		innerErr := s.Close()
@@ -255,24 +290,19 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(err, "failed to read directory contents failed")
 	}
 	thisContext := context.WithValue(ctx, logger.ContextKey, db.logger)
-	thisContext = context.WithValue(thisContext, optionsKey, opts)
+	thisContext = context.WithValue(thisContext, OptionsKey, opts)
+	db.shardCreationCtx = thisContext
 	if len(entries) > 0 {
 		return loadDatabase(thisContext, db)
 	}
-	return initDatabase(thisContext, db)
+	return db, nil
 }
 
-func initDatabase(ctx context.Context, db *database) (Database, error) {
-	db.Lock()
-	defer db.Unlock()
-	return createDatabase(ctx, db, 0)
-}
-
-func createDatabase(ctx context.Context, db *database, startID int) (Database, error) {
+func createDatabase(db *database, startID int) (Database, error) {
 	var err error
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
-		so, errNewShard := OpenShard(ctx, common.ShardID(i),
+		so, errNewShard := OpenShard(db.shardCreationCtx, common.ShardID(i),
 			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize, defaultMaxBlockQueueSize)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
@@ -315,14 +345,6 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 	})
 	if err != nil {
 		return nil, errors.WithMessage(err, "load the database failed")
-	}
-
-	loadedShardsNum := len(db.sLst)
-	if loadedShardsNum < int(db.shardNum) {
-		_, err := createDatabase(ctx, db, loadedShardsNum)
-		if err != nil {
-			return nil, errors.WithMessage(err, "load the database failed")
-		}
 	}
 	return db, nil
 }

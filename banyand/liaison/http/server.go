@@ -38,6 +38,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/ui"
@@ -89,6 +90,7 @@ func (p *service) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
 	}
+	observability.UpdateAddress("http", p.listenAddr)
 	if p.grpcCert != "" {
 		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
 		if errTLS != nil {

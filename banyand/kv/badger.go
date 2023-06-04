@@ -65,6 +65,10 @@ func (b *badgerTSS) SizeOnDisk() int64 {
 	return lsmSize + vlogSize
 }
 
+func (b *badgerTSS) CollectStats() *badger.Statistics {
+	return b.db.CollectStats()
+}
+
 type mergedIter struct {
 	delegated Iterator
 	data      []byte
