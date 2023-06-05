@@ -400,7 +400,7 @@ function changeFields() {
                             </el-option>
                         </el-select>
                         <el-select v-if="data.type == 'measure'" v-model="data.handleFields" collapse-tags
-                            style="margin: 0 0 0 10px" @change="changeFields" filterable multiple
+                            style="margin: 0 0 0 10px; width: 400px;" @change="changeFields" filterable multiple
                             placeholder="Please select Fields">
                             <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
                             </el-option>
