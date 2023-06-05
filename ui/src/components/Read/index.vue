@@ -24,7 +24,7 @@ import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { getStreamOrMeasure, getTableList } from '@/api/index'
 import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { jsonToYaml, yamlToJson } from '@/utils/yaml'
-import CodeMirror from '@/components2/CodeMirror/index.vue'
+import CodeMirror from '@/components/CodeMirror/index.vue'
 import { ElMessage } from 'element-plus'
 import { computed } from '@vue/runtime-core'
 

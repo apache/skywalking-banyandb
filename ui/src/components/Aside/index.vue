@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import RigheMenu from '@/components2/RightMenu/index.vue'
+import RigheMenu from '@/components/RightMenu/index.vue'
 import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCurrentInstance } from "@vue/runtime-core"
