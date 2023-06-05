@@ -21,12 +21,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -113,9 +116,13 @@ func openDatabase(ctx context.Context, t *require.Assertions, path string) (db D
 			BlockInterval:   IntervalRule{Num: 2},
 			SegmentInterval: IntervalRule{Num: 1, Unit: DAY},
 			TTL:             IntervalRule{Num: 7, Unit: DAY},
+			TSTableFactory:  bypassTSTableFactory{},
 		})
 	t.NoError(err)
 	t.NotNil(db)
+	shard, err := db.CreateShardsAndGetByID(0)
+	t.NoError(err)
+	t.Equal(common.ShardID(0), shard.ID())
 	return db
 }
 
@@ -124,4 +131,47 @@ func validateDirectory(t *assert.Assertions, dir string) {
 	t.False(os.IsNotExist(err), "Directory does not exist: %v", dir)
 	t.NoError(err, "Directory error: %v", dir)
 	t.True(info.IsDir(), "Directory is a file, not a directory: %#v\n", dir)
+}
+
+// bypassTSTableFactory is a bypass implementation of TSTableFactory.
+type bypassTSTableFactory struct{}
+
+// NewByPassTSTableFactory creates a bypass implementation of TSTableFactory.
+func NewByPassTSTableFactory() TSTableFactory {
+	return bypassTSTableFactory{}
+}
+
+func (bypassTSTableFactory) NewTSTable(_ BlockExpiryTracker, _ string, _ common.Position, _ *logger.Logger) (TSTable, error) {
+	return newBypassTSTable()
+}
+
+// bypassTSTable is a bypass implementation of TSTable.
+type bypassTSTable struct{}
+
+func newBypassTSTable() (TSTable, error) {
+	return &bypassTSTable{}, nil
+}
+
+func (b *bypassTSTable) OpenBuffer() error {
+	return nil
+}
+
+func (b *bypassTSTable) Put(_, _ []byte, _ time.Time) error {
+	return nil
+}
+
+func (b *bypassTSTable) Get(_ []byte, _ time.Time) ([]byte, error) {
+	return nil, nil
+}
+
+func (b *bypassTSTable) CollectStats() *badger.Statistics {
+	return &badger.Statistics{TableBuilderSize: &sync.Map{}}
+}
+
+func (b *bypassTSTable) SizeOnDisk() int64 {
+	return 0
+}
+
+func (b *bypassTSTable) Close() error {
+	return nil
 }

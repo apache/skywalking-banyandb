@@ -35,6 +35,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -401,6 +402,7 @@ func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logge
 	cfg := embed.NewConfig()
 	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
+	observability.UpdatePath(cfg.Dir)
 	cURL, _ := url.Parse(config.listenerClientURL)
 	pURL, _ := url.Parse(config.listenerPeerURL)
 
