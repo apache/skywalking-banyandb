@@ -26,6 +26,7 @@ import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { jsonToYaml, yamlToJson } from '@/utils/yaml'
 import CodeMirror from '@/components2/CodeMirror/index.vue'
 import { ElMessage } from 'element-plus'
+import { computed } from '@vue/runtime-core'
 
 const route = useRoute()
 
@@ -44,6 +45,15 @@ const tagType = {
     'TAG_TYPE_INT_ARRAY': 'intArray',
     'TAG_TYPE_DATA_BINARY': 'binaryData',
     'TAG_TYPE_ID': 'id'
+}
+const fieldTypes = {
+    'FIELD_TYPE_UNSPECIFIED': 'null',
+    'FIELD_TYPE_STRING': 'str',
+    'FIELD_TYPE_INT': 'int',
+    'FIELD_TYPE_STRING_ARRAY': 'strArray',
+    'FIELD_TYPE_INT_ARRAY': 'intArray',
+    'FIELD_TYPE_DATA_BINARY': 'binaryData',
+    'FIELD_TYPE_ID': 'id'
 }
 const shortcuts = [
     {
@@ -104,6 +114,9 @@ const param = {
     }
 }
 const data = reactive({
+    fields: [],
+    tableFields: [],
+    handleFields: "",
     group: route.params.group,
     name: route.params.group,
     type: route.params.type,
@@ -123,7 +136,22 @@ const data = reactive({
     code: null,
     codeStorage: []
 })
-
+const tableHeader = computed(() => {
+    return data.tableTags.concat(data.tableFields)
+})
+watch(() => data.handleFields, () => {
+    if (data.handleFields.length > 0) {
+        data.tableTags = data.tableTags.map(item => {
+            item.label = `${data.options[data.tagFamily].label}.${item.name}`
+            return item
+        })
+    } else {
+        data.tableTags = data.tableTags.map(item => {
+            item.label = item.name
+            return item
+        })
+    }
+})
 watch(() => route, () => {
     data.group = route.params.group
     data.name = route.params.name
@@ -185,11 +213,15 @@ function initData() {
         .then(res => {
             if (res.status == 200) {
                 data.resourceData = res.data[data.type]
-                data.tableTags = res.data[data.type].tagFamilies[0].tags
+                data.tableTags = res.data[data.type].tagFamilies[0].tags.map(item => {
+                    item.label = item.name
+                    return item
+                })
                 data.options = res.data[data.type].tagFamilies.map((item, index) => {
                     return { label: item.name, value: index }
                 })
                 data.tagFamily = 0
+                data.fields = res.data[data.type].fields ? res.data[data.type].fields : []
                 handleCodeData()
             }
         })
@@ -202,8 +234,13 @@ function getTableData() {
     data.loading = true
     setTableParam()
     let paramList = JSON.parse(JSON.stringify(param))
-    if(data.type == 'measure') {
+    if (data.type == 'measure') {
         paramList.tagProjection = paramList.projection
+        if (data.handleFields.length > 0) {
+            paramList.fieldProjection = {
+                names: data.handleFields
+            }
+        }
         delete paramList.projection
     }
     /* paramList.offset = data.queryInfo.pagenum
@@ -212,12 +249,12 @@ function getTableData() {
     getTableList(paramList, data.type)
         .then((res) => {
             if (res.status == 200) {
-                if(data.type == 'stream') {
+                if (data.type == 'stream') {
                     setTableData(res.data.elements)
                 } else {
                     setTableData(res.data.dataPoints)
                 }
-                
+
             }
         })
         .catch(() => {
@@ -226,6 +263,7 @@ function getTableData() {
 }
 function setTableData(elements) {
     const tags = data.resourceData.tagFamilies[data.tagFamily].tags
+    const tableFields = data.tableFields
     data.tableData = elements.map(item => {
         let dataItem = {}
         item.tagFamilies[0].tags.forEach(tag => {
@@ -236,6 +274,19 @@ function setTableData(elements) {
             }
             dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value') ? tag.value[tagType[type]].value : tag.value[tagType[type]]
         })
+        if (data.type == 'measure' && tableFields.length > 0) {
+            item.fields.forEach(field => {
+                const name = field.name
+                const fieldType = tableFields.filter(tableField => {
+                    return tableField.name == name
+                })[0].fieldType || ''
+                if (field.value[fieldTypes[fieldType]] == null) {
+                    return dataItem[name] = 'Null'
+                }
+                dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value') ? field.value[fieldTypes[fieldType]].value : field.value[fieldTypes[fieldType]]
+            })
+        }
+
         dataItem.timestamp = item.timestamp
         return dataItem
     })
@@ -252,7 +303,13 @@ function setTableParam() {
     //param.criteria[0].tagFamilyName = tagFamily.name
 }
 function changeTagFamilies() {
-    data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags
+    data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags.map(item => {
+        item.label = item.name
+        if (data.handleFields.length > 0) {
+            item.label = `${data.options[data.tagFamily].label}.${item.name}`
+        }
+        return item
+    })
     getTableData()
 }
 function handleCodeData() {
@@ -305,6 +362,16 @@ function changeDatePicker() {
     json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null
     data.code = jsonToYaml(json.data).data
 }
+function changeFields() {
+    data.tableFields = data.handleFields.map(fieldName => {
+        let item = data.fields.filter(field => {
+            return field.name == fieldName
+        })[0]
+        item.label = item.name
+        return item
+    })
+    getTableData()
+}
 </script>
 
 <template>
@@ -327,6 +394,12 @@ function changeDatePicker() {
                             placeholder="Please select">
                             <el-option v-for="item in data.options" :key="item.value" :label="item.label"
                                 :value="item.value">
+                            </el-option>
+                        </el-select>
+                        <el-select v-if="data.type == 'measure'" v-model="data.handleFields" collapse-tags
+                            style="margin: 0 0 0 10px" @change="changeFields" filterable multiple
+                            placeholder="Please select Fields">
+                            <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
                             </el-option>
                         </el-select>
                         <el-date-picker @change="changeDatePicker" style="margin: 0 10px 0 10px" v-model="data.timeValue"
@@ -355,8 +428,8 @@ function changeDatePicker() {
                 <el-table-column type="index" label="number" width="90">
                 </el-table-column>
                 <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
-                <el-table-column v-for="item in data.tableTags" sortable :sort-change="sortChange" :key="item.name"
-                    :label="item.name" :prop="item.name" show-overflow-tooltip>
+                <el-table-column v-for="item in tableHeader" sortable :sort-change="sortChange" :key="item.name"
+                    :label="item.label" :prop="item.name" show-overflow-tooltip>
                 </el-table-column>
             </el-table>
         </el-card>
