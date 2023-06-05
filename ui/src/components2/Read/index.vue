@@ -158,6 +158,9 @@ watch(() => route, () => {
     data.type = route.params.type
     data.tableData = []
     data.tableTags = []
+    data.tableFields = []
+    data.fields = []
+    data.handleFields = ""
 
     if (data.group && data.name && data.type) {
         initCode()
