@@ -43,9 +43,9 @@ export function getStreamOrMeasure(type, group, name) {
     })
 }
 
-export function getTableList(data) {
+export function getTableList(data, type) {
     return request({
-        url: '/api/v1/stream/data',
+        url: `/api/v1/${type}/data`,
         data: data,
         method: 'post'
     })

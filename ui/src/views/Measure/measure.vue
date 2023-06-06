@@ -18,13 +18,13 @@
 -->
 
 <script setup>
+import Read from '@/components/Read/index.vue'
 </script>
 
 <template>
-    <div class="about">
-    <h1>This is the Measure page</h1>
+  <div>
+    <Read></Read>
   </div>
 </template>
 
-<style lang="scss" scoped>
-</style>
+<style lang="scss" scoped></style>
