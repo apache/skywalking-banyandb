@@ -235,12 +235,15 @@
         height: 100% !important;
     }
 }
+
 .el-menu-item.is-active {
     color: var(--color-main) !important;
 }
+
 .el-sub-menu.is-active {
     --el-menu-active-color: var(--color-main) !important;
 }
+
 .navigation {
     border: 0px !important;
 }

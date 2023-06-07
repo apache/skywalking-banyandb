@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -51,15 +52,16 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo    schemaRepo
-	metadata      metadata.Repo
-	pipeline      queue.Queue
-	repo          discovery.ServiceRepo
-	writeListener *writeCallback
-	l             *logger.Logger
-	stopCh        chan struct{}
-	root          string
-	dbOpts        tsdb.DatabaseOpts
+	schemaRepo      schemaRepo
+	metadata        metadata.Repo
+	pipeline        queue.Queue
+	repo            discovery.ServiceRepo
+	writeListener   *writeCallback
+	l               *logger.Logger
+	stopCh          chan struct{}
+	root            string
+	dbOpts          tsdb.DatabaseOpts
+	blockBufferSize run.Bytes
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -72,10 +74,13 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
+	s.blockBufferSize = 8 << 20
+	s.dbOpts.SeriesMemSize = 1 << 20
+	s.dbOpts.GlobalIndexMemSize = 2 << 20
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
-	flagS.Int64Var(&s.dbOpts.BlockMemSize, "stream-block-mem-size", 8<<20, "block memory size")
-	flagS.Int64Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", 1<<20, "series metadata memory size")
-	flagS.Int64Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", 2<<20, "global index memory size")
+	flagS.Var(&s.blockBufferSize, "stream-block-buffer-size", "block buffer size")
+	flagS.Var(&s.dbOpts.SeriesMemSize, "stream-seriesmeta-mem-size", "series metadata memory size")
+	flagS.Var(&s.dbOpts.GlobalIndexMemSize, "stream-global-index-mem-size", "global index memory size")
 	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "stream-idx-batch-wait-sec", 1, "index batch wait in second")
 	return flagS
 }
@@ -99,7 +104,9 @@ func (s *service) PreRun() error {
 	if err != nil {
 		return err
 	}
-	s.schemaRepo = newSchemaRepo(path.Join(s.root, s.Name()), s.metadata, s.repo, s.dbOpts, s.l)
+	path := path.Join(s.root, s.Name())
+	observability.UpdatePath(path)
+	s.schemaRepo = newSchemaRepo(path, s.metadata, s.repo, int64(s.blockBufferSize), s.dbOpts, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			continue

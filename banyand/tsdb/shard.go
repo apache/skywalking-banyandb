@@ -38,9 +38,9 @@ import (
 )
 
 const (
-	defaultBlockQueueSize    = 4
+	defaultBlockQueueSize    = 2
 	defaultMaxBlockQueueSize = 64
-	defaultKVMemorySize      = 8 << 20
+	defaultKVMemorySize      = 4 << 20
 )
 
 var (
@@ -168,7 +168,7 @@ func (s *shard) Index() IndexDatabase {
 }
 
 func (s *shard) collectSizeOnDisk(labelsValues []string) {
-	var globalIndex, localLSM, localInverted, main int64
+	var globalIndex, localLSM, localInverted, tst int64
 	for _, seg := range s.segmentController.segments() {
 		if seg.globalIndex != nil {
 			globalIndex += seg.globalIndex.SizeOnDisk()
@@ -177,8 +177,8 @@ func (s *shard) collectSizeOnDisk(labelsValues []string) {
 			if b.Closed() {
 				continue
 			}
-			if b.sst != nil {
-				main += b.sst.SizeOnDisk()
+			if b.tsTable != nil {
+				tst += b.tsTable.SizeOnDisk()
 			}
 			if b.lsmIndex != nil {
 				localLSM += b.lsmIndex.SizeOnDisk()
@@ -192,7 +192,7 @@ func (s *shard) collectSizeOnDisk(labelsValues []string) {
 	onDiskBytesGauge.Set(float64(globalIndex), append(labelsValues, "global_index")...)
 	onDiskBytesGauge.Set(float64(localLSM), append(labelsValues, "local_lsm")...)
 	onDiskBytesGauge.Set(float64(localInverted), append(labelsValues, "local_inverted")...)
-	onDiskBytesGauge.Set(float64(main), append(labelsValues, "main")...)
+	onDiskBytesGauge.Set(float64(tst), append(labelsValues, "tst")...)
 }
 
 func (s *shard) State() (shardState ShardState) {

@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import StreamEditor from '@/components2/StreamEditor/index.vue'
+import StreamEditor from '@/components/StreamEditor/index.vue'
 </script>
 
 <template>

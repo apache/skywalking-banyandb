@@ -148,5 +148,5 @@ replace (
 	github.com/blugelabs/bluge => github.com/zinclabs/bluge v1.1.5
 	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
 	github.com/blugelabs/ice => github.com/zinclabs/ice v1.1.3
-	github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20230329010346-dfdf57f0581b
+	github.com/dgraph-io/badger/v3 v3.2011.1 => github.com/SkyAPM/badger/v3 v3.0.0-20230511223516-583c6a825854
 )

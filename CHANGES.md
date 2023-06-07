@@ -16,6 +16,9 @@ Release Notes.
 - Fix max ModRevision computation with inclusion of `TopNAggregation`
 - Enhance meter performance
 - Reduce logger creation frequency
+- Add units to memory flags
+- Introduce TSTable to customize the block's structure
+- Add `/system` endpoint to the monitoring server that displays a list of nodes' system information.
 
 ### Bugs
 
@@ -27,6 +30,8 @@ Release Notes.
 - Bump go to 1.20.
 - Set KV's minimum memtable size to 8MB
 - [docs] Fix docs crud examples error
+- Modified `TestGoVersion` to check for CPU architecture and Go Version
+- Bump node to 18.16
 
 ## 0.3.1
 

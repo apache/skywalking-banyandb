@@ -18,7 +18,7 @@
  */
 
 import { createRouter, createWebHistory } from 'vue-router'
-import Header from '@/components2/Header/index.vue'
+import Header from '@/components/Header/index.vue'
 import NotFoundView from '../views/NotFoundView.vue'
 
 const router = createRouter({
@@ -51,7 +51,7 @@ const router = createRouter({
             {
               path: '/banyandb/stream/start',
               name: 'streamStart',
-              component: () => import('@/components2/Start/index.vue'),
+              component: () => import('@/components/Start/index.vue'),
               meta: {
                 type: 'stream'
               }
@@ -82,7 +82,7 @@ const router = createRouter({
             {
               path: '/banyandb/measure/start',
               name: 'measureStart',
-              component: () => import('@/components2/Start/index.vue'),
+              component: () => import('@/components/Start/index.vue'),
               meta: {
                 type: 'measure'
               }

@@ -507,12 +507,12 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		l:        logger.Fetch(ctx, "series_database"),
 		position: common.GetPosition(ctx),
 	}
-	o := ctx.Value(optionsKey)
+	o := ctx.Value(OptionsKey)
 	var memSize int64
 	if o != nil {
 		options := o.(DatabaseOpts)
 		if options.SeriesMemSize > 1 {
-			memSize = options.SeriesMemSize
+			memSize = int64(options.SeriesMemSize)
 		} else {
 			memSize = defaultKVMemorySize
 		}
