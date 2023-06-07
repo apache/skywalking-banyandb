@@ -18,8 +18,8 @@
 -->
 
 <script setup>
-import Aside from '@/components2/Aside/index.vue'
-import TopNav from '@/components2/TopNav/index.vue'
+import Aside from '@/components/Aside/index.vue'
+import TopNav from '@/components/TopNav/index.vue'
 import { reactive } from 'vue';
 
 const data = reactive({

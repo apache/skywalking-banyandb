@@ -16,7 +16,7 @@ Get binaries from the [download](https://skywalking.apache.org/downloads/).
 Users who want to build a binary from sources have to set up:
 
 * Go 1.20
-* Node 16.15
+* Node 18.16
 * Git >= 2.30
 * Linux, macOS or Windows+WSL2
 * GNU make
@@ -143,20 +143,22 @@ Flags:
       --logging.level string                 the root level of logging (default "info")
       --logging.levels stringArray           the level logging of logging
       --logging.modules stringArray          the specific module
-      --max-recv-msg-size int                the size of max receiving message (default 10485760)
-      --measure-block-mem-size int           block memory size (default 16777216)
+      --max-recv-msg-size bytes              the size of max receiving message (default 10.00MiB)
+      --measure-buffer-size bytes            block buffer size (default 4.00MiB)
+      --measure-encoder-buffer-size bytes    block fields buffer size (default 12.00MiB)
       --measure-idx-batch-wait-sec int       index batch wait in second (default 1)
       --measure-root-path string             the root path of database (default "/tmp")
-      --measure-seriesmeta-mem-size int      series metadata memory size (default 1048576)
+      --measure-seriesmeta-mem-size bytes    series metadata memory size (default 1.00MiB)
       --metadata-root-path string            the root path of metadata (default "/tmp")
   -n, --name string                          name of this service (default "standalone")
       --observability-listener-addr string   listen addr for observability (default ":2121")
       --pprof-listener-addr string           listen addr for pprof (default ":6060")
       --show-rungroup-units                  show rungroup units
-      --stream-block-mem-size int            block memory size (default 8388608)
-      --stream-global-index-mem-size int     global index memory size (default 2097152)
+      --stream-block-buffer-size bytes       block buffer size (default 8.00MiB)
+      --stream-global-index-mem-size bytes   global index memory size (default 2.00MiB)
       --stream-idx-batch-wait-sec int        index batch wait in second (default 1)
       --stream-root-path string              the root path of database (default "/tmp")
-      --stream-seriesmeta-mem-size int       series metadata memory size (default 1048576)
+      --stream-seriesmeta-mem-size bytes     series metadata memory size (default 1.00MiB)
       --tls                                  connection uses TLS if true, else plain TCP
+  -v, --version                              version for standalone
 ```

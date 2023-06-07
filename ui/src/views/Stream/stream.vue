@@ -18,9 +18,7 @@
 -->
 
 <script setup>
-import Read from '@/components2/Read/index.vue'
-import { useRoute } from 'vue-router'
-const route = useRoute()
+import Read from '@/components/Read/index.vue'
 </script>
 
 <template>

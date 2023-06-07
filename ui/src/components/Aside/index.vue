@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import RigheMenu from '@/components2/RightMenu/index.vue'
+import RigheMenu from '@/components/RightMenu/index.vue'
 import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCurrentInstance } from "@vue/runtime-core"
@@ -527,8 +527,7 @@ initActiveMenu()
             <Plus />
         </el-icon>
     </div>
-    <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible"
-        :show-close="false">
+    <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible" :show-close="false">
         <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
             <el-form-item label="group name" label-width="120px" prop="name">
                 <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off">
@@ -547,8 +546,7 @@ initActiveMenu()
             </el-button>
         </div>
     </el-dialog>
-    <div v-if="data.showRightMenu" class="right-menu box-shadow"
-        :style="{ top: `${data.top}px`, left: `${data.left}px` }">
+    <div v-if="data.showRightMenu" class="right-menu box-shadow" :style="{ top: `${data.top}px`, left: `${data.left}px` }">
         <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList">
         </RigheMenu>
     </div>

@@ -35,7 +35,7 @@ ISC licenses
     glob-parent 5.1.2 ISC
     graceful-fs 4.2.10 ISC
     picocolors 1.0.0 ISC
-    yaml 2.2.1 ISC
+    yaml 2.2.2 ISC
 
 ========================================================================
 MIT licenses
