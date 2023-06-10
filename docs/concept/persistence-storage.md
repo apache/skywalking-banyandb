@@ -1,28 +1,48 @@
 # Persistence Storage
-Persistence storage is used for unifying data of BanyanDB persistence， including write-ahead logging(WAL)， index, and data collected from skywalking and other observability platforms or APM systems. By exposing necessary interfaces, making upper components do not need to care about how persistence implement. And BanyanDB provides concise interfaces that shield the complexity of the implementation from the upper layer to make it as easy to use as possible. BanyanDB provides various implementations of persistence and IO modes to satisfy the need of different components.
+Persistence storage is used for unifying data of BanyanDB persistence， including write-ahead logging(WAL)， index, and data collected from skywalking and other observability platforms or APM systems. It provides various implementations and IO modes to satisfy the need of different components.
+BanyanDB provides a concise interface that shields the complexity of the implementation from the upper layer. By exposing necessary interfaces, making upper components do not need to care how persistence implement and mask differences between different operating systems.
 
 # IO Mode
-persistence storage support different IO modes to satisfy different throughput requirements. The interface is not directly exposed to developers and can be set through configuration.
+persistence storage support different IO mode to satisfy different throughput requirements. The interface is not directly exposed to developers and can be set through configuration.
 
 ## Io_uring
-Io_uring is a new feature in Linux 5.1, which provides high throughput and implements in a fully asynchronous way. In the sense of massive storage, io_uring can bring significant benefits.
+Io_uring is a new feature in Linux 5.1, which provides high throughput and implements in a fully asynchronous way. In the scene of massive storage, io_uring can bring significant benefits.
 
 ## Synchronous IO
 Synchronous IO is the most common IO mode, but the throughput is relatively low. BanyanDB provides a nonblocking mode that can be used in lower Linux versions.
 
-# Write
-BanyanDB designs different storage ways for different senses. There are two kinds of storage, one is append-only with no compaction, which can be chosen when writing WAL. The other is Log-Structured Merge Tree storage, data written on disk will become a sorted string table(SST) and will compaction in a specific size.
-To guarantee idempotence, BanyanDB introduces multi-version concurrency control(MVCC). When data is recorded on the disk, the version will increase. Of course, not all data requires MVCC, for WAL, only appending to the end of the file.
+# Operation
+## Directory
+### Create
+Create the specified directory and return an error if the directory already exists.
 
-# Update
-When executing the update operation, the original data will not be truly overwritten. The updated value will be read first when read, so it will not affect the accuracy of the data.
+### Delete
+Delete the directory and all files and return an error if the directory does not exist or the directory not reading or writing.
 
-# Delete
-The same as the update operation, the original data will not be truly deleted when you execute the delete operation. The deleted value will be read before the old operation, so it also will not affect the accuracy of the data.
+### rename
+Rename the directory and return an error if the directory already exists.
 
-# Read
-For the read operation, two read methods are provided, one is to read a specific piece of data, and the other is to read a certain range of data. For each of the read operations, you can choose to use version number or not.
-BanyanDB guarantees that the data read is idempotent by using version, or returning the latest data if you don't use it.BanyanDB uses the index and filter to accelerate reading.
+### Get Children
+Get all lists of files or children's directories in the directory and return an error if the directory does not exist.
 
-# Snapshot
-BanyanDB allows building snapshots, which record the state of persistence storage at a specific time and can be used for backup and reading.
+## File
+### Write
+BanyanDB provides two methods for writing files.
+Append mode, which adds new data to the end of a file. This mode is typically used for WAL.
+Flush mode, which flushes all data to one or more files and can specify the size of each file to write to.
+It will return an error when writing a directory, the file does not exist or there is not enough space.
+
+### Delete
+BanyanDB provides a batch-deleting operation, which can delete several files at once. it will return an error if the directory does not exist or the file not reading or writing.
+
+### Read
+For reading operation, two read methods are provided:
+Reading a specified location of data, which relies on a specified offset and a buffer.
+Read the entire file, BanyanDB provides stream reading, which can use when the file is too large, the size gets each time can be set when using stream reading.
+If entering incorrect parameters such as incorrect offset or non-existent file, it will return an error.
+
+### rename
+Rename the file and return an error if the directory exists in this directory.
+
+### Get size
+Get the file size and return an error if the file does not exist.
