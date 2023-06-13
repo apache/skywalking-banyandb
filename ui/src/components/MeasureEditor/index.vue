@@ -17,14 +17,22 @@
   ~ under the License.
 -->
 
-<script setup>
-import MeasureEditor from '@/components/MeasureEditor/index.vue'
+<script lang="ts" setup>
+
 </script>
 
 <template>
-  <div class="about">
-    <MeasureEditor></MeasureEditor>
-  </div>
+    <div>
+        <el-card shadow="always">
+
+        </el-card>
+    </div>
 </template>
 
-<style lang="scss" scoped></style>
+<style lang="scss"  scoped>
+::v-deep {
+    .el-card {
+        margin: 15px;
+    }
+}
+</style>
