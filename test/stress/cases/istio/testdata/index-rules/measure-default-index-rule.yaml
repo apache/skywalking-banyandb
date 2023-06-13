@@ -1,0 +1,337 @@
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "43"
+    group: measure-default
+    id: 219484473
+    modRevision: "43"
+    name: agent_id
+  tags:
+  - agent_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "49"
+    group: measure-default
+    id: 178739615
+    modRevision: "49"
+    name: dest_endpoint
+  tags:
+  - dest_endpoint
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "62"
+    group: measure-default
+    id: 1430693162
+    modRevision: "62"
+    name: dest_service_id
+  tags:
+  - dest_service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "63"
+    group: measure-default
+    id: 3399541562
+    modRevision: "63"
+    name: dest_service_instance_id
+  tags:
+  - dest_service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "42"
+    group: measure-default
+    id: 2166424594
+    modRevision: "42"
+    name: detect_type
+  tags:
+  - detect_type
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "136"
+    group: measure-default
+    id: 2018997299
+    modRevision: "136"
+    name: end_time
+  tags:
+  - end_time
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "131"
+    group: measure-default
+    id: 4249055049
+    modRevision: "131"
+    name: endpoint
+  tags:
+  - endpoint
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "21"
+    group: measure-default
+    id: 763196979
+    modRevision: "21"
+    name: id
+  tags:
+  - id
+  type: TYPE_TREE
+  updatedAt: "2023-05-22T18:03:28.011340226Z"
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "23"
+    group: measure-default
+    id: 2064689473
+    modRevision: "23"
+    name: last_ping
+  tags:
+  - last_ping
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "38"
+    group: measure-default
+    id: 2004711754
+    modRevision: "38"
+    name: last_update_time_bucket
+  tags:
+  - last_update_time_bucket
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "137"
+    group: measure-default
+    id: 2351100520
+    modRevision: "137"
+    name: layer
+  tags:
+  - layer
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "134"
+    group: measure-default
+    id: 3027157148
+    modRevision: "134"
+    name: message
+  tags:
+  - message
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "132"
+    group: measure-default
+    id: 2051273940
+    modRevision: "132"
+    name: name
+  tags:
+  - name
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "156"
+    group: measure-default
+    id: 3724605788
+    modRevision: "156"
+    name: process_id
+  tags:
+  - process_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "44"
+    group: measure-default
+    id: 2152550471
+    modRevision: "44"
+    name: profiling_support_status
+  tags:
+  - profiling_support_status
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "36"
+    group: measure-default
+    id: 2301087040
+    modRevision: "36"
+    name: represent_service_id
+  tags:
+  - represent_service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "37"
+    group: measure-default
+    id: 1222559755
+    modRevision: "37"
+    name: represent_service_instance_id
+  tags:
+  - represent_service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "129"
+    group: measure-default
+    id: 3813567025
+    modRevision: "129"
+    name: service
+  tags:
+  - service
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "110"
+    group: measure-default
+    id: 724783690
+    modRevision: "110"
+    name: service_group
+  tags:
+  - service_group
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "41"
+    group: measure-default
+    id: 1302242766
+    modRevision: "41"
+    name: service_id
+  tags:
+  - service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "130"
+    group: measure-default
+    id: 2423651156
+    modRevision: "130"
+    name: service_instance
+  tags:
+  - service_instance
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "109"
+    group: measure-default
+    id: 2653338811
+    modRevision: "109"
+    name: short_name
+  tags:
+  - short_name
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "48"
+    group: measure-default
+    id: 2694163
+    modRevision: "48"
+    name: source_endpoint
+  tags:
+  - source_endpoint
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "60"
+    group: measure-default
+    id: 3301363196
+    modRevision: "60"
+    name: source_service_id
+  tags:
+  - source_service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "61"
+    group: measure-default
+    id: 4036972435
+    modRevision: "61"
+    name: source_service_instance_id
+  tags:
+  - source_service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "135"
+    group: measure-default
+    id: 4042258863
+    modRevision: "135"
+    name: start_time
+  tags:
+  - start_time
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "155"
+    group: measure-default
+    id: 2405822821
+    modRevision: "155"
+    name: task_id
+  tags:
+  - task_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "133"
+    group: measure-default
+    id: 2831080955
+    modRevision: "133"
+    name: type
+  tags:
+  - type
+  type: TYPE_INVERTED
+  updatedAt: null
+
