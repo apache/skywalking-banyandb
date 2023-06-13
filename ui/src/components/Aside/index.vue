@@ -534,10 +534,10 @@ initActiveMenu()
 
 <template>
     <div style="display: flex; flex-direction: column; width: 100%;">
-        <el-input v-if="data.showSearch" class="aside-search" v-model="data.search" placeholder="Search"
-            :prefix-icon="Search" clearable />
-        <div class="size flex" v-if="data.groupLists.length > 0">
-            <el-menu :collapse="data.isCollapse" :default-active="data.activeMenu">
+        <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
+            <el-input v-if="data.showSearch" class="aside-search" v-model="data.search" placeholder="Search"
+                :prefix-icon="Search" clearable />
+            <el-menu v-if="data.groupLists.length > 0" :collapse="data.isCollapse" :default-active="data.activeMenu">
                 <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
                     @contextmenu.prevent="rightClickGroup($event, index)">
                     <el-sub-menu :index="`${item.metadata.name}-${index}`">
