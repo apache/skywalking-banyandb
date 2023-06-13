@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
@@ -41,7 +42,15 @@ const host = "127.0.0.1"
 
 // Common wires common modules to build a testing ready runtime.
 func Common(flags ...string) (string, string, func()) {
-	path, deferFn, err := test.NewSpace()
+	return CommonWithSchemaLoaders([]SchemaLoader{
+		&preloadService{name: "stream"},
+		&preloadService{name: "measure"},
+	}, flags...)
+}
+
+// CommonWithSchemaLoaders wires common modules to build a testing ready runtime. It also allows to preload schema.
+func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (string, string, func()) {
+	path, _, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
@@ -60,14 +69,14 @@ func Common(flags ...string) (string, string, func()) {
 	if len(flags) > 0 {
 		ff = append(ff, flags...)
 	}
-	gracefulStop := modules(ff)
+	gracefulStop := modules(schemaLoaders, ff)
 	return addr, httpAddr, func() {
 		gracefulStop()
-		deferFn()
+		// deferFn()
 	}
 }
 
-func modules(flags []string) func() {
+func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	// Init `Discovery` module
 	repo, err := discovery.NewServiceRepo(context.Background())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -89,19 +98,27 @@ func modules(flags []string) func() {
 	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
 	httpServer := http.NewService()
 
-	return test.SetupModules(
-		flags,
+	units := []run.Unit{
 		repo,
 		pipeline,
 		metaSvc,
-		&preloadService{name: "stream", metaSvc: metaSvc},
-		&preloadService{name: "measure", metaSvc: metaSvc},
-		streamSvc,
-		measureSvc,
-		q,
-		tcp,
-		httpServer,
+	}
+	for _, sl := range schemaLoaders {
+		sl.SetMeta(metaSvc)
+		units = append(units, sl)
+	}
+	units = append(units, streamSvc, measureSvc, q, tcp, httpServer)
+
+	return test.SetupModules(
+		flags,
+		units...,
 	)
+}
+
+// SchemaLoader is a service that can preload schema.
+type SchemaLoader interface {
+	run.Unit
+	SetMeta(meta metadata.Service)
 }
 
 type preloadService struct {
@@ -118,4 +135,8 @@ func (p *preloadService) PreRun() error {
 		return test_stream.PreloadSchema(p.metaSvc.SchemaRegistry())
 	}
 	return test_measure.PreloadSchema(p.metaSvc.SchemaRegistry())
+}
+
+func (p *preloadService) SetMeta(meta metadata.Service) {
+	p.metaSvc = meta
 }

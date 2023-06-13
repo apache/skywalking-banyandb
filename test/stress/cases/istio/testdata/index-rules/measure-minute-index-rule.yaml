@@ -1,0 +1,133 @@
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "57"
+    group: measure-minute
+    id: 3190852531
+    modRevision: "57"
+    name: dest_endpoint
+  tags:
+  - dest_endpoint
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "82"
+    group: measure-minute
+    id: 2536805753
+    modRevision: "82"
+    name: dest_process_id
+  tags:
+  - dest_process_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "70"
+    group: measure-minute
+    id: 78301675
+    modRevision: "70"
+    name: dest_service_id
+  tags:
+  - dest_service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "71"
+    group: measure-minute
+    id: 3783939828
+    modRevision: "71"
+    name: dest_service_instance_id
+  tags:
+  - dest_service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "55"
+    group: measure-minute
+    id: 3885973638
+    modRevision: "55"
+    name: id
+  tags:
+  - id
+  type: TYPE_TREE
+  updatedAt: "2023-05-22T18:03:28.196387339Z"
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "412"
+    group: measure-minute
+    id: 3759318934
+    modRevision: "412"
+    name: service_id
+  tags:
+  - service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "80"
+    group: measure-minute
+    id: 3142097068
+    modRevision: "80"
+    name: service_instance_id
+  tags:
+  - service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "56"
+    group: measure-minute
+    id: 1371893970
+    modRevision: "56"
+    name: source_endpoint
+  tags:
+  - source_endpoint
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "81"
+    group: measure-minute
+    id: 3250392062
+    modRevision: "81"
+    name: source_process_id
+  tags:
+  - source_process_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "68"
+    group: measure-minute
+    id: 1378047852
+    modRevision: "68"
+    name: source_service_id
+  tags:
+  - source_service_id
+  type: TYPE_INVERTED
+  updatedAt: null
+- analyzer: ANALYZER_UNSPECIFIED
+  location: LOCATION_SERIES
+  metadata:
+    createRevision: "69"
+    group: measure-minute
+    id: 518904186
+    modRevision: "69"
+    name: source_service_instance_id
+  tags:
+  - source_service_instance_id
+  type: TYPE_INVERTED
+  updatedAt: null
+
