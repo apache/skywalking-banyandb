@@ -53,7 +53,7 @@ var _ = Describe("Istio", func() {
 	BeforeEach(func() {
 		Expect(logger.Init(logger.Logging{
 			Env:   "dev",
-			Level: "debug",
+			Level: "info",
 		})).To(Succeed())
 	})
 	It("should pass", func() {
@@ -172,7 +172,7 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 		}
 		return nil
 	}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 40; i++ {
 		if err = loop(i); err != nil {
 			return err
 		}
