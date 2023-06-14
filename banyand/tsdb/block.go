@@ -406,7 +406,7 @@ func (d *bDelegate) write(key []byte, val []byte, ts time.Time) error {
 }
 
 func (d *bDelegate) writePrimaryIndex(field index.Field, id common.ItemID) error {
-	if err := d.delegate.lsmIndex.Write([]index.Field{field}, id); err != nil {
+	if err := d.delegate.lsmIndex.Write([]index.Field{field}, uint64(id)); err != nil {
 		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "primary", "true")...)
 		return err
 	}
@@ -421,7 +421,7 @@ func (d *bDelegate) writeLSMIndex(fields []index.Field, id common.ItemID) error 
 		total += len(f.Marshal())
 	}
 
-	if err := d.delegate.lsmIndex.Write(fields, id); err != nil {
+	if err := d.delegate.lsmIndex.Write(fields, uint64(id)); err != nil {
 		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_lsm", "true")...)
 		return err
 	}
@@ -436,7 +436,7 @@ func (d *bDelegate) writeInvertedIndex(fields []index.Field, id common.ItemID) e
 		total += len(f.Marshal())
 	}
 
-	if err := d.delegate.invertedIndex.Write(fields, id); err != nil {
+	if err := d.delegate.invertedIndex.Write(fields, uint64(id)); err != nil {
 		receivedNumCounter.Inc(1, append(d.delegate.position.ShardLabelValues(), "local_inverted", "true")...)
 		return err
 	}

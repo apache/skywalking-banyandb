@@ -35,7 +35,6 @@ import (
 	"github.com/dgraph-io/badger/v3/y"
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -47,7 +46,7 @@ import (
 )
 
 const (
-	docID         = "_id"
+	docIDField    = "_id"
 	batchSize     = 1024
 	seriesIDField = "series_id"
 	idField       = "id"
@@ -79,7 +78,7 @@ type StoreOpts struct {
 
 type doc struct {
 	fields []index.Field
-	itemID common.ItemID
+	docID  uint64
 }
 
 type flushEvent struct {
@@ -128,7 +127,7 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
+func (s *store) Write(fields []index.Field, docID uint64) error {
 	if len(fields) < 1 {
 		return nil
 	}
@@ -140,7 +139,7 @@ func (s *store) Write(fields []index.Field, itemID common.ItemID) error {
 	case <-s.closer.CloseNotify():
 	case s.ch <- doc{
 		fields: fields,
-		itemID: itemID,
+		docID:  docID,
 	}:
 	}
 	return nil
@@ -175,15 +174,18 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 			SetField(fk)
 	} else {
 		shouldDecodeTerm = false
-		query = bluge.NewBooleanQuery().
+		bQuery := bluge.NewBooleanQuery().
 			AddMust(bluge.NewTermRangeInclusiveQuery(
 				string(termRange.Lower),
 				string(termRange.Upper),
 				termRange.IncludesLower,
 				termRange.IncludesUpper,
 			).
-				SetField(fk)).
-			AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+				SetField(fk))
+		if fieldKey.HasSeriesID() {
+			bQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+		}
+		query = bQuery
 	}
 
 	sortedKey := fk
@@ -214,9 +216,12 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 		query = bluge.NewTermQuery(string(field.Marshal())).SetField(fk)
 	} else {
 		shouldDecodeTerm = false
-		query = bluge.NewBooleanQuery().
-			AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk)).
-			AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).SetField(seriesIDField))
+		bQuery := bluge.NewBooleanQuery().
+			AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk))
+		if field.Key.HasSeriesID() {
+			bQuery.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).SetField(seriesIDField))
+		}
+		query = bQuery
 	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -244,7 +249,9 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	analyzer := analyzers[fieldKey.Analyzer]
 	fk := fieldKey.MarshalIndexRule()
 	query := bluge.NewBooleanQuery()
-	query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+	if fieldKey.HasSeriesID() {
+		query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+	}
 	for _, m := range matches {
 		query.AddMust(bluge.NewMatchQuery(m).SetField(fk).
 			SetAnalyzer(analyzer))
@@ -315,8 +322,10 @@ func (s *store) run() {
 					// TODO: generate a segment directly.
 					fk := d.fields[0].Key
 					docIDBuffer.Reset()
-					docIDBuffer.Write(fk.SeriesID.Marshal())
-					docIDBuffer.Write(convert.Uint64ToBytes(uint64(d.itemID)))
+					if fk.HasSeriesID() {
+						docIDBuffer.Write(fk.SeriesID.Marshal())
+					}
+					docIDBuffer.Write(convert.Uint64ToBytes(uint64(d.docID)))
 					doc := bluge.NewDocument(docIDBuffer.String())
 					toAddSeriesIDField := false
 					for _, f := range d.fields {
@@ -328,7 +337,7 @@ func (s *store) run() {
 								WithAnalyzer(analyzers[f.Key.Analyzer]))
 						}
 					}
-					if toAddSeriesIDField {
+					if toAddSeriesIDField && fk.HasSeriesID() {
 						doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
 					}
 					size++
@@ -407,13 +416,18 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		return false
 	}
 	i := 0
-	var itemID common.ItemID
+	var docID uint64
 	var term []byte
 	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
-		if field == docID {
-			// value = seriesID(8bytes)+itemID(8bytes)
-			id := convert.BytesToUint64(value[8:])
-			itemID = common.ItemID(id)
+		if field == docIDField {
+			var id uint64
+			if len(value) == 8 {
+				id = convert.BytesToUint64(value)
+			} else if len(value) == 16 {
+				// value = seriesID(8bytes)+docID(8bytes)
+				id = convert.BytesToUint64(value[8:])
+			}
+			docID = uint64(id)
 			i++
 		}
 		if field == bmi.fieldKey {
@@ -438,18 +452,18 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	if bmi.agg == nil {
 		bmi.agg = &index.PostingValue{
 			Term:  term,
-			Value: roaring.NewPostingListWithInitialData(uint64(itemID)),
+			Value: roaring.NewPostingListWithInitialData(uint64(docID)),
 		}
 		return true
 	}
 	if bytes.Equal(bmi.agg.Term, term) {
-		bmi.agg.Value.Insert(itemID)
+		bmi.agg.Value.Insert(uint64(docID))
 		return true
 	}
 	bmi.current = bmi.agg
 	bmi.agg = &index.PostingValue{
 		Term:  term,
-		Value: roaring.NewPostingListWithInitialData(uint64(itemID)),
+		Value: roaring.NewPostingListWithInitialData(uint64(docID)),
 	}
 	return false
 }
