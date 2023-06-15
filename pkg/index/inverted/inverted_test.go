@@ -161,7 +161,6 @@ func TestStore_SeriesMatch(t *testing.T) {
 		matches []string
 		wantErr bool
 	}{
-
 		{
 			matches: []string{"test"},
 			want:    roaring.NewPostingListWithInitialData(1, 2, 3),
@@ -190,7 +189,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 	}
 }
 
-func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 index.FieldKey) index.Store {
+func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 index.FieldKey) {
 	tester.NoError(s.Write([]index.Field{{
 		Key:  serviceName,
 		Term: []byte("GET::/product/order"),
@@ -217,7 +216,6 @@ func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 i
 		Term: []byte("test.c"),
 	}}, 3))
 	s.(*store).flush()
-	return s
 }
 
 func TestStore_MatchTerm(t *testing.T) {

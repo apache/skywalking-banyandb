@@ -50,8 +50,7 @@ func (s *store) Close() (err error) {
 
 func (s *store) Write(fields []index.Field, docID uint64) (err error) {
 	for _, field := range fields {
-		docIDInt := uint64(docID)
-		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(docIDInt), docIDInt))
+		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(docID), docID))
 	}
 	return err
 }

@@ -59,6 +59,7 @@ func (f FieldKey) Marshal() []byte {
 	return b
 }
 
+// HasSeriesID reports whether f has a series id.
 func (f FieldKey) HasSeriesID() bool {
 	return f.SeriesID > 0
 }

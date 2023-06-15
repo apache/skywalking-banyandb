@@ -339,7 +339,7 @@ func setUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 				Key:  duration,
 				Term: convert.Int64ToBytes(int64(term)),
 			}}, id))
-			r[term].Insert(uint64(id))
+			r[term].Insert(id)
 		}
 	}
 	return r

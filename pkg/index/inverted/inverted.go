@@ -325,7 +325,7 @@ func (s *store) run() {
 					if fk.HasSeriesID() {
 						docIDBuffer.Write(fk.SeriesID.Marshal())
 					}
-					docIDBuffer.Write(convert.Uint64ToBytes(uint64(d.docID)))
+					docIDBuffer.Write(convert.Uint64ToBytes(d.docID))
 					doc := bluge.NewDocument(docIDBuffer.String())
 					toAddSeriesIDField := false
 					for _, f := range d.fields {
@@ -420,14 +420,12 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	var term []byte
 	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
 		if field == docIDField {
-			var id uint64
 			if len(value) == 8 {
-				id = convert.BytesToUint64(value)
+				docID = convert.BytesToUint64(value)
 			} else if len(value) == 16 {
 				// value = seriesID(8bytes)+docID(8bytes)
-				id = convert.BytesToUint64(value[8:])
+				docID = convert.BytesToUint64(value[8:])
 			}
-			docID = uint64(id)
 			i++
 		}
 		if field == bmi.fieldKey {
@@ -452,18 +450,18 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	if bmi.agg == nil {
 		bmi.agg = &index.PostingValue{
 			Term:  term,
-			Value: roaring.NewPostingListWithInitialData(uint64(docID)),
+			Value: roaring.NewPostingListWithInitialData(docID),
 		}
 		return true
 	}
 	if bytes.Equal(bmi.agg.Term, term) {
-		bmi.agg.Value.Insert(uint64(docID))
+		bmi.agg.Value.Insert(docID)
 		return true
 	}
 	bmi.current = bmi.agg
 	bmi.agg = &index.PostingValue{
 		Term:  term,
-		Value: roaring.NewPostingListWithInitialData(uint64(docID)),
+		Value: roaring.NewPostingListWithInitialData(docID),
 	}
 	return false
 }
