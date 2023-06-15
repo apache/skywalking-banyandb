@@ -49,7 +49,7 @@ func (s *seekerBuilder) buildIndexFilter(block blockDelegate) (filterFn, error) 
 		return nil, err
 	}
 	return func(item Item) bool {
-		valid := allItemIDs.Contains(item.ID())
+		valid := allItemIDs.Contains(uint64(item.ID()))
 		s.seriesSpan.l.Trace().Int("valid_item_num", allItemIDs.Len()).Bool("valid", valid).Msg("filter item by index")
 		return valid
 	}, nil

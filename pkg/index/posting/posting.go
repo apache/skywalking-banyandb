@@ -20,20 +20,18 @@ package posting
 
 import (
 	"github.com/pkg/errors"
-
-	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 // ErrListEmpty indicates the postings list is empty.
 var ErrListEmpty = errors.New("postings list is empty")
 
-// List is a collection of common.ItemID.
+// List is a collection of uint64.
 type List interface {
-	Contains(id common.ItemID) bool
+	Contains(id uint64) bool
 
 	IsEmpty() bool
 
-	Max() (common.ItemID, error)
+	Max() (uint64, error)
 
 	Len() int
 
@@ -43,7 +41,7 @@ type List interface {
 
 	Equal(other List) bool
 
-	Insert(i common.ItemID)
+	Insert(i uint64)
 
 	Intersect(other List) error
 
@@ -55,13 +53,13 @@ type List interface {
 
 	AddIterator(iter Iterator) error
 
-	AddRange(min, max common.ItemID) error
+	AddRange(min, max uint64) error
 
-	RemoveRange(min, max common.ItemID) error
+	RemoveRange(min, max uint64) error
 
 	Reset()
 
-	ToSlice() []common.ItemID
+	ToSlice() []uint64
 
 	Marshall() ([]byte, error)
 
@@ -74,7 +72,7 @@ type List interface {
 type Iterator interface {
 	Next() bool
 
-	Current() common.ItemID
+	Current() uint64
 
 	Close() error
 }
