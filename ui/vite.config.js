@@ -46,7 +46,7 @@ export default defineConfig({
   server: {
     proxy: {
       "^/api": {
-        target: "http://34.101.178.230:17913",
+        target: "http://localhost:17913",
         changeOrigin: true,
       },
       "^/monitoring": {
