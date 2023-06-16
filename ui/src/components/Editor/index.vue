@@ -22,9 +22,10 @@ import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router'
 import TagEditor from './tagEditor.vue'
+import FieldsEditor from './fieldsEditor.vue'
 import type { FormInstance } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { createResources, editResources, getStreamOrMeasureList } from '@/api/index'
+import { createResources, editResources, getStreamOrMeasureList, getStreamOrMeasure } from '@/api/index'
 
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
@@ -34,6 +35,7 @@ const router = useRouter()
 const route = useRoute()
 const ruleFormRef = ref<FormInstance>()
 const tagEditorRef = ref()
+const fieldEditorRef = ref()
 const rules = {
     group: [
         {
@@ -59,20 +61,13 @@ const data = reactive({
 watch(() => route, () => {
     data.form.group = route.params.group
     data.form.name = route.params.name
-    data.type = route.params.type
+    data.type = route.params.type + ''
     data.operator = route.params.operator
     initData()
 }, {
     immediate: true,
     deep: true
-})/* let tableData = [{
-    name: 'stream-ids',
-    tags: [{
-        name: 'start_time',
-        type: 'TAG_TYPE_INT',
-        indexedOnly: false
-    }]
-}, */
+})
 const submit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return
     await formEl.validate((valid) => {
@@ -108,11 +103,20 @@ const submit = async (formEl: FormInstance | undefined) => {
                     group: data.form.group,
                     name: data.form.name
                 },
-                tagFamilies: tagFamilies
+                tagFamilies: tagFamilies,
+            }
+            if (data.type == 'measure') {
+                const fields = fieldEditorRef.value.getFields()
+                form['fields'] = fields
+                form['entity'] = {
+                    tagNames: []
+                }
             }
             $loadingCreate()
+            let params = {}
+            params[data.type + ''] = form
             if (data.operator == 'edit' && data.form.group && data.form.name) {
-                return editResources('stream', data.form.group, data.form.name, { stream: form })
+                return editResources(data.type, data.form.group, data.form.name, params)
                     .then((res) => {
                         if (res.status == 200) {
                             ElMessage({
@@ -129,7 +133,7 @@ const submit = async (formEl: FormInstance | undefined) => {
                         $loadingClose()
                     })
             }
-            createResources('stream', { stream: form })
+            createResources(data.type, params)
                 .then((res) => {
                     if (res.status == 200) {
                         ElMessage({
@@ -150,12 +154,12 @@ const submit = async (formEl: FormInstance | undefined) => {
 }
 function openResourses() {
     const route = {
-        name: 'stream',
+        name: data.type + '',
         params: {
             group: data.form.group,
             name: data.form.name,
             operator: 'read',
-            type: 'stream'
+            type: data.type + ''
         }
     }
     router.push(route)
@@ -170,27 +174,26 @@ function openResourses() {
 function initData() {
     if (data.operator == 'edit' && data.form.group && data.form.name) {
         $loadingCreate()
-        getStreamOrMeasureList('stream', data.form.group)
+        getStreamOrMeasure(data.type, data.form.group, data.form.name)
             .then(res => {
                 if (res.status == 200) {
-                    const index = res.data.stream.findIndex(item => {
-                        return item.metadata.group == data.form.group && item.metadata.name == data.form.name
-                    })
-                    if (index >= 0) {
-                        const tagFamilies = res.data.stream[index].tagFamilies
-                        const arr = []
-                        tagFamilies.forEach(item => {
-                            item.tags.forEach(tag => {
-                                let obj = {
-                                    tagFamily: item.name,
-                                    tag: tag.name,
-                                    type: tag.type,
-                                    indexedOnly: tag.indexedOnly
-                                }
-                                arr.push(obj)
-                            })
+                    const tagFamilies = res.data[data.type + ''].tagFamilies
+                    const arr = []
+                    tagFamilies.forEach(item => {
+                        item.tags.forEach(tag => {
+                            let obj = {
+                                tagFamily: item.name,
+                                tag: tag.name,
+                                type: tag.type,
+                                indexedOnly: tag.indexedOnly
+                            }
+                            arr.push(obj)
                         })
-                        tagEditorRef.value.setTagFamilies(arr)
+                    })
+                    tagEditorRef.value.setTagFamilies(arr)
+                    if (data.type == 'measure') {
+                        const fields = res.data[data.type + ''].fields
+                        fieldEditorRef.value.setFields(fields)
                     }
                 }
             })
@@ -238,6 +241,8 @@ function initData() {
                 </el-form-item>
             </el-form>
             <TagEditor ref="tagEditorRef"></TagEditor>
+            <el-divider v-if="data.type == 'measure'" border-style="dashed" />
+            <FieldsEditor ref="fieldEditorRef" v-if="data.type == 'measure'"></FieldsEditor>
         </el-card>
     </div>
 </template>

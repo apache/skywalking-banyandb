@@ -217,7 +217,7 @@ defineExpose({
 
 <template>
     <el-button size="small" type="primary" color="#6E38F7" style="margin-top: 20px;"
-        @click="openAddTagFamily">Add</el-button>
+        @click="openAddTagFamily">Add Tag</el-button>
     <el-table :data="data.tableData" :span-method="objectSpanMethod" style="width: 100%; margin-top: 20px;" border>
         <el-table-column label="Tag Family" prop="tagFamily"></el-table-column>
         <el-table-column label="Tag" prop="tag"></el-table-column>
@@ -235,7 +235,7 @@ defineExpose({
             </template>
         </el-table-column>
     </el-table>
-    <el-dialog v-model="data.dialogVisible" :close-on-click-modal="false" align-center title="Create Tag Family"
+    <el-dialog v-model="data.dialogVisible" :close-on-click-modal="false" align-center :title="data.tagOperator == 'Add' ? 'Create Tag Family' : 'Edit Tag Family'"
         width="30%">
         <el-form ref="ruleFormRef" :rules="rules" :model="data.form" label-width="120" label-position="left">
             <el-form-item label="Tag Family" prop="tagFamily">
