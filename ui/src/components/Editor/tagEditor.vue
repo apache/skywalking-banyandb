@@ -31,7 +31,8 @@ const data = reactive({
         tagFamily: '',
         tag: '',
         type: 'TAG_TYPE_INT',
-        indexedOnly: false
+        indexedOnly: false,
+        entity: false
     },
     tagFamilyOptions: [],
     tagOperator: 'Add',
@@ -167,7 +168,8 @@ function initForm() {
         tagFamily: '',
         tag: '',
         type: 'TAG_TYPE_INT',
-        indexedOnly: false
+        indexedOnly: false,
+        entity: false
     }
 }
 function addTagFamily() {
@@ -223,6 +225,7 @@ defineExpose({
         <el-table-column label="Tag" prop="tag"></el-table-column>
         <el-table-column label="Type" prop="type"></el-table-column>
         <el-table-column label="IndexedOnly" prop="indexedOnly"></el-table-column>
+        <el-table-column label="Entity" prop="entity"></el-table-column>
         <el-table-column label="Operator">
             <template #default="scope">
                 <el-button link type="primary" @click.prevent="openEditTagFamily(scope.$index)"
@@ -256,6 +259,9 @@ defineExpose({
             </el-form-item>
             <el-form-item label="IndexedOnly" prop="indexedOnly">
                 <el-switch v-model="data.form.indexedOnly" />
+            </el-form-item>
+            <el-form-item label="Entity" prop="entity">
+                <el-switch v-model="data.form.entity" />
             </el-form-item>
         </el-form>
         <span class="dialog-footer">

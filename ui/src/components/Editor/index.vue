@@ -74,10 +74,14 @@ const submit = async (formEl: FormInstance | undefined) => {
         if (valid) {
             const arr = tagEditorRef.value.getTagFamilies()
             const tagFamilies = []
+            const entity = []
             arr.forEach(item => {
                 const index = tagFamilies.findIndex(tagItem => {
                     return tagItem.name == item.tagFamily
                 })
+                if (item.entity == true) {
+                    entity.push(item.tag)
+                }
                 if (index >= 0) {
                     let obj = {
                         name: item.tag,
@@ -98,19 +102,26 @@ const submit = async (formEl: FormInstance | undefined) => {
                 }
                 tagFamilies.push(obj)
             })
+            if (entity.length == 0) {
+                return ElMessage({
+                    message: 'At least one Entity is required',
+                    type: "error",
+                    duration: 5000
+                })
+            }
             const form = {
                 metadata: {
                     group: data.form.group,
                     name: data.form.name
                 },
                 tagFamilies: tagFamilies,
+                entity: {
+                    tagNames: entity
+                }
             }
             if (data.type == 'measure') {
                 const fields = fieldEditorRef.value.getFields()
                 form['fields'] = fields
-                form['entity'] = {
-                    tagNames: []
-                }
             }
             $loadingCreate()
             let params = {}
@@ -178,14 +189,19 @@ function initData() {
             .then(res => {
                 if (res.status == 200) {
                     const tagFamilies = res.data[data.type + ''].tagFamilies
+                    const entity = res.data[data.type + ''].entity.tagNames
                     const arr = []
                     tagFamilies.forEach(item => {
                         item.tags.forEach(tag => {
+                            let index = entity.findIndex(entityItem => {
+                                return entityItem == tag.name
+                            })
                             let obj = {
                                 tagFamily: item.name,
                                 tag: tag.name,
                                 type: tag.type,
-                                indexedOnly: tag.indexedOnly
+                                indexedOnly: tag.indexedOnly,
+                                entity: index >= 0 ? true : false
                             }
                             arr.push(obj)
                         })
