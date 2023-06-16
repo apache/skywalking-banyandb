@@ -54,9 +54,46 @@ const data = reactive({
     operator: route.params.operator,
     form: {
         group: route.params.group,
-        name: route.params.group
+        name: route.params.group,
+        interval: 1,
+        intervalUnit: 'ns'
     }
 })
+
+const options = [
+    {
+        label: 'ns',
+        value: 'ns'
+    },
+    {
+        label: 'us',
+        value: 'us'
+    },
+    {
+        label: 'µs',
+        value: 'µs'
+    },
+    {
+        label: 'ms',
+        value: 'ms'
+    },
+    {
+        label: 's',
+        value: 's'
+    },
+    {
+        label: 'm',
+        value: 'm'
+    },
+    {
+        label: 'h',
+        value: 'h'
+    },
+    {
+        label: 'd',
+        value: 'd'
+    }
+]
 
 watch(() => route, () => {
     data.form.group = route.params.group
@@ -122,6 +159,7 @@ const submit = async (formEl: FormInstance | undefined) => {
             if (data.type == 'measure') {
                 const fields = fieldEditorRef.value.getFields()
                 form['fields'] = fields
+                form['interval'] = data.form.interval + data.form.intervalUnit
             }
             $loadingCreate()
             let params = {}
@@ -209,6 +247,19 @@ function initData() {
                     tagEditorRef.value.setTagFamilies(arr)
                     if (data.type == 'measure') {
                         const fields = res.data[data.type + ''].fields
+                        const intervalArr = res.data[data.type + ''].interval.split('')
+                        let interval = 0
+                        let intervalUnit = ''
+                        intervalArr.forEach(char => {
+                            let code = char.charCodeAt()
+                            if (code >= 48 && code < 58) {
+                                interval = interval * 10 + (char - 0)
+                            } else {
+                                intervalUnit = intervalUnit + char
+                            }
+                        })
+                        data.form.interval = interval
+                        data.form.intervalUnit = intervalUnit
                         fieldEditorRef.value.setFields(fields)
                     }
                 }
@@ -254,6 +305,12 @@ function initData() {
                 </el-form-item>
                 <el-form-item label="name" prop="name">
                     <el-input clearable v-model="data.form.name"></el-input>
+                </el-form-item>
+                <el-form-item v-if="data.type == 'measure'" label="interval" prop="interval">
+                    <el-input-number v-model="data.form.interval" min="1" />
+                    <el-select v-model="data.form.intervalUnit" style="width: 100px; margin-left: 5px;">
+                        <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
+                    </el-select>
                 </el-form-item>
             </el-form>
             <TagEditor ref="tagEditorRef"></TagEditor>

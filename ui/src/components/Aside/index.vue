@@ -175,6 +175,8 @@ function searchGroup() {
 // init data
 function getGroupLists() {
     $loadingCreate()
+    data.showSearch = false
+    data.search = ''
     getGroupList()
         .then(res => {
             if (res.status == 200) {
