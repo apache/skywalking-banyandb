@@ -21,10 +21,10 @@
 import RigheMenu from '@/components/RightMenu/index.vue'
 import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getCurrentInstance } from "@vue/runtime-core"
+import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
 import { ref, reactive } from 'vue'
-
+import { Search } from '@element-plus/icons-vue'
 const router = useRouter()
 const route = useRoute()
 const { proxy } = getCurrentInstance()
@@ -40,6 +40,8 @@ const $loadingClose = proxy.$loadingClose
 // Data
 const data = reactive({
     groupLists: [],
+    groupListsCopy: [],
+    showSearch: false,
     isShrink: false,
     isCollapse: false,
     // right menu
@@ -57,7 +59,12 @@ const data = reactive({
         name: null,
         catalog: 'CATALOG_STREAM'
     },
-    activeMenu: ''
+    activeMenu: '',
+    search: ''
+})
+
+watch(() => data.search, () => {
+    debounce(searchGroup, 300)()
 })
 
 // menu config
@@ -135,6 +142,36 @@ const props = defineProps({
 const emit = defineEmits(['setWidth'])
 
 // function
+// search group
+function debounce(event, delay) {
+    let timer = null
+    return function (...args) {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+            event(args)
+        }, delay)
+    }
+}
+
+function searchGroup() {
+    if (!data.search) {
+        return data.groupLists = JSON.parse(JSON.stringify(data.groupListsCopy))
+    }
+    let groupLists = []
+    data.groupListsCopy.forEach(item => {
+        let itemCache = JSON.parse(JSON.stringify(item))
+        if (Array.isArray(itemCache.children)) {
+            itemCache.children = itemCache.children.filter(child => {
+                return child.metadata.name.indexOf(data.search) > -1
+            })
+            if (itemCache.children.length > 0) {
+                groupLists.push(itemCache)
+            }
+        }
+    })
+    data.groupLists = JSON.parse(JSON.stringify(groupLists))
+    that.$forceUpdate()
+}
 // init data
 function getGroupLists() {
     $loadingCreate()
@@ -142,29 +179,38 @@ function getGroupLists() {
         .then(res => {
             if (res.status == 200) {
                 let group = res.data.group
-                let length = group.length
                 data.groupLists = group
                 deleteOtherGroup()
-                data.groupLists.forEach((item, index) => {
+                let promise = data.groupLists.map((item) => {
                     let type = props.type
                     let name = item.metadata.name
-                    getStreamOrMeasureList(type, name)
-                        .then(res => {
-                            if (res.status == 200) {
-                                item.children = res.data[type]
-                            }
-                        })
-                        .finally(() => {
-                            if (length - 1 == index) {
-                                $loadingClose()
-                            }
-                            that.$forceUpdate()
-                        })
+                    return new Promise((resolve, reject) => {
+                        getStreamOrMeasureList(type, name)
+                            .then(res => {
+                                if (res.status == 200) {
+                                    item.children = res.data[type]
+                                    resolve()
+                                }
+                            })
+                            .catch((err) => {
+                                reject(err)
+                            })
+                    })
+                })
+                Promise.all(promise).then(() => {
+                    data.showSearch = true
+                    data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
+                    that.$forceUpdate()
+                }).catch((err) => {
+                    ElMessage({
+                        message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
+                        type: "error",
+                        duration: 3000
+                    })
+                }).finally(() => {
+                    $loadingClose()
                 })
             }
-        })
-        .finally(() => {
-            $loadingClose()
         })
 }
 function deleteOtherGroup() {
@@ -487,72 +533,83 @@ initActiveMenu()
 </script>
 
 <template>
-    <div class="size flex" v-if="data.groupLists.length > 0">
-        <el-menu :collapse="data.isCollapse" :default-active="data.activeMenu">
-            <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
-                @contextmenu.prevent="rightClickGroup($event, index)">
-                <el-sub-menu :index="`${item.metadata.name}-${index}`">
-                    <template #title>
-                        <el-icon>
-                            <Folder />
-                        </el-icon>
-                        <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">
-                            {{ item.metadata.name }}
-                        </span>
-                    </template>
-                    <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
-                        <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
-                            <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
-                                @click="openResources(index, childIndex)">
-                                <template #title>
-                                    <el-icon>
-                                        <Document />
-                                    </el-icon>
-                                    <span slot="title" :title="child.metadata.name" style="width: 90%"
-                                        class="text-overflow-hidden">
-                                        {{ child.metadata.name }}
-                                    </span>
-                                </template>
-                            </el-menu-item>
+    <div style="display: flex; flex-direction: column; width: 100%;">
+        <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
+            <el-input v-if="data.showSearch" class="aside-search" v-model="data.search" placeholder="Search"
+                :prefix-icon="Search" clearable />
+            <el-menu v-if="data.groupLists.length > 0" :collapse="data.isCollapse" :default-active="data.activeMenu">
+                <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
+                    @contextmenu.prevent="rightClickGroup($event, index)">
+                    <el-sub-menu :index="`${item.metadata.name}-${index}`">
+                        <template #title>
+                            <el-icon>
+                                <Folder />
+                            </el-icon>
+                            <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">
+                                {{ item.metadata.name }}
+                            </span>
+                        </template>
+                        <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
+                            <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
+                                <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
+                                    @click="openResources(index, childIndex)">
+                                    <template #title>
+                                        <el-icon>
+                                            <Document />
+                                        </el-icon>
+                                        <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                            class="text-overflow-hidden">
+                                            {{ child.metadata.name }}
+                                        </span>
+                                    </template>
+                                </el-menu-item>
+                            </div>
                         </div>
-                    </div>
-                </el-sub-menu>
-            </div>
-        </el-menu>
-        <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
-    </div>
-    <div class="flex center add" @click="openCreateGroup" style="height: 50px; width: 100%;"
-        v-if="data.groupLists.length == 0">
-        <el-icon>
-            <Plus />
-        </el-icon>
-    </div>
-    <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible" :show-close="false">
-        <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
-            <el-form-item label="group name" label-width="120px" prop="name">
-                <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off">
-                </el-input>
-            </el-form-item>
-            <el-form-item label="group type" label-width="120px" prop="catalog">
-                <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
-                    <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
-                    <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
-                </el-select>
-            </el-form-item>
-        </el-form>
-        <div slot="footer" class="dialog-footer footer">
-            <el-button @click="cancelCreateEditDialog">cancel</el-button>
-            <el-button type="primary" @click="confirmForm">{{ data.setGroup }}
-            </el-button>
+                    </el-sub-menu>
+                </div>
+            </el-menu>
+            <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
         </div>
-    </el-dialog>
-    <div v-if="data.showRightMenu" class="right-menu box-shadow" :style="{ top: `${data.top}px`, left: `${data.left}px` }">
-        <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList">
-        </RigheMenu>
+        <div class="flex center add" @click="openCreateGroup" style="height: 50px; width: 100%;"
+            v-if="data.groupLists.length == 0">
+            <el-icon>
+                <Plus />
+            </el-icon>
+        </div>
+        <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible"
+            :show-close="false">
+            <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
+                <el-form-item label="group name" label-width="120px" prop="name">
+                    <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off">
+                    </el-input>
+                </el-form-item>
+                <el-form-item label="group type" label-width="120px" prop="catalog">
+                    <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
+                        <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
+                        <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            <div slot="footer" class="dialog-footer footer">
+                <el-button @click="cancelCreateEditDialog">cancel</el-button>
+                <el-button type="primary" @click="confirmForm">{{ data.setGroup }}
+                </el-button>
+            </div>
+        </el-dialog>
+        <div v-if="data.showRightMenu" class="right-menu box-shadow"
+            :style="{ top: `${data.top}px`, left: `${data.left}px` }">
+            <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList">
+            </RigheMenu>
+        </div>
     </div>
 </template>
 
 <style lang="scss" scoped>
+.aside-search {
+    margin: 10px;
+    width: calc(100% - 20px);
+}
+
 .el-menu {
     width: 100%;
     border-right: none;

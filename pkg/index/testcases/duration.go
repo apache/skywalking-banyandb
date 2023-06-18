@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -331,7 +330,7 @@ func setUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 	}
 	sort.Ints(idx)
 	for i := 100; i < 200; i++ {
-		id := common.ItemID(i)
+		id := uint64(i)
 		for i2, term := range idx {
 			if i%len(idx) != i2 || r[term] == nil {
 				continue

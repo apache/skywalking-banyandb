@@ -35,21 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var (
-	serviceName = index.FieldKey{
-		// http_method
-		IndexRuleID: 6,
-		SeriesID:    common.SeriesID(0),
-		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
-	}
-	serviceName1 = index.FieldKey{
-		// http_method
-		IndexRuleID: 6,
-		SeriesID:    common.SeriesID(1),
-		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
-	}
-)
-
 func TestStore_Match(t *testing.T) {
 	tester := assert.New(t)
 	path, fn := setUp(require.New(t))
@@ -57,37 +42,23 @@ func TestStore_Match(t *testing.T) {
 		Path:   path,
 		Logger: logger.GetLogger("test"),
 	})
+	tester.NoError(err)
 	defer func() {
 		tester.NoError(s.Close())
 		fn()
 	}()
-	tester.NoError(err)
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("GET::/product/order"),
-	}}, common.ItemID(1)))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("GET::/root/product"),
-	}}, common.ItemID(2)))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
-	}}, common.ItemID(3)))
-	s.(*store).flush()
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
-		Term: []byte("test.1"),
-	}}, common.ItemID(1)))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
-		Term: []byte("test.2"),
-	}}, common.ItemID(2)))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
-		Term: []byte("test.3"),
-	}}, common.ItemID(3)))
-	s.(*store).flush()
+	serviceName := index.FieldKey{
+		// http_method
+		IndexRuleID: 6,
+		SeriesID:    common.SeriesID(11),
+		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+	}
+	setup(tester, s, serviceName, index.FieldKey{
+		// http_method
+		IndexRuleID: 6,
+		SeriesID:    common.SeriesID(1),
+		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+	})
 
 	tests := []struct {
 		want    posting.List
@@ -146,6 +117,10 @@ func TestStore_Match(t *testing.T) {
 			matches: []string{"OrderService", "order"},
 			want:    roaring.NewPostingListWithInitialData(3),
 		},
+		{
+			matches: []string{"test"},
+			want:    roaring.NewPostingListWithInitialData(),
+		},
 	}
 	for _, tt := range tests {
 		name := strings.Join(tt.matches, " and ")
@@ -160,6 +135,87 @@ func TestStore_Match(t *testing.T) {
 			tester.Equal(tt.want, list, name)
 		})
 	}
+}
+
+func TestStore_SeriesMatch(t *testing.T) {
+	tester := assert.New(t)
+	path, fn := setUp(require.New(t))
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+	serviceName := index.FieldKey{
+		// http_method
+		IndexRuleID: 6,
+		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+	}
+	setup(tester, s, serviceName, serviceName)
+
+	tests := []struct {
+		want    posting.List
+		matches []string
+		wantErr bool
+	}{
+		{
+			matches: []string{"test"},
+			want:    roaring.NewPostingListWithInitialData(1, 2, 3),
+		},
+		{
+			matches: []string{"a"},
+			want:    roaring.NewPostingListWithInitialData(1),
+		},
+		{
+			matches: []string{"root"},
+			want:    roaring.NewPostingListWithInitialData(),
+		},
+	}
+	for _, tt := range tests {
+		name := strings.Join(tt.matches, " and ")
+		t.Run(name, func(t *testing.T) {
+			list, err := s.Match(serviceName, tt.matches)
+			if tt.wantErr {
+				tester.Error(err)
+				return
+			}
+			tester.NoError(err, name)
+			tester.NotNil(list, name)
+			tester.Equal(tt.want, list, name)
+		})
+	}
+}
+
+func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 index.FieldKey) {
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("GET::/product/order"),
+	}}, 1))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("GET::/root/product"),
+	}}, 2))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName,
+		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
+	}}, 3))
+	s.(*store).flush()
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.a"),
+	}}, 1))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.b"),
+	}}, 2))
+	tester.NoError(s.Write([]index.Field{{
+		Key:  serviceName1,
+		Term: []byte("test.c"),
+	}}, 3))
+	s.(*store).flush()
 }
 
 func TestStore_MatchTerm(t *testing.T) {

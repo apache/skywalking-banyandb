@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -92,12 +91,12 @@ func SetUp(t *assert.Assertions, store SimpleStore) {
 			t.NoError(store.Write([]index.Field{{
 				Key:  serviceName,
 				Term: []byte("gateway"),
-			}}, common.ItemID(i)))
+			}}, uint64(i)))
 		} else {
 			t.NoError(store.Write([]index.Field{{
 				Key:  serviceName,
 				Term: []byte("webpage"),
-			}}, common.ItemID(i)))
+			}}, uint64(i)))
 		}
 	}
 }

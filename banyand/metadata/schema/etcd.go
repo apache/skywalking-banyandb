@@ -410,5 +410,9 @@ func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logge
 	cfg.LCUrls, cfg.ACUrls = []url.URL{*cURL}, []url.URL{*cURL}
 	cfg.LPUrls, cfg.APUrls = []url.URL{*pURL}, []url.URL{*pURL}
 	cfg.InitialCluster = ",default=" + pURL.String()
+
+	cfg.BackendBatchInterval = 500 * time.Millisecond
+	cfg.BackendBatchLimit = 10000
+	cfg.MaxRequestBytes = 10 * 1024 * 1024
 	return cfg
 }
