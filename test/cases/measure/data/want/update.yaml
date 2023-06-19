@@ -30,7 +30,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "1"
       - key: entity_id
         value:
@@ -50,7 +50,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "4"
       - key: entity_id
         value:
@@ -70,7 +70,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "5"
       - key: entity_id
         value:
@@ -90,7 +90,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "6"
       - key: entity_id
         value:
@@ -110,7 +110,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "2"
       - key: entity_id
         value:
@@ -130,7 +130,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "3"
       - key: entity_id
         value:

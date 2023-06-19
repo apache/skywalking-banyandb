@@ -30,7 +30,7 @@ dataPoints:
     tags:
     - key: id
       value:
-        id:
+        str:
           value: "4"
     - key: entity_id
       value:
@@ -51,7 +51,7 @@ dataPoints:
     tags:
     - key: id
       value:
-        id:
+        str:
           value: "5"
     - key: entity_id
       value:
