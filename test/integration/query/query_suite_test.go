@@ -56,7 +56,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
-		Level: flags.LogLevel,
+		Level: "info",
 	})).To(Succeed())
 	var addr string
 	addr, _, deferFunc = setup.Common()

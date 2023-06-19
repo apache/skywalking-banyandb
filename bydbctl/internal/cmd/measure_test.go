@@ -85,9 +85,9 @@ tag_families:
   - name: default
     tags:
       - name: id
-        type: TAG_TYPE_ID
+        type: TAG_TYPE_STRING
 entity:
-  tagNames: ["tag1"]`))
+  tagNames: ["id"]`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -120,7 +120,7 @@ tag_families:
   - name: default
     tags:
       - name: id
-        type: TAG_TYPE_ID
+        type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {
@@ -165,7 +165,7 @@ tag_families:
   - name: default
     tags:
       - name: id
-        type: TAG_TYPE_ID
+        type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
 		out := capturer.CaptureStdout(func() {

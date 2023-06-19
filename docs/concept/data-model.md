@@ -64,7 +64,7 @@ tag_families:
 - name: default
   tags:
   - name: id
-    type: TAG_TYPE_ID
+    type: TAG_TYPE_STRING
   - name: entity_id
     type: TAG_TYPE_STRING
 fields:

@@ -26,7 +26,6 @@
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
     - [Float](#banyandb-model-v1-Float)
-    - [ID](#banyandb-model-v1-ID)
     - [Int](#banyandb-model-v1-Int)
     - [IntArray](#banyandb-model-v1-IntArray)
     - [Str](#banyandb-model-v1-Str)
@@ -502,21 +501,6 @@ Metadata is for multi-tenant, multi-model use
 
 
 
-<a name="banyandb-model-v1-ID"></a>
-
-### ID
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| value | [string](#string) |  |  |
-
-
-
-
-
-
 <a name="banyandb-model-v1-Int"></a>
 
 ### Int
@@ -606,7 +590,6 @@ Metadata is for multi-tenant, multi-model use
 | int | [Int](#banyandb-model-v1-Int) |  |  |
 | int_array | [IntArray](#banyandb-model-v1-IntArray) |  |  |
 | binary_data | [bytes](#bytes) |  |  |
-| id | [ID](#banyandb-model-v1-ID) |  |  |
 
 
 
@@ -1147,7 +1130,6 @@ Type determine the index structure under the hood
 | TAG_TYPE_STRING_ARRAY | 3 |  |
 | TAG_TYPE_INT_ARRAY | 4 |  |
 | TAG_TYPE_DATA_BINARY | 5 |  |
-| TAG_TYPE_ID | 6 |  |
 
 
  

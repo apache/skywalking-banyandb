@@ -44,7 +44,7 @@ const tagType = {
     'TAG_TYPE_STRING_ARRAY': 'strArray',
     'TAG_TYPE_INT_ARRAY': 'intArray',
     'TAG_TYPE_DATA_BINARY': 'binaryData',
-    'TAG_TYPE_ID': 'id'
+    'TAG_TYPE_STRING': 'id'
 }
 const fieldTypes = {
     'FIELD_TYPE_UNSPECIFIED': 'null',

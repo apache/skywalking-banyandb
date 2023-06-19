@@ -19,7 +19,6 @@ package schema
 
 import (
 	"context"
-	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -69,70 +68,14 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 			return errors.Wrap(err, "interval is malformed")
 		}
 	}
-	if err := e.create(ctx, Metadata{
+	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
 			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
-	}); err != nil {
-		return err
-	}
-
-	// Add an index rule for the ID type tag
-	idIndexRuleMetadata := &commonv1.Metadata{
-		Name:  tagTypeID,
-		Group: measure.Metadata.Group,
-	}
-	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
-	if isNotFound(err) {
-		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
-			Metadata:  idIndexRuleMetadata,
-			Tags:      []string{tagTypeID},
-			Type:      databasev1.IndexRule_TYPE_TREE,
-			Location:  databasev1.IndexRule_LOCATION_SERIES,
-			UpdatedAt: timestamppb.Now(),
-		}); errIndexRule != nil {
-			return errIndexRule
-		}
-	} else if err != nil {
-		return err
-	}
-	for _, tfs := range measure.GetTagFamilies() {
-		for _, ts := range tfs.GetTags() {
-			if ts.Type == databasev1.TagType_TAG_TYPE_ID {
-				for _, e := range measure.GetEntity().GetTagNames() {
-					if ts.Name == e {
-						continue
-					}
-				}
-				irb := &databasev1.IndexRuleBinding{
-					Metadata: &commonv1.Metadata{
-						Name:  tagTypeID + "_" + measure.Metadata.Name + "_" + ts.Name,
-						Group: measure.Metadata.Group,
-					},
-					Rules: []string{tagTypeID},
-					Subject: &databasev1.Subject{
-						Catalog: commonv1.Catalog_CATALOG_MEASURE,
-						Name:    measure.Metadata.Name,
-					},
-					BeginAt:   timestamppb.Now(),
-					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
-					UpdatedAt: timestamppb.Now(),
-				}
-				_, innerErr := e.GetIndexRuleBinding(ctx, irb.GetMetadata())
-				if innerErr == nil {
-					return e.UpdateIndexRuleBinding(ctx, irb)
-				}
-				if isNotFound(innerErr) {
-					return e.CreateIndexRuleBinding(ctx, irb)
-				}
-				return innerErr
-			}
-		}
-	}
-	return nil
+	})
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
@@ -141,64 +84,14 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 			return errors.Wrap(err, "interval is malformed")
 		}
 	}
-	if err := e.update(ctx, Metadata{
+	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
 			Name:  measure.GetMetadata().GetName(),
 		},
 		Spec: measure,
-	}); err != nil {
-		return err
-	}
-
-	// Add an index rule for the ID type tag
-	idIndexRuleMetadata := &commonv1.Metadata{
-		Name:  tagTypeID,
-		Group: measure.Metadata.Group,
-	}
-	_, err := e.GetIndexRule(ctx, idIndexRuleMetadata)
-	if isNotFound(err) {
-		if errIndexRule := e.CreateIndexRule(ctx, &databasev1.IndexRule{
-			Metadata:  idIndexRuleMetadata,
-			Tags:      []string{tagTypeID},
-			Type:      databasev1.IndexRule_TYPE_TREE,
-			Location:  databasev1.IndexRule_LOCATION_SERIES,
-			UpdatedAt: timestamppb.Now(),
-		}); errIndexRule != nil {
-			return errIndexRule
-		}
-	} else if err != nil {
-		return err
-	}
-	for _, tfs := range measure.GetTagFamilies() {
-		for _, ts := range tfs.GetTags() {
-			if ts.Type == databasev1.TagType_TAG_TYPE_ID {
-				for _, e := range measure.Entity.TagNames {
-					if ts.Name == e {
-						continue
-					}
-				}
-				if errIndexRule := e.UpdateIndexRuleBinding(ctx, &databasev1.IndexRuleBinding{
-					Metadata: &commonv1.Metadata{
-						Name:  tagTypeID + "_" + measure.Metadata.Name + "_" + ts.Name,
-						Group: measure.Metadata.Group,
-					},
-					Rules: []string{tagTypeID},
-					Subject: &databasev1.Subject{
-						Catalog: commonv1.Catalog_CATALOG_MEASURE,
-						Name:    measure.Metadata.Name,
-					},
-					BeginAt:   timestamppb.Now(),
-					ExpireAt:  timestamppb.New(time.Now().AddDate(100, 0, 0)),
-					UpdatedAt: timestamppb.Now(),
-				}); errIndexRule != nil {
-					return errIndexRule
-				}
-			}
-		}
-	}
-	return nil
+	})
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
