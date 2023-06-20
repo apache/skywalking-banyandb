@@ -181,7 +181,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 				Tags: append([]*databasev1.TagSpec{
 					{
 						Name: "measure_id",
-						Type: databasev1.TagType_TAG_TYPE_ID,
+						Type: databasev1.TagType_TAG_TYPE_STRING,
 					},
 				}, seriesSpecs...),
 			},

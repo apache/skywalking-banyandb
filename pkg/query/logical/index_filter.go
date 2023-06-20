@@ -182,15 +182,6 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		return str(v.Str.GetValue()), nil, nil
-	case *modelv1.TagValue_Id:
-		if ok {
-			parsedEntity := make(tsdb.Entity, len(entity))
-			copy(parsedEntity, entity)
-			parsedEntity[entityIdx] = []byte(v.Id.GetValue())
-			return nil, []tsdb.Entity{parsedEntity}, nil
-		}
-		return id(v.Id.GetValue()), nil, nil
-
 	case *modelv1.TagValue_StrArray:
 		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
 			entities := make([]tsdb.Entity, len(v.StrArray.Value))

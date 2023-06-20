@@ -50,7 +50,3 @@ func BadRequest(field, desc string) error {
 	st, _ := statusGRPCInvalidArgument.WithDetails(br)
 	return st.Err()
 }
-
-func isNotFound(err error) bool {
-	return errors.Is(err, ErrGRPCResourceNotFound)
-}

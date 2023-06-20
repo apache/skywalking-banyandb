@@ -74,10 +74,6 @@ const typeOptions = [
         label: 'DATA_BINARY'
     },
     {
-        value: 'TAG_TYPE_ID',
-        label: 'ID'
-    },
-    {
         value: 'TAG_TYPE_UNSPECIFIED',
         label: 'UNSPECIFIED'
     }

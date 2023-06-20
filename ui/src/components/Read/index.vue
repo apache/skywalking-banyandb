@@ -43,17 +43,14 @@ const tagType = {
     'TAG_TYPE_INT': 'int',
     'TAG_TYPE_STRING_ARRAY': 'strArray',
     'TAG_TYPE_INT_ARRAY': 'intArray',
-    'TAG_TYPE_DATA_BINARY': 'binaryData',
-    'TAG_TYPE_ID': 'id'
+    'TAG_TYPE_DATA_BINARY': 'binaryData'
 }
 const fieldTypes = {
     'FIELD_TYPE_UNSPECIFIED': 'null',
     'FIELD_TYPE_STRING': 'str',
     'FIELD_TYPE_INT': 'int',
-    'FIELD_TYPE_STRING_ARRAY': 'strArray',
-    'FIELD_TYPE_INT_ARRAY': 'intArray',
-    'FIELD_TYPE_DATA_BINARY': 'binaryData',
-    'FIELD_TYPE_ID': 'id'
+    'FIELD_TYPE_FLOAT': 'float',
+    'FIELD_TYPE_DATA_BINARY': 'binaryData'
 }
 const shortcuts = [
     {

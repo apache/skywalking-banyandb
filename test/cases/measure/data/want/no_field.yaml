@@ -21,7 +21,7 @@ dataPoints:
       tags:
       - key: id
         value:
-          id:
+          str:
             value: "1"
       - key: service_id
         value:

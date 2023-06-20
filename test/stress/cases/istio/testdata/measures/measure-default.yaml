@@ -5063,7 +5063,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5121,7 +5121,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5179,7 +5179,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5237,7 +5237,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5295,7 +5295,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5353,7 +5353,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5605,7 +5605,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5663,7 +5663,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5791,7 +5791,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5849,7 +5849,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -5977,7 +5977,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6035,7 +6035,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6217,7 +6217,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6275,7 +6275,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6457,7 +6457,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6515,7 +6515,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6573,7 +6573,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6631,7 +6631,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6743,7 +6743,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6801,7 +6801,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6859,7 +6859,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6917,7 +6917,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -6975,7 +6975,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -7033,7 +7033,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -7091,7 +7091,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -7149,7 +7149,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -7207,7 +7207,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -7265,7 +7265,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: entity_id
       type: TAG_TYPE_STRING
@@ -11018,7 +11018,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11074,7 +11074,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11134,7 +11134,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11194,7 +11194,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11610,7 +11610,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11670,7 +11670,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11730,7 +11730,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11790,7 +11790,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11850,7 +11850,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11910,7 +11910,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -11969,7 +11969,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
@@ -12028,7 +12028,7 @@
     tags:
     - indexedOnly: false
       name: measure_id
-      type: TAG_TYPE_ID
+      type: TAG_TYPE_STRING
     - indexedOnly: false
       name: service_id
       type: TAG_TYPE_STRING
