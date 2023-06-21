@@ -18,12 +18,12 @@
 -->
 
 <script setup>
-import MeasureEditor from '@/components/MeasureEditor/index.vue'
+import Editor from '@/components/Editor/index.vue'
 </script>
 
 <template>
   <div class="about">
-    <MeasureEditor></MeasureEditor>
+    <Editor></Editor>
   </div>
 </template>
 
