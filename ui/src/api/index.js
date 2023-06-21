@@ -96,3 +96,17 @@ export function editResources(type, group, name, data) {
         data: data
     })
 }
+
+export function getindexRuleList(name) {
+    return request({
+        url: `/api/v1/index-rule/schema/lists/${name}`,
+        method: 'get'
+    })
+}
+
+export function getindexRuleBindingList(name) {
+    return request({
+        url: `/api/v1/index-rule-binding/schema/lists/${name}`,
+        method: 'get'
+    })
+}

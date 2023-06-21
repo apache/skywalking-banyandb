@@ -19,7 +19,9 @@
 
 <script setup>
 import RigheMenu from '@/components/RightMenu/index.vue'
-import { getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
+import IndexRule from './indexRule.vue'
+import IndexRuleBinding from './indexRuleBinding.vue'
+import { getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
@@ -175,6 +177,8 @@ function searchGroup() {
 // init data
 function getGroupLists() {
     $loadingCreate()
+    data.showSearch = false
+    data.search = ''
     getGroupList()
         .then(res => {
             if (res.status == 200) {
@@ -197,6 +201,42 @@ function getGroupLists() {
                             })
                     })
                 })
+                if (props.type == 'stream') {
+                    let promiseIndexRule = data.groupLists.map((item) => {
+                        let name = item.metadata.name
+                        return new Promise((resolve, reject) => {
+                            getindexRuleList(name)
+                                .then(res => {
+                                    if (res.status == 200) {
+                                        item.indexRule = res.data.indexRule
+                                        resolve()
+                                    }
+                                })
+                                .catch((err) => {
+                                    reject(err)
+                                })
+                        })
+                    })
+                    let promiseIndexRuleBinding = data.groupLists.map((item) => {
+                        let name = item.metadata.name
+                        return new Promise((resolve, reject) => {
+                            getindexRuleBindingList(name)
+                                .then(res => {
+                                    if (res.status == 200) {
+                                        item.indexRuleBinding = res.data.indexRuleBinding
+                                        console.log(res)
+                                        resolve()
+                                    }
+                                })
+                                .catch((err) => {
+                                    reject(err)
+                                })
+                        })
+                    })
+                    promise = promise.concat(promiseIndexRule)
+                    promise = promise.concat(promiseIndexRuleBinding)
+                }
+                console.log(promise)
                 Promise.all(promise).then(() => {
                     data.showSearch = true
                     data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
@@ -535,8 +575,8 @@ initActiveMenu()
 <template>
     <div style="display: flex; flex-direction: column; width: 100%;">
         <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
-            <el-input v-if="data.showSearch" class="aside-search" v-model="data.search" placeholder="Search"
-                :prefix-icon="Search" clearable />
+            <el-input v-if="data.showSearch && props.type == 'measure'" class="aside-search" v-model="data.search"
+                placeholder="Search" :prefix-icon="Search" clearable />
             <el-menu v-if="data.groupLists.length > 0" :collapse="data.isCollapse" :default-active="data.activeMenu">
                 <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
                     @contextmenu.prevent="rightClickGroup($event, index)">
@@ -549,20 +589,51 @@ initActiveMenu()
                                 {{ item.metadata.name }}
                             </span>
                         </template>
-                        <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
-                            <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
-                                <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
-                                    @click="openResources(index, childIndex)">
-                                    <template #title>
-                                        <el-icon>
-                                            <Document />
-                                        </el-icon>
-                                        <span slot="title" :title="child.metadata.name" style="width: 90%"
-                                            class="text-overflow-hidden">
-                                            {{ child.metadata.name }}
-                                        </span>
-                                    </template>
-                                </el-menu-item>
+                        <IndexRule v-if="props.type == 'stream'" :indexRule="item.indexRule" :index="`${item.metadata.name}-${index}-indexRule`"></IndexRule>
+                        <IndexRuleBinding v-if="props.type == 'stream'"></IndexRuleBinding>
+                        <el-sub-menu v-if="props.type == 'stream'" :index="`${item.metadata.name}-${index}-stream`">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span slot="title" title="Stream" style="width: 70%"
+                                    class="text-overflow-hidden">
+                                    Stream
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
+                                    <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
+                                        @click="openResources(index, childIndex)">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                        <div v-if="props.type == 'measure'">
+                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
+                                    <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
+                                        @click="openResources(index, childIndex)">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
                             </div>
                         </div>
                     </el-sub-menu>
