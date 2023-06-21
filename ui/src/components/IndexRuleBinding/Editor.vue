@@ -17,9 +17,10 @@
   ~ under the License.
 -->
 
-<script setup>
-</script>
+<script setup></script>
 
-<template></template>
+<template>
+    123456Editor
+</template>
 
-<style lang="scss" scoped></style>
+<style></style>
