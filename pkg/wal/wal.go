@@ -28,11 +28,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -106,14 +106,14 @@ type LogEntry interface {
 type Log struct {
 	buffer           buffer
 	logger           *logger.Logger
+	bytesBuffer      *bytes.Buffer
+	timestampsBuffer *bytes.Buffer
 	segmentIndexMap  map[SegmentID]*segment
 	workSegment      *segment
 	writeChannel     chan logRequest
 	flushChannel     chan buffer
 	path             string
 	options          Options
-	bytesBuffer      *bytes.Buffer
-	timestampsBuffer *bytes.Buffer
 }
 
 type segment struct {
@@ -124,17 +124,17 @@ type segment struct {
 }
 
 type logRequest struct {
-	timestamp time.Time
-	data      []byte
 	seriesID  common.SeriesIDV2
+	timestamp time.Time
 	callback  func(common.SeriesIDV2, time.Time, []byte, error)
+	data      []byte
 }
 
 type logEntry struct {
 	timestamps  []time.Time
 	values      *list.List
-	entryLength int64
 	seriesID    common.SeriesIDV2
+	entryLength int64
 	count       int32
 }
 
@@ -184,8 +184,7 @@ func New(path string, options *Options) (WAL, error) {
 // Write a logging entity.
 // It will return immediately when the data is written in the buffer,
 // The callback function will be called when the entity is flushed on the persistent storage.
-func (log *Log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte,
-	callback func(common.SeriesIDV2, time.Time, []byte, error)) {
+func (log *Log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error)) {
 	log.writeChannel <- logRequest{
 		seriesID:  seriesID,
 		timestamp: timestamp,
@@ -211,7 +210,6 @@ func (log *Log) ReadAllSegments() ([]Segment, error) {
 
 // Rotate closes the open segment and opens a new one, returning the closed segment details.
 func (log *Log) Rotate() (Segment, error) {
-	// 需要锁定
 	if err := log.workSegment.file.Close(); err != nil {
 		return nil, errors.Wrap(err, "Close WAL segment error")
 	}
@@ -308,19 +306,15 @@ func (log *Log) startAsyncFlushTask() {
 
 	go func() {
 		log.logger.Info().Msg("Start flush task...")
-		for {
-			select {
-			case buffer, ok := <-log.flushChannel:
-				if !ok {
-					log.logger.Info().Msg("Exit selector when flush-channel closed!")
-					return
-				}
-				log.flushBuffer(buffer)
-				if log.logger.Debug().Enabled() {
-					log.logger.Debug().Msg("Flushed buffer to WAL file. elements: " + strconv.Itoa(buffer.count))
-				}
+
+		for batch := range log.flushChannel {
+			log.flushBuffer(batch)
+			if log.logger.Debug().Enabled() {
+				log.logger.Debug().Msg("Flushed buffer to WAL file. elements: " + strconv.Itoa(batch.count))
 			}
 		}
+
+		log.logger.Info().Msg("Exit flush task when flush-channel closed!")
 	}()
 
 	log.logger.Info().Msg("Started WAL async flush task.")
@@ -571,11 +565,7 @@ func (segment *segment) parseLogEntries() error {
 		if err != nil {
 			return errors.Wrap(err, "Read values compression binary fail to snappy decode")
 		}
-		var values *list.List
-		values, err = parseValuesBinary(data)
-		if err != nil {
-			return errors.Wrap(err, "Parse values binary fail to split bytes")
-		}
+		values := parseValuesBinary(data)
 		if values.Len() != len(timestamps) {
 			return errors.New("Timestamps length and values length not match: " + strconv.Itoa(len(timestamps)) + " vs " + strconv.Itoa(values.Len()))
 		}
@@ -622,7 +612,7 @@ func (buffer *buffer) write(request logRequest) {
 	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
 
 	buffer.callbackMap[seriesID] = append(buffer.callbackMap[seriesID], request.callback)
-	buffer.count += 1
+	buffer.count++
 }
 
 func (buffer *buffer) notifyRequests(err error) {
@@ -632,7 +622,7 @@ func (buffer *buffer) notifyRequests(err error) {
 		valuePos := 0
 		var valueItem []byte
 		for index, callback := range callbacks {
-			valuePos, valueItem, _ = readBinarySplit(values, valuePos, valuesBinaryLength)
+			valuePos, valueItem = readBinarySplit(values, valuePos, valuesBinaryLength)
 			runCallbackWithTryCatch(func() {
 				callback(seriesID, timestamps[index], valueItem, err)
 			})
@@ -653,26 +643,23 @@ func runCallbackWithTryCatch(callback func()) {
 	callback()
 }
 
-func parseValuesBinary(binary []byte) (*list.List, error) {
+func parseValuesBinary(binary []byte) *list.List {
 	values := list.New()
 	pos := 0
 	for {
-		nextPos, binaryItem, err := readBinarySplit(binary, pos, valuesBinaryLength)
-		if err != nil {
-			return nil, errors.Wrap(err, "Read binary split error")
-		}
+		nextPos, binaryItem := readBinarySplit(binary, pos, valuesBinaryLength)
 		if binaryItem == nil {
 			break
 		}
 		values.PushBack(binaryItem)
 		pos = nextPos
 	}
-	return values, nil
+	return values
 }
 
-func readBinarySplit(raw []byte, pos int, offsetLen int) (int, []byte, error) {
+func readBinarySplit(raw []byte, pos int, offsetLen int) (int, []byte) {
 	if pos == len(raw) {
-		return pos, nil, nil
+		return pos, nil
 	}
 
 	data := raw[pos : pos+offsetLen]
@@ -681,7 +668,7 @@ func readBinarySplit(raw []byte, pos int, offsetLen int) (int, []byte, error) {
 
 	data = raw[pos : pos+int(binaryLen)]
 	pos += int(binaryLen)
-	return pos, data, nil
+	return pos, data
 }
 
 func rewriteInt64InBuf(buf []byte, value int64, offset int, order binary.ByteOrder) {
@@ -708,7 +695,7 @@ func rewriteInt64InBuf(buf []byte, value int64, offset int, order binary.ByteOrd
 }
 
 func int16ToBytes(i int16) []byte {
-	var buf = make([]byte, 2)
+	buf := make([]byte, 2)
 	binary.LittleEndian.PutUint16(buf, uint16(i))
 	return buf
 }

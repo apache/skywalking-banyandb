@@ -114,7 +114,7 @@ var _ = ginkgo.Describe("WAL", func() {
 					seriesID := entity.GetSeriesID()
 					seriesIDSequence := seriesID.SeriesID
 					expectSeriesID := common.SeriesIDV2{
-						SeriesID: common.SeriesID(seriesIDSequence),
+						SeriesID: seriesIDSequence,
 						Name:     fmt.Sprintf("series-%d", seriesIDSequence),
 					}
 					// Check seriesID

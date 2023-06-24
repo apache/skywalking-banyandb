@@ -40,23 +40,24 @@ func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
-// SeriesID V2 identities a series in a shard.
+// SeriesIDV2 identities a series in a shard.
 type SeriesIDV2 struct {
-	SeriesID SeriesID
 	Name     string
+	SeriesID SeriesID
 }
 
 // Marshal encodes series id v2 to bytes.
 func (s SeriesIDV2) Marshal() []byte {
 	seriesIDBytes := convert.Uint64ToBytes(uint64(s.SeriesID))
-	nameBytes := convert.StringToBytes(s.Name)
+	nameBytes := []byte(s.Name)
 	return append(seriesIDBytes, nameBytes...)
 }
 
+// ParseSeriesIDV2 parses series id v2 from bytes.
 func ParseSeriesIDV2(b []byte) SeriesIDV2 {
 	return SeriesIDV2{
 		SeriesID: SeriesID(convert.BytesToUint64(b[:8])),
-		Name:     convert.BytesToString(b[8:]),
+		Name:     string(b[8:]),
 	}
 }
 
