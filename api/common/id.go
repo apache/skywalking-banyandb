@@ -40,6 +40,26 @@ func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
+// SeriesID V2 identities a series in a shard.
+type SeriesIDV2 struct {
+	SeriesID SeriesID
+	Name     string
+}
+
+// Marshal encodes series id v2 to bytes.
+func (s SeriesIDV2) Marshal() []byte {
+	seriesIDBytes := convert.Uint64ToBytes(uint64(s.SeriesID))
+	nameBytes := convert.StringToBytes(s.Name)
+	return append(seriesIDBytes, nameBytes...)
+}
+
+func ParseSeriesIDV2(b []byte) SeriesIDV2 {
+	return SeriesIDV2{
+		SeriesID: SeriesID(convert.BytesToUint64(b[:8])),
+		Name:     convert.BytesToString(b[8:]),
+	}
+}
+
 // positionKey is a context key to store the module position.
 var positionKey = contextPositionKey{}
 

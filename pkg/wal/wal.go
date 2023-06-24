@@ -20,6 +20,7 @@ package wal
 
 import (
 	"bytes"
+	"container/list"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -27,49 +28,92 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
-	segmentNamePrefix   = "seg"
-	segmentNameSuffix   = ".wal"
-	batchWriteLength    = 8
-	entryLength         = 8
-	seriesIDLength      = 8
-	countLength         = 4
-	timestampLength     = 8
-	binaryLength        = 2
-	flushSuccessFlag    = "success"
-	flushFailFlag       = "fail"
-	bufferBatchInterval = 500
-	parseTimeStr        = "2006-01-02 15:04:05"
+	moduleName             = "wal"
+	segmentNamePrefix      = "seg"
+	segmentNameSuffix      = ".wal"
+	batchWriteLength       = 8
+	entryLength            = 8
+	seriesIDLength         = 2
+	seriesCountLength      = 4
+	timestampLength        = 8
+	timestampsBinaryLength = 2
+	valuesBinaryLength     = 2
+	parseTimeStr           = "2006-01-02 15:04:05"
 )
 
-// SegmentID identities a segment in a WAL.
-type SegmentID uint64
-
-// Log implements the WAL interface.
-type Log struct {
-	buffer          buffer
-	l               *logger.Logger
-	segmentIndexMap map[SegmentID]*segment
-	workSegment     *segment
-	writeChannel    chan logRequest
-	flushChannel    chan string
-	path            string
-	options         Options
-	closeFlag       bool
+// DefaultOptions for Open().
+var DefaultOptions = &Options{
+	FileSize:            67108864, // 64MB
+	BufferSize:          16384,    // 16KB
+	BufferBatchInterval: 3 * time.Second,
 }
 
 // Options for creating Write-ahead Logging.
 type Options struct {
-	Compression bool
-	FileSize    int
-	BufferSize  int
+	FileSize            int
+	BufferSize          int
+	BufferBatchInterval time.Duration
+	FlushQueueSize      int
+}
+
+// WAL denotes a Write-ahead logging.
+// Modules who want their data reliable could write data to an instance of WAL.
+// A WAL combines several segments, ingesting data on a single opened one.
+// Rotating the WAL will create a new segment, marking it as opened and persisting previous segments on the disk.
+type WAL interface {
+	// Write a logging entity.
+	// It will return immediately when the data is written in the buffer,
+	// The callback function will be called when the entity is flushed on the persistent storage.
+	Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error))
+	// Read specified segment by SegmentID.
+	Read(segmentID SegmentID) (Segment, error)
+	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
+	ReadAllSegments() ([]Segment, error)
+	// Rotate closes the open segment and opens a new one, returning the closed segment details.
+	Rotate() (Segment, error)
+	// Delete the specified segment.
+	Delete(segmentID SegmentID) error
+	// Close all of segments and stop WAL work.
+	Close() error
+}
+
+// SegmentID identities a segment in a WAL.
+type SegmentID uint64
+
+// Segment allows reading underlying segments that hold WAl entities.
+type Segment interface {
+	GetSegmentID() SegmentID
+	GetLogEntries() []LogEntry
+}
+
+// LogEntry used for attain detail value of WAL entry.
+type LogEntry interface {
+	GetSeriesID() common.SeriesIDV2
+	GetTimestamps() []time.Time
+	GetValues() *list.List
+}
+
+// Log implements the WAL interface.
+type Log struct {
+	buffer           buffer
+	logger           *logger.Logger
+	segmentIndexMap  map[SegmentID]*segment
+	workSegment      *segment
+	writeChannel     chan logRequest
+	flushChannel     chan buffer
+	path             string
+	options          Options
+	bytesBuffer      *bytes.Buffer
+	timestampsBuffer *bytes.Buffer
 }
 
 type segment struct {
@@ -82,63 +126,23 @@ type segment struct {
 type logRequest struct {
 	timestamp time.Time
 	data      []byte
-	seriesID  []byte
+	seriesID  common.SeriesIDV2
+	callback  func(common.SeriesIDV2, time.Time, []byte, error)
 }
 
 type logEntry struct {
-	timestamp    []time.Time
-	binary       []byte
-	entryLength  int64
-	seriesID     common.SeriesID
-	count        int32
-	binaryLength int16
+	timestamps  []time.Time
+	values      *list.List
+	entryLength int64
+	seriesID    common.SeriesIDV2
+	count       int32
 }
 
 type buffer struct {
-	timestampMap map[common.SeriesID][]time.Time
-	valueMap     map[common.SeriesID][]byte
-	size         int
-}
-
-// DefaultOptions for Open().
-var DefaultOptions = &Options{
-	Compression: true,
-	FileSize:    67108864, // 64MB
-	BufferSize:  16384,    // 16KB
-}
-
-// Segment allows reading underlying segments that hold WAl entities.
-type Segment interface {
-	GetSegmentID() SegmentID
-	GetLogEntries() []LogEntry
-}
-
-// LogEntry used for attain detail value of WAL entry.
-type LogEntry interface {
-	GetSeriesID() common.SeriesID
-	GetTimestamp() []time.Time
-	GetBinary() []byte
-}
-
-// WAL denotes a Write-ahead logging.
-// Modules who want their data reliable could write data to an instance of WAL.
-// A WAL combines several segments, ingesting data on a single opened one.
-// Rotating the WAL will create a new segment, marking it as opened and persisting previous segments on the disk.
-type WAL interface {
-	// Write a logging entity.
-	// It will return immediately when the data is written in the buffer,
-	// The returned function will be called when the entity is flushed on the persistent storage.
-	Write(seriesID []byte, timestamp time.Time, data []byte) error
-	// Read specified segment by SegmentID.
-	Read(segmentID SegmentID) (Segment, error)
-	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
-	ReadAllSegments() ([]Segment, error)
-	// Rotate closes the open segment and opens a new one, returning the closed segment details.
-	Rotate() (Segment, error)
-	// Delete the specified segment.
-	Delete(segmentID SegmentID) error
-	// Close all of segments and stop WAL work.
-	Close() error
+	timestampMap map[common.SeriesIDV2][]time.Time
+	valueMap     map[common.SeriesIDV2][]byte
+	callbackMap  map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error)
+	count        int
 }
 
 // New creates a WAL instance in the specified path.
@@ -153,215 +157,41 @@ func New(path string, options *Options) (WAL, error) {
 	if options.BufferSize <= 0 {
 		options.BufferSize = DefaultOptions.BufferSize
 	}
+	if options.BufferBatchInterval <= 0 {
+		options.BufferBatchInterval = DefaultOptions.BufferBatchInterval
+	}
 
 	// Initial WAL path.
 	path, err := filepath.Abs(path)
 	if err != nil {
-		return nil, errors.Wrap(err, "Can not get absolute path")
+		return nil, errors.Wrap(err, "Can not get absolute path: "+path)
 	}
-	log := &Log{path: path, options: *options}
 	if err := os.MkdirAll(path, os.ModePerm); err != nil {
 		return nil, err
 	}
 
+	log := &Log{path: path, options: *options, logger: logger.GetLogger(moduleName)}
+
 	if err := log.load(); err != nil {
 		return nil, err
 	}
-	log.runFlushTask()
+	log.startAsyncFlushTask()
+
+	log.logger.Info().Msgf("WAL initialized at %s", path)
 	return log, nil
-}
-
-func (log *Log) runFlushTask() {
-	go func() {
-		bufferSize := 0
-		for {
-			timer := time.NewTimer(bufferBatchInterval * time.Millisecond)
-			select {
-			case request := <-log.writeChannel:
-				bufferSize += seriesIDLength + timestampLength + len(request.data)
-				err := log.buffer.write(request)
-				if err != nil {
-					log.l.Error().Err(err).Msg("Fail to write to buffer")
-				}
-				if bufferSize > log.options.BufferSize {
-					// Clone buffer,avoiding to block write.
-					buf := log.buffer
-					// Clear buffer to receive Log request.
-					log.newBuffer()
-					if log.closeFlag {
-						return
-					}
-					log.asyncBatchflush(buf, log.flushChannel)
-				}
-			case <-timer.C:
-				buf := log.buffer
-				log.newBuffer()
-				if log.closeFlag {
-					return
-				}
-				log.asyncBatchflush(buf, log.flushChannel)
-			}
-		}
-	}()
-}
-
-func (log *Log) asyncBatchflush(buffer buffer, flushCh chan string) {
-	go func() {
-		// Convert to byte.
-		var err error
-		bytesBuffer := bytes.NewBuffer([]byte{})
-		err = binary.Write(bytesBuffer, binary.LittleEndian, int64(log.buffer.size))
-		if err != nil {
-			log.l.Error().Err(err).Msg("EntryLength fail to convert to byte")
-		}
-		for seriesID, timestamp := range buffer.timestampMap {
-			count := 0
-			var timeBytes []byte
-			for _, timestamp := range timestamp {
-				time := []byte(timestamp.String())
-				count += len(time)
-				timeBytes = append(timeBytes, time...)
-			}
-			count /= timestampLength
-			entryLength := seriesIDLength + count + len(timeBytes) + binaryLength + len(buffer.valueMap[seriesID])
-			err = binary.Write(bytesBuffer, binary.LittleEndian, int64(entryLength))
-			if err != nil {
-				log.l.Error().Err(err).Msg("EntryLength fail to convert to byte")
-			}
-			err = binary.Write(bytesBuffer, binary.LittleEndian, uint64(seriesID))
-			if err != nil {
-				log.l.Error().Err(err).Msg("SeriesID fail to convert to byte")
-			}
-			err = binary.Write(bytesBuffer, binary.LittleEndian, int32(count))
-			if err != nil {
-				log.l.Error().Err(err).Msg("Count fail to convert to byte")
-			}
-			err = binary.Write(bytesBuffer, binary.LittleEndian, timeBytes)
-			if err != nil {
-				log.l.Error().Err(err).Msg("Timestamp fail to convert to byte")
-			}
-			err = binary.Write(bytesBuffer, binary.LittleEndian, int16(len(buffer.valueMap[seriesID])))
-			if err != nil {
-				log.l.Error().Err(err).Msg("Binary Length fail to convert to byte")
-			}
-			err = binary.Write(bytesBuffer, binary.LittleEndian, buffer.valueMap[seriesID])
-			if err != nil {
-				log.l.Error().Err(err).Msg("Value fail to convert to byte")
-			}
-		}
-
-		// Compression and flush.
-		compressionData := snappy.Encode(nil, bytesBuffer.Bytes())
-		err = os.WriteFile(log.workSegment.path, compressionData, os.ModePerm)
-		if err != nil {
-			if log.closeFlag {
-				return
-			}
-			flushCh <- flushFailFlag
-			log.l.Error().Err(err).Msg("Write WAL segment error")
-		}
-		syncError := log.workSegment.file.Sync()
-		if syncError != nil {
-			if log.closeFlag {
-				return
-			}
-			flushCh <- flushFailFlag
-			log.l.Error().Err(syncError).Msg("Can not sync WAL segment")
-		}
-		if log.closeFlag {
-			return
-		}
-		flushCh <- flushSuccessFlag
-	}()
-}
-
-func (log *Log) newBuffer() {
-	log.buffer.timestampMap = make(map[common.SeriesID][]time.Time)
-	log.buffer.valueMap = make(map[common.SeriesID][]byte)
-	log.buffer.size = 0
-}
-
-func (log *Log) load() error {
-	files, err := os.ReadDir(log.path)
-	if err != nil {
-		return errors.Wrap(err, "Can not read dir")
-	}
-	// Load all of WAL segments.
-	var workSegmentID SegmentID
-	log.segmentIndexMap = make(map[SegmentID]*segment)
-	for _, file := range files {
-		name := file.Name()
-		segmentID, parseErr := strconv.ParseUint(name[3:19], 10, 64)
-		if parseErr != nil {
-			return errors.Wrap(parseErr, "Parse file name error")
-		}
-		if segmentID > uint64(workSegmentID) {
-			workSegmentID = SegmentID(segmentID)
-		}
-		segment := &segment{
-			segmentID: SegmentID(segmentID),
-			path:      filepath.Join(log.path, segmentName(segmentID)),
-		}
-		_, err = os.OpenFile(segment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
-		if err != nil {
-			return errors.Wrap(err, "Open WAL segment error")
-		}
-		if segment.parseLogEntries() != nil {
-			return errors.New("Fail to parse log entries")
-		}
-		log.segmentIndexMap[SegmentID(segmentID)] = segment
-	}
-
-	// If load first time.
-	if len(log.segmentIndexMap) == 0 {
-		segment := &segment{
-			segmentID: 1,
-			path:      filepath.Join(log.path, segmentName(1)),
-		}
-		log.segmentIndexMap[1] = segment
-		log.workSegment = segment
-	} else {
-		log.workSegment = log.segmentIndexMap[workSegmentID]
-	}
-	log.workSegment.file, err = os.OpenFile(log.workSegment.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
-	if err != nil {
-		return errors.Wrap(err, "Open WAL segment error")
-	}
-
-	log.closeFlag = false
-	log.flushChannel = make(chan string)
-	log.writeChannel = make(chan logRequest)
-	log.buffer = buffer{
-		timestampMap: make(map[common.SeriesID][]time.Time),
-		valueMap:     make(map[common.SeriesID][]byte),
-		size:         0,
-	}
-	return nil
-}
-
-func segmentName(index uint64) string {
-	return fmt.Sprintf("%v%016x%v", segmentNamePrefix, index, segmentNameSuffix)
 }
 
 // Write a logging entity.
 // It will return immediately when the data is written in the buffer,
-// The returned function will be called when the entity is flushed on the persistent storage.
-func (log *Log) Write(seriesID []byte, timestamp time.Time, data []byte) error {
+// The callback function will be called when the entity is flushed on the persistent storage.
+func (log *Log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte,
+	callback func(common.SeriesIDV2, time.Time, []byte, error)) {
 	log.writeChannel <- logRequest{
 		seriesID:  seriesID,
 		timestamp: timestamp,
 		data:      data,
+		callback:  callback,
 	}
-
-	// Wait for flush response.
-	result := <-log.flushChannel
-	switch result {
-	case flushFailFlag:
-		return errors.New("Write WAL error")
-	case flushSuccessFlag:
-		return nil
-	}
-	return nil
 }
 
 // Read specified segment by SegmentID.
@@ -381,6 +211,7 @@ func (log *Log) ReadAllSegments() ([]Segment, error) {
 
 // Rotate closes the open segment and opens a new one, returning the closed segment details.
 func (log *Log) Rotate() (Segment, error) {
+	// 需要锁定
 	if err := log.workSegment.file.Close(); err != nil {
 		return nil, errors.Wrap(err, "Close WAL segment error")
 	}
@@ -416,16 +247,216 @@ func (log *Log) Delete(segmentID SegmentID) error {
 
 // Close all of segments and stop WAL work.
 func (log *Log) Close() error {
-	buf := log.buffer
-	log.asyncBatchflush(buf, log.flushChannel)
+	log.logger.Info().Msg("Closing WAL...")
 	close(log.writeChannel)
-	log.closeFlag = true
 	close(log.flushChannel)
 	err := log.workSegment.file.Close()
 	if err != nil {
-		return errors.Wrap(err, "Fail to close WAL segment")
+		return errors.Wrap(err, "Close WAL error")
+	}
+	log.logger.Info().Msg("Closed WAL")
+	return nil
+}
+
+func (log *Log) startAsyncFlushTask() {
+	go func() {
+		log.logger.Info().Msg("Start batch task...")
+		bufferSize := 0
+		for {
+			timer := time.NewTimer(log.options.BufferBatchInterval)
+			select {
+			case request, ok := <-log.writeChannel:
+				if !ok {
+					log.logger.Info().Msg("Exit selector when write-channel closed!")
+					return
+				}
+				log.buffer.write(request)
+				if log.logger.Debug().Enabled() {
+					log.logger.Debug().Msg("Write request to buffer. elements: " + strconv.Itoa(log.buffer.count))
+				}
+
+				bufferSize += len(request.seriesID.Marshal()) + timestampLength + len(request.data)
+				if bufferSize > log.options.BufferSize {
+					// Clone buffer,avoiding to block write.
+					buf := log.buffer
+					// Clear buffer to receive Log request.
+					log.newBuffer()
+					bufferSize = 0
+					// Send buffer to flushBuffer channel.
+					log.flushChannel <- buf
+					if log.logger.Debug().Enabled() {
+						log.logger.Debug().Msg("Send buffer to flush-channel. elements: " + strconv.Itoa(buf.count))
+					}
+				}
+			case <-timer.C:
+				if bufferSize == 0 {
+					continue
+				}
+				// Clone buffer,avoiding to block write.
+				buf := log.buffer
+				// Clear buffer to receive Log request.
+				log.newBuffer()
+				bufferSize = 0
+				// Send buffer to flushBuffer channel.
+				log.flushChannel <- buf
+				if log.logger.Debug().Enabled() {
+					log.logger.Debug().Msg("Send buffer to flush-channel. elements: " + strconv.Itoa(buf.count))
+				}
+			}
+		}
+	}()
+
+	go func() {
+		log.logger.Info().Msg("Start flush task...")
+		for {
+			select {
+			case buffer, ok := <-log.flushChannel:
+				if !ok {
+					log.logger.Info().Msg("Exit selector when flush-channel closed!")
+					return
+				}
+				log.flushBuffer(buffer)
+				if log.logger.Debug().Enabled() {
+					log.logger.Debug().Msg("Flushed buffer to WAL file. elements: " + strconv.Itoa(buffer.count))
+				}
+			}
+		}
+	}()
+
+	log.logger.Info().Msg("Started WAL async flush task.")
+}
+
+func (log *Log) flushBuffer(buffer buffer) {
+	log.bytesBuffer.Reset()
+	// placeholder, preset batch length value is 0
+	batchLength := 0
+	log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, int64(batchLength))
+
+	for seriesID, timestamps := range buffer.timestampMap {
+		// Generate seriesID binary
+		seriesIDBytes := seriesID.Marshal()
+		seriesIDBytesLen := len(seriesIDBytes)
+
+		// Generate timestamps compression binary
+		log.timestampsBuffer.Reset()
+		timestampWriter := encoding.NewWriter()
+		timestampEncoder := encoding.NewXOREncoder(timestampWriter)
+		timestampWriter.Reset(log.timestampsBuffer)
+		for _, timestamp := range timestamps {
+			timestampEncoder.Write(timeTouUnixNano(timestamp))
+		}
+		timestampWriter.Flush()
+		timestampsBytes := log.timestampsBuffer.Bytes()
+		timestampsBytesLen := len(timestampsBytes)
+
+		// Generate values compression binary
+		valuesBytes := snappy.Encode(nil, buffer.valueMap[seriesID])
+
+		// Write entry data
+		entryLength := seriesIDLength + seriesIDBytesLen + seriesCountLength + timestampsBinaryLength + timestampsBytesLen + len(valuesBytes)
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, int64(entryLength))
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, int16(seriesIDBytesLen))
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, seriesIDBytes)
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, int32(len(timestamps)))
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, int16(timestampsBytesLen))
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, timestampsBytes)
+		log.writeToBytesBuffer(log.bytesBuffer, binary.LittleEndian, valuesBytes)
+	}
+	// Rewrite batch length
+	batchBytes := log.bytesBuffer.Bytes()
+	batchLength = len(batchBytes) - batchWriteLength
+	rewriteInt64InBuf(batchBytes, int64(batchLength), 0, binary.LittleEndian)
+	log.bytesBuffer.Reset()
+
+	// Flush
+	_, err := log.workSegment.file.Write(batchBytes)
+	if err != nil {
+		log.logger.Error().Err(err).Msg("Write WAL segment file error, file: " + log.workSegment.path)
+		buffer.notifyRequests(err)
+		return
+	}
+	err = log.workSegment.file.Sync()
+	if err != nil {
+		log.logger.Error().Err(err).Msg("Sync WAL segment file to disk error, file: " + log.workSegment.path)
+		buffer.notifyRequests(err)
+		return
+	}
+	buffer.notifyRequests(nil)
+	if log.logger.Debug().Enabled() {
+		log.logger.Debug().Msg("Flushed buffer to WAL. file: " + log.workSegment.path +
+			", elements: " + strconv.Itoa(buffer.count) +
+			", bytes: " + strconv.Itoa(len(batchBytes)))
+	}
+}
+
+func (log *Log) newBuffer() {
+	log.buffer.timestampMap = make(map[common.SeriesIDV2][]time.Time)
+	log.buffer.valueMap = make(map[common.SeriesIDV2][]byte)
+	log.buffer.callbackMap = make(map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error))
+	log.buffer.count = 0
+}
+
+func (log *Log) load() error {
+	files, err := os.ReadDir(log.path)
+	if err != nil {
+		return errors.Wrap(err, "Can not read dir: "+log.path)
+	}
+	// Load all of WAL segments.
+	var workSegmentID SegmentID
+	log.segmentIndexMap = make(map[SegmentID]*segment)
+	for _, file := range files {
+		name := file.Name()
+		segmentID, parsePathErr := strconv.ParseUint(name[3:19], 10, 64)
+		if parsePathErr != nil {
+			return errors.Wrap(parsePathErr, "Parse file name error, name: "+name)
+		}
+		if segmentID > uint64(workSegmentID) {
+			workSegmentID = SegmentID(segmentID)
+		}
+		segment := &segment{
+			segmentID: SegmentID(segmentID),
+			path:      filepath.Join(log.path, segmentName(segmentID)),
+		}
+		if err = segment.parseLogEntries(); err != nil {
+			return errors.Wrap(err, "Fail to parse log entries")
+		}
+		log.segmentIndexMap[SegmentID(segmentID)] = segment
+	}
+
+	// If load first time.
+	if len(log.segmentIndexMap) == 0 {
+		segment := &segment{
+			segmentID: 1,
+			path:      filepath.Join(log.path, segmentName(1)),
+		}
+		log.segmentIndexMap[1] = segment
+		log.workSegment = segment
+	} else {
+		log.workSegment = log.segmentIndexMap[workSegmentID]
+	}
+	log.workSegment.file, err = os.OpenFile(log.workSegment.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		return errors.Wrap(err, "Open WAL segment error, file: "+log.workSegment.path)
+	}
+
+	log.writeChannel = make(chan logRequest)
+	log.flushChannel = make(chan buffer, log.options.FlushQueueSize)
+	log.bytesBuffer = bytes.NewBuffer([]byte{})
+	log.timestampsBuffer = bytes.NewBuffer([]byte{})
+	log.buffer = buffer{
+		timestampMap: make(map[common.SeriesIDV2][]time.Time),
+		valueMap:     make(map[common.SeriesIDV2][]byte),
+		callbackMap:  make(map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error)),
+		count:        0,
 	}
 	return nil
+}
+
+func (log *Log) writeToBytesBuffer(buf *bytes.Buffer, order binary.ByteOrder, v any) {
+	err := binary.Write(buf, order, v)
+	if err != nil {
+		log.logger.Error().Err(err).Msg("Write to bytes buffer error")
+	}
 }
 
 func (segment *segment) GetSegmentID() SegmentID {
@@ -440,138 +471,256 @@ func (segment *segment) parseLogEntries() error {
 	var err error
 	filebytes, err := os.ReadFile(segment.path)
 	if err != nil {
-		return errors.Wrap(err, "Fail to read WAL segment")
+		return errors.Wrap(err, "Fail to read WAL segment, path: "+segment.path)
 	}
 	var logEntries []LogEntry
 	oldPos := 0
 	pos := 0
-	parsebatchWriteLenFlag := true
-	var batchWriteLen int64
+	parseBatchWriteLenFlag := true
 	var data []byte
+	var batchWriteLen int64
+	var entryLen int64
+	var seriesIDLen int16
+	var seriesID common.SeriesIDV2
+	var seriesCount int32
+	var timestampsBinaryLen int16
+	var seriesBlockEndPos int
 	var buffer *bytes.Buffer
-	var length int64
-	var seriesID common.SeriesID
-	var count int32
-	var timestamp []time.Time
-	var binaryLen int16
+
 	for {
-		if parsebatchWriteLenFlag {
+		if parseBatchWriteLenFlag {
 			if len(filebytes) <= batchWriteLength {
 				break
 			}
 			data = filebytes[pos : pos+batchWriteLength]
 			buffer = bytes.NewBuffer(data)
-			err = binary.Write(buffer, binary.LittleEndian, &batchWriteLen)
+			err = binary.Read(buffer, binary.LittleEndian, &batchWriteLen)
 			if err != nil {
-				return errors.Wrap(err, "BatchWriteLength fail to convert from byte")
+				return errors.Wrap(err, "Read batch write length fail to convert from byte")
 			}
 			if len(filebytes) <= int(batchWriteLen) {
 				break
 			}
 			pos += batchWriteLength
 			oldPos = pos
-			parsebatchWriteLenFlag = false
+			parseBatchWriteLenFlag = false
 		}
 
 		// Parse entryLength.
 		data = filebytes[pos : pos+entryLength]
 		buffer = bytes.NewBuffer(data)
-		err = binary.Write(buffer, binary.LittleEndian, &length)
+		err = binary.Read(buffer, binary.LittleEndian, &entryLen)
 		if err != nil {
-			return errors.Wrap(err, "EntryLength fail to convert from byte")
+			return errors.Wrap(err, "Read entry length fail to convert from byte")
 		}
 		pos += int(entryLength)
-		if len(filebytes) < pos+int(length) {
+
+		// Mark series block end-position
+		seriesBlockEndPos = pos + int(entryLen)
+		if len(filebytes) < seriesBlockEndPos {
 			break
 		}
 
-		// Parse seriesID.
+		// Parse seriesIDLen.
 		data = filebytes[pos : pos+seriesIDLength]
 		buffer = bytes.NewBuffer(data)
-		err = binary.Write(buffer, binary.LittleEndian, &seriesID)
+		err = binary.Read(buffer, binary.LittleEndian, &seriesIDLen)
 		if err != nil {
-			return errors.Wrap(err, "SeriesID fail to convert from byte")
+			return errors.Wrap(err, "Read seriesIDLen fail to convert from byte")
 		}
 		pos += seriesIDLength
 
-		// Parse count.
-		data = filebytes[pos : pos+countLength]
-		buffer = bytes.NewBuffer(data)
-		err = binary.Write(buffer, binary.LittleEndian, &count)
-		if err != nil {
-			return errors.Wrap(err, "Count fail to convert from byte")
-		}
-		pos += countLength
+		// Parse seriesID.
+		data = filebytes[pos : pos+int(seriesIDLen)]
+		seriesID = common.ParseSeriesIDV2(data)
+		pos += int(seriesIDLen)
 
-		// Parse timestamp.
-		for i := 0; i <= int(count); i++ {
-			timeStr := string(filebytes[pos : pos+timestampLength])
-			time, parseErr := time.Parse(parseTimeStr, timeStr)
-			if parseErr != nil {
-				return errors.Wrap(parseErr, "Parse time error")
+		// Parse series count.
+		data = filebytes[pos : pos+seriesCountLength]
+		buffer = bytes.NewBuffer(data)
+		err = binary.Read(buffer, binary.LittleEndian, &seriesCount)
+		if err != nil {
+			return errors.Wrap(err, "Read series count fail to convert from byte")
+		}
+		pos += seriesCountLength
+
+		// Parse timestamps compression binary.
+		data = filebytes[pos : pos+timestampsBinaryLength]
+		buffer = bytes.NewBuffer(data)
+		err = binary.Read(buffer, binary.LittleEndian, &timestampsBinaryLen)
+		if err != nil {
+			return errors.Wrap(err, "Read timestamps compression binary length fail to convert from byte")
+		}
+		pos += timestampsBinaryLength
+		data = filebytes[pos : pos+int(timestampsBinaryLen)]
+		timestampReader := encoding.NewReader(bytes.NewReader(data))
+		timestampDecoder := encoding.NewXORDecoder(timestampReader)
+		var timestamps []time.Time
+		for i := 0; i < int(seriesCount); i++ {
+			if !timestampDecoder.Next() {
+				return errors.Wrap(err, "Timestamps length not match series count, index: "+strconv.Itoa(i))
 			}
-			timestamp = append(timestamp, time)
-			pos += timestampLength
+			unixNano := timestampDecoder.Value()
+			timestamps = append(timestamps, unixNanoToTime(unixNano))
 		}
+		pos += int(timestampsBinaryLen)
 
-		// Parse binary Length.
-		data = filebytes[pos : pos+binaryLength]
-		buffer = bytes.NewBuffer(data)
-		err = binary.Write(buffer, binary.LittleEndian, &binaryLen)
+		// Parse values compression binary.
+		data = filebytes[pos:seriesBlockEndPos]
+		data, err = snappy.Decode(nil, data)
 		if err != nil {
-			return errors.Wrap(err, "Binary Length fail to convert from byte")
+			return errors.Wrap(err, "Read values compression binary fail to snappy decode")
 		}
-		pos += binaryLength
+		var values *list.List
+		values, err = parseValuesBinary(data)
+		if err != nil {
+			return errors.Wrap(err, "Parse values binary fail to split bytes")
+		}
+		if values.Len() != len(timestamps) {
+			return errors.New("Timestamps length and values length not match: " + strconv.Itoa(len(timestamps)) + " vs " + strconv.Itoa(values.Len()))
+		}
+		pos = seriesBlockEndPos
 
-		// Parse value.
-		data = filebytes[pos : pos+int(binaryLen)]
 		logEntry := &logEntry{
-			entryLength:  length,
-			seriesID:     seriesID,
-			count:        count,
-			timestamp:    timestamp,
-			binaryLength: binaryLen,
-			binary:       data,
+			entryLength: entryLen,
+			seriesID:    seriesID,
+			count:       int32(len(timestamps)),
+			timestamps:  timestamps,
+			values:      values,
 		}
-
 		logEntries = append(logEntries, logEntry)
-		pos += int(binaryLen)
 		if pos == len(filebytes) {
 			break
 		}
 		if pos-oldPos == int(batchWriteLen) {
-			parsebatchWriteLenFlag = true
+			parseBatchWriteLenFlag = true
 		}
 	}
 	segment.logEntries = logEntries
 	return nil
 }
 
-func (logEntry *logEntry) GetSeriesID() common.SeriesID {
+func (logEntry *logEntry) GetSeriesID() common.SeriesIDV2 {
 	return logEntry.seriesID
 }
 
-func (logEntry *logEntry) GetTimestamp() []time.Time {
-	return logEntry.timestamp
+func (logEntry *logEntry) GetTimestamps() []time.Time {
+	return logEntry.timestamps
 }
 
-func (logEntry *logEntry) GetBinary() []byte {
-	return logEntry.binary
+func (logEntry *logEntry) GetValues() *list.List {
+	return logEntry.values
 }
 
-func (buffer *buffer) write(request logRequest) error {
-	var seriesID common.SeriesID
-	buf := bytes.NewBuffer(request.seriesID)
-	err := binary.Write(buf, binary.LittleEndian, &seriesID)
-	if err != nil {
-		return errors.Wrap(err, "SeriesId fail to convert from byte")
-	}
-	if buffer.timestampMap[seriesID] == nil {
-		buffer.size += seriesIDLength + timestampLength + len(request.data)
-	} else {
-		buffer.size += timestampLength + len(request.data)
-	}
+func (buffer *buffer) write(request logRequest) {
+	seriesID := request.seriesID
 	buffer.timestampMap[seriesID] = append(buffer.timestampMap[seriesID], request.timestamp)
+
+	// Value item: binary-length(2-bytes) + binary data(n-bytes)
+	binaryLength := int16ToBytes(int16(len(request.data)))
+	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], binaryLength...)
 	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
-	return nil
+
+	buffer.callbackMap[seriesID] = append(buffer.callbackMap[seriesID], request.callback)
+	buffer.count += 1
+}
+
+func (buffer *buffer) notifyRequests(err error) {
+	for seriesID, callbacks := range buffer.callbackMap {
+		timestamps := buffer.timestampMap[seriesID]
+		values := buffer.valueMap[seriesID]
+		valuePos := 0
+		var valueItem []byte
+		for index, callback := range callbacks {
+			valuePos, valueItem, _ = readBinarySplit(values, valuePos, valuesBinaryLength)
+			runCallbackWithTryCatch(func() {
+				callback(seriesID, timestamps[index], valueItem, err)
+			})
+		}
+	}
+}
+
+func segmentName(index uint64) string {
+	return fmt.Sprintf("%v%016x%v", segmentNamePrefix, index, segmentNameSuffix)
+}
+
+func runCallbackWithTryCatch(callback func()) {
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Printf("Run callback error is %v\n", err)
+		}
+	}()
+	callback()
+}
+
+func parseValuesBinary(binary []byte) (*list.List, error) {
+	values := list.New()
+	pos := 0
+	for {
+		nextPos, binaryItem, err := readBinarySplit(binary, pos, valuesBinaryLength)
+		if err != nil {
+			return nil, errors.Wrap(err, "Read binary split error")
+		}
+		if binaryItem == nil {
+			break
+		}
+		values.PushBack(binaryItem)
+		pos = nextPos
+	}
+	return values, nil
+}
+
+func readBinarySplit(raw []byte, pos int, offsetLen int) (int, []byte, error) {
+	if pos == len(raw) {
+		return pos, nil, nil
+	}
+
+	data := raw[pos : pos+offsetLen]
+	binaryLen := bytesToInt16(data)
+	pos += offsetLen
+
+	data = raw[pos : pos+int(binaryLen)]
+	pos += int(binaryLen)
+	return pos, data, nil
+}
+
+func rewriteInt64InBuf(buf []byte, value int64, offset int, order binary.ByteOrder) {
+	_ = buf[offset+7] // early bounds check to guarantee safety of writes below
+	if order == binary.LittleEndian {
+		buf[offset+0] = byte(value)
+		buf[offset+1] = byte(value >> 8)
+		buf[offset+2] = byte(value >> 16)
+		buf[offset+3] = byte(value >> 24)
+		buf[offset+4] = byte(value >> 32)
+		buf[offset+5] = byte(value >> 40)
+		buf[offset+6] = byte(value >> 48)
+		buf[offset+7] = byte(value >> 56)
+	} else {
+		buf[offset+0] = byte(value >> 56)
+		buf[offset+1] = byte(value >> 48)
+		buf[offset+2] = byte(value >> 40)
+		buf[offset+3] = byte(value >> 32)
+		buf[offset+4] = byte(value >> 24)
+		buf[offset+5] = byte(value >> 16)
+		buf[offset+6] = byte(value >> 8)
+		buf[offset+7] = byte(value)
+	}
+}
+
+func int16ToBytes(i int16) []byte {
+	var buf = make([]byte, 2)
+	binary.LittleEndian.PutUint16(buf, uint16(i))
+	return buf
+}
+
+func bytesToInt16(buf []byte) int16 {
+	return int16(binary.LittleEndian.Uint16(buf))
+}
+
+func timeTouUnixNano(time time.Time) uint64 {
+	return uint64(time.UnixNano())
+}
+
+func unixNanoToTime(unixNano uint64) time.Time {
+	return time.Unix(0, int64(unixNano))
 }
