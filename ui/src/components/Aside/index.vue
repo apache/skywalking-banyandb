@@ -148,7 +148,7 @@ const menuItemFunction = {
     "new group": openCreateGroup,
     "edit group": openEditGroup,
     "new resources": openCreateResource,
-    "refresh": getGroupList,
+    "refresh": getGroupLists,
     "delete": openDeletaDialog,
     "edit resources": openEditResource,
     'new index-rule': openCreateIndexRuleOrIndexRuleBinding,

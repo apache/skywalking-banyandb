@@ -110,3 +110,26 @@ export function getindexRuleBindingList(name) {
         method: 'get'
     })
 }
+
+export function getIndexRuleOrIndexRuleBinding(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'get'
+    })
+}
+
+export function createIndexRuleOrIndexRuleBinding(type, data) {
+    return request({
+        url: `/api/v1/${type}/schema`,
+        method: 'post',
+        data: data
+    })
+}
+
+export function updatendexRuleOrIndexRuleBinding(type, group, name, data) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'put',
+        data: data
+    })
+}

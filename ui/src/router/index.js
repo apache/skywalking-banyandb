@@ -77,7 +77,7 @@ const router = createRouter({
               component: () => import('@/components/IndexRule/Editor.vue')
             },
             {
-              path: '/banyandb/stream/index-rule/operator/:type/:operator/:group',
+              path: '/banyandb/stream/index-rule/operator/:type/:operator/:group/:name',
               name: 'edit-index-rule',
               component: () => import('@/components/IndexRule/Editor.vue')
             },
