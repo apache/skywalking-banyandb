@@ -142,14 +142,16 @@ const submit = async (formEl: FormInstance | undefined) => {
   await formEl.validate((valid) => {
     if (valid) {
       const param = {
-        metadata: {
-          group: data.form.group,
-          name: data.form.name
-        },
-        tags: data.form.tags,
-        type: data.form.type,
-        location: data.form.location,
-        analyzer: data.form.analyzer
+        indexRule: {
+          metadata: {
+            group: data.form.group,
+            name: data.form.name
+          },
+          tags: data.form.tags,
+          type: data.form.type,
+          location: data.form.location,
+          analyzer: data.form.analyzer
+        }
       }
       $loadingCreate()
       if (data.operator == 'create') {

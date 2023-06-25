@@ -19,7 +19,7 @@
 
 <script setup>
 import RigheMenu from '@/components/RightMenu/index.vue'
-import { getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
+import { deleteIndexRuleOrIndexRuleBinding, getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
@@ -546,16 +546,40 @@ function openEditResource() {
     $bus.emit('AddTabs', add)
 }
 function openDeletaDialog() {
-    ElMessageBox.confirm('Are you sure to delete this resource?')
+    ElMessageBox.confirm('Are you sure to delete?')
         .then(() => {
             let group = data.groupLists[data.clickIndex].metadata.name
             if (data.rightClickType == 'group') {
                 return deleteGroupFunction(group)
+            } else if (data.rightClickType == 'index-rule') {
+                return deleteIndexRuleFunction()
             }
             return deleteResource(group)
         })
         .catch(() => {
             // catch error
+        })
+}
+function deleteIndexRuleFunction() {
+    $loadingCreate()
+    let group = data.groupLists[data.clickIndex].metadata.name
+    let name = data.groupLists[data.clickIndex].indexRule[data.clickChildIndex].metadata.name
+    deleteIndexRuleOrIndexRuleBinding("index-rule", group, name)
+        .then((res) => {
+            if (res.status == 200) {
+                if (res.data.deleted) {
+                    ElMessage({
+                        message: 'Delete succeeded',
+                        type: "success",
+                        duration: 5000
+                    })
+                    getGroupLists()
+                    $bus.emit('deleteResource', name)
+                }
+            }
+        })
+        .finally(() => {
+            $loadingClose()
         })
 }
 function deleteGroupFunction(group) {
@@ -741,7 +765,8 @@ initActiveMenu()
                             </template>
                             <div v-for="(child, childIndex) in item.indexRule" :key="child.metadata.name">
                                 <div @contextmenu.prevent="rightClickIndexRuleItem($event, index, childIndex)">
-                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRule')" :index="`${child.metadata.group}-${child.metadata.name}`">
+                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRule')"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>
                                                 <Document />
@@ -769,7 +794,9 @@ initActiveMenu()
                             </template>
                             <div v-for="(child, childIndex) in item.indexRuleBinding" :key="child.metadata.name">
                                 <div @contextmenu.prevent="rightClickIndexRuleBindingItem($event, index, childIndex)">
-                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRuleBinding')" :index="`${child.metadata.group}-${child.metadata.name}`">
+                                    <el-menu-item
+                                        @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRuleBinding')"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>
                                                 <Document />

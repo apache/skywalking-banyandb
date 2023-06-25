@@ -133,3 +133,10 @@ export function updatendexRuleOrIndexRuleBinding(type, group, name, data) {
         data: data
     })
 }
+
+export function deleteIndexRuleOrIndexRuleBinding(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'delete'
+    })
+}
