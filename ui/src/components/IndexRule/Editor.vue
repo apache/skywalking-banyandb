@@ -126,10 +126,16 @@ const data = reactive({
 
 
 watch(() => route, () => {
+  data.form = {
+    group: route.params.group,
+    name: route.params.name || '',
+    analyzer: '',
+    location: '',
+    tags: [],
+    type: ''
+  }
   data.group = route.params.group
-  data.form.group = route.params.group
   data.name = route.params.name
-  data.form.name = route.params.name || ''
   data.type = route.params.type
   data.operator = route.params.operator
   initData()
