@@ -166,8 +166,6 @@ func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
 	switch v := value.Value.(type) {
 	case *modelv1.TagValue_Str:
 		return &strLiteral{v.Str.GetValue()}, nil
-	case *modelv1.TagValue_Id:
-		return &idLiteral{v.Id.GetValue()}, nil
 	case *modelv1.TagValue_StrArray:
 		return &strArrLiteral{
 			arr: v.StrArray.GetValue(),

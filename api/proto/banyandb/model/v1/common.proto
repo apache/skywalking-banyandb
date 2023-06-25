@@ -24,10 +24,6 @@ import "google/protobuf/struct.proto";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 option java_package = "org.apache.skywalking.banyandb.model.v1";
 
-message ID {
-  string value = 1;
-}
-
 message Str {
   string value = 1;
 }
@@ -56,7 +52,6 @@ message TagValue {
     Int int = 4;
     IntArray int_array = 5;
     bytes binary_data = 6;
-    ID id = 7;
   }
 }
 

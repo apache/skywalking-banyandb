@@ -23,7 +23,6 @@ import (
 
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -49,10 +48,9 @@ func (s *store) Close() (err error) {
 	return err
 }
 
-func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
+func (s *store) Write(fields []index.Field, docID uint64) (err error) {
 	for _, field := range fields {
-		itemIDInt := uint64(itemID)
-		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(itemIDInt), itemIDInt))
+		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(docID), docID))
 	}
 	return err
 }

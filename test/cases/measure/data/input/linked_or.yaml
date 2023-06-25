@@ -32,7 +32,7 @@ criteria:
         name: "id"
         op: "BINARY_OP_EQ"
         value:
-          id:
+          str:
             value: "4"
     right:
       le:
@@ -42,7 +42,7 @@ criteria:
             name: "id"
             op: "BINARY_OP_EQ"
             value:
-              id:
+              str:
                 value: "5"
         right:
           le:
@@ -52,5 +52,5 @@ criteria:
                 name: "id"
                 op: "BINARY_OP_EQ"
                 value:
-                  id:
+                  str:
                     value: "unknown"
