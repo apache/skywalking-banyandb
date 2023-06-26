@@ -72,34 +72,34 @@ const router = createRouter({
               component: () => import('@/views/Stream/createEdit.vue')
             },
             {
-              path: '/banyandb/stream/index-rule/operator/:type/:operator/:group',
-              name: 'create-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
-            },
-            {
-              path: '/banyandb/stream/index-rule/operator/:type/:operator/:group/:name',
-              name: 'edit-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
-            },
-            {
-              path: '/banyandb/stream/index-rule/operator/:type/:operator/:group/:name',
+              path: '/banyandb/stream/index-rule/operator-read/:type/:operator/:group/:name',
               name: 'index-rule',
               component: () => import('@/components/IndexRule/index.vue')
             },
             {
-              path: '/banyandb/stream/index-rule-binding/operator/:type/:operator/:group',
+              path: '/banyandb/stream/index-rule/operator-create/:type/:operator/:group',
+              name: 'create-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue')
+            },
+            {
+              path: '/banyandb/stream/index-rule/operator-edit/:type/:operator/:group/:name',
+              name: 'edit-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue')
+            },
+            {
+              path: '/banyandb/stream/index-rule-binding/operator-read/:type/:operator/:group/:name',
+              name: 'index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/index.vue')
+            },
+            {
+              path: '/banyandb/stream/index-rule-binding/operator-create/:type/:operator/:group',
               name: 'create-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/Editor.vue')
             },
             {
-              path: '/banyandb/stream/index-rule-binding/operator/:type/:operator/:group/:name',
+              path: '/banyandb/stream/index-rule-binding/operator-edit/:type/:operator/:group/:name',
               name: 'edit-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/Editor.vue')
-            },
-            {
-              path: '/banyandb/stream/index-rule-binding/operator/:type/:operator/:group/:name',
-              name: 'index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/index.vue')
             }
           ]
         },
