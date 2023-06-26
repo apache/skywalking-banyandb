@@ -207,3 +207,26 @@ func (w *writer) Write() (GlobalItemID, error) {
 		Term: convert.Int64ToBytes(w.ts.UnixNano()),
 	}, id.ID)
 }
+
+var _ IndexWriter = (*seriesIndexWriter)(nil)
+
+type seriesIndexWriter struct {
+	seriesDB SeriesDatabase
+	seriesID common.SeriesID
+}
+
+func (s *seriesIndexWriter) WriteInvertedIndex(fields []index.Field) error {
+	return s.seriesDB.writeInvertedIndex(fields, s.seriesID)
+}
+
+func (s *seriesIndexWriter) WriteLSMIndex(fields []index.Field) error {
+	return s.seriesDB.writeLSMIndex(fields, s.seriesID)
+}
+
+// NewSeriesIndexWriter returns a new series index writer.
+func NewSeriesIndexWriter(seriesID common.SeriesID, seriesDB SeriesDatabase) IndexWriter {
+	return &seriesIndexWriter{
+		seriesID: seriesID,
+		seriesDB: seriesDB,
+	}
+}

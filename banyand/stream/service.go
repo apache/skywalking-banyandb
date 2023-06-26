@@ -162,6 +162,7 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		pipeline: pipeline,
 		dbOpts: tsdb.DatabaseOpts{
 			EnableGlobalIndex: true,
+			IndexGranularity:  tsdb.IndexGranularityBlock,
 		},
 		stopCh: make(chan struct{}),
 	}, nil
