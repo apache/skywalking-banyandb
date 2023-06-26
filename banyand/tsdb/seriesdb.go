@@ -523,7 +523,7 @@ func (s *seriesDB) Search(ctx context.Context, path Path, filter index.Filter, o
 			continue
 		}
 		pIter := pv.Iterator()
-		for iter.Next() {
+		for pIter.Next() {
 			var series Series
 			if series, err = s.GetByID(common.SeriesID(pIter.Current())); err != nil {
 				return nil, multierr.Append(err, pIter.Close())
