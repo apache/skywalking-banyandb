@@ -115,7 +115,7 @@ const data = reactive({
     tableFields: [],
     handleFields: "",
     group: route.params.group,
-    name: route.params.group,
+    name: route.params.name,
     type: route.params.type,
     tagFamily: 0,
     tagFamilies: [],
