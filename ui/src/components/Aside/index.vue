@@ -362,6 +362,13 @@ function shrinkDown(e) {
 // right click menu
 function rightClickGroup(e, index) {
     data.rightMenuList = groupMenu
+    if (props.type == 'measure') {
+        data.rightMenuList.push({
+            icon: "el-icon-document",
+            name: "new resources",
+            id: "create resources"
+        })
+    }
     data.clickIndex = index
     data.rightClickType = 'group'
     openRightMenu(e)
@@ -552,7 +559,9 @@ function openDeletaDialog() {
             if (data.rightClickType == 'group') {
                 return deleteGroupFunction(group)
             } else if (data.rightClickType == 'index-rule') {
-                return deleteIndexRuleFunction()
+                return deleteIndexRuleOrIndexRuleBindingFunction("index-rule")
+            } else if (data.rightClickType == 'index-rule-binding') {
+                return deleteIndexRuleOrIndexRuleBindingFunction("index-rule-binding")
             }
             return deleteResource(group)
         })
@@ -560,11 +569,15 @@ function openDeletaDialog() {
             // catch error
         })
 }
-function deleteIndexRuleFunction() {
+function deleteIndexRuleOrIndexRuleBindingFunction(type) {
     $loadingCreate()
+    const flag = {
+        'index-rule': 'indexRule',
+        'index-rule-binding': 'indexRuleBinding'
+    }
     let group = data.groupLists[data.clickIndex].metadata.name
-    let name = data.groupLists[data.clickIndex].indexRule[data.clickChildIndex].metadata.name
-    deleteIndexRuleOrIndexRuleBinding("index-rule", group, name)
+    let name = data.groupLists[data.clickIndex][flag[type]][data.clickChildIndex].metadata.name
+    deleteIndexRuleOrIndexRuleBinding(type, group, name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
