@@ -49,21 +49,23 @@ watch(() => route, () => {
 })
 
 function initData() {
-  $loadingCreate()
-  getIndexRuleOrIndexRuleBinding(data.type, data.group, data.name)
-    .then(result => {
-      data.indexRule = result.data.indexRule
-    })
-    .catch(err => {
-      ElMessage({
-        message: 'Please refresh and try again. Error: ' + err,
-        type: "error",
-        duration: 3000
+  if (data.type && data.group && data.name) {
+    $loadingCreate()
+    getIndexRuleOrIndexRuleBinding(data.type, data.group, data.name)
+      .then(result => {
+        data.indexRule = result.data.indexRule
       })
-    })
-    .finally(() => {
-      $loadingClose()
-    })
+      .catch(err => {
+        ElMessage({
+          message: 'Please refresh and try again. Error: ' + err,
+          type: "error",
+          duration: 3000
+        })
+      })
+      .finally(() => {
+        $loadingClose()
+      })
+  }
 }
 </script>
 

@@ -68,15 +68,15 @@ function initData() {
     if (operator == 'read') {
         routeData.name = type
         add.label = name
-        add.type = type == 'index-rule' || type == 'index-rule' ? `Read-${type}` : 'Read'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Read-${type}` : 'Read'
     } else if (operator == 'edit') {
         routeData.name = `edit-${type}`
         add.label = name
-        add.type = type == 'index-rule' || type == 'index-rule' ? `Edit-${type}` : 'Edit'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Edit-${type}` : 'Edit'
     } else {
         routeData.name = `create-${type}`
         add.label = group
-        add.type = type == 'index-rule' || type == 'index-rule' ? `Create-${type}` : 'Create'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Create-${type}` : 'Create'
     }
     data.tabsList.push(add)
 }

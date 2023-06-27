@@ -72,7 +72,7 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 
 ## Contributing
 
-For developers who want to contribute to this project, see the [Contribution Guide](CONTRIBUTING.md)](CONTRIBUTING.md)
+For developers who want to contribute to this project, see the [Contribution Guide](CONTRIBUTING.md).
 
 ## License
 
