@@ -1,4 +1,4 @@
-# Contributing to Apache SkyWalking Cloud on Kubernetes
+# Contributing to Apache SkyWalking BanyanDB
 
 Firstly, thanks for your interest in contributing! We hope that this will be a
 pleasant first experience for you, and that you will return to continue
