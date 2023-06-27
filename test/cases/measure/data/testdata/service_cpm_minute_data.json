@@ -5,7 +5,7 @@
         "tags": [
           {
             "str": {
-              "value": "1"
+              "value": "svc1"
             }
           },
           {
@@ -35,7 +35,7 @@
         "tags": [
           {
             "str": {
-              "value": "4"
+              "value": "svc1"
             }
           },
           {
@@ -65,12 +65,12 @@
         "tags": [
           {
             "str": {
-              "value": "5"
+              "value": "svc1"
             }
           },
           {
             "str": {
-              "value": "entity_2"
+              "value": "entity_3"
             }
           }
         ]
@@ -95,12 +95,12 @@
         "tags": [
           {
             "str": {
-              "value": "6"
+              "value": "svc2"
             }
           },
           {
             "str": {
-              "value": "entity_3"
+              "value": "entity_4"
             }
           }
         ]
@@ -125,12 +125,12 @@
         "tags": [
           {
             "str": {
-              "value": "2"
+              "value": "svc2"
             }
           },
           {
             "str": {
-              "value": "entity_1"
+              "value": "entity_5"
             }
           }
         ]
@@ -155,12 +155,12 @@
         "tags": [
           {
             "str": {
-              "value": "3"
+              "value": "svc3"
             }
           },
           {
             "str": {
-              "value": "entity_1"
+              "value": "entity_6"
             }
           }
         ]

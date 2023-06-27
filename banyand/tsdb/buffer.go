@@ -161,6 +161,9 @@ func (b *Buffer) Read(key []byte, ts time.Time) ([]byte, bool) {
 
 // Close gracefully closes the Buffer and ensures that all pending operations are completed.
 func (b *Buffer) Close() error {
+	if b == nil {
+		return nil
+	}
 	b.closerOnce.Do(func() {
 		b.entryCloser.Done()
 		b.entryCloser.CloseThenWait()

@@ -21,6 +21,7 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 var _ Shard = (*scopedShard)(nil)
@@ -71,6 +72,18 @@ var _ SeriesDatabase = (*scopedSeriesDatabase)(nil)
 type scopedSeriesDatabase struct {
 	delegated SeriesDatabase
 	scope     Entry
+}
+
+func (sdd *scopedSeriesDatabase) writeInvertedIndex(fields []index.Field, seriesID common.SeriesID) error {
+	return sdd.delegated.writeInvertedIndex(fields, seriesID)
+}
+
+func (sdd *scopedSeriesDatabase) writeLSMIndex(fields []index.Field, seriesID common.SeriesID) error {
+	return sdd.delegated.writeLSMIndex(fields, seriesID)
+}
+
+func (sdd *scopedSeriesDatabase) Search(ctx context.Context, path Path, filter index.Filter, order *OrderBy) (SeriesList, error) {
+	return sdd.delegated.Search(ctx, path.prepend(sdd.scope), filter, order)
 }
 
 func (sdd *scopedSeriesDatabase) Close() error {

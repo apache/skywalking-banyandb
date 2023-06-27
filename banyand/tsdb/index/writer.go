@@ -38,10 +38,11 @@ import (
 
 // Message wraps value and other info to generate relative indices.
 type Message struct {
-	Value       Value
-	LocalWriter tsdb.Writer
-	BlockCloser io.Closer
-	Scope       tsdb.Entry
+	IndexWriter  tsdb.IndexWriter
+	BlockCloser  io.Closer
+	Value        Value
+	Scope        tsdb.Entry
+	GlobalItemID tsdb.GlobalItemID
 }
 
 // Value represents the input data for generating indices.
@@ -122,8 +123,8 @@ func NewWriter(ctx context.Context, options WriterOptions) *Writer {
 
 func (s *Writer) Write(m Message) {
 	err := multierr.Combine(
-		s.writeLocalIndex(m.LocalWriter, m.Value),
-		s.writeGlobalIndex(m.Scope, m.LocalWriter.ItemID(), m.Value),
+		s.writeLocalIndex(m.IndexWriter, m.Value),
+		s.writeGlobalIndex(m.Scope, m.GlobalItemID, m.Value),
 		m.BlockCloser.Close(),
 	)
 	if err != nil {
@@ -191,7 +192,7 @@ func (s *Writer) writeGlobalIndex(scope tsdb.Entry, ref tsdb.GlobalItemID, value
 	)
 }
 
-func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
+func (s *Writer) writeLocalIndex(writer tsdb.IndexWriter, value Value) (err error) {
 	collect := func(ruleIndexes []*partition.IndexRuleLocator, fn func(fields []index.Field) error) error {
 		fields := make([]index.Field, 0)
 		for _, ruleIndex := range ruleIndexes {
@@ -212,6 +213,9 @@ func (s *Writer) writeLocalIndex(writer tsdb.Writer, value Value) (err error) {
 					Term: val,
 				})
 			}
+		}
+		if len(fields) == 0 {
+			return nil
 		}
 		return fn(fields)
 	}

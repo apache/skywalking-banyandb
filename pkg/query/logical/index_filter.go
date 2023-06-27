@@ -81,6 +81,12 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 		if le.GetLeft() == nil && le.GetRight() == nil {
 			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
+		if le.GetLeft() == nil {
+			return BuildLocalFilter(le.Right, schema, entityDict, entity)
+		}
+		if le.GetRight() == nil {
+			return BuildLocalFilter(le.Left, schema, entityDict, entity)
+		}
 		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
