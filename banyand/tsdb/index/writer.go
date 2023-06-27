@@ -214,6 +214,9 @@ func (s *Writer) writeLocalIndex(writer tsdb.IndexWriter, value Value) (err erro
 				})
 			}
 		}
+		if len(fields) == 0 {
+			return nil
+		}
 		return fn(fields)
 	}
 	return multierr.Combine(
