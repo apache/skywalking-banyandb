@@ -32,6 +32,7 @@ Release Notes.
 
 - Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
 - Fix resource corrupts caused by update indexRule operation
+- Set the maximum integer as the limit for aggregation or grouping operations when performing aggregation or grouping operations in a query plan.
 
 ### Chores
 
