@@ -24,12 +24,12 @@ Release Notes.
 - Generalize the index's docID to uint64.
 - Remove redundant ID tag type.
 - Improve granularity of index in `measure` by leveling up from data point to series.
-- Set the maximum integer as the limit for aggregation or grouping operations when performing aggregation or grouping operations in a query plan.
 
 ### Bugs
 
 - Fix iterator leaks and ensure proper closure and introduce a closer to guarantee all iterators are closed
 - Fix resource corrupts caused by update indexRule operation
+- Set the maximum integer as the limit for aggregation or grouping operations when performing aggregation or grouping operations in a query plan.
 
 ### Chores
 
