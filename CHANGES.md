@@ -24,6 +24,7 @@ Release Notes.
 - Generalize the index's docID to uint64.
 - Remove redundant ID tag type.
 - Improve granularity of index in `measure` by leveling up from data point to series.
+- Set the maximum integer as the limit for aggregation or grouping operations when performing aggregation or grouping operations in a query plan.
 
 ### Bugs
 
