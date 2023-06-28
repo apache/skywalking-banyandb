@@ -182,15 +182,6 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 			return nil, []tsdb.Entity{parsedEntity}, nil
 		}
 		return str(v.Str.GetValue()), nil, nil
-	case *modelv1.TagValue_Id:
-		if ok {
-			parsedEntity := make(tsdb.Entity, len(entity))
-			copy(parsedEntity, entity)
-			parsedEntity[entityIdx] = []byte(v.Id.GetValue())
-			return nil, []tsdb.Entity{parsedEntity}, nil
-		}
-		return id(v.Id.GetValue()), nil, nil
-
 	case *modelv1.TagValue_StrArray:
 		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
 			entities := make([]tsdb.Entity, len(v.StrArray.Value))
@@ -648,7 +639,7 @@ func (an emptyNode) String() string {
 
 type bypassList struct{}
 
-func (bl bypassList) Contains(_ common.ItemID) bool {
+func (bl bypassList) Contains(_ uint64) bool {
 	// all items should be fetched
 	return true
 }
@@ -657,7 +648,7 @@ func (bl bypassList) IsEmpty() bool {
 	return false
 }
 
-func (bl bypassList) Max() (common.ItemID, error) {
+func (bl bypassList) Max() (uint64, error) {
 	panic("not invoked")
 }
 
@@ -677,7 +668,7 @@ func (bl bypassList) Equal(_ posting.List) bool {
 	panic("not invoked")
 }
 
-func (bl bypassList) Insert(_ common.ItemID) {
+func (bl bypassList) Insert(_ uint64) {
 	panic("not invoked")
 }
 
@@ -701,11 +692,11 @@ func (bl bypassList) AddIterator(_ posting.Iterator) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) AddRange(_ common.ItemID, _ common.ItemID) error {
+func (bl bypassList) AddRange(_ uint64, _ uint64) error {
 	panic("not invoked")
 }
 
-func (bl bypassList) RemoveRange(_ common.ItemID, _ common.ItemID) error {
+func (bl bypassList) RemoveRange(_ uint64, _ uint64) error {
 	panic("not invoked")
 }
 
@@ -713,7 +704,7 @@ func (bl bypassList) Reset() {
 	panic("not invoked")
 }
 
-func (bl bypassList) ToSlice() []common.ItemID {
+func (bl bypassList) ToSlice() []uint64 {
 	panic("not invoked")
 }
 

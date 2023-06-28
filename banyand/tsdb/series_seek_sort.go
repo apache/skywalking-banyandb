@@ -200,7 +200,7 @@ func (s *searcherIterator) Next() bool {
 func (s *searcherIterator) Val() Item {
 	return &item{
 		sortedField: s.curKey,
-		itemID:      s.cur.Current(),
+		itemID:      common.ItemID(s.cur.Current()),
 		data:        s.data,
 		seriesID:    s.seriesID,
 	}

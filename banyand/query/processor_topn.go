@@ -165,8 +165,6 @@ func locateEntity(topNSchema *databasev1.TopNAggregation, sortDirection modelv1.
 			switch v := pairQuery.GetValue().GetValue().(type) {
 			case *modelv1.TagValue_Str:
 				entity[entityIdx] = []byte(v.Str.GetValue())
-			case *modelv1.TagValue_Id:
-				entity[entityIdx] = []byte(v.Id.GetValue())
 			case *modelv1.TagValue_Int:
 				entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
 			default:

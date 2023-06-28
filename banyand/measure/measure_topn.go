@@ -190,8 +190,8 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 						Tags: append([]*modelv1.TagValue{
 							// MeasureID
 							{
-								Value: &modelv1.TagValue_Id{
-									Id: &modelv1.ID{
+								Value: &modelv1.TagValue_Str{
+									Str: &modelv1.Str{
 										Value: measureID,
 									},
 								},
@@ -484,8 +484,6 @@ func stringify(tagValue *modelv1.TagValue) string {
 	switch v := tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Str:
 		return v.Str.GetValue()
-	case *modelv1.TagValue_Id:
-		return v.Id.GetValue()
 	case *modelv1.TagValue_Int:
 		return strconv.FormatInt(v.Int.GetValue(), 10)
 	case *modelv1.TagValue_BinaryData:

@@ -102,7 +102,7 @@ dataPoints:
     tags:
     - key: id
       value:
-        id:
+        str:
           value: "2"
     - key: entity_id
       value:
