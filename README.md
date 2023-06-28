@@ -44,7 +44,7 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [x] Index processor
 - [x] TTL
 - [x] Cold data processor
-- [ ] WAL (v0.3.0)
+- [ ] WAL (v0.5.0)
 
 ### Query processor
 
@@ -58,17 +58,17 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 ### Verification
 
 - [x] E2E with OAP and simulated data
-- [ ] E2E with showcases, agents and OAP (v0.3.0)
+- [x] E2E with showcases, agents and OAP
 - [x] Space utilization rate
-- [ ] Leading and trailing zero (v0.4.0)
-- [ ] Stability (v0.3.0)
-- [ ] Crash recovery (v0.3.0)
+- [ ] Leading and trailing zero (v0.5.0)
+- [ ] Stability (v0.5.0)
+- [ ] Crash recovery (v0.5.0)
 - [ ] Performance
 
 ### Tools
 
 - [x] Command-line
-- [ ] Webapp (v0.4.0)
+- [x] Webapp
 
 ## Contributing
 

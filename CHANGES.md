@@ -24,6 +24,9 @@ Release Notes.
 - Generalize the index's docID to uint64.
 - Remove redundant ID tag type.
 - Improve granularity of index in `measure` by leveling up from data point to series.
+- [UI] Add measure CRUD operations.
+- [UI] Add indexRule CRUD operations.
+- [UI] Add indexRuleBinding CRUD operations.
 
 ### Bugs
 
