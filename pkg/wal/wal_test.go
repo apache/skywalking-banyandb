@@ -75,8 +75,8 @@ var _ = ginkgo.Describe("WAL", func() {
 		})
 
 		ginkgo.It("should write and read data correctly", func() {
-			seriesIDCount := 1
-			seriesIDElementCount := 1
+			seriesIDCount := 100
+			seriesIDElementCount := 20
 			writeLogCount := seriesIDCount * seriesIDElementCount
 
 			var wg sync.WaitGroup
@@ -87,16 +87,18 @@ var _ = ginkgo.Describe("WAL", func() {
 					SeriesID: common.SeriesID(i),
 					Name:     fmt.Sprintf("series-%d", i),
 				}
-				for j := 0; j < seriesIDElementCount; j++ {
-					timestamp := time.UnixMilli(baseTime.UnixMilli() + int64(j))
-					value := []byte(fmt.Sprintf("value-%d", j))
-					callback := func(seriesID common.SeriesIDV2, t time.Time, bytes []byte, err error) {
-						gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				go func() {
+					for j := 0; j < seriesIDElementCount; j++ {
+						timestamp := time.UnixMilli(baseTime.UnixMilli() + int64(j))
+						value := []byte(fmt.Sprintf("value-%d", j))
+						callback := func(seriesID common.SeriesIDV2, t time.Time, bytes []byte, err error) {
+							gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-						wg.Done()
+							wg.Done()
+						}
+						log.Write(*seriesID, timestamp, value, callback)
 					}
-					log.Write(*seriesID, timestamp, value, callback)
-				}
+				}()
 			}
 			wg.Wait()
 
