@@ -37,6 +37,7 @@ import (
 var (
 	errUnspecifiedIndexType = errors.New("Unspecified index type")
 	emptyFilters            = make([]filterFn, 0)
+	rangeOpts               = index.RangeOpts{}
 )
 
 func (s *seekerBuilder) OrderByIndex(indexRule *databasev1.IndexRule, order modelv1.Sort) SeekerBuilder {
@@ -84,9 +85,9 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 		}
 		switch s.indexRuleForSorting.GetType() {
 		case databasev1.IndexRule_TYPE_TREE:
-			inner, err = b.lsmIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
+			inner, err = b.lsmIndexReader().Iterator(fieldKey, rangeOpts, s.order)
 		case databasev1.IndexRule_TYPE_INVERTED:
-			inner, err = b.invertedIndexReader().Iterator(fieldKey, s.rangeOptsForSorting, s.order)
+			inner, err = b.invertedIndexReader().Iterator(fieldKey, rangeOpts, s.order)
 		case databasev1.IndexRule_TYPE_UNSPECIFIED:
 			return nil, errors.WithMessagef(errUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
 		}

@@ -100,6 +100,15 @@ type Shard interface {
 	TriggerSchedule(task string) bool
 }
 
+// IndexGranularity denotes the granularity of the local index.
+type IndexGranularity int
+
+// The options of the local index granularity.
+const (
+	IndexGranularityBlock IndexGranularity = iota
+	IndexGranularitySeries
+)
+
 var _ Database = (*database)(nil)
 
 // DatabaseOpts wraps options to create a tsdb.
@@ -114,6 +123,7 @@ type DatabaseOpts struct {
 	GlobalIndexMemSize run.Bytes
 	ShardNum           uint32
 	EnableGlobalIndex  bool
+	IndexGranularity   IndexGranularity
 }
 
 // InvertedIndexOpts wraps options to create the block inverted index.

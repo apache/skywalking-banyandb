@@ -21,7 +21,6 @@
 import { reactive } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { getCurrentInstance } from '@vue/runtime-core'
-import { ElStep } from 'element-plus';
 
 const router = useRouter()
 const route = useRoute()
@@ -69,15 +68,15 @@ function initData() {
     if (operator == 'read') {
         routeData.name = type
         add.label = name
-        add.type = 'Read'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Read-${type}` : 'Read'
     } else if (operator == 'edit') {
         routeData.name = `edit-${type}`
         add.label = name
-        add.type = 'Edit'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Edit-${type}` : 'Edit'
     } else {
         routeData.name = `create-${type}`
         add.label = group
-        add.type = 'Create'
+        add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Create-${type}` : 'Create'
     }
     data.tabsList.push(add)
 }

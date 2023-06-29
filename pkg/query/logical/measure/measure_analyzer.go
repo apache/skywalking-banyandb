@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -72,8 +73,16 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 	// parse fields
 	plan := parseFields(criteria, metadata, groupByEntity)
 
+	// parse limit and offset
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = defaultLimit
+	}
+	pushedLimit := int(limitParameter + criteria.GetOffset())
+
 	if criteria.GetGroupBy() != nil {
 		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
+		pushedLimit = math.MaxInt
 	}
 
 	if criteria.GetAgg() != nil {
@@ -82,17 +91,13 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
 		)
+		pushedLimit = math.MaxInt
 	}
 
 	if criteria.GetTop() != nil {
 		plan = top(plan, criteria.GetTop())
 	}
 
-	// parse limit and offset
-	limitParameter := criteria.GetLimit()
-	if limitParameter == 0 {
-		limitParameter = defaultLimit
-	}
 	plan = limit(plan, criteria.GetOffset(), limitParameter)
 	p, err := plan.Analyze(s)
 	if err != nil {
@@ -100,7 +105,7 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 	}
 	rules := []logical.OptimizeRule{
 		logical.NewPushDownOrder(criteria.OrderBy),
-		logical.NewPushDownMaxSize(int(limitParameter + criteria.GetOffset())),
+		logical.NewPushDownMaxSize(pushedLimit),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {
 		return nil, err

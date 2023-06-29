@@ -24,16 +24,6 @@ tagProjection:
     tags: ["id"]
 fieldProjection:
   names: ["total", "value"]
-groupBy:
-  tagProjection:
-    tagFamilies:
-    - name: "default"
-      tags: ["id"]
-  fieldName: "value"
-agg:
-  function: "AGGREGATION_FUNCTION_MEAN"
-  fieldName: "value"
-top:
-  number: 2
-  fieldName: "value"
-  fieldValueSort: "SORT_ASC"
+orderBy:
+  sort: "SORT_DESC"
+  indexRuleName: "id"

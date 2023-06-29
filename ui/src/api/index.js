@@ -96,3 +96,47 @@ export function editResources(type, group, name, data) {
         data: data
     })
 }
+
+export function getindexRuleList(name) {
+    return request({
+        url: `/api/v1/index-rule/schema/lists/${name}`,
+        method: 'get'
+    })
+}
+
+export function getindexRuleBindingList(name) {
+    return request({
+        url: `/api/v1/index-rule-binding/schema/lists/${name}`,
+        method: 'get'
+    })
+}
+
+export function getIndexRuleOrIndexRuleBinding(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'get'
+    })
+}
+
+export function createIndexRuleOrIndexRuleBinding(type, data) {
+    return request({
+        url: `/api/v1/${type}/schema`,
+        method: 'post',
+        data: data
+    })
+}
+
+export function updatendexRuleOrIndexRuleBinding(type, group, name, data) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'put',
+        data: data
+    })
+}
+
+export function deleteIndexRuleOrIndexRuleBinding(type, group, name) {
+    return request({
+        url: `/api/v1/${type}/schema/${group}/${name}`,
+        method: 'delete'
+    })
+}
