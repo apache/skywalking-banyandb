@@ -50,7 +50,7 @@ Every other resource should belong to a group. The `catalog` indicates which kin
 * `MEASURE`: [`Measure`](#streams).
 * `STREAM`: [`Stream`](#measures).
 
-[Group Registration Operations](api-reference.md#groupregistryservice)
+[Group Registration Operations](../api-reference.md#groupregistryservice)
 
 ### Measures
 
@@ -270,9 +270,9 @@ expire_at: '2121-04-15T01:30:15.01Z'
 
 IndexRuleBinding binds IndexRules to a subject, `Stream` or `Measure`. The time range between `begin_at` and `expire_at` is the effective time.
 
-[IndexRule Registration Operations](api-reference.md#indexruleregistryservice)
+[IndexRule Registration Operations](../api-reference.md#indexruleregistryservice)
 
-[IndexRuleBinding Registration Operations](api-reference.md#indexrulebindingregistryservice)
+[IndexRuleBinding Registration Operations](../api-reference.md#indexrulebindingregistryservice)
 
 ### Index Granularity
 
@@ -294,9 +294,9 @@ The indexed target would be the combination of the series ID and timestamp, whic
 
 The following is a comparison of the indexing granularity, performance, and flexibility of `Stream` and `Measure` indices:
 
-| Indexing Granularity | Performance | Flexibility |
-| --- | --- | --- |
+| Indexing Granularity                                                                                                                                     | Performance                                | Flexibility                                                                                                     |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
 | Measure indices are constructed for each series and are based on the entity field of the Measure. Each indexed value has to represent a unique seriesID. | Measure index is faster than Stream index. | Measure index is less flexible and requires more care when indexing tags that are not part of the entity field. |
-| Stream indices are constructed for each element and are based on the series ID and timestamp. | Stream index is slower than Measure index. | Stream index is more flexible than Measure index and can index any tag value. |
+| Stream indices are constructed for each element and are based on the series ID and timestamp.                                                            | Stream index is slower than Measure index. | Stream index is more flexible than Measure index and can index any tag value.                                   |
 
 In general, `Measure` indices are faster and more efficient, but they require more care when indexing tags that are not part of the `entity` field. `Stream` indices, on the other hand, are slower and take up more space, but they can index any tag value and do not have the same side effects as `Measure` indices.
