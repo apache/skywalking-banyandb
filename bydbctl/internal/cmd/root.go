@@ -42,6 +42,14 @@ var (
 	}
 )
 
+// ResetFlags resets the flags.
+func ResetFlags() {
+	filePath = ""
+	name = ""
+	start = ""
+	end = ""
+}
+
 // Execute executes the root command.
 func Execute() error {
 	return rootCmd.Execute()
