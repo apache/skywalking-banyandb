@@ -32,11 +32,7 @@ dataPoints:
       value:
         str:
           value: svc1
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-  timestamp: "2023-06-25T23:26:00Z"
+  timestamp: "2023-06-26T12:41:00Z"
 - fields:
   - name: total
     value:
@@ -53,11 +49,7 @@ dataPoints:
       value:
         str:
           value: svc1
-    - key: entity_id
-      value:
-        str:
-          value: entity_2
-  timestamp: "2023-06-25T23:27:00Z"
+  timestamp: "2023-06-26T12:42:00Z"
 - fields:
   - name: total
     value:
@@ -74,11 +66,7 @@ dataPoints:
       value:
         str:
           value: svc1
-    - key: entity_id
-      value:
-        str:
-          value: entity_3
-  timestamp: "2023-06-25T23:28:00Z"
+  timestamp: "2023-06-26T12:43:00Z"
 - fields:
   - name: total
     value:
@@ -95,11 +83,7 @@ dataPoints:
       value:
         str:
           value: svc2
-    - key: entity_id
-      value:
-        str:
-          value: entity_4
-  timestamp: "2023-06-25T23:29:00Z"
+  timestamp: "2023-06-26T12:44:00Z"
 - fields:
   - name: total
     value:
@@ -116,11 +100,7 @@ dataPoints:
       value:
         str:
           value: svc2
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-  timestamp: "2023-06-25T23:30:00Z"
+  timestamp: "2023-06-26T12:45:00Z"
 - fields:
   - name: total
     value:
@@ -137,8 +117,4 @@ dataPoints:
       value:
         str:
           value: svc3
-    - key: entity_id
-      value:
-        str:
-          value: entity_6
-  timestamp: "2023-06-25T23:31:00Z"
+  timestamp: "2023-06-26T12:46:00Z"

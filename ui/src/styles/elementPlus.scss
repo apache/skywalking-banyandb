@@ -131,7 +131,6 @@
       el-select
 ==================== */
 .el-select {
-    height: 25px !important;
     border-radius: 1px !important;
     --el-select-input-focus-border-color: var(--color-main) !important;
     --el-select-border-color-hover: var(--color-main) !important;
@@ -156,26 +155,25 @@
       el-input
 ====================*/
 .el-input {
-    height: 25px !important;
     --el-input-border-radius: 1px !important;
     --el-input-focus-border-color: var(--color-main) !important;
     --el-input-clear-hover-color: var(--color-main) !important;
 
-    .el-input__inner {
+    /* .el-input__inner {
         height: 25px !important;
-    }
+    } */
 }
 
 /* ================
       el-date-editor
 =====================*/
 .el-date-editor {
-    height: 25px !important;
+    /* height: 25px !important; */
     border-radius: 1px !important;
 
-    .el-range-input {
+    /* .el-range-input {
         height: 21px !important;
-    }
+    } */
 }
 
 /* ================

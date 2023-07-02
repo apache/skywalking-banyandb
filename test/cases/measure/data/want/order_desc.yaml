@@ -24,23 +24,6 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "7"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-  timestamp: "2022-10-17T13:01:03.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "300"
-  - name: value
-    value:
-      int:
         value: "6"
   tagFamilies:
   - name: default
@@ -48,25 +31,8 @@ dataPoints:
     - key: entity_id
       value:
         str:
-          value: entity_1
-  timestamp: "2022-10-17T13:01:02.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "50"
-  - name: value
-    value:
-      int:
-        value: "12"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-  timestamp: "2022-10-17T13:00:03.444Z"
+          value: entity_6
+  timestamp: "2023-06-26T00:59:00Z"
 - fields:
   - name: total
     value:
@@ -82,25 +48,8 @@ dataPoints:
     - key: entity_id
       value:
         str:
-          value: entity_1
-  timestamp: "2022-10-17T13:00:02.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "11"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_3
-  timestamp: "2022-10-17T12:59:03.444Z"
+          value: entity_5
+  timestamp: "2023-06-26T00:58:00Z"
 - fields:
   - name: total
     value:
@@ -116,25 +65,8 @@ dataPoints:
     - key: entity_id
       value:
         str:
-          value: entity_3
-  timestamp: "2022-10-17T12:59:02.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "8"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_2
-  timestamp: "2022-10-17T12:58:03.444Z"
+          value: entity_4
+  timestamp: "2023-06-26T00:57:00Z"
 - fields:
   - name: total
     value:
@@ -150,25 +82,8 @@ dataPoints:
     - key: entity_id
       value:
         str:
-          value: entity_2
-  timestamp: "2022-10-17T12:58:02.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "9"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_2
-  timestamp: "2022-10-17T12:57:03.444Z"
+          value: entity_3
+  timestamp: "2023-06-26T00:56:00Z"
 - fields:
   - name: total
     value:
@@ -185,24 +100,7 @@ dataPoints:
       value:
         str:
           value: entity_2
-  timestamp: "2022-10-17T12:57:02.444Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "10"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_2
-  timestamp: "2022-10-17T12:56:03.444Z"
+  timestamp: "2023-06-26T00:55:00Z"
 - fields:
   - name: total
     value:
@@ -219,4 +117,4 @@ dataPoints:
       value:
         str:
           value: entity_1
-  timestamp: "2022-10-17T12:56:02.444Z"
+  timestamp: "2023-06-26T00:54:00Z"

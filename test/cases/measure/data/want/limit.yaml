@@ -24,29 +24,29 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "9"
+        value: "5"
   tagFamilies:
   - name: default
     tags:
     - key: entity_id
       value:
         str:
-          value: entity_2
-  timestamp: "2022-10-17T12:57:03.444Z"
+          value: entity_4
+  timestamp: "2023-06-26T01:01:00Z"
 - fields:
   - name: total
     value:
       int:
-        value: "100"
+        value: "50"
   - name: value
     value:
       int:
-        value: "3"
+        value: "4"
   tagFamilies:
   - name: default
     tags:
     - key: entity_id
       value:
         str:
-          value: entity_2
-  timestamp: "2022-10-17T12:58:02.444Z"
+          value: entity_5
+  timestamp: "2023-06-26T01:02:00Z"

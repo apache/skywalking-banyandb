@@ -23,6 +23,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -32,9 +33,15 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/lsm"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -245,13 +252,22 @@ func prepend(src []byte, entry []byte) []byte {
 	return dst
 }
 
+// OrderBy specifies the order of the result.
+type OrderBy struct {
+	Index *databasev1.IndexRule
+	Sort  modelv1.Sort
+}
+
 // SeriesDatabase allows retrieving series.
 type SeriesDatabase interface {
 	io.Closer
 	GetByID(id common.SeriesID) (Series, error)
 	Get(key []byte, entityValues EntityValues) (Series, error)
 	List(ctx context.Context, path Path) (SeriesList, error)
+	Search(ctx context.Context, path Path, filter index.Filter, order *OrderBy) (SeriesList, error)
 	SizeOnDisk() int64
+	writeInvertedIndex(fields []index.Field, seriesID common.SeriesID) error
+	writeLSMIndex(fields []index.Field, seriesID common.SeriesID) error
 }
 
 type blockDatabase interface {
@@ -270,6 +286,8 @@ var (
 
 type seriesDB struct {
 	seriesMetadata kv.Store
+	invertedIndex  index.Store
+	lsmIndex       index.Store
 	l              *logger.Logger
 	segCtrl        *segmentController
 	position       common.Position
@@ -277,6 +295,21 @@ type seriesDB struct {
 	sID common.ShardID
 }
 
+func (s *seriesDB) writeInvertedIndex(fields []index.Field, seriesID common.SeriesID) error {
+	if s.invertedIndex == nil {
+		return errors.New("inverted index is not enabled")
+	}
+	return s.invertedIndex.Write(fields, uint64(seriesID))
+}
+
+func (s *seriesDB) writeLSMIndex(fields []index.Field, seriesID common.SeriesID) error {
+	if s.lsmIndex == nil {
+		return errors.New("lsm index is not enabled")
+	}
+	return s.lsmIndex.Write(fields, uint64(seriesID))
+}
+
+// nolint: contextcheck
 func (s *seriesDB) GetByID(id common.SeriesID) (Series, error) {
 	var series string
 	if e := s.l.Debug(); e.Enabled() {
@@ -404,7 +437,8 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 				Uint64("series_id", uint64(seriesID)).
 				Msg("got a series with a full path")
 		}
-		return []Series{newSeries(ctx, seriesID, series, s)}, nil
+		// nolint: contextcheck
+		return []Series{newSeries(s.context(), seriesID, series, s)}, nil
 	}
 	result := make([]Series, 0)
 	var err error
@@ -444,6 +478,123 @@ func (s *seriesDB) List(ctx context.Context, path Path) (SeriesList, error) {
 		return nil, errScan
 	}
 	return result, err
+}
+
+func (s *seriesDB) Search(ctx context.Context, path Path, filter index.Filter, order *OrderBy) (SeriesList, error) {
+	if s.invertedIndex == nil || s.lsmIndex == nil {
+		return nil, errors.New("search is not supported")
+	}
+	if path.isFull {
+		return s.List(ctx, path)
+	}
+	if order == nil {
+		return s.filterSeries(ctx, path, filter)
+	}
+	fieldKey := index.FieldKey{
+		IndexRuleID: order.Index.GetMetadata().Id,
+	}
+	var iter index.FieldIterator
+	var err error
+	switch order.Index.Type {
+	case databasev1.IndexRule_TYPE_TREE:
+		iter, err = s.lsmIndex.Iterator(fieldKey, rangeOpts, order.Sort)
+	case databasev1.IndexRule_TYPE_INVERTED:
+		iter, err = s.invertedIndex.Iterator(fieldKey, rangeOpts, order.Sort)
+	default:
+		return nil, errUnspecifiedIndexType
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
+	var pl posting.List
+	if pl, err = s.seriesFilter(ctx, path, filter); err != nil {
+		return nil, err
+	}
+	seriesList := make([]Series, 0)
+	for iter.Next() {
+		pv := iter.Val().Value
+		if err = pv.Intersect(pl); err != nil {
+			return nil, err
+		}
+		if pv.IsEmpty() {
+			continue
+		}
+		pIter := pv.Iterator()
+		for pIter.Next() {
+			var series Series
+			if series, err = s.GetByID(common.SeriesID(pIter.Current())); err != nil {
+				return nil, multierr.Append(err, pIter.Close())
+			}
+			seriesList = append(seriesList, series)
+		}
+		if err = pIter.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return seriesList, err
+}
+
+func (s *seriesDB) filterSeries(ctx context.Context, path Path, filter index.Filter) (SeriesList, error) {
+	var seriesList SeriesList
+	var err error
+	if filter == nil {
+		return s.List(ctx, path)
+	}
+	var pl posting.List
+	if pl, err = filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+		switch ruleType {
+		case databasev1.IndexRule_TYPE_TREE:
+			return s.lsmIndex, nil
+		case databasev1.IndexRule_TYPE_INVERTED:
+			return s.invertedIndex, nil
+		default:
+			return nil, errUnspecifiedIndexType
+		}
+	}, 0); err != nil {
+		return nil, err
+	}
+
+	if len(path.seekKey) == 0 {
+		iter := pl.Iterator()
+		defer func() {
+			err = multierr.Append(err, iter.Close())
+		}()
+		for iter.Next() {
+			var series Series
+			if series, err = s.GetByID(common.SeriesID(iter.Current())); err != nil {
+				return nil, err
+			}
+			seriesList = append(seriesList, series)
+		}
+		return seriesList, err
+	}
+	if seriesList, err = s.List(ctx, path); err != nil {
+		return nil, err
+	}
+	// Remove a series from seriesList if its ID is not in the pl
+	for i := 0; i < len(seriesList); i++ {
+		if !pl.Contains(uint64(seriesList[i].ID())) {
+			seriesList = append(seriesList[:i], seriesList[i+1:]...)
+			i--
+		}
+	}
+	return seriesList, nil
+}
+
+func (s *seriesDB) seriesFilter(ctx context.Context, path Path, filter index.Filter) (posting.List, error) {
+	var sl SeriesList
+	var err error
+	if sl, err = s.filterSeries(ctx, path, filter); err != nil {
+		return nil, err
+	}
+	pl := roaring.NewPostingList()
+	for _, series := range sl {
+		pl.Insert(uint64(series.ID()))
+	}
+	return pl, nil
 }
 
 func (s *seriesDB) span(ctx context.Context, timeRange timestamp.TimeRange) ([]blockDelegate, error) {
@@ -497,10 +648,17 @@ func (s *seriesDB) context() context.Context {
 }
 
 func (s *seriesDB) Close() error {
-	return s.seriesMetadata.Close()
+	err := s.seriesMetadata.Close()
+	if s.invertedIndex != nil {
+		err = multierr.Append(err, s.invertedIndex.Close())
+	}
+	if s.lsmIndex != nil {
+		err = multierr.Append(err, s.lsmIndex.Close())
+	}
+	return err
 }
 
-func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string, segCtrl *segmentController) (SeriesDatabase, error) {
+func newSeriesDataBase(ctx context.Context, shardID common.ShardID, root string, segCtrl *segmentController) (SeriesDatabase, error) {
 	sdb := &seriesDB{
 		sID:      shardID,
 		segCtrl:  segCtrl,
@@ -508,24 +666,40 @@ func newSeriesDataBase(ctx context.Context, shardID common.ShardID, path string,
 		position: common.GetPosition(ctx),
 	}
 	o := ctx.Value(OptionsKey)
+	var options DatabaseOpts
+	if o == nil {
+		options = DatabaseOpts{}
+	} else {
+		options = o.(DatabaseOpts)
+	}
 	var memSize int64
-	if o != nil {
-		options := o.(DatabaseOpts)
-		if options.SeriesMemSize > 1 {
-			memSize = int64(options.SeriesMemSize)
-		} else {
-			memSize = defaultKVMemorySize
-		}
+	if options.SeriesMemSize > 1 {
+		memSize = int64(options.SeriesMemSize)
 	} else {
 		memSize = defaultKVMemorySize
 	}
 	var err error
-	sdb.seriesMetadata, err = kv.OpenStore(path+"/md",
+	if sdb.seriesMetadata, err = kv.OpenStore(root+"/md",
 		kv.StoreWithNamedLogger("metadata", sdb.l),
 		kv.StoreWithMemTableSize(memSize),
-	)
-	if err != nil {
+	); err != nil {
 		return nil, err
+	}
+	if options.IndexGranularity == IndexGranularitySeries {
+		if sdb.invertedIndex, err = inverted.NewStore(inverted.StoreOpts{
+			Path:         path.Join(root, componentSecondInvertedIdx),
+			Logger:       sdb.l.Named(componentSecondInvertedIdx),
+			BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
+		}); err != nil {
+			return nil, err
+		}
+		if sdb.lsmIndex, err = lsm.NewStore(lsm.StoreOpts{
+			Path:         path.Join(root, componentSecondLSMIdx),
+			Logger:       sdb.l.Named(componentSecondLSMIdx),
+			MemTableSize: defaultKVMemorySize,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return sdb, nil
 }

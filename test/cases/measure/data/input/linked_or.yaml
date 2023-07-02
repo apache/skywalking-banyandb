@@ -29,27 +29,27 @@ criteria:
     op: "LOGICAL_OP_OR"
     left:
       condition:
-        name: "id"
+        name: "entity_id"
         op: "BINARY_OP_EQ"
         value:
           str:
-            value: "4"
+            value: "entity_4"
     right:
       le:
         op: "LOGICAL_OP_OR"
         left:
           condition:
-            name: "id"
+            name: "entity_id"
             op: "BINARY_OP_EQ"
             value:
               str:
-                value: "5"
+                value: "entity_5"
         right:
           le:
             op: "LOGICAL_OP_OR"
             left:
               condition:
-                name: "id"
+                name: "entity_id"
                 op: "BINARY_OP_EQ"
                 value:
                   str:

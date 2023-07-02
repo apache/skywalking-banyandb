@@ -115,7 +115,7 @@ const data = reactive({
     tableFields: [],
     handleFields: "",
     group: route.params.group,
-    name: route.params.group,
+    name: route.params.name,
     type: route.params.type,
     tagFamily: 0,
     tagFamilies: [],
@@ -389,7 +389,7 @@ function changeFields() {
             </template>
             <el-row>
                 <el-col :span="12">
-                    <div class="flex align-item-center" style="height: 30px; width: 100%;">
+                    <div class="flex align-item-center" style="height: 40px; width: 100%;">
                         <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
                             placeholder="Please select">
                             <el-option v-for="item in data.options" :key="item.value" :label="item.label"
@@ -406,12 +406,12 @@ function changeFields() {
                             type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
                             end-placeholder="end" align="right">
                         </el-date-picker>
-                        <el-button size="small" :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
+                        <el-button size="normal" :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
                     </div>
                 </el-col>
                 <el-col :span="12">
                     <div class="flex align-item-center justify-end" style="height: 30px;">
-                        <el-button size="small" :icon="RefreshRight" @click="getTableData" plain></el-button>
+                        <el-button size="normal" :icon="RefreshRight" @click="getTableData" plain></el-button>
                     </div>
                 </el-col>
             </el-row>

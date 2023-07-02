@@ -20,23 +20,23 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "6"
+        value: "2"
   tagFamilies:
   - name: default
     tags:
-    - key: entity_id
+    - key: id
       value:
         str:
-          value: entity_2
+          value: svc1
 - fields:
   - name: value
     value:
       int:
-        value: "6"
+        value: "4"
   tagFamilies:
   - name: default
     tags:
-    - key: entity_id
+    - key: id
       value:
         str:
-          value: entity_1
+          value: svc2

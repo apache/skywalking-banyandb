@@ -108,7 +108,7 @@ type block struct {
 
 type openOpts struct {
 	tsTableFactory TSTableFactory
-	inverted       inverted.StoreOpts
+	inverted       *inverted.StoreOpts
 	lsm            lsm.StoreOpts
 }
 
@@ -163,10 +163,12 @@ func options(ctx context.Context, root string, l *logger.Logger) (openOpts, erro
 	}
 	options = o.(DatabaseOpts)
 	var opts openOpts
-	opts.inverted = inverted.StoreOpts{
-		Path:         path.Join(root, componentSecondInvertedIdx),
-		Logger:       l.Named(componentSecondInvertedIdx),
-		BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
+	if options.IndexGranularity == IndexGranularityBlock {
+		opts.inverted = &inverted.StoreOpts{
+			Path:         path.Join(root, componentSecondInvertedIdx),
+			Logger:       l.Named(componentSecondInvertedIdx),
+			BatchWaitSec: options.BlockInvertedIndex.BatchWaitSec,
+		}
 	}
 	opts.lsm = lsm.StoreOpts{
 		Path:         path.Join(root, componentSecondLSMIdx),
@@ -198,13 +200,16 @@ func (b *block) open() (err error) {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.tsTable)
-	if b.invertedIndex, err = inverted.NewStore(b.openOpts.inverted); err != nil {
-		return err
+	if b.openOpts.inverted != nil {
+		if b.invertedIndex, err = inverted.NewStore(*b.openOpts.inverted); err != nil {
+			return err
+		}
+		b.closableLst = append(b.closableLst, b.invertedIndex)
 	}
 	if b.lsmIndex, err = lsm.NewStore(b.openOpts.lsm); err != nil {
 		return err
 	}
-	b.closableLst = append(b.closableLst, b.invertedIndex, b.lsmIndex)
+	b.closableLst = append(b.closableLst, b.lsmIndex)
 	b.ref.Store(0)
 	b.closed.Store(false)
 	blockOpenedTimeSecondsGauge.Set(float64(time.Now().Unix()), b.position.LabelValues()...)
@@ -431,6 +436,9 @@ func (d *bDelegate) writeLSMIndex(fields []index.Field, id common.ItemID) error 
 }
 
 func (d *bDelegate) writeInvertedIndex(fields []index.Field, id common.ItemID) error {
+	if d.delegate.invertedIndex == nil {
+		return errors.New("inverted index is not enabled")
+	}
 	total := 0
 	for _, f := range fields {
 		total += len(f.Marshal())
