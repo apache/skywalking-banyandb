@@ -111,7 +111,8 @@ type LogEntry interface {
 
 // log implements the WAL interface.
 type log struct {
-	entryCloser      *run.ChannelCloser
+	writeCloser      *run.ChannelCloser
+	flushCloser      *run.ChannelCloser
 	buffer           buffer
 	logger           *logger.Logger
 	bytesBuffer      *bytes.Buffer
@@ -196,7 +197,8 @@ func New(path string, options *Options) (WAL, error) {
 		flushChannel:     make(chan buffer, walOptions.FlushQueueSize),
 		bytesBuffer:      bytes.NewBuffer([]byte{}),
 		timestampsBuffer: bytes.NewBuffer([]byte{}),
-		entryCloser:      run.NewChannelCloser(3),
+		writeCloser:      run.NewChannelCloser(2),
+		flushCloser:      run.NewChannelCloser(2),
 		buffer: buffer{
 			timestampMap: make(map[common.SeriesIDV2][]time.Time),
 			valueMap:     make(map[common.SeriesIDV2][]byte),
@@ -217,10 +219,10 @@ func New(path string, options *Options) (WAL, error) {
 // It will return immediately when the data is written in the buffer,
 // The callback function will be called when the entity is flushed on the persistent storage.
 func (log *log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error)) {
-	if !log.entryCloser.AddRunning() {
+	if !log.writeCloser.AddRunning() {
 		return
 	}
-	defer log.entryCloser.RunningDone()
+	defer log.writeCloser.RunningDone()
 
 	log.writeChannel <- logRequest{
 		seriesID:  seriesID,
@@ -305,8 +307,11 @@ func (log *log) Close() error {
 	log.closerOnce.Do(func() {
 		log.logger.Info().Msg("Closing WAL...")
 
-		log.entryCloser.Done()
-		log.entryCloser.CloseThenWait()
+		log.writeCloser.Done()
+		log.writeCloser.CloseThenWait()
+
+		log.flushCloser.Done()
+		log.flushCloser.CloseThenWait()
 
 		if err := log.flushBuffer(log.buffer); err != nil {
 			globalErr = multierr.Append(globalErr, err)
@@ -323,7 +328,7 @@ func (log *log) start() {
 	go func() {
 		log.logger.Info().Msg("Start batch task...")
 
-		defer log.entryCloser.Done()
+		defer log.writeCloser.Done()
 
 		bufferVolume := 0
 		for {
@@ -352,7 +357,7 @@ func (log *log) start() {
 				}
 				log.triggerFlushing()
 				bufferVolume = 0
-			case <-log.entryCloser.CloseNotify():
+			case <-log.writeCloser.CloseNotify():
 				timer.Stop()
 				log.logger.Info().Msg("Stop batch task when close notify")
 				return
@@ -363,7 +368,7 @@ func (log *log) start() {
 	go func() {
 		log.logger.Info().Msg("Start flush task...")
 
-		defer log.entryCloser.Done()
+		defer log.flushCloser.Done()
 
 		for {
 			select {
@@ -389,7 +394,7 @@ func (log *log) start() {
 				}
 
 				batch.notifyRequests(err)
-			case <-log.entryCloser.CloseNotify():
+			case <-log.flushCloser.CloseNotify():
 				log.logger.Info().Msg("Stop flush task when close notify")
 				return
 			}

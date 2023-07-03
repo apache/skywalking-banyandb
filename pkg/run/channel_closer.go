@@ -26,14 +26,12 @@ var dummyChannelCloserChan <-chan struct{}
 
 // ChannelCloser can close a goroutine then wait for it to stop.
 type ChannelCloser struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	sender         sync.WaitGroup
-	receiver       sync.WaitGroup
-	senderLock     sync.RWMutex
-	receiverLock   sync.RWMutex
-	senderClosed   bool
-	receiverClosed bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	sender   sync.WaitGroup
+	receiver sync.WaitGroup
+	lock     sync.RWMutex
+	closed   bool
 }
 
 // NewChannelCloser instances a new ChannelCloser.
@@ -50,9 +48,9 @@ func (c *ChannelCloser) AddRunning() bool {
 	if c == nil {
 		return false
 	}
-	c.senderLock.RLock()
-	defer c.senderLock.RUnlock()
-	if c.senderClosed {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if c.closed {
 		return false
 	}
 	c.sender.Add(1)
@@ -89,19 +87,14 @@ func (c *ChannelCloser) CloseThenWait() {
 		return
 	}
 
-	c.senderLock.Lock()
-	c.senderClosed = true
-	c.senderLock.Unlock()
+	c.lock.Lock()
+	c.closed = true
+	c.lock.Unlock()
 
 	c.sender.Done()
 	c.sender.Wait()
 
 	c.cancel()
-
-	c.receiverLock.Lock()
-	c.receiverClosed = true
-	c.receiverLock.Unlock()
-
 	c.receiver.Wait()
 }
 
@@ -110,7 +103,7 @@ func (c *ChannelCloser) Closed() bool {
 	if c == nil {
 		return true
 	}
-	c.receiverLock.RLock()
-	defer c.receiverLock.RUnlock()
-	return c.receiverClosed
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.closed
 }

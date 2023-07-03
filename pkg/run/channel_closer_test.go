@@ -98,8 +98,8 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 			var wg sync.WaitGroup
 			wg.Add(groupAWorkerNum + groupBWorkerNum + 2)
 
-			chanL1 := make(chan struct{})
-			chanL2 := make(chan struct{})
+			chanA := make(chan struct{})
+			chanB := make(chan struct{})
 			chanCloser := NewChannelCloser(3)
 
 			for i := 0; i < groupAWorkerNum; i++ {
@@ -110,7 +110,7 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 					for {
 						if chanCloser.AddRunning() {
 							time.Sleep(5 * time.Millisecond)
-							chanL1 <- struct{}{}
+							chanA <- struct{}{}
 							chanCloser.RunningDone()
 						} else {
 							fmt.Printf("Stop worker - %d\n", index)
@@ -128,7 +128,7 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 					for {
 						if chanCloser.AddRunning() {
 							time.Sleep(5 * time.Millisecond)
-							chanL2 <- struct{}{}
+							chanB <- struct{}{}
 							chanCloser.RunningDone()
 						} else {
 							fmt.Printf("Stop worker - %d\n", index)
@@ -150,7 +150,7 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 				for {
 					select {
-					case <-chanL1:
+					case <-chanA:
 						time.Sleep(10 * time.Millisecond)
 					case <-chanCloser.CloseNotify():
 						return
@@ -170,7 +170,7 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 				for {
 					select {
-					case <-chanL2:
+					case <-chanB:
 						time.Sleep(10 * time.Millisecond)
 					case <-chanCloser.CloseNotify():
 						return
@@ -193,7 +193,8 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 			chanL1 := make(chan struct{})
 			chanL2 := make(chan struct{})
-			chanCloser := NewChannelCloser(3)
+			chanL1Closer := NewChannelCloser(2)
+			chanL2Closer := NewChannelCloser(2)
 
 			for i := 0; i < workerNum; i++ {
 				go func(index int) {
@@ -201,10 +202,10 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 					fmt.Printf("Start worker - %d\n", index)
 					for {
-						if chanCloser.AddRunning() {
+						if chanL1Closer.AddRunning() {
 							time.Sleep(5 * time.Millisecond)
 							chanL1 <- struct{}{}
-							chanCloser.RunningDone()
+							chanL1Closer.RunningDone()
 						} else {
 							fmt.Printf("Stop worker - %d\n", index)
 							return
@@ -220,29 +221,14 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 				defer func() {
 					fmt.Printf("Stop consumer: chanL1\n")
-					chanCloser.Done()
+					chanL1Closer.Done()
 				}()
 
 				for {
 					select {
 					case req := <-chanL1:
-
-					ExitSendChan:
-						for {
-							select {
-							case chanL2 <- req:
-								// logical code
-								break ExitSendChan
-							default:
-							}
-							if chanCloser.Closed() {
-								fmt.Printf("Discard unprocessed record: %v, consumer: chanL1\n", req)
-								return
-							}
-							time.Sleep(10 * time.Millisecond)
-						}
-
-					case <-chanCloser.CloseNotify():
+						chanL2 <- req
+					case <-chanL1Closer.CloseNotify():
 						return
 					}
 				}
@@ -255,14 +241,14 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 
 				defer func() {
 					fmt.Printf("Stop consumer: chanL2\n")
-					chanCloser.Done()
+					chanL2Closer.Done()
 				}()
 
 				for {
 					select {
 					case <-chanL2:
 						time.Sleep(10 * time.Millisecond)
-					case <-chanCloser.CloseNotify():
+					case <-chanL2Closer.CloseNotify():
 						return
 					}
 				}
@@ -271,8 +257,11 @@ var _ = ginkgo.Describe("ChannelCloser", func() {
 			wg.Wait()
 
 			fmt.Printf("Start close...\n")
-			chanCloser.Done()
-			chanCloser.CloseThenWait()
+			chanL1Closer.Done()
+			chanL1Closer.CloseThenWait()
+
+			chanL2Closer.Done()
+			chanL2Closer.CloseThenWait()
 			fmt.Printf("Stop close\n")
 		})
 	})
