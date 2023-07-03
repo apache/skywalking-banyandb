@@ -24,10 +24,6 @@ include ../scripts/build/base.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/help.mk
 
-.PHONY: check-version
-check-version: install
-	@node tools/checkversion
-
 .PHONY: install
 install:
 	npm install 

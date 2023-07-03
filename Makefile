@@ -92,7 +92,7 @@ format: default ## Run the linters on all projects
 
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
-	@$(MAKE) -C ui check-version
+	@$(MAKE) -C ui install
 
 check: ## Check that the status is consistent with CI
 	$(MAKE) license-check
