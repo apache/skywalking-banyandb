@@ -26,22 +26,22 @@ var dummyChannelCloserChan <-chan struct{}
 
 // ChannelCloser can close a goroutine then wait for it to stop.
 type ChannelCloser struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	running       sync.WaitGroup
-	waiting       sync.WaitGroup
-	runningLock   sync.RWMutex
-	waitingLock   sync.RWMutex
-	runningClosed bool
-	waitingClosed bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	sender         sync.WaitGroup
+	receiver       sync.WaitGroup
+	senderLock     sync.RWMutex
+	receiverLock   sync.RWMutex
+	senderClosed   bool
+	receiverClosed bool
 }
 
 // NewChannelCloser instances a new ChannelCloser.
 func NewChannelCloser(initial int) *ChannelCloser {
 	c := &ChannelCloser{}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.running.Add(1)
-	c.waiting.Add(initial)
+	c.sender.Add(1)
+	c.receiver.Add(initial)
 	return c
 }
 
@@ -50,12 +50,12 @@ func (c *ChannelCloser) AddRunning() bool {
 	if c == nil {
 		return false
 	}
-	c.runningLock.RLock()
-	defer c.runningLock.RUnlock()
-	if c.runningClosed {
+	c.senderLock.RLock()
+	defer c.senderLock.RUnlock()
+	if c.senderClosed {
 		return false
 	}
-	c.running.Add(1)
+	c.sender.Add(1)
 	return true
 }
 
@@ -64,7 +64,7 @@ func (c *ChannelCloser) RunningDone() {
 	if c == nil {
 		return
 	}
-	c.running.Done()
+	c.sender.Done()
 }
 
 // CloseNotify receives a signal from Close.
@@ -75,12 +75,12 @@ func (c *ChannelCloser) CloseNotify() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-// Done notifies that waiting task is done.
+// Done notifies that receiver task is done.
 func (c *ChannelCloser) Done() {
 	if c == nil {
 		return
 	}
-	c.waiting.Done()
+	c.receiver.Done()
 }
 
 // CloseThenWait closes all tasks then waits till they are done.
@@ -89,20 +89,20 @@ func (c *ChannelCloser) CloseThenWait() {
 		return
 	}
 
-	c.runningLock.Lock()
-	c.runningClosed = true
-	c.runningLock.Unlock()
+	c.senderLock.Lock()
+	c.senderClosed = true
+	c.senderLock.Unlock()
 
-	c.running.Done()
-	c.running.Wait()
+	c.sender.Done()
+	c.sender.Wait()
 
 	c.cancel()
 
-	c.waitingLock.Lock()
-	c.waitingClosed = true
-	c.waitingLock.Unlock()
+	c.receiverLock.Lock()
+	c.receiverClosed = true
+	c.receiverLock.Unlock()
 
-	c.waiting.Wait()
+	c.receiver.Wait()
 }
 
 // Closed returns whether the ChannelCloser is closed.
@@ -110,7 +110,7 @@ func (c *ChannelCloser) Closed() bool {
 	if c == nil {
 		return true
 	}
-	c.waitingLock.RLock()
-	defer c.waitingLock.RUnlock()
-	return c.waitingClosed
+	c.receiverLock.RLock()
+	defer c.receiverLock.RUnlock()
+	return c.receiverClosed
 }

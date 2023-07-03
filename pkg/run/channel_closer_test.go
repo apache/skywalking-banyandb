@@ -20,243 +20,260 @@ package run
 import (
 	"fmt"
 	"sync"
-	"testing"
 	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
+
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-func TestSimpleChannelCloser(_ *testing.T) {
-	workerNum := 10
-	var wg sync.WaitGroup
-	wg.Add(workerNum + 1)
+var _ = ginkgo.Describe("ChannelCloser", func() {
+	var goods []gleak.Goroutine
+	ginkgo.BeforeEach(func() {
+		goods = gleak.Goroutines()
+	})
+	ginkgo.AfterEach(func() {
+		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	})
 
-	chanL1 := make(chan struct{})
-	chanCloser := NewChannelCloser(2)
+	ginkgo.Context("Close", func() {
+		ginkgo.It("close simple channel", func() {
+			workerNum := 10
+			var wg sync.WaitGroup
+			wg.Add(workerNum + 1)
 
-	for i := 0; i < workerNum; i++ {
-		go func(index int) {
-			wg.Done()
+			chanL1 := make(chan struct{})
+			chanCloser := NewChannelCloser(2)
 
-			fmt.Printf("Start worker - %d\n", index)
-			for {
-				if chanCloser.AddRunning() {
-					time.Sleep(5 * time.Millisecond)
-					chanL1 <- struct{}{}
-					chanCloser.RunningDone()
-				} else {
-					fmt.Printf("Stop worker - %d\n", index)
-					return
-				}
+			for i := 0; i < workerNum; i++ {
+				go func(index int) {
+					wg.Done()
+
+					fmt.Printf("Start worker - %d\n", index)
+					for {
+						if chanCloser.AddRunning() {
+							time.Sleep(5 * time.Millisecond)
+							chanL1 <- struct{}{}
+							chanCloser.RunningDone()
+						} else {
+							fmt.Printf("Stop worker - %d\n", index)
+							return
+						}
+					}
+				}(i)
 			}
-		}(i)
-	}
 
-	go func() {
-		wg.Done()
-		fmt.Printf("Start consumer: chanL1\n")
+			go func() {
+				wg.Done()
+				fmt.Printf("Start consumer: chanL1\n")
 
-		defer func() {
-			fmt.Printf("Stop consumer: chanL1\n")
-			chanCloser.Done()
-		}()
+				defer func() {
+					fmt.Printf("Stop consumer: chanL1\n")
+					chanCloser.Done()
+				}()
 
-		for {
-			select {
-			case <-chanL1:
-				time.Sleep(10 * time.Millisecond)
-			case <-chanCloser.CloseNotify():
-				return
-			}
-		}
-	}()
-
-	wg.Wait()
-
-	fmt.Printf("Start close...\n")
-	chanCloser.Done()
-	chanCloser.CloseThenWait()
-	fmt.Printf("Stop close\n")
-}
-
-func TestMultipleChannelCloser(_ *testing.T) {
-	groupAWorkerNum := 10
-	groupBWorkerNum := 10
-	var wg sync.WaitGroup
-	wg.Add(groupAWorkerNum + groupBWorkerNum + 2)
-
-	chanL1 := make(chan struct{})
-	chanL2 := make(chan struct{})
-	chanCloser := NewChannelCloser(3)
-
-	for i := 0; i < groupAWorkerNum; i++ {
-		go func(index int) {
-			wg.Done()
-
-			fmt.Printf("Start group-a worker - %d\n", index)
-			for {
-				if chanCloser.AddRunning() {
-					time.Sleep(5 * time.Millisecond)
-					chanL1 <- struct{}{}
-					chanCloser.RunningDone()
-				} else {
-					fmt.Printf("Stop worker - %d\n", index)
-					return
-				}
-			}
-		}(i)
-	}
-
-	for i := 0; i < groupBWorkerNum; i++ {
-		go func(index int) {
-			wg.Done()
-
-			fmt.Printf("Start group-b worker - %d\n", index)
-			for {
-				if chanCloser.AddRunning() {
-					time.Sleep(5 * time.Millisecond)
-					chanL2 <- struct{}{}
-					chanCloser.RunningDone()
-				} else {
-					fmt.Printf("Stop worker - %d\n", index)
-					return
-				}
-			}
-		}(i)
-	}
-
-	go func() {
-		wg.Done()
-
-		fmt.Printf("Start consumer: chanL1\n")
-
-		defer func() {
-			fmt.Printf("Stop consumer: chanL1\n")
-			chanCloser.Done()
-		}()
-
-		for {
-			select {
-			case <-chanL1:
-				time.Sleep(10 * time.Millisecond)
-			case <-chanCloser.CloseNotify():
-				return
-			}
-		}
-	}()
-
-	go func() {
-		wg.Done()
-
-		fmt.Printf("Start consumer: chanL2\n")
-
-		defer func() {
-			fmt.Printf("Stop consumer: chanL2\n")
-			chanCloser.Done()
-		}()
-
-		for {
-			select {
-			case <-chanL2:
-				time.Sleep(10 * time.Millisecond)
-			case <-chanCloser.CloseNotify():
-				return
-			}
-		}
-	}()
-
-	wg.Wait()
-
-	fmt.Printf("Start close...\n")
-	chanCloser.Done()
-	chanCloser.CloseThenWait()
-	fmt.Printf("Stop close\n")
-}
-
-func TestAssociatedChannelCloser(_ *testing.T) {
-	workerNum := 10
-	var wg sync.WaitGroup
-	wg.Add(workerNum + 2)
-
-	chanL1 := make(chan struct{})
-	chanL2 := make(chan struct{})
-	chanCloser := NewChannelCloser(3)
-
-	for i := 0; i < workerNum; i++ {
-		go func(index int) {
-			wg.Done()
-
-			fmt.Printf("Start worker - %d\n", index)
-			for {
-				if chanCloser.AddRunning() {
-					time.Sleep(5 * time.Millisecond)
-					chanL1 <- struct{}{}
-					chanCloser.RunningDone()
-				} else {
-					fmt.Printf("Stop worker - %d\n", index)
-					return
-				}
-			}
-		}(i)
-	}
-
-	go func() {
-		wg.Done()
-
-		fmt.Printf("Start consumer: chanL1\n")
-
-		defer func() {
-			fmt.Printf("Stop consumer: chanL1\n")
-			chanCloser.Done()
-		}()
-
-		for {
-			select {
-			case req := <-chanL1:
-
-			ExitSendChan:
 				for {
 					select {
-					case chanL2 <- req:
-						// logical code
-						break ExitSendChan
-					default:
-					}
-					if chanCloser.Closed() {
-						fmt.Printf("Discard unprocessed record: %v, consumer: chanL1\n", req)
+					case <-chanL1:
+						time.Sleep(10 * time.Millisecond)
+					case <-chanCloser.CloseNotify():
 						return
 					}
-					time.Sleep(10 * time.Millisecond)
 				}
+			}()
 
-			case <-chanCloser.CloseNotify():
-				return
-			}
-		}
-	}()
+			wg.Wait()
 
-	go func() {
-		wg.Done()
-
-		fmt.Printf("Start consumer: chanL2\n")
-
-		defer func() {
-			fmt.Printf("Stop consumer: chanL2\n")
+			fmt.Printf("Start close...\n")
 			chanCloser.Done()
-		}()
+			chanCloser.CloseThenWait()
+			fmt.Printf("Stop close\n")
+		})
 
-		for {
-			select {
-			case <-chanL2:
-				time.Sleep(10 * time.Millisecond)
-			case <-chanCloser.CloseNotify():
-				return
+		ginkgo.It("close multiple channel", func() {
+			groupAWorkerNum := 10
+			groupBWorkerNum := 10
+			var wg sync.WaitGroup
+			wg.Add(groupAWorkerNum + groupBWorkerNum + 2)
+
+			chanL1 := make(chan struct{})
+			chanL2 := make(chan struct{})
+			chanCloser := NewChannelCloser(3)
+
+			for i := 0; i < groupAWorkerNum; i++ {
+				go func(index int) {
+					wg.Done()
+
+					fmt.Printf("Start group-a worker - %d\n", index)
+					for {
+						if chanCloser.AddRunning() {
+							time.Sleep(5 * time.Millisecond)
+							chanL1 <- struct{}{}
+							chanCloser.RunningDone()
+						} else {
+							fmt.Printf("Stop worker - %d\n", index)
+							return
+						}
+					}
+				}(i)
 			}
-		}
-	}()
 
-	wg.Wait()
+			for i := 0; i < groupBWorkerNum; i++ {
+				go func(index int) {
+					wg.Done()
 
-	fmt.Printf("Start close...\n")
-	chanCloser.Done()
-	chanCloser.CloseThenWait()
-	fmt.Printf("Stop close\n")
-}
+					fmt.Printf("Start group-b worker - %d\n", index)
+					for {
+						if chanCloser.AddRunning() {
+							time.Sleep(5 * time.Millisecond)
+							chanL2 <- struct{}{}
+							chanCloser.RunningDone()
+						} else {
+							fmt.Printf("Stop worker - %d\n", index)
+							return
+						}
+					}
+				}(i)
+			}
+
+			go func() {
+				wg.Done()
+
+				fmt.Printf("Start consumer: chanL1\n")
+
+				defer func() {
+					fmt.Printf("Stop consumer: chanL1\n")
+					chanCloser.Done()
+				}()
+
+				for {
+					select {
+					case <-chanL1:
+						time.Sleep(10 * time.Millisecond)
+					case <-chanCloser.CloseNotify():
+						return
+					}
+				}
+			}()
+
+			go func() {
+				wg.Done()
+
+				fmt.Printf("Start consumer: chanL2\n")
+
+				defer func() {
+					fmt.Printf("Stop consumer: chanL2\n")
+					chanCloser.Done()
+				}()
+
+				for {
+					select {
+					case <-chanL2:
+						time.Sleep(10 * time.Millisecond)
+					case <-chanCloser.CloseNotify():
+						return
+					}
+				}
+			}()
+
+			wg.Wait()
+
+			fmt.Printf("Start close...\n")
+			chanCloser.Done()
+			chanCloser.CloseThenWait()
+			fmt.Printf("Stop close\n")
+		})
+
+		ginkgo.It("close associated channel", func() {
+			workerNum := 10
+			var wg sync.WaitGroup
+			wg.Add(workerNum + 2)
+
+			chanL1 := make(chan struct{})
+			chanL2 := make(chan struct{})
+			chanCloser := NewChannelCloser(3)
+
+			for i := 0; i < workerNum; i++ {
+				go func(index int) {
+					wg.Done()
+
+					fmt.Printf("Start worker - %d\n", index)
+					for {
+						if chanCloser.AddRunning() {
+							time.Sleep(5 * time.Millisecond)
+							chanL1 <- struct{}{}
+							chanCloser.RunningDone()
+						} else {
+							fmt.Printf("Stop worker - %d\n", index)
+							return
+						}
+					}
+				}(i)
+			}
+
+			go func() {
+				wg.Done()
+
+				fmt.Printf("Start consumer: chanL1\n")
+
+				defer func() {
+					fmt.Printf("Stop consumer: chanL1\n")
+					chanCloser.Done()
+				}()
+
+				for {
+					select {
+					case req := <-chanL1:
+
+					ExitSendChan:
+						for {
+							select {
+							case chanL2 <- req:
+								// logical code
+								break ExitSendChan
+							default:
+							}
+							if chanCloser.Closed() {
+								fmt.Printf("Discard unprocessed record: %v, consumer: chanL1\n", req)
+								return
+							}
+							time.Sleep(10 * time.Millisecond)
+						}
+
+					case <-chanCloser.CloseNotify():
+						return
+					}
+				}
+			}()
+
+			go func() {
+				wg.Done()
+
+				fmt.Printf("Start consumer: chanL2\n")
+
+				defer func() {
+					fmt.Printf("Stop consumer: chanL2\n")
+					chanCloser.Done()
+				}()
+
+				for {
+					select {
+					case <-chanL2:
+						time.Sleep(10 * time.Millisecond)
+					case <-chanCloser.CloseNotify():
+						return
+					}
+				}
+			}()
+
+			wg.Wait()
+
+			fmt.Printf("Start close...\n")
+			chanCloser.Done()
+			chanCloser.CloseThenWait()
+			fmt.Printf("Stop close\n")
+		})
+	})
+})
