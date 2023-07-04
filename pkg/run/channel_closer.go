@@ -35,16 +35,16 @@ type ChannelCloser struct {
 }
 
 // NewChannelCloser instances a new ChannelCloser.
-func NewChannelCloser(initial int) *ChannelCloser {
+func NewChannelCloser() *ChannelCloser {
 	c := &ChannelCloser{}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.sender.Add(1)
-	c.receiver.Add(initial)
+	c.receiver.Add(1)
 	return c
 }
 
-// AddRunning adds a running task.
-func (c *ChannelCloser) AddRunning() bool {
+// AddSender adds a running sender.
+func (c *ChannelCloser) AddSender() bool {
 	if c == nil {
 		return false
 	}
@@ -57,12 +57,34 @@ func (c *ChannelCloser) AddRunning() bool {
 	return true
 }
 
-// RunningDone notifies that running task is done.
-func (c *ChannelCloser) RunningDone() {
+// SenderDone notifies that running sender is done.
+func (c *ChannelCloser) SenderDone() {
 	if c == nil {
 		return
 	}
 	c.sender.Done()
+}
+
+// AddReceiver adds a running receiver.
+func (c *ChannelCloser) AddReceiver() bool {
+	if c == nil {
+		return false
+	}
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if c.closed {
+		return false
+	}
+	c.receiver.Add(1)
+	return true
+}
+
+// ReceiverDone notifies that receiver task is done.
+func (c *ChannelCloser) ReceiverDone() {
+	if c == nil {
+		return
+	}
+	c.receiver.Done()
 }
 
 // CloseNotify receives a signal from Close.
@@ -71,14 +93,6 @@ func (c *ChannelCloser) CloseNotify() <-chan struct{} {
 		return dummyChannelCloserChan
 	}
 	return c.ctx.Done()
-}
-
-// Done notifies that receiver task is done.
-func (c *ChannelCloser) Done() {
-	if c == nil {
-		return
-	}
-	c.receiver.Done()
 }
 
 // CloseThenWait closes all tasks then waits till they are done.
@@ -95,6 +109,7 @@ func (c *ChannelCloser) CloseThenWait() {
 	c.sender.Wait()
 
 	c.cancel()
+	c.receiver.Done()
 	c.receiver.Wait()
 }
 

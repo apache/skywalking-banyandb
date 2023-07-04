@@ -113,6 +113,7 @@ type LogEntry interface {
 type log struct {
 	writeCloser      *run.ChannelCloser
 	flushCloser      *run.ChannelCloser
+	chanGroupCloser  *run.ChannelGroupCloser
 	buffer           buffer
 	logger           *logger.Logger
 	bytesBuffer      *bytes.Buffer
@@ -189,6 +190,9 @@ func New(path string, options *Options) (WAL, error) {
 		return nil, err
 	}
 
+	writeCloser := run.NewChannelCloser()
+	flushCloser := run.NewChannelCloser()
+	chanGroupCloser := run.NewChannelGroupCloser(writeCloser, flushCloser)
 	log := &log{
 		path:             path,
 		options:          *walOptions,
@@ -197,8 +201,9 @@ func New(path string, options *Options) (WAL, error) {
 		flushChannel:     make(chan buffer, walOptions.FlushQueueSize),
 		bytesBuffer:      bytes.NewBuffer([]byte{}),
 		timestampsBuffer: bytes.NewBuffer([]byte{}),
-		writeCloser:      run.NewChannelCloser(2),
-		flushCloser:      run.NewChannelCloser(2),
+		writeCloser:      writeCloser,
+		flushCloser:      flushCloser,
+		chanGroupCloser:  chanGroupCloser,
 		buffer: buffer{
 			timestampMap: make(map[common.SeriesIDV2][]time.Time),
 			valueMap:     make(map[common.SeriesIDV2][]byte),
@@ -219,10 +224,10 @@ func New(path string, options *Options) (WAL, error) {
 // It will return immediately when the data is written in the buffer,
 // The callback function will be called when the entity is flushed on the persistent storage.
 func (log *log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error)) {
-	if !log.writeCloser.AddRunning() {
+	if !log.writeCloser.AddSender() {
 		return
 	}
-	defer log.writeCloser.RunningDone()
+	defer log.writeCloser.SenderDone()
 
 	log.writeChannel <- logRequest{
 		seriesID:  seriesID,
@@ -307,11 +312,7 @@ func (log *log) Close() error {
 	log.closerOnce.Do(func() {
 		log.logger.Info().Msg("Closing WAL...")
 
-		log.writeCloser.Done()
-		log.writeCloser.CloseThenWait()
-
-		log.flushCloser.Done()
-		log.flushCloser.CloseThenWait()
+		log.chanGroupCloser.CloseThenWait()
 
 		if err := log.flushBuffer(log.buffer); err != nil {
 			globalErr = multierr.Append(globalErr, err)
@@ -325,10 +326,17 @@ func (log *log) Close() error {
 }
 
 func (log *log) start() {
-	go func() {
-		log.logger.Info().Msg("Start batch task...")
+	var initialTasks sync.WaitGroup
+	initialTasks.Add(2)
 
-		defer log.writeCloser.Done()
+	go func() {
+		if !log.writeCloser.AddReceiver() {
+			panic("writeCloser already closed")
+		}
+		defer log.writeCloser.ReceiverDone()
+
+		log.logger.Info().Msg("Start batch task...")
+		initialTasks.Done()
 
 		bufferVolume := 0
 		for {
@@ -366,9 +374,13 @@ func (log *log) start() {
 	}()
 
 	go func() {
-		log.logger.Info().Msg("Start flush task...")
+		if !log.flushCloser.AddReceiver() {
+			panic("flushCloser already closed")
+		}
+		defer log.flushCloser.ReceiverDone()
 
-		defer log.flushCloser.Done()
+		log.logger.Info().Msg("Start flush task...")
+		initialTasks.Done()
 
 		for {
 			select {
@@ -401,6 +413,7 @@ func (log *log) start() {
 		}
 	}()
 
+	initialTasks.Wait()
 	log.logger.Info().Msg("Started WAL")
 }
 

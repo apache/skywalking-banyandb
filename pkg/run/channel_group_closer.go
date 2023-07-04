@@ -19,8 +19,6 @@ package run
 
 import (
 	"sync"
-
-	"github.com/pkg/errors"
 )
 
 // ChannelGroupCloser can close a goroutine group then wait for it to stop.
@@ -35,24 +33,6 @@ func NewChannelGroupCloser(closer ...*ChannelCloser) *ChannelGroupCloser {
 	return &ChannelGroupCloser{group: closer}
 }
 
-// NewChannelCloser instances a new ChannelCloser and adds it to the group.
-func (c *ChannelGroupCloser) NewChannelCloser(initial int) (*ChannelCloser, error) {
-	if c == nil {
-		return nil, errors.New("ChannelGroupCloser is nil")
-	}
-
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	if c.closed {
-		return nil, errors.New("ChannelGroupCloser is closed")
-	}
-
-	closer := NewChannelCloser(initial)
-	c.group = append(c.group, closer)
-	return closer, nil
-}
-
 // CloseThenWait closes all closer then waits till they are done.
 func (c *ChannelGroupCloser) CloseThenWait() {
 	if c == nil {
@@ -64,10 +44,7 @@ func (c *ChannelGroupCloser) CloseThenWait() {
 	c.lock.Unlock()
 
 	for _, closer := range c.group {
-		if !closer.Closed() {
-			closer.Done()
-			closer.CloseThenWait()
-		}
+		closer.CloseThenWait()
 	}
 }
 
