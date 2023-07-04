@@ -27,6 +27,7 @@ Release Notes.
 - [UI] Add measure CRUD operations.
 - [UI] Add indexRule CRUD operations.
 - [UI] Add indexRuleBinding CRUD operations.
+- Implement Write-ahead Logging
 
 ### Bugs
 
