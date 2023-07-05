@@ -70,9 +70,9 @@ type service struct {
 
 func (s *service) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVarP(&s.rootDir, "metadata-root-path", "", "/tmp", "the root path of metadata")
-	fs.StringVarP(&s.listenClientURL, "etcd-listen-client-url", "", "http://localhost:2379", "A URL to listen on for client traffic")
-	fs.StringVarP(&s.listenPeerURL, "etcd-listen-peer-url", "", "http://localhost:2380", "A URL to listen on for peer traffic")
+	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
+	fs.StringVar(&s.listenClientURL, "etcd-listen-client-url", "http://localhost:2379", "A URL to listen on for client traffic")
+	fs.StringVar(&s.listenPeerURL, "etcd-listen-peer-url", "http://localhost:2380", "A URL to listen on for peer traffic")
 	return fs
 }
 

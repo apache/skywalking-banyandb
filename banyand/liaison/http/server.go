@@ -79,10 +79,10 @@ func (p *service) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("http")
 	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
-	flagSet.StringVarP(&p.certFile, "http-cert-file", "", "", "the TLS cert file of http server")
-	flagSet.StringVarP(&p.keyFile, "http-key-file", "", "", "the TLS key file of http server")
-	flagSet.StringVarP(&p.grpcCert, "http-grpc-cert-file", "", "", "the grpc TLS cert file if grpc server enables tls")
-	flagSet.BoolVarP(&p.tls, "http-tls", "", false, "connection uses TLS if true, else plain HTTP")
+	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
+	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
+	flagSet.StringVar(&p.grpcCert, "http-grpc-cert-file", "", "the grpc TLS cert file if grpc server enables tls")
+	flagSet.BoolVar(&p.tls, "http-tls", false, "connection uses TLS if true, else plain HTTP")
 	return flagSet
 }
 
