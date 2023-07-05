@@ -117,10 +117,10 @@ func newStandaloneCmd() *cobra.Command {
 		},
 	}
 
-	standaloneCmd.Flags().StringVarP(&logging.Env, "logging.env", "", "prod", "the logging")
-	standaloneCmd.Flags().StringVarP(&logging.Level, "logging.level", "", "info", "the root level of logging")
-	standaloneCmd.Flags().StringArrayVarP(&logging.Modules, "logging.modules", "", nil, "the specific module")
-	standaloneCmd.Flags().StringArrayVarP(&logging.Levels, "logging.levels", "", nil, "the level logging of logging")
+	standaloneCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
+	standaloneCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	standaloneCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
+	standaloneCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
 	standaloneCmd.Flags().AddFlagSet(g.RegisterFlags().FlagSet)
 	return standaloneCmd
 }
