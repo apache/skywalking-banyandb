@@ -36,7 +36,7 @@ message Metadata {
   // group contains a set of options, like retention policy, max
   string group = 1;
   // name of the entity
-  string name = 2 [(validate.rules).string.min_len = 1];
+  string name = 2;
   uint32 id = 3;
   // readonly. create_revision is the revision of last creation on this key.
   int64 create_revision = 4;
