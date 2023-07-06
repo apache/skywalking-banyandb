@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - List all properties in a group.
+- Implement Write-ahead Logging
 
 ## 0.4.0
 
@@ -33,7 +34,6 @@ Release Notes.
 - [UI] Add measure CRUD operations.
 - [UI] Add indexRule CRUD operations.
 - [UI] Add indexRuleBinding CRUD operations.
-- Implement Write-ahead Logging
 
 ### Bugs
 
