@@ -140,7 +140,14 @@ var _ = Describe("Property application", func() {
 		Expect(conn.Close()).To(Succeed())
 		deferFn()
 	})
-	It("lists properties", func() {
+	It("lists properties in a group", func() {
+		got, err := client.List(context.Background(), &propertyv1.ListRequest{Container: &commonv1.Metadata{
+			Group: "g",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(got.Property)).To(Equal(1))
+	})
+	It("lists properties in a container", func() {
 		got, err := client.List(context.Background(), &propertyv1.ListRequest{Container: md.Container})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(got.Property)).To(Equal(1))

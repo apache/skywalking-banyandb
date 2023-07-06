@@ -102,6 +102,9 @@ service PropertyService {
   rpc List(ListRequest) returns (ListResponse) {
     option (google.api.http) = {
       get: "/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
+      additional_bindings {
+        get: "/v1/property/lists/{container.group}"
+      }
     };
   }
 }

@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.5.0
+
+### Features
+
+- List all properties in a group.
+
 ## 0.4.0
 
 ### Features

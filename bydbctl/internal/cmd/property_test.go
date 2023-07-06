@@ -201,7 +201,44 @@ tags:
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
-	It("list property", func() {
+	It("list all properties", func() {
+		// create another property for list operation
+		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  container:
+    group: ui-template 
+    name: service
+  id: spring
+tags:
+  - key: content
+    value:
+      str:
+        value: bar
+  - key: state
+    value:
+      int:
+        value: 1
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("created: true"))
+		Expect(out).To(ContainSubstring("tagsNum: 2"))
+		// list
+		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template"})
+		out = capturer.CaptureStdout(func() {
+			cmd.ResetFlags()
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(propertyv1.ListResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property).To(HaveLen(2))
+	})
+
+	It("list properties in a container", func() {
 		// create another property for list operation
 		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
@@ -229,6 +266,7 @@ tags:
 		// list
 		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service"})
 		out = capturer.CaptureStdout(func() {
+			cmd.ResetFlags()
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
