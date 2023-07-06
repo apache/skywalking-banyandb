@@ -83,7 +83,7 @@ var _ = ginkgo.Describe("WAL", func() {
 			wg.Add(writeLogCount)
 			baseTime := time.Now()
 			for i := 0; i < seriesIDCount; i++ {
-				seriesID := &common.SeriesIDV2{
+				seriesID := &common.GlobalSeriesID{
 					SeriesID: common.SeriesID(i),
 					Name:     fmt.Sprintf("series-%d", i),
 				}
@@ -91,7 +91,7 @@ var _ = ginkgo.Describe("WAL", func() {
 					for j := 0; j < seriesIDElementCount; j++ {
 						timestamp := time.UnixMilli(baseTime.UnixMilli() + int64(j))
 						value := []byte(fmt.Sprintf("value-%d", j))
-						callback := func(seriesID common.SeriesIDV2, t time.Time, bytes []byte, err error) {
+						callback := func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {
 							gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 							wg.Done()
@@ -115,7 +115,7 @@ var _ = ginkgo.Describe("WAL", func() {
 				for _, entity := range entries {
 					seriesID := entity.GetSeriesID()
 					seriesIDSequence := seriesID.SeriesID
-					expectSeriesID := common.SeriesIDV2{
+					expectSeriesID := common.GlobalSeriesID{
 						SeriesID: seriesIDSequence,
 						Name:     fmt.Sprintf("series-%d", seriesIDSequence),
 					}
@@ -171,15 +171,15 @@ var _ = ginkgo.Describe("WAL", func() {
 			writeLogCount := 3
 
 			wg.Add(writeLogCount)
-			expectSegments := make(map[wal.SegmentID]common.SeriesIDV2)
+			expectSegments := make(map[wal.SegmentID]common.GlobalSeriesID)
 			for i := 0; i < writeLogCount; i++ {
-				seriesID := &common.SeriesIDV2{
+				seriesID := &common.GlobalSeriesID{
 					SeriesID: common.SeriesID(i),
 					Name:     fmt.Sprintf("series-%d", i),
 				}
 				timestamp := time.Now()
 				value := []byte(fmt.Sprintf("value-%d", i))
-				callback := func(seriesID common.SeriesIDV2, t time.Time, bytes []byte, err error) {
+				callback := func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 					// Rotate

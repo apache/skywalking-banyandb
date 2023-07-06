@@ -80,7 +80,7 @@ type WAL interface {
 	// Write a logging entity.
 	// It will return immediately when the data is written in the buffer,
 	// The callback function will be called when the entity is flushed on the persistent storage.
-	Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error))
+	Write(seriesID common.GlobalSeriesID, timestamp time.Time, data []byte, callback func(common.GlobalSeriesID, time.Time, []byte, error))
 	// Read specified segment by SegmentID.
 	Read(segmentID SegmentID) (Segment, error)
 	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
@@ -104,7 +104,7 @@ type Segment interface {
 
 // LogEntry used for attain detail value of WAL entry.
 type LogEntry interface {
-	GetSeriesID() common.SeriesIDV2
+	GetSeriesID() common.GlobalSeriesID
 	GetTimestamps() []time.Time
 	GetValues() *list.List
 }
@@ -136,24 +136,24 @@ type segment struct {
 }
 
 type logRequest struct {
-	seriesID  common.SeriesIDV2
+	seriesID  common.GlobalSeriesID
 	timestamp time.Time
-	callback  func(common.SeriesIDV2, time.Time, []byte, error)
+	callback  func(common.GlobalSeriesID, time.Time, []byte, error)
 	data      []byte
 }
 
 type logEntry struct {
 	timestamps  []time.Time
 	values      *list.List
-	seriesID    common.SeriesIDV2
+	seriesID    common.GlobalSeriesID
 	entryLength uint64
 	count       uint32
 }
 
 type buffer struct {
-	timestampMap map[common.SeriesIDV2][]time.Time
-	valueMap     map[common.SeriesIDV2][]byte
-	callbackMap  map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error)
+	timestampMap map[common.GlobalSeriesID][]time.Time
+	valueMap     map[common.GlobalSeriesID][]byte
+	callbackMap  map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)
 	count        int
 }
 
@@ -205,9 +205,9 @@ func New(path string, options *Options) (WAL, error) {
 		flushCloser:      flushCloser,
 		chanGroupCloser:  chanGroupCloser,
 		buffer: buffer{
-			timestampMap: make(map[common.SeriesIDV2][]time.Time),
-			valueMap:     make(map[common.SeriesIDV2][]byte),
-			callbackMap:  make(map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error)),
+			timestampMap: make(map[common.GlobalSeriesID][]time.Time),
+			valueMap:     make(map[common.GlobalSeriesID][]byte),
+			callbackMap:  make(map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)),
 			count:        0,
 		},
 	}
@@ -223,7 +223,7 @@ func New(path string, options *Options) (WAL, error) {
 // Write a logging entity.
 // It will return immediately when the data is written in the buffer,
 // The callback function will be called when the entity is flushed on the persistent storage.
-func (log *log) Write(seriesID common.SeriesIDV2, timestamp time.Time, data []byte, callback func(common.SeriesIDV2, time.Time, []byte, error)) {
+func (log *log) Write(seriesID common.GlobalSeriesID, timestamp time.Time, data []byte, callback func(common.GlobalSeriesID, time.Time, []byte, error)) {
 	if !log.writeCloser.AddSender() {
 		return
 	}
@@ -434,9 +434,9 @@ func (log *log) triggerFlushing() {
 
 func (log *log) newBuffer() {
 	log.buffer = buffer{
-		timestampMap: make(map[common.SeriesIDV2][]time.Time),
-		valueMap:     make(map[common.SeriesIDV2][]byte),
-		callbackMap:  make(map[common.SeriesIDV2][]func(common.SeriesIDV2, time.Time, []byte, error)),
+		timestampMap: make(map[common.GlobalSeriesID][]time.Time),
+		valueMap:     make(map[common.GlobalSeriesID][]byte),
+		callbackMap:  make(map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)),
 		count:        0,
 	}
 }
@@ -632,7 +632,7 @@ func (segment *segment) parseLogEntries() error {
 	var batchLen uint64
 	var entryLen uint64
 	var seriesIDLen uint16
-	var seriesID common.SeriesIDV2
+	var seriesID common.GlobalSeriesID
 	var seriesCount uint32
 	var timestampsBinaryLen uint16
 	var entryEndPosition uint64
@@ -772,8 +772,8 @@ func (segment *segment) parseSeriesIDLength(data []byte) (uint16, error) {
 	return seriesIDLen, nil
 }
 
-func (segment *segment) parseSeriesID(data []byte) common.SeriesIDV2 {
-	return common.ParseSeriesIDV2(data)
+func (segment *segment) parseSeriesID(data []byte) common.GlobalSeriesID {
+	return common.ParseGlobalSeriesID(data)
 }
 
 func (segment *segment) parseSeriesCountLength(data []byte) (uint32, error) {
@@ -826,7 +826,7 @@ func (segment *segment) parseValuesBinary(data []byte) (*list.List, error) {
 	return values, nil
 }
 
-func (logEntry *logEntry) GetSeriesID() common.SeriesIDV2 {
+func (logEntry *logEntry) GetSeriesID() common.GlobalSeriesID {
 	return logEntry.seriesID
 }
 
