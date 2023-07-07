@@ -26,9 +26,7 @@ import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
 option java_package = "org.apache.skywalking.banyandb.stream.v1";
-option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path: "/api"
-};
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
 service StreamService {
   rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse) {
