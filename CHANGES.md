@@ -8,6 +8,10 @@ Release Notes.
 
 - List all properties in a group.
 
+### Bugs
+
+- BanyanDB ui unable to load icon.
+
 ### Chores
 
 - Bump several dependencies and tools.
