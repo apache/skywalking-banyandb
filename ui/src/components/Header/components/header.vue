@@ -35,7 +35,7 @@ const data = reactive({
     isCollapse: false,
     showButton: false
 })
-const userImg = 'http://localhost:5173/src/assets/banyandb_small.jpg'
+const userImg = '../../../src/assets/banyandb_small.jpg'
 
 // watch
 watch(() => route, () => {
