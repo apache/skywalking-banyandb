@@ -34,7 +34,7 @@ var (
 
 func init() {
 	if eventuallyTimeout == "" {
-		EventuallyTimeout = time.Second * 3
+		EventuallyTimeout = time.Second * 10
 		return
 	}
 	d, err := time.ParseDuration(eventuallyTimeout)

@@ -8,6 +8,10 @@ Release Notes.
 
 - List all properties in a group.
 
+### Chores
+
+- Bump several dependencies and tools.
+
 ## 0.4.0
 
 ### Features
