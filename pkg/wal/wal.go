@@ -62,6 +62,7 @@ var DefaultOptions = &Options{
 	FileSize:            67108864, // 64MB
 	BufferSize:          16384,    // 16KB
 	BufferBatchInterval: 3 * time.Second,
+	NoSync:              false,
 }
 
 // Options for creating Write-ahead Logging.
@@ -70,6 +71,7 @@ type Options struct {
 	BufferSize          int
 	BufferBatchInterval time.Duration
 	FlushQueueSize      int
+	NoSync              bool
 }
 
 // WAL denotes a Write-ahead logging.
@@ -178,6 +180,7 @@ func New(path string, options *Options) (WAL, error) {
 			FileSize:            fileSize,
 			BufferSize:          bufferSize,
 			BufferBatchInterval: bufferBatchInterval,
+			NoSync:              options.NoSync,
 		}
 	}
 
@@ -548,8 +551,10 @@ func (log *log) writeWorkSegment(data []byte) error {
 	if _, err := log.workSegment.file.Write(data); err != nil {
 		return errors.Wrap(err, "Write WAL segment file error, file: "+log.workSegment.path)
 	}
-	if err := log.workSegment.file.Sync(); err != nil {
-		log.logger.Warn().Msg("Sync WAL segment file to disk failed, file: " + log.workSegment.path)
+	if !log.options.NoSync {
+		if err := log.workSegment.file.Sync(); err != nil {
+			log.logger.Warn().Msg("Sync WAL segment file to disk failed, file: " + log.workSegment.path)
+		}
 	}
 	return nil
 }
