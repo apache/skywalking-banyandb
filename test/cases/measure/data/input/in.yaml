@@ -26,8 +26,8 @@ fieldProjection:
   names: ["total", "value"]
 criteria:
   condition:
-    name: "id"
+    name: "entity_id"
     op: "BINARY_OP_IN"
     value:
       str_array:
-        value: ["4", "5", "unknown"]
+        value: ["entity_4", "entity_5", "unknown"]

@@ -3,47 +3,50 @@
 ## Result
 
 ```bash
-Ran 1 of 1 Specs in 2368.640 seconds
+Ran 1 of 1 Specs in 2384.312 seconds
 SUCCESS! -- 1 Passed | 0 Failed | 0 Pending | 0 Skipped
 PASS
 
-Ginkgo ran 1 suite in 39m32.259409687s
+Ginkgo ran 1 suite in 39m47.81357862s
 ```
 
 ## Disk Usage
 
 ```bash
-96M     ./measure-minute/shard-0/seg-20230613/block-2023061313/inverted
-25M     ./measure-minute/shard-0/seg-20230613/block-2023061313/lsm
-18M     ./measure-minute/shard-0/seg-20230613/block-2023061313/encoded
-26M     ./measure-minute/shard-0/seg-20230613/block-2023061313/tst
-163M    ./measure-minute/shard-0/seg-20230613/block-2023061313
-4.0K    ./measure-minute/shard-0/seg-20230613/index
-163M    ./measure-minute/shard-0/seg-20230613
+4.0K    ./measure-minute/shard-0/seg-20230626/index
+24M     ./measure-minute/shard-0/seg-20230626/block-2023062607/lsm
+17M     ./measure-minute/shard-0/seg-20230626/block-2023062607/encoded
+26M     ./measure-minute/shard-0/seg-20230626/block-2023062607/tst
+66M     ./measure-minute/shard-0/seg-20230626/block-2023062607
+66M     ./measure-minute/shard-0/seg-20230626
 4.4M    ./measure-minute/shard-0/series/md
-4.4M    ./measure-minute/shard-0/series
-167M    ./measure-minute/shard-0
-96M     ./measure-minute/shard-1/seg-20230613/block-2023061313/inverted
-24M     ./measure-minute/shard-1/seg-20230613/block-2023061313/lsm
-20M     ./measure-minute/shard-1/seg-20230613/block-2023061313/encoded
-26M     ./measure-minute/shard-1/seg-20230613/block-2023061313/tst
-164M    ./measure-minute/shard-1/seg-20230613/block-2023061313
-4.0K    ./measure-minute/shard-1/seg-20230613/index
-164M    ./measure-minute/shard-1/seg-20230613
+2.2M    ./measure-minute/shard-0/series/inverted
+20K     ./measure-minute/shard-0/series/lsm
+6.6M    ./measure-minute/shard-0/series
+72M     ./measure-minute/shard-0
+4.0K    ./measure-minute/shard-1/seg-20230626/index
+24M     ./measure-minute/shard-1/seg-20230626/block-2023062607/lsm
+19M     ./measure-minute/shard-1/seg-20230626/block-2023062607/encoded
+26M     ./measure-minute/shard-1/seg-20230626/block-2023062607/tst
+68M     ./measure-minute/shard-1/seg-20230626/block-2023062607
+68M     ./measure-minute/shard-1/seg-20230626
 4.4M    ./measure-minute/shard-1/series/md
-4.4M    ./measure-minute/shard-1/series
-169M    ./measure-minute/shard-1
-336M    ./measure-minute
-93M     ./measure-default/shard-0/seg-20230613/block-2023061313/inverted
-79M     ./measure-default/shard-0/seg-20230613/block-2023061313/lsm
-70M     ./measure-default/shard-0/seg-20230613/block-2023061313/encoded
-86M     ./measure-default/shard-0/seg-20230613/block-2023061313/tst
-326M    ./measure-default/shard-0/seg-20230613/block-2023061313
-4.0K    ./measure-default/shard-0/seg-20230613/index
-326M    ./measure-default/shard-0/seg-20230613
+2.2M    ./measure-minute/shard-1/series/inverted
+20K     ./measure-minute/shard-1/series/lsm
+6.5M    ./measure-minute/shard-1/series
+74M     ./measure-minute/shard-1
+146M    ./measure-minute
+4.0K    ./measure-default/shard-0/seg-20230626/index
+79M     ./measure-default/shard-0/seg-20230626/block-2023062607/lsm
+65M     ./measure-default/shard-0/seg-20230626/block-2023062607/encoded
+85M     ./measure-default/shard-0/seg-20230626/block-2023062607/tst
+228M    ./measure-default/shard-0/seg-20230626/block-2023062607
+228M    ./measure-default/shard-0/seg-20230626
 16M     ./measure-default/shard-0/series/md
-16M     ./measure-default/shard-0/series
-341M    ./measure-default/shard-0
-341M    ./measure-default
-676M    .
+2.4M    ./measure-default/shard-0/series/inverted
+20K     ./measure-default/shard-0/series/lsm
+18M     ./measure-default/shard-0/series
+245M    ./measure-default/shard-0
+245M    ./measure-default
+391M    .
 ```

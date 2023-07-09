@@ -123,6 +123,13 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	var orderBy *tsdb.OrderBy
+	if i.order.Index != nil {
+		orderBy = &tsdb.OrderBy{
+			Index: i.order.Index,
+			Sort:  i.order.Sort,
+		}
+	}
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, errInternal := ec.Shards(e)
@@ -130,11 +137,16 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 			return nil, errInternal
 		}
 		for _, shard := range shards {
-			sl, errInternal := shard.Series().List(context.WithValue(
-				context.Background(),
-				logger.ContextKey,
-				i.l,
-			), tsdb.NewPath(e))
+			sl, errInternal := shard.Series().Search(
+				context.WithValue(
+					context.Background(),
+					logger.ContextKey,
+					i.l,
+				),
+				tsdb.NewPath(e),
+				i.filter,
+				orderBy,
+			)
 			if errInternal != nil {
 				return nil, errInternal
 			}
@@ -145,20 +157,12 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		return dummyIter, nil
 	}
 	var builders []logical.SeekerBuilder
-	if i.order.Index != nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.order.Index, i.order.Sort)
-		})
-	} else {
+	if i.order.Index == nil {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
 			builder.OrderByTime(i.order.Sort)
 		})
 	}
-	if i.filter != nil {
-		builders = append(builders, func(b tsdb.SeekerBuilder) {
-			b.Filter(i.filter)
-		})
-	}
+	// CAVEAT: the order of series list matters when sorting by an index.
 	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
 	if err != nil {
 		return nil, err

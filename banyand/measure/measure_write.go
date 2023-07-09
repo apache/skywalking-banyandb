@@ -56,7 +56,8 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 	if err != nil {
 		return err
 	}
-	series, err := shard.Series().Get(entity, entityValues)
+	seriesDB := shard.Series()
+	series, err := seriesDB.Get(entity, entityValues)
 	if err != nil {
 		return err
 	}
@@ -69,18 +70,18 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 		}
 		return err
 	}
-	writeFn := func() (tsdb.Writer, error) {
+	writeFn := func() error {
 		builder := wp.WriterBuilder().Time(t)
 		for fi, family := range value.GetTagFamilies() {
 			spec := s.schema.GetTagFamilies()[fi]
 			bb, errMarshal := pbv1.EncodeFamily(spec, family)
 			if errMarshal != nil {
-				return nil, errMarshal
+				return errMarshal
 			}
 			builder.Family(familyIdentity(spec.GetName(), pbv1.TagFlag), bb)
 		}
 		if len(value.GetFields()) > len(s.schema.GetFields()) {
-			return nil, errors.Wrap(errMalformedElement, "fields number is more than expected")
+			return errors.Wrap(errMalformedElement, "fields number is more than expected")
 		}
 		for fi, fieldValue := range value.GetFields() {
 			fieldSpec := s.schema.GetFields()[fi]
@@ -90,7 +91,7 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 				continue
 			}
 			if fType != fieldSpec.GetFieldType() {
-				return nil, errors.Wrapf(errMalformedElement, "field %s type is unexpected", fieldSpec.GetName())
+				return errors.Wrapf(errMalformedElement, "field %s type is unexpected", fieldSpec.GetName())
 			}
 			data := encodeFieldValue(fieldValue)
 			if data == nil {
@@ -101,7 +102,7 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 		}
 		writer, errWrite := builder.Build()
 		if errWrite != nil {
-			return nil, errWrite
+			return errWrite
 		}
 		_, errWrite = writer.Write()
 		if s.l.Debug().Enabled() {
@@ -114,15 +115,15 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 				Int("shard_id", int(shardID)).
 				Msg("write measure")
 		}
-		return writer, errWrite
+		return errWrite
 	}
-	writer, err := writeFn()
-	if err != nil {
+
+	if err = writeFn(); err != nil {
 		_ = wp.Close()
 		return err
 	}
 	m := index.Message{
-		LocalWriter: writer,
+		IndexWriter: tsdb.NewSeriesIndexWriter(series.ID(), seriesDB),
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
 			Timestamp:   t,

@@ -24,37 +24,37 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "2"
+        value: "5"
   tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
-          value: "4"
+          value: svc2
     - key: entity_id
       value:
         str:
-          value: entity_2
-  timestamp: "2022-10-17T12:50:45.912Z"
+          value: entity_4
+  timestamp: "2023-06-26T01:38:00Z"
 - fields:
   - name: total
     value:
       int:
-        value: "100"
+        value: "50"
   - name: value
     value:
       int:
-        value: "3"
+        value: "4"
   tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
-          value: "5"
+          value: svc2
     - key: entity_id
       value:
         str:
-          value: entity_2
-  timestamp: "2022-10-17T12:51:45.912Z"
+          value: entity_5
+  timestamp: "2023-06-26T01:39:00Z"

@@ -173,12 +173,12 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	s.maxRecvMsgSize = defaultRecvSize
 	fs.VarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", "the size of max receiving message")
-	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.certFile, "cert-file", "", "", "the TLS cert file")
-	fs.StringVarP(&s.keyFile, "key-file", "", "", "the TLS key file")
-	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
-	fs.BoolVarP(&s.enableIngestionAccessLog, "enable-ingestion-access-log", "", false, "enable ingestion access log")
-	fs.StringVarP(&s.accessLogRootPath, "access-log-root-path", "", "", "access log root path")
+	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
+	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
+	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
+	fs.StringVar(&s.addr, "addr", ":17912", "the address of banyand listens")
+	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	return fs
 }
 

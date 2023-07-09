@@ -35,6 +35,7 @@ var (
 	propertySchemaPathWithoutTagParams  = propertySchemaPath + "/{group}/{name}/{id}"
 	propertySchemaPathWithTagParams     = propertySchemaPath + "/{group}/{name}/{id}/{tag}"
 	propertyListSchemaPathWithTagParams = propertySchemaPath + "/lists/{group}/{name}/{ids}/{tags}"
+	propertyListSchemaPath              = propertySchemaPath + "/lists/{group}"
 )
 
 func newPropertyCmd() *cobra.Command {
@@ -103,12 +104,15 @@ func newPropertyCmd() *cobra.Command {
 		Short:   "List properties",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+				if len(request.name) == 0 {
+					return request.req.SetPathParam("group", request.group).Get(getPath(propertyListSchemaPath))
+				}
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("ids", request.ids()).SetPathParam("tags", request.tags()).Get(getPath(propertyListSchemaPathWithTagParams))
 			}, yamlPrinter)
 		},
 	}
-	bindNameFlag(listCmd)
+	listCmd.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
 	listCmd.Flags().StringArrayVarP(&ids, "ids", "", nil, "id selector")
 	listCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "tag selector")
 

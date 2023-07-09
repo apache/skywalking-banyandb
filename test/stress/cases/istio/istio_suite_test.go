@@ -53,7 +53,7 @@ var _ = Describe("Istio", func() {
 	BeforeEach(func() {
 		Expect(logger.Init(logger.Logging{
 			Env:   "dev",
-			Level: "info",
+			Level: flags.LogLevel,
 		})).To(Succeed())
 	})
 	It("should pass", func() {

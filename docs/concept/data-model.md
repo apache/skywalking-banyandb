@@ -50,7 +50,7 @@ Every other resource should belong to a group. The `catalog` indicates which kin
 * `MEASURE`: [`Measure`](#streams).
 * `STREAM`: [`Stream`](#measures).
 
-[Group Registration Operations](api-reference.md#groupregistryservice)
+[Group Registration Operations](../api-reference.md#groupregistryservice)
 
 ### Measures
 
@@ -95,7 +95,6 @@ interval: 1m
 * **STRING_ARRAY** : A group of strings
 * **INT_ARRAY** : A group of integers
 * **DATA_BINARY** : Raw binary
-* **ID** : Identity of a data point in a measure. If several data points come with an identical ID typed tag, the last write wins according to the `timestamp`.
 
 A group of selected tags composite an `entity` that points out a specific time series the data point belongs to. The database engine has capacities to encode and compress values in the same time series. Users should select appropriate tag combinations to optimize the data size. Another role of `entity` is the sharding key of data points, determining how to fragment data between shards.
 
@@ -107,6 +106,7 @@ functions to them.
 * **STRING** : Text
 * **INT** : 64 bits long integer
 * **DATA_BINARY** : Raw binary
+* **FLOAT** : 64 bits double-precision floating-point number
 
 `Measure` supports the following encoding methods:
 
@@ -270,6 +270,33 @@ expire_at: '2121-04-15T01:30:15.01Z'
 
 IndexRuleBinding binds IndexRules to a subject, `Stream` or `Measure`. The time range between `begin_at` and `expire_at` is the effective time.
 
-[IndexRule Registration Operations](api-reference.md#indexruleregistryservice)
+[IndexRule Registration Operations](../api-reference.md#indexruleregistryservice)
 
-[IndexRuleBinding Registration Operations](api-reference.md#indexrulebindingregistryservice)
+[IndexRuleBinding Registration Operations](../api-reference.md#indexrulebindingregistryservice)
+
+### Index Granularity
+
+In BanyanDB, `Stream` and `Measure` have different levels of index granularity.
+
+For `Measure`, the indexed target is a data point with specific tag values. The query processor uses the tag values defined in the `entity` field of the Measure to compose a series ID, which is used to find the several series that match the query criteria. The `entity` field is a set of tags that defines the unique identity of a time series, and it restricts the tags that can be used as indexed target.
+
+Each series contains a sequence of data points that share the same tag values. Once the query processor has identified the relevant series, it scans the data points between the desired time range in those series to find the data that matches the query criteria.
+
+For example, suppose we have a `Measure` with the following `entity` field: `{service, operation, instance}`. If we get a data point with the following tag values: `service=shopping`, `operation=search`, and `instance=prod-1`, then the query processor would use those tag values to construct a series ID that uniquely identifies the series containing that data point. The query processor would then scan the relevant data points in that series to find the data that matches the query criteria.
+
+The side effect of the measure index is that each indexed value has to represent a unique seriesID. This is because the series ID is constructed by concatenating the indexed tag values in the `entity` field. If two series have the same `entity` field, they would have the same series ID and would be indistinguishable from one another. This means that if you want to index a tag that is not part of the `entity` field, you would need to ensure that it is unique across all series. One way to do this would be to include the tag in the `entity` field, but this may not always be feasible or desirable depending on your use case.
+
+For `Stream`, the indexed target is an element that is a combination of the series ID and timestamp. The `Stream` query processor uses the time range to find target files. The indexed result points to the target element. The processor doesn't have to scan a series of elements in this time range, which reduces the query time.
+
+For example, suppose we have a `Stream` with the following tags: `service`, `operation`, `instance`, and `status_code`. If we get a data point with the following tag values: `service=shopping`, `operation=search`, `instance=prod-1`, and `status_code=200`, and the data point's time is 1:00pm on January 1st, 2022, then the series ID for this data point would be `shopping_search_prod-1_200_1641052800`, where `1641052800` is the Unix timestamp representing 1:00pm on January 1st, 2022.
+
+The indexed target would be the combination of the series ID and timestamp, which in this case would be `shopping_search_prod-1_200_1641052800`. The `Stream` query processor would use the time range specified in the query to find target files and then search within those files for the indexed target.
+
+The following is a comparison of the indexing granularity, performance, and flexibility of `Stream` and `Measure` indices:
+
+| Indexing Granularity                                                                                                                                     | Performance                                | Flexibility                                                                                                     |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| Measure indices are constructed for each series and are based on the entity field of the Measure. Each indexed value has to represent a unique seriesID. | Measure index is faster than Stream index. | Measure index is less flexible and requires more care when indexing tags that are not part of the entity field. |
+| Stream indices are constructed for each element and are based on the series ID and timestamp.                                                            | Stream index is slower than Measure index. | Stream index is more flexible than Measure index and can index any tag value.                                   |
+
+In general, `Measure` indices are faster and more efficient, but they require more care when indexing tags that are not part of the `entity` field. `Stream` indices, on the other hand, are slower and take up more space, but they can index any tag value and do not have the same side effects as `Measure` indices.

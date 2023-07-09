@@ -244,7 +244,7 @@ func (b *badgerDB) Get(key []byte) ([]byte, error) {
 func (b *badgerDB) GetAll(key []byte, applyFn func([]byte) error) error {
 	iter := b.db.NewIterator(badger.DefaultIteratorOptions)
 	var count int
-	for iter.Seek(y.KeyWithTs(key, math.MaxInt64)); iter.Valid(); iter.Next() {
+	for iter.Seek(y.KeyWithTs(key, math.MaxUint64)); iter.Valid(); iter.Next() {
 		if !bytes.Equal(y.ParseKey(iter.Key()), key) {
 			break
 		}

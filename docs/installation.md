@@ -139,10 +139,10 @@ Flags:
       --http-key-file string                 the TLS key file of http server
       --http-tls                             connection uses TLS if true, else plain HTTP
       --key-file string                      the TLS key file
-      --logging.env string                   the logging (default "prod")
-      --logging.level string                 the root level of logging (default "info")
-      --logging.levels stringArray           the level logging of logging
-      --logging.modules stringArray          the specific module
+      --logging-env string                   the logging (default "prod")
+      --logging-level string                 the root level of logging (default "info")
+      --logging-levels stringArray           the level logging of logging
+      --logging-modules stringArray          the specific module
       --max-recv-msg-size bytes              the size of max receiving message (default 10.00MiB)
       --measure-buffer-size bytes            block buffer size (default 4.00MiB)
       --measure-encoder-buffer-size bytes    block fields buffer size (default 12.00MiB)
