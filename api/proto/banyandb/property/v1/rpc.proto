@@ -27,9 +27,7 @@ import "validate/validate.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
 option java_package = "org.apache.skywalking.banyandb.property.v1";
-option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path: "/api"
-};
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
 message ApplyRequest {
   banyandb.property.v1.Property property = 1 [(validate.rules).message.required = true];
@@ -88,20 +86,17 @@ service PropertyService {
   }
 
   rpc Delete(DeleteRequest) returns (DeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
-    };
+    option (google.api.http) = {delete: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"};
   }
 
   rpc Get(GetRequest) returns (GetResponse) {
-    option (google.api.http) = {
-      get: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"
-    };
+    option (google.api.http) = {get: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"};
   }
 
   rpc List(ListRequest) returns (ListResponse) {
     option (google.api.http) = {
       get: "/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
+      additional_bindings {get: "/v1/property/lists/{container.group}"}
     };
   }
 }

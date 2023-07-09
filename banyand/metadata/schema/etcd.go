@@ -180,7 +180,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	}
 
 	config := clientv3.Config{
-		Endpoints:            []string{e.Config().ACUrls[0].String()},
+		Endpoints:            []string{e.Config().AdvertiseClientUrls[0].String()},
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
@@ -407,8 +407,8 @@ func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logge
 	pURL, _ := url.Parse(config.listenerPeerURL)
 
 	cfg.ClusterState = "new"
-	cfg.LCUrls, cfg.ACUrls = []url.URL{*cURL}, []url.URL{*cURL}
-	cfg.LPUrls, cfg.APUrls = []url.URL{*pURL}, []url.URL{*pURL}
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*cURL}, []url.URL{*cURL}
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*pURL}, []url.URL{*pURL}
 	cfg.InitialCluster = ",default=" + pURL.String()
 
 	cfg.BackendBatchInterval = 500 * time.Millisecond

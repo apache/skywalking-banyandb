@@ -21,6 +21,8 @@
 package observability
 
 import (
+	"sync"
+
 	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,7 +32,12 @@ import (
 	"google.golang.org/grpc"
 )
 
-var reg = prometheus.NewRegistry()
+var (
+	reg = prometheus.NewRegistry()
+
+	once       = sync.Once{}
+	srvMetrics *grpcprom.ServerMetrics
+)
 
 func init() {
 	reg.MustRegister(prometheus.NewGoCollector())
@@ -48,11 +55,13 @@ func NewMeterProvider(scope meter.Scope) meter.Provider {
 
 // MetricsServerInterceptor returns a server interceptor for metrics.
 func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
-	srvMetrics := grpcprom.NewServerMetrics(
-		grpcprom.WithServerHandlingTimeHistogram(
-			grpcprom.WithHistogramBuckets([]float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120}),
-		),
-	)
-	reg.MustRegister(srvMetrics)
+	once.Do(func() {
+		srvMetrics = grpcprom.NewServerMetrics(
+			grpcprom.WithServerHandlingTimeHistogram(
+				grpcprom.WithHistogramBuckets([]float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120}),
+			),
+		)
+		reg.MustRegister(srvMetrics)
+	})
 	return srvMetrics.UnaryServerInterceptor(), srvMetrics.StreamServerInterceptor()
 }

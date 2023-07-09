@@ -95,9 +95,17 @@ $ bydbctl property delete -g sw -n ui_template --id General-Service --tags state
 
 ## List operation
 
-List operation lists all properties.
+List operation lists all properties in a group.
 
-### Examples of listing
+### Examples of listing in a group
+
+```shell
+$ bydbctl property list -g sw
+```
+
+List operation lists all properties in a group with a name.
+
+### Examples of listing in a group with a name
 
 ```shell
 $ bydbctl property list -g sw -n ui_template

@@ -202,5 +202,8 @@ func NewService(_ context.Context, metadata metadata.Repo, repo discovery.Servic
 		repo:     repo,
 		pipeline: pipeline,
 		stopCh:   make(chan struct{}),
+		dbOpts: tsdb.DatabaseOpts{
+			IndexGranularity: tsdb.IndexGranularitySeries,
+		},
 	}, nil
 }

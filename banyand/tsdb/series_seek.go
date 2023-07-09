@@ -62,7 +62,6 @@ type seekerBuilder struct {
 	seriesSpan          *seriesSpan
 	indexRuleForSorting *databasev1.IndexRule
 	l                   *logger.Logger
-	rangeOptsForSorting index.RangeOpts
 	order               modelv1.Sort
 }
 

@@ -21,14 +21,14 @@ metadata:
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["entity_id"]
+    tags: ["id"]
 fieldProjection:
   names: ["total", "value"]
 groupBy:
   tagProjection:
     tagFamilies:
     - name: "default"
-      tags: ["entity_id"]
+      tags: ["id"]
   fieldName: "value"
 agg:
   function: "AGGREGATION_FUNCTION_MAX"

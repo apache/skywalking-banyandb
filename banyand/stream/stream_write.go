@@ -120,8 +120,9 @@ func (s *stream) write(shardID common.ShardID, entity []byte, entityValues tsdb.
 		return err
 	}
 	m := index.Message{
-		Scope:       tsdb.Entry(s.name),
-		LocalWriter: writer,
+		Scope:        tsdb.Entry(s.name),
+		IndexWriter:  writer,
+		GlobalItemID: writer.ItemID(),
 		Value: index.Value{
 			TagFamilies: value.GetTagFamilies(),
 			Timestamp:   t,

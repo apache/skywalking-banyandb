@@ -49,7 +49,8 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		baseTime = timestamp.NowMilli()
+		ns := timestamp.NowMilli().UnixNano()
+		baseTime = time.Unix(0, ns-ns%int64(time.Minute))
 		interval = 500 * time.Millisecond
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, interval)
 		goods = gleak.Goroutines()
@@ -65,7 +66,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: conn,
 				BaseTime:   baseTime,
-			}, helpers.Args{Input: "all", Want: "update", Duration: 1 * time.Hour})
-		}, flags.EventuallyTimeout)
+			}, helpers.Args{Input: "all", Want: "update", Duration: 25 * time.Minute, Offset: -20 * time.Minute})
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	})
 })

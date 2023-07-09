@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/golang-lru/simplelru"
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -45,7 +45,7 @@ type Queue interface {
 	Remove(id fmt.Stringer)
 	Len() int
 	Volume() int
-	All() []interface{}
+	All() []fmt.Stringer
 }
 
 const (
@@ -59,9 +59,9 @@ const (
 var errInvalidSize = errors.New("invalid size")
 
 type lruQueue struct {
-	recent      simplelru.LRUCache
-	frequent    simplelru.LRUCache
-	recentEvict simplelru.LRUCache
+	recent      simplelru.LRUCache[fmt.Stringer, any]
+	frequent    simplelru.LRUCache[fmt.Stringer, any]
+	recentEvict simplelru.LRUCache[fmt.Stringer, any]
 	l           *logger.Logger
 	evictFn     EvictFn
 	size        int
@@ -79,15 +79,15 @@ func NewQueue(l *logger.Logger, size int, maxSize int, scheduler *timestamp.Sche
 	recentSize := int(float64(size) * defaultRecentRatio)
 	evictSize := maxSize - size
 
-	recent, err := simplelru.NewLRU(size, nil)
+	recent, err := simplelru.NewLRU[fmt.Stringer, any](size, nil)
 	if err != nil {
 		return nil, err
 	}
-	frequent, err := simplelru.NewLRU(size, nil)
+	frequent, err := simplelru.NewLRU[fmt.Stringer, any](size, nil)
 	if err != nil {
 		return nil, err
 	}
-	recentEvict, err := simplelru.NewLRU(evictSize, nil)
+	recentEvict, err := simplelru.NewLRU[fmt.Stringer, any](evictSize, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -201,10 +201,10 @@ func (q *lruQueue) Volume() int {
 	return q.size + q.recentSize + q.evictSize
 }
 
-func (q *lruQueue) All() []interface{} {
+func (q *lruQueue) All() []fmt.Stringer {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
-	all := make([]interface{}, q.recent.Len()+q.frequent.Len()+q.recentEvict.Len())
+	all := make([]fmt.Stringer, q.recent.Len()+q.frequent.Len()+q.recentEvict.Len())
 	copy(all, q.recent.Keys())
 	copy(all[q.recent.Len():], q.frequent.Keys())
 	copy(all[q.recent.Len()+q.frequent.Len():], q.recentEvict.Keys())
@@ -237,7 +237,7 @@ func (q *lruQueue) ensureSpace(ctx context.Context, recentEvict bool) error {
 	return q.removeOldest(ctx, q.frequent)
 }
 
-func (q *lruQueue) addLst(ctx context.Context, lst simplelru.LRUCache, size int, id interface{}) error {
+func (q *lruQueue) addLst(ctx context.Context, lst simplelru.LRUCache[fmt.Stringer, any], size int, id fmt.Stringer) error {
 	if lst.Len() < size {
 		lst.Add(id, nil)
 		return nil
@@ -249,7 +249,7 @@ func (q *lruQueue) addLst(ctx context.Context, lst simplelru.LRUCache, size int,
 	return nil
 }
 
-func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache) error {
+func (q *lruQueue) removeOldest(ctx context.Context, lst simplelru.LRUCache[fmt.Stringer, any]) error {
 	oldestID, _, ok := lst.GetOldest()
 	if ok && q.evictFn != nil {
 		if err := q.evictFn(ctx, oldestID); err != nil {
