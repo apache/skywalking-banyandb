@@ -26,9 +26,7 @@ import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
 option java_package = "org.apache.skywalking.banyandb.database.v1";
-option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path: "/api"
-};
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
 message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
@@ -91,21 +89,15 @@ service StreamRegistryService {
   }
 
   rpc Delete(StreamRegistryServiceDeleteRequest) returns (StreamRegistryServiceDeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/stream/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {delete: "/v1/stream/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc Get(StreamRegistryServiceGetRequest) returns (StreamRegistryServiceGetResponse) {
-    option (google.api.http) = {
-      get: "/v1/stream/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {get: "/v1/stream/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc List(StreamRegistryServiceListRequest) returns (StreamRegistryServiceListResponse) {
-    option (google.api.http) = {
-      get: "/v1/stream/schema/lists/{group}"
-    };
+    option (google.api.http) = {get: "/v1/stream/schema/lists/{group}"};
   }
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
@@ -173,21 +165,15 @@ service IndexRuleBindingRegistryService {
   }
 
   rpc Delete(IndexRuleBindingRegistryServiceDeleteRequest) returns (IndexRuleBindingRegistryServiceDeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {delete: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc Get(IndexRuleBindingRegistryServiceGetRequest) returns (IndexRuleBindingRegistryServiceGetResponse) {
-    option (google.api.http) = {
-      get: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {get: "/v1/index-rule-binding/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc List(IndexRuleBindingRegistryServiceListRequest) returns (IndexRuleBindingRegistryServiceListResponse) {
-    option (google.api.http) = {
-      get: "/v1/index-rule-binding/schema/lists/{group}"
-    };
+    option (google.api.http) = {get: "/v1/index-rule-binding/schema/lists/{group}"};
   }
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
@@ -255,21 +241,15 @@ service IndexRuleRegistryService {
   }
 
   rpc Delete(IndexRuleRegistryServiceDeleteRequest) returns (IndexRuleRegistryServiceDeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {delete: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc Get(IndexRuleRegistryServiceGetRequest) returns (IndexRuleRegistryServiceGetResponse) {
-    option (google.api.http) = {
-      get: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {get: "/v1/index-rule/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc List(IndexRuleRegistryServiceListRequest) returns (IndexRuleRegistryServiceListResponse) {
-    option (google.api.http) = {
-      get: "/v1/index-rule/schema/lists/{group}"
-    };
+    option (google.api.http) = {get: "/v1/index-rule/schema/lists/{group}"};
   }
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
@@ -337,21 +317,15 @@ service MeasureRegistryService {
   }
 
   rpc Delete(MeasureRegistryServiceDeleteRequest) returns (MeasureRegistryServiceDeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/measure/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {delete: "/v1/measure/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc Get(MeasureRegistryServiceGetRequest) returns (MeasureRegistryServiceGetResponse) {
-    option (google.api.http) = {
-      get: "/v1/measure/schema/{metadata.group}/{metadata.name}"
-    };
+    option (google.api.http) = {get: "/v1/measure/schema/{metadata.group}/{metadata.name}"};
   }
 
   rpc List(MeasureRegistryServiceListRequest) returns (MeasureRegistryServiceListResponse) {
-    option (google.api.http) = {
-      get: "/v1/measure/schema/lists/{group}"
-    };
+    option (google.api.http) = {get: "/v1/measure/schema/lists/{group}"};
   }
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
@@ -416,21 +390,15 @@ service GroupRegistryService {
   }
 
   rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
-    option (google.api.http) = {
-      delete: "/v1/group/schema/{group}"
-    };
+    option (google.api.http) = {delete: "/v1/group/schema/{group}"};
   }
 
   rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse) {
-    option (google.api.http) = {
-      get: "/v1/group/schema/{group}"
-    };
+    option (google.api.http) = {get: "/v1/group/schema/{group}"};
   }
 
   rpc List(GroupRegistryServiceListRequest) returns (GroupRegistryServiceListResponse) {
-    option (google.api.http) = {
-      get: "/v1/group/schema/lists"
-    };
+    option (google.api.http) = {get: "/v1/group/schema/lists"};
   }
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead

@@ -27,9 +27,7 @@ import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
 option java_package = "org.apache.skywalking.banyandb.measure.v1";
-option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  base_path: "/api"
-};
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
 service MeasureService {
   rpc Query(banyandb.measure.v1.QueryRequest) returns (banyandb.measure.v1.QueryResponse) {
