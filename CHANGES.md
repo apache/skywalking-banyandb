@@ -9,6 +9,10 @@ Release Notes.
 - List all properties in a group.
 - Implement Write-ahead Logging
 
+### Chores
+
+- Bump several dependencies and tools.
+
 ## 0.4.0
 
 ### Features
