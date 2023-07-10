@@ -11,6 +11,7 @@ Release Notes.
 ### Bugs
 
 - BanyanDB ui unable to load icon.
+- BanyanDB ui type error
 
 ### Chores
 
