@@ -25,6 +25,7 @@ import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
 import { ref, reactive } from 'vue'
 import { Search } from '@element-plus/icons-vue'
+
 const router = useRouter()
 const route = useRoute()
 const { proxy } = getCurrentInstance()
@@ -295,8 +296,13 @@ function getGroupLists() {
         })
 }
 function deleteOtherGroup() {
+    let flag = {
+        'CATALOG_MEASURE': 'measure',
+        'CATALOG_STREAM': 'stream',
+        'STRATEGY_UNSPECIFIED': 'property'
+    }
     for (let i = 0; i < data.groupLists.length; i++) {
-        let type = data.groupLists[i].catalog == 'CATALOG_MEASURE' ? 'measure' : 'stream'
+        let type = flag[data.groupLists[i].catalog]
         if (type !== props.type) {
             data.groupLists.splice(i, 1)
             i--
