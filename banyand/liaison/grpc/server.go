@@ -292,6 +292,7 @@ func (s *server) GracefulStop() {
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
 	}
+	t.Stop()
 }
 
 type accessLogRecorder interface {
