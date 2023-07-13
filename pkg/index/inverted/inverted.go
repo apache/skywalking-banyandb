@@ -309,9 +309,11 @@ func (s *store) run() {
 			timer := time.NewTimer(s.batchInterval)
 			select {
 			case <-s.closer.CloseNotify():
+				timer.Stop()
 				return
 			case event, more := <-s.ch:
 				if !more {
+					timer.Stop()
 					return
 				}
 				switch d := event.(type) {
@@ -349,6 +351,7 @@ func (s *store) run() {
 			case <-timer.C:
 				flush()
 			}
+			timer.Stop()
 		}
 	}()
 }
