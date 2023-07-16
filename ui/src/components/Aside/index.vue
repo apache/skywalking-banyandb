@@ -29,7 +29,6 @@ import { Search } from '@element-plus/icons-vue'
 const router = useRouter()
 const route = useRoute()
 const { proxy } = getCurrentInstance()
-const { ctx: that } = getCurrentInstance()
 
 // ref
 const ruleForm = ref()
@@ -216,7 +215,6 @@ function searchGroup() {
         }
     })
     data.groupLists = JSON.parse(JSON.stringify(groupLists))
-    that.$forceUpdate()
 }
 // init data
 function getGroupLists() {
@@ -282,7 +280,6 @@ function getGroupLists() {
                 Promise.all(promise).then(() => {
                     data.showSearch = true
                     data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
-                    that.$forceUpdate()
                 }).catch((err) => {
                     ElMessage({
                         message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
