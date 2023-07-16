@@ -452,9 +452,11 @@ func (log *log) flushBuffer(buffer buffer) error {
 		return nil
 	}
 
-	log.bufferWriter.Reset()
-
 	var err error
+	if err = log.bufferWriter.Reset(); err != nil {
+		return errors.Wrap(err, "Reset buffer writer error")
+	}
+
 	for seriesID, timestamps := range buffer.timestampMap {
 		log.bufferWriter.ResetSeries()
 
@@ -545,13 +547,14 @@ func NewBufferWriter() *bufferWriter {
 	}
 }
 
-func (w *bufferWriter) Reset() {
+func (w *bufferWriter) Reset() error {
 	w.ResetSeries()
 	w.buf.Reset()
 	w.batchLen = 0
 
 	// pre-placement padding
-	w.writeBatchLength(0)
+	err := w.writeBatchLength(0)
+	return err
 }
 
 func (w *bufferWriter) ResetSeries() {
@@ -621,8 +624,9 @@ func (w *bufferWriter) WriteTimestamps(timestamps []time.Time) {
 
 func (w *bufferWriter) WriteData(data []byte) {
 	maxEncodedLen := snappy.MaxEncodedLen(len(data))
-	if len(w.dataBuf) < maxEncodedLen {
-		newCapacity := len(w.dataBuf) * (1 / 2)
+	dataBufLen := len(w.dataBuf)
+	if dataBufLen < maxEncodedLen {
+		newCapacity := (dataBufLen * 2) - (dataBufLen / 2)
 		if newCapacity < maxEncodedLen {
 			newCapacity = maxEncodedLen
 		}
@@ -636,16 +640,16 @@ func (w *bufferWriter) writeBatchLength(data uint64) error {
 	return writeUint64(w.buf, data)
 }
 
-func (w *bufferWriter) rewriteBatchLength(b []byte, len uint64) []byte {
+func (w *bufferWriter) rewriteBatchLength(b []byte, batchLen uint64) []byte {
 	_ = b[7] // early bounds check to guarantee safety of writes below
-	b[0] = byte(len)
-	b[1] = byte(len >> 8)
-	b[2] = byte(len >> 16)
-	b[3] = byte(len >> 24)
-	b[4] = byte(len >> 32)
-	b[5] = byte(len >> 40)
-	b[6] = byte(len >> 48)
-	b[7] = byte(len >> 56)
+	b[0] = byte(batchLen)
+	b[1] = byte(batchLen >> 8)
+	b[2] = byte(batchLen >> 16)
+	b[3] = byte(batchLen >> 24)
+	b[4] = byte(batchLen >> 32)
+	b[5] = byte(batchLen >> 40)
+	b[6] = byte(batchLen >> 48)
+	b[7] = byte(batchLen >> 56)
 	return b
 }
 
@@ -1041,12 +1045,6 @@ func writeUint64(buffer *bytes.Buffer, data uint64) error {
 		return err
 	}
 	return err
-}
-
-func uint16ToBytes(i uint16) []byte {
-	buf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(buf, i)
-	return buf
 }
 
 func bytesToUint16(buf []byte) uint16 {

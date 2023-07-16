@@ -367,6 +367,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_64MB(b *testing.B
 
 func newWAL(options *Options) WAL {
 	os.RemoveAll(path)
+
 	logger.Init(logger.Logging{Level: "error"})
 	logPath, _ := filepath.Abs(path)
 	if options == nil {
