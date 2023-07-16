@@ -60,7 +60,7 @@ const (
 // DefaultOptions for Open().
 var DefaultOptions = &Options{
 	FileSize:            67108864, // 64MB
-	BufferSize:          16384,    // 16KB
+	BufferSize:          65535,    // 16KB
 	BufferBatchInterval: 3 * time.Second,
 	NoSync:              false,
 }
@@ -113,21 +113,20 @@ type LogEntry interface {
 
 // log implements the WAL interface.
 type log struct {
-	writeCloser      *run.ChannelCloser
-	flushCloser      *run.ChannelCloser
-	chanGroupCloser  *run.ChannelGroupCloser
-	buffer           buffer
-	logger           *logger.Logger
-	bytesBuffer      *bytes.Buffer
-	timestampsBuffer *bytes.Buffer
-	segmentMap       map[SegmentID]*segment
-	workSegment      *segment
-	writeChannel     chan logRequest
-	flushChannel     chan buffer
-	path             string
-	options          Options
-	rwMutex          sync.RWMutex
-	closerOnce       sync.Once
+	writeCloser     *run.ChannelCloser
+	flushCloser     *run.ChannelCloser
+	chanGroupCloser *run.ChannelGroupCloser
+	buffer          buffer
+	logger          *logger.Logger
+	bufferWriter    *bufferWriter
+	segmentMap      map[SegmentID]*segment
+	workSegment     *segment
+	writeChannel    chan logRequest
+	flushChannel    chan buffer
+	path            string
+	options         Options
+	rwMutex         sync.RWMutex
+	closerOnce      sync.Once
 }
 
 type segment struct {
@@ -157,6 +156,16 @@ type buffer struct {
 	valueMap     map[common.GlobalSeriesID][]byte
 	callbackMap  map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)
 	count        int
+}
+
+type bufferWriter struct {
+	buf           *bytes.Buffer
+	seriesIDBuf   *bytes.Buffer
+	timestampsBuf *bytes.Buffer
+	dataBuf       []byte
+	dataLen       int
+	seriesCount   uint32
+	batchLen      uint64
 }
 
 // New creates a WAL instance in the specified path.
@@ -197,16 +206,15 @@ func New(path string, options *Options) (WAL, error) {
 	flushCloser := run.NewChannelCloser()
 	chanGroupCloser := run.NewChannelGroupCloser(writeCloser, flushCloser)
 	log := &log{
-		path:             path,
-		options:          *walOptions,
-		logger:           logger.GetLogger(moduleName),
-		writeChannel:     make(chan logRequest),
-		flushChannel:     make(chan buffer, walOptions.FlushQueueSize),
-		bytesBuffer:      bytes.NewBuffer([]byte{}),
-		timestampsBuffer: bytes.NewBuffer([]byte{}),
-		writeCloser:      writeCloser,
-		flushCloser:      flushCloser,
-		chanGroupCloser:  chanGroupCloser,
+		path:            path,
+		options:         *walOptions,
+		logger:          logger.GetLogger(moduleName),
+		writeChannel:    make(chan logRequest),
+		flushChannel:    make(chan buffer, walOptions.FlushQueueSize),
+		bufferWriter:    NewBufferWriter(),
+		writeCloser:     writeCloser,
+		flushCloser:     flushCloser,
+		chanGroupCloser: chanGroupCloser,
 		buffer: buffer{
 			timestampMap: make(map[common.GlobalSeriesID][]time.Time),
 			valueMap:     make(map[common.GlobalSeriesID][]byte),
@@ -357,7 +365,7 @@ func (log *log) start() {
 					log.logger.Debug().Msg("Write request to buffer. elements: " + strconv.Itoa(log.buffer.count))
 				}
 
-				bufferVolume += len(request.seriesID.Marshal()) + timestampVolumeLength + len(request.data)
+				bufferVolume += request.seriesID.Volume() + timestampVolumeLength + len(request.data)
 				if bufferVolume > log.options.BufferSize {
 					log.triggerFlushing()
 					bufferVolume = 0
@@ -373,6 +381,7 @@ func (log *log) start() {
 				log.logger.Info().Msg("Stop batch task when close notify")
 				return
 			}
+			timer.Stop()
 		}
 	}()
 
@@ -421,18 +430,12 @@ func (log *log) start() {
 }
 
 func (log *log) triggerFlushing() {
-	for {
-		select {
-		case log.flushChannel <- log.buffer:
-			if log.logger.Debug().Enabled() {
-				log.logger.Debug().Msg("Send buffer to flush-channel. elements: " + strconv.Itoa(log.buffer.count))
-			}
-			log.newBuffer()
-			return
-		default:
-		}
-		time.Sleep(10 * time.Millisecond)
+	log.flushChannel <- log.buffer
+	if log.logger.Debug().Enabled() {
+		log.logger.Debug().Msg("Send buffer to flush-channel. elements: " + strconv.Itoa(log.buffer.count))
 	}
+
+	log.newBuffer()
 }
 
 func (log *log) newBuffer() {
@@ -449,98 +452,23 @@ func (log *log) flushBuffer(buffer buffer) error {
 		return nil
 	}
 
-	defer func() {
-		log.bytesBuffer.Reset()
-		log.timestampsBuffer.Reset()
-	}()
+	log.bufferWriter.Reset()
 
-	// placeholder, preset batch length value is 0
-	var batchLen uint64
-	if err := log.writeBatchLength(batchLen); err != nil {
-		return errors.Wrap(err, "Write batch length error")
-	}
+	var err error
 	for seriesID, timestamps := range buffer.timestampMap {
-		// Generate seriesID binary
-		seriesIDBytes := seriesID.Marshal()
-		seriesIDBytesLen := len(seriesIDBytes)
+		log.bufferWriter.ResetSeries()
 
-		// Generate timestamps compression binary
-		log.timestampsBuffer.Reset()
-		timestampWriter := encoding.NewWriter()
-		timestampEncoder := encoding.NewXOREncoder(timestampWriter)
-		timestampWriter.Reset(log.timestampsBuffer)
-		for _, timestamp := range timestamps {
-			timestampEncoder.Write(timeToUnixNano(timestamp))
-		}
-		timestampWriter.Flush()
-		timestampsBytes := log.timestampsBuffer.Bytes()
-		timestampsBytesLen := len(timestampsBytes)
-
-		// Generate values compression binary
-		valuesBytes := snappy.Encode(nil, buffer.valueMap[seriesID])
-
-		// Write entry data
-		entryLen := seriesIDLength + seriesIDBytesLen + seriesCountLength + timestampsBinaryLength + timestampsBytesLen + len(valuesBytes)
-		if err := log.writeEntryLength(uint64(entryLen)); err != nil {
-			return errors.Wrap(err, "Write entry length error")
-		}
-		if err := log.writeSeriesIDLength(uint16(seriesIDBytesLen)); err != nil {
-			return errors.Wrap(err, "Write seriesID length error")
-		}
-		if err := log.writeSeriesID(seriesIDBytes); err != nil {
+		if err = log.bufferWriter.WriteSeriesID(seriesID); err != nil {
 			return errors.Wrap(err, "Write seriesID error")
 		}
-		if err := log.writeSeriesCount(uint32(len(timestamps))); err != nil {
-			return errors.Wrap(err, "Write series count error")
-		}
-		if err := log.writeTimestampsLength(uint16(timestampsBytesLen)); err != nil {
-			return errors.Wrap(err, "Write timestamps length error")
-		}
-		if err := log.writeTimestamps(timestampsBytes); err != nil {
-			return errors.Wrap(err, "Write timestamps error")
-		}
-		if err := log.writeData(valuesBytes); err != nil {
-			return errors.Wrap(err, "Write values error")
+		log.bufferWriter.WriteTimestamps(timestamps)
+		log.bufferWriter.WriteData(buffer.valueMap[seriesID])
+		if err = log.bufferWriter.AddSeries(); err != nil {
+			return errors.Wrap(err, "Add series error")
 		}
 	}
-	// Rewrite batch length
-	batchBytes := log.bytesBuffer.Bytes()
-	batchLen = uint64(len(batchBytes)) - batchLength
-	rewriteBatchLength(batchBytes, batchLen)
 
-	return log.writeWorkSegment(batchBytes)
-}
-
-func (log *log) writeBatchLength(data uint64) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeEntryLength(data uint64) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeSeriesIDLength(data uint16) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeSeriesID(data []byte) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeSeriesCount(data uint32) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeTimestampsLength(data uint16) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeTimestamps(data []byte) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
-}
-
-func (log *log) writeData(data []byte) error {
-	return binary.Write(log.bytesBuffer, binary.LittleEndian, data)
+	return log.writeWorkSegment(log.bufferWriter.Bytes())
 }
 
 func (log *log) writeWorkSegment(data []byte) error {
@@ -606,6 +534,150 @@ func (log *log) load() error {
 		return errors.Wrap(err, "Open WAL segment error, file: "+log.workSegment.path)
 	}
 	return nil
+}
+
+func NewBufferWriter() *bufferWriter {
+	return &bufferWriter{
+		buf:           bytes.NewBuffer([]byte{}),
+		seriesIDBuf:   bytes.NewBuffer([]byte{}),
+		timestampsBuf: bytes.NewBuffer([]byte{}),
+		dataBuf:       make([]byte, 128),
+	}
+}
+
+func (w *bufferWriter) Reset() {
+	w.ResetSeries()
+	w.buf.Reset()
+	w.batchLen = 0
+
+	// pre-placement padding
+	w.writeBatchLength(0)
+}
+
+func (w *bufferWriter) ResetSeries() {
+	w.seriesIDBuf.Reset()
+	w.timestampsBuf.Reset()
+	w.dataLen = 0
+	w.seriesCount = 0
+}
+
+func (w *bufferWriter) AddSeries() error {
+	seriesIDBytesLen := uint16(w.seriesIDBuf.Len())
+	timestampsBytesLen := uint16(w.timestampsBuf.Len())
+	entryLen := seriesIDLength + uint64(seriesIDBytesLen) + seriesCountLength + timestampsBinaryLength + uint64(timestampsBytesLen) + uint64(w.dataLen)
+
+	var err error
+	if err = w.writeEntryLength(entryLen); err != nil {
+		return err
+	}
+	if err = w.writeSeriesIDLength(seriesIDBytesLen); err != nil {
+		return err
+	}
+	if err = w.writeSeriesID(w.seriesIDBuf.Bytes()); err != nil {
+		return err
+	}
+	if err = w.writeSeriesCount(w.seriesCount); err != nil {
+		return err
+	}
+	if err = w.writeTimestampsLength(timestampsBytesLen); err != nil {
+		return err
+	}
+	if err = w.writeTimestamps(w.timestampsBuf.Bytes()); err != nil {
+		return err
+	}
+	if err = w.writeData(w.dataBuf[:w.dataLen]); err != nil {
+		return err
+	}
+	w.batchLen += entryLen
+	return nil
+}
+
+func (w *bufferWriter) Bytes() []byte {
+	batchBytes := w.buf.Bytes()
+	batchLen := uint64(len(batchBytes)) - batchLength
+	return w.rewriteBatchLength(batchBytes, batchLen)
+}
+
+func (w *bufferWriter) WriteSeriesID(s common.GlobalSeriesID) error {
+	if err := writeUint64(w.seriesIDBuf, uint64(s.SeriesID)); err != nil {
+		return err
+	}
+	if _, err := w.seriesIDBuf.WriteString(s.Name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *bufferWriter) WriteTimestamps(timestamps []time.Time) {
+	timestampWriter := encoding.NewWriter()
+	timestampEncoder := encoding.NewXOREncoder(timestampWriter)
+	timestampWriter.Reset(w.timestampsBuf)
+	for _, timestamp := range timestamps {
+		timestampEncoder.Write(timeToUnixNano(timestamp))
+	}
+	timestampWriter.Flush()
+	w.seriesCount = uint32(len(timestamps))
+}
+
+func (w *bufferWriter) WriteData(data []byte) {
+	maxEncodedLen := snappy.MaxEncodedLen(len(data))
+	if len(w.dataBuf) < maxEncodedLen {
+		newCapacity := len(w.dataBuf) * (1 / 2)
+		if newCapacity < maxEncodedLen {
+			newCapacity = maxEncodedLen
+		}
+		w.dataBuf = make([]byte, newCapacity)
+	}
+	snappyData := snappy.Encode(w.dataBuf, data)
+	w.dataLen = len(snappyData)
+}
+
+func (w *bufferWriter) writeBatchLength(data uint64) error {
+	return writeUint64(w.buf, data)
+}
+
+func (w *bufferWriter) rewriteBatchLength(b []byte, len uint64) []byte {
+	_ = b[7] // early bounds check to guarantee safety of writes below
+	b[0] = byte(len)
+	b[1] = byte(len >> 8)
+	b[2] = byte(len >> 16)
+	b[3] = byte(len >> 24)
+	b[4] = byte(len >> 32)
+	b[5] = byte(len >> 40)
+	b[6] = byte(len >> 48)
+	b[7] = byte(len >> 56)
+	return b
+}
+
+func (w *bufferWriter) writeEntryLength(data uint64) error {
+	return writeUint64(w.buf, data)
+}
+
+func (w *bufferWriter) writeSeriesIDLength(data uint16) error {
+	return writeUint16(w.buf, data)
+}
+
+func (w *bufferWriter) writeSeriesID(data []byte) error {
+	_, err := w.buf.Write(data)
+	return err
+}
+
+func (w *bufferWriter) writeSeriesCount(data uint32) error {
+	return writeUint32(w.buf, data)
+}
+
+func (w *bufferWriter) writeTimestampsLength(data uint16) error {
+	return writeUint16(w.buf, data)
+}
+
+func (w *bufferWriter) writeTimestamps(data []byte) error {
+	_, err := w.buf.Write(data)
+	return err
+}
+
+func (w *bufferWriter) writeData(data []byte) error {
+	_, err := w.buf.Write(data)
+	return err
 }
 
 func (segment *segment) GetSegmentID() SegmentID {
@@ -778,7 +850,10 @@ func (segment *segment) parseSeriesIDLength(data []byte) (uint16, error) {
 }
 
 func (segment *segment) parseSeriesID(data []byte) common.GlobalSeriesID {
-	return common.ParseGlobalSeriesID(data)
+	return common.GlobalSeriesID{
+		SeriesID: common.SeriesID(bytesToUint64(data[:8])),
+		Name:     string(data[8:]),
+	}
 }
 
 func (segment *segment) parseSeriesCountLength(data []byte) (uint32, error) {
@@ -848,8 +923,8 @@ func (buffer *buffer) write(request logRequest) {
 	buffer.timestampMap[seriesID] = append(buffer.timestampMap[seriesID], request.timestamp)
 
 	// Value item: binary-length(2-bytes) + binary data(n-bytes)
-	binaryLength := uint16ToBytes(uint16(len(request.data)))
-	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], binaryLength...)
+	binaryLen := uint16(len(request.data))
+	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], byte(binaryLen), byte(binaryLen>>8))
 	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
 
 	buffer.callbackMap[seriesID] = append(buffer.callbackMap[seriesID], request.callback)
@@ -857,11 +932,14 @@ func (buffer *buffer) write(request logRequest) {
 }
 
 func (buffer *buffer) notifyRequests(err error) {
+	var timestamps []time.Time
+	var values []byte
+	var valueItem []byte
+	var valuePos int
 	for seriesID, callbacks := range buffer.callbackMap {
-		timestamps := buffer.timestampMap[seriesID]
-		values := buffer.valueMap[seriesID]
-		valuePos := 0
-		var valueItem []byte
+		timestamps = buffer.timestampMap[seriesID]
+		values = buffer.valueMap[seriesID]
+		valuePos = 0
 		for index, callback := range callbacks {
 			valuePos, valueItem = readValuesBinary(values, valuePos, valuesBinaryLength)
 			buffer.runningCallback(func() {
@@ -908,16 +986,61 @@ func readValuesBinary(raw []byte, position int, offsetLen int) (int, []byte) {
 	return position, data
 }
 
-func rewriteBatchLength(batchBytes []byte, batchLen uint64) {
-	_ = batchBytes[7] // early bounds check to guarantee safety of writes below
-	batchBytes[0] = byte(batchLen)
-	batchBytes[1] = byte(batchLen >> 8)
-	batchBytes[2] = byte(batchLen >> 16)
-	batchBytes[3] = byte(batchLen >> 24)
-	batchBytes[4] = byte(batchLen >> 32)
-	batchBytes[5] = byte(batchLen >> 40)
-	batchBytes[6] = byte(batchLen >> 48)
-	batchBytes[7] = byte(batchLen >> 56)
+func writeUint16(buffer *bytes.Buffer, data uint16) error {
+	var err error
+	if err = buffer.WriteByte(byte(data)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 8)); err != nil {
+		return err
+	}
+	return err
+}
+
+func writeUint32(buffer *bytes.Buffer, data uint32) error {
+	var err error
+	if err = buffer.WriteByte(byte(data)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 8)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 16)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 24)); err != nil {
+		return err
+	}
+	return err
+}
+
+func writeUint64(buffer *bytes.Buffer, data uint64) error {
+	var err error
+	if err = buffer.WriteByte(byte(data)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 8)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 16)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 24)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 32)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 40)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 48)); err != nil {
+		return err
+	}
+	if err = buffer.WriteByte(byte(data >> 56)); err != nil {
+		return err
+	}
+	return err
 }
 
 func uint16ToBytes(i uint16) []byte {
@@ -928,6 +1051,10 @@ func uint16ToBytes(i uint16) []byte {
 
 func bytesToUint16(buf []byte) uint16 {
 	return binary.LittleEndian.Uint16(buf)
+}
+
+func bytesToUint64(buf []byte) uint64 {
+	return binary.LittleEndian.Uint64(buf)
 }
 
 func timeToUnixNano(time time.Time) uint64 {

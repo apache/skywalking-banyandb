@@ -53,6 +53,11 @@ func (s GlobalSeriesID) Marshal() []byte {
 	return append(seriesIDBytes, nameBytes...)
 }
 
+// Volume returns the estimated bytes volume of global series id.
+func (s GlobalSeriesID) Volume() int {
+	return 8 + len(s.Name)
+}
+
 // ParseGlobalSeriesID parses global series id from bytes.
 func ParseGlobalSeriesID(b []byte) GlobalSeriesID {
 	return GlobalSeriesID{
