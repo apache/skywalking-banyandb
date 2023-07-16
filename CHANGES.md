@@ -9,6 +9,12 @@ Release Notes.
 - List all properties in a group.
 - Implement Write-ahead Logging
 
+### Bugs
+
+- BanyanDB ui unable to load icon.
+- BanyanDB ui type error
+- Fix timer not released
+
 ### Chores
 
 - Bump several dependencies and tools.
