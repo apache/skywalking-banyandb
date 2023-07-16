@@ -22,6 +22,7 @@ import { reactive } from "vue";
 import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { watch, getCurrentInstance } from '@vue/runtime-core'
+import userImg from '@/assets/banyandb_small.jpg'
 
 // Eventbus
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
@@ -35,7 +36,6 @@ const data = reactive({
     isCollapse: false,
     showButton: false
 })
-const userImg = 'http://localhost:5173/src/assets/banyandb_small.jpg'
 
 // watch
 watch(() => route, () => {
