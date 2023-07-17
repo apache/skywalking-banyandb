@@ -31,16 +31,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-var path = "benchmark"
-var baseTime = time.Now().UnixMilli()
-var data = newBinaryData()
-var dataLen = len(data)
-var seriesID1 = newSeriesIDList(1)
-var seriesID20 = newSeriesIDList(20)
-var seriesID100 = newSeriesIDList(100)
-var seriesID500 = newSeriesIDList(500)
-var seriesID1000 = newSeriesIDList(1000)
-var callback = func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {}
+var (
+	path         = "benchmark"
+	baseTime     = time.Now().UnixMilli()
+	data         = newBinaryData()
+	dataLen      = len(data)
+	seriesID1    = newSeriesIDList(1)
+	seriesID20   = newSeriesIDList(20)
+	seriesID100  = newSeriesIDList(100)
+	seriesID500  = newSeriesIDList(500)
+	seriesID1000 = newSeriesIDList(1000)
+	callback     = func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {}
+)
 
 func Benchmark_SeriesID_1(b *testing.B) {
 	wal := newWAL(nil)
