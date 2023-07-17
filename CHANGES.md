@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - List all properties in a group.
+- Implement Write-ahead Logging
 
 ### Bugs
 
