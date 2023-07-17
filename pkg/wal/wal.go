@@ -211,7 +211,7 @@ func New(path string, options *Options) (WAL, error) {
 		logger:          logger.GetLogger(moduleName),
 		writeChannel:    make(chan logRequest),
 		flushChannel:    make(chan buffer, walOptions.FlushQueueSize),
-		bufferWriter:    NewBufferWriter(),
+		bufferWriter:    newBufferWriter(),
 		writeCloser:     writeCloser,
 		flushCloser:     flushCloser,
 		chanGroupCloser: chanGroupCloser,
@@ -538,7 +538,7 @@ func (log *log) load() error {
 	return nil
 }
 
-func NewBufferWriter() *bufferWriter {
+func newBufferWriter() *bufferWriter {
 	return &bufferWriter{
 		buf:           bytes.NewBuffer([]byte{}),
 		seriesIDBuf:   bytes.NewBuffer([]byte{}),
