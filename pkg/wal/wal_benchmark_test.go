@@ -19,8 +19,9 @@
 package wal
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -423,12 +424,25 @@ func randStr() string {
 	bytes := []byte("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\"',:{}[]")
 	result := []byte{}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(100))))
-	var lower uint32 = 200
-	var upper uint32 = 1024
-	length := (r.Uint32() % upper) + lower
-	for i := 0; i < int(length); i++ {
-		result = append(result, bytes[r.Intn(len(bytes))])
+	var err error
+	var strLengthLower int64 = 200
+	var strLengthUpper int64 = 1024
+	var strLength *big.Int
+	var strRandIndex *big.Int
+	strLength, err = rand.Int(rand.Reader, big.NewInt(strLengthUpper))
+	if err != nil {
+		panic(err)
+	}
+	if strLength.Int64() < strLengthLower {
+		strLength = big.NewInt(strLengthLower)
+	}
+	for i := 0; i < int(strLength.Int64()); i++ {
+		strRandIndex, err = rand.Int(rand.Reader, big.NewInt(int64(len(bytes))))
+		if err != nil {
+			panic(err)
+		}
+
+		result = append(result, bytes[strRandIndex.Int64()])
 	}
 	return string(result)
 }
