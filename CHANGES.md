@@ -8,6 +8,7 @@ Release Notes.
 
 - List all properties in a group.
 - Implement Write-ahead Logging
+- Document the clustering.
 
 ### Bugs
 
