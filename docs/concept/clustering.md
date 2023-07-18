@@ -76,7 +76,7 @@ The BanyanDB architecture allows for efficient clustering, scaling, and high ava
 
 In BanyanDB, writing data in a cluster is designed to take advantage of the robust capabilities of underlying storage systems, such as Google Compute Persistent Disk or Amazon S3(TBD). These platforms ensure high levels of data durability, making them an optimal choice for storing raw time series data.
 
-Unlike some other systems, BanyanDB does not support application-level replication. Instead, it delegates the task of replication to these underlying storage systems. This approach simplifies the BanyanDB architecture and reduces the complexity of managing replication at the application level.
+Unlike some other systems, BanyanDB does not support application-level replication, which can consume significant disk space. Instead, it delegates the task of replication to these underlying storage systems. This approach simplifies the BanyanDB architecture and reduces the complexity of managing replication at the application level. This approach also results in significant data savings.
 
 Data distribution across the cluster is determined based on the `shard_num` setting for a group and the specified `entity` in each resource, be it a stream or measure. The resource’s `name` with its `entity` is the sharding key, guiding data distribution to the appropriate Data Node during write operations.
 
