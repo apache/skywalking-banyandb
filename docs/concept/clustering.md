@@ -6,7 +6,7 @@ BanyanDB Clustering introduces a robust and scalable architecture that comprises
 
 A BanyanDB installation includes four distinct types of nodes: Data Nodes, Meta Nodes, Query Nodes, and Liaison Nodes.
 
-![clustering](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/clustring.png))
+![clustering](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/clustring.png)
 
 ### 1.1 Data Nodes
 
