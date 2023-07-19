@@ -14,6 +14,7 @@ Release Notes.
 - BanyanDB ui unable to load icon.
 - BanyanDB ui type error
 - Fix timer not released
+- Fix data duplicate writing
 
 ### Chores
 
