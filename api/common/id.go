@@ -40,32 +40,6 @@ func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
-// GlobalSeriesID identities a series in a shard.
-type GlobalSeriesID struct {
-	Name     string
-	SeriesID SeriesID
-}
-
-// Marshal encodes global series id to bytes.
-func (s GlobalSeriesID) Marshal() []byte {
-	seriesIDBytes := convert.Uint64ToBytes(uint64(s.SeriesID))
-	nameBytes := []byte(s.Name)
-	return append(seriesIDBytes, nameBytes...)
-}
-
-// Volume returns the estimated bytes volume of global series id.
-func (s GlobalSeriesID) Volume() int {
-	return 8 + len(s.Name)
-}
-
-// ParseGlobalSeriesID parses global series id from bytes.
-func ParseGlobalSeriesID(b []byte) GlobalSeriesID {
-	return GlobalSeriesID{
-		SeriesID: SeriesID(convert.BytesToUint64(b[:8])),
-		Name:     string(b[8:]),
-	}
-}
-
 // positionKey is a context key to store the module position.
 var positionKey = contextPositionKey{}
 

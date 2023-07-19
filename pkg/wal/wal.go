@@ -26,6 +26,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +36,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -55,6 +55,7 @@ const (
 	parseTimeStr           = "2006-01-02 15:04:05"
 	maxRetries             = 3
 	maxSegmentID           = uint64(math.MaxUint64) - 1
+	defaultSyncFlush       = false
 )
 
 // DefaultOptions for Open().
@@ -62,7 +63,7 @@ var DefaultOptions = &Options{
 	FileSize:            67108864, // 64MB
 	BufferSize:          65535,    // 16KB
 	BufferBatchInterval: 3 * time.Second,
-	NoSync:              false,
+	SyncFlush:           defaultSyncFlush,
 }
 
 // Options for creating Write-ahead Logging.
@@ -71,7 +72,7 @@ type Options struct {
 	BufferSize          int
 	BufferBatchInterval time.Duration
 	FlushQueueSize      int
-	NoSync              bool
+	SyncFlush           bool
 }
 
 // WAL denotes a Write-ahead logging.
@@ -82,7 +83,7 @@ type WAL interface {
 	// Write a logging entity.
 	// It will return immediately when the data is written in the buffer,
 	// The callback function will be called when the entity is flushed on the persistent storage.
-	Write(seriesID common.GlobalSeriesID, timestamp time.Time, data []byte, callback func(common.GlobalSeriesID, time.Time, []byte, error))
+	Write(seriesID []byte, timestamp time.Time, data []byte, callback func([]byte, time.Time, []byte, error))
 	// Read specified segment by SegmentID.
 	Read(segmentID SegmentID) (Segment, error)
 	// ReadAllSegments reads all segments sorted by their creation time in ascending order.
@@ -106,7 +107,7 @@ type Segment interface {
 
 // LogEntry used for attain detail value of WAL entry.
 type LogEntry interface {
-	GetSeriesID() common.GlobalSeriesID
+	GetSeriesID() []byte
 	GetTimestamps() []time.Time
 	GetValues() *list.List
 }
@@ -137,35 +138,56 @@ type segment struct {
 }
 
 type logRequest struct {
-	seriesID  common.GlobalSeriesID
+	seriesID  []byte
 	timestamp time.Time
-	callback  func(common.GlobalSeriesID, time.Time, []byte, error)
+	callback  func([]byte, time.Time, []byte, error)
 	data      []byte
 }
 
 type logEntry struct {
 	timestamps  []time.Time
 	values      *list.List
-	seriesID    common.GlobalSeriesID
+	seriesID    []byte
 	entryLength uint64
 	count       uint32
 }
 
 type buffer struct {
-	timestampMap map[common.GlobalSeriesID][]time.Time
-	valueMap     map[common.GlobalSeriesID][]byte
-	callbackMap  map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)
+	timestampMap map[logSeriesID][]time.Time
+	valueMap     map[logSeriesID][]byte
+	callbackMap  map[logSeriesID][]func([]byte, time.Time, []byte, error)
 	count        int
 }
 
 type bufferWriter struct {
 	buf           *bytes.Buffer
-	seriesIDBuf   *bytes.Buffer
 	timestampsBuf *bytes.Buffer
 	dataBuf       []byte
 	dataLen       int
+	seriesID      *logSeriesID
 	seriesCount   uint32
 	batchLen      uint64
+}
+
+type logSeriesID struct {
+	key     string
+	byteLen int
+}
+
+func newLogSeriesID(b []byte) logSeriesID {
+	return logSeriesID{key: string(b), byteLen: len(b)}
+}
+
+func (s logSeriesID) string() string {
+	return s.key
+}
+
+func (s logSeriesID) bytes() []byte {
+	return []byte(s.key)
+}
+
+func (s logSeriesID) len() int {
+	return s.byteLen
 }
 
 // New creates a WAL instance in the specified path.
@@ -189,7 +211,7 @@ func New(path string, options *Options) (WAL, error) {
 			FileSize:            fileSize,
 			BufferSize:          bufferSize,
 			BufferBatchInterval: bufferBatchInterval,
-			NoSync:              options.NoSync,
+			SyncFlush:           options.SyncFlush,
 		}
 	}
 
@@ -216,9 +238,9 @@ func New(path string, options *Options) (WAL, error) {
 		flushCloser:     flushCloser,
 		chanGroupCloser: chanGroupCloser,
 		buffer: buffer{
-			timestampMap: make(map[common.GlobalSeriesID][]time.Time),
-			valueMap:     make(map[common.GlobalSeriesID][]byte),
-			callbackMap:  make(map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)),
+			timestampMap: make(map[logSeriesID][]time.Time),
+			valueMap:     make(map[logSeriesID][]byte),
+			callbackMap:  make(map[logSeriesID][]func([]byte, time.Time, []byte, error)),
 			count:        0,
 		},
 	}
@@ -234,7 +256,7 @@ func New(path string, options *Options) (WAL, error) {
 // Write a logging entity.
 // It will return immediately when the data is written in the buffer,
 // The callback function will be called when the entity is flushed on the persistent storage.
-func (log *log) Write(seriesID common.GlobalSeriesID, timestamp time.Time, data []byte, callback func(common.GlobalSeriesID, time.Time, []byte, error)) {
+func (log *log) Write(seriesID []byte, timestamp time.Time, data []byte, callback func([]byte, time.Time, []byte, error)) {
 	if !log.writeCloser.AddSender() {
 		return
 	}
@@ -266,6 +288,7 @@ func (log *log) ReadAllSegments() ([]Segment, error) {
 	for _, segment := range log.segmentMap {
 		segments = append(segments, segment)
 	}
+	sort.Slice(segments, func(i, j int) bool { return segments[i].GetSegmentID() < segments[j].GetSegmentID() })
 	return segments, nil
 }
 
@@ -365,7 +388,7 @@ func (log *log) start() {
 					log.logger.Debug().Msg("Write request to buffer. elements: " + strconv.Itoa(log.buffer.count))
 				}
 
-				bufferVolume += request.seriesID.Volume() + timestampVolumeLength + len(request.data)
+				bufferVolume += len(request.seriesID) + timestampVolumeLength + len(request.data)
 				if bufferVolume > log.options.BufferSize {
 					log.triggerFlushing()
 					bufferVolume = 0
@@ -440,9 +463,9 @@ func (log *log) triggerFlushing() {
 
 func (log *log) newBuffer() {
 	log.buffer = buffer{
-		timestampMap: make(map[common.GlobalSeriesID][]time.Time),
-		valueMap:     make(map[common.GlobalSeriesID][]byte),
-		callbackMap:  make(map[common.GlobalSeriesID][]func(common.GlobalSeriesID, time.Time, []byte, error)),
+		timestampMap: make(map[logSeriesID][]time.Time),
+		valueMap:     make(map[logSeriesID][]byte),
+		callbackMap:  make(map[logSeriesID][]func([]byte, time.Time, []byte, error)),
 		count:        0,
 	}
 }
@@ -481,7 +504,7 @@ func (log *log) writeWorkSegment(data []byte) error {
 	if _, err := log.workSegment.file.Write(data); err != nil {
 		return errors.Wrap(err, "Write WAL segment file error, file: "+log.workSegment.path)
 	}
-	if !log.options.NoSync {
+	if log.options.SyncFlush {
 		if err := log.workSegment.file.Sync(); err != nil {
 			log.logger.Warn().Msg("Sync WAL segment file to disk failed, file: " + log.workSegment.path)
 		}
@@ -541,7 +564,6 @@ func (log *log) load() error {
 func newBufferWriter() *bufferWriter {
 	return &bufferWriter{
 		buf:           bytes.NewBuffer([]byte{}),
-		seriesIDBuf:   bytes.NewBuffer([]byte{}),
 		timestampsBuf: bytes.NewBuffer([]byte{}),
 		dataBuf:       make([]byte, 128),
 	}
@@ -558,14 +580,14 @@ func (w *bufferWriter) Reset() error {
 }
 
 func (w *bufferWriter) ResetSeries() {
-	w.seriesIDBuf.Reset()
 	w.timestampsBuf.Reset()
 	w.dataLen = 0
+	w.seriesID = nil
 	w.seriesCount = 0
 }
 
 func (w *bufferWriter) AddSeries() error {
-	seriesIDBytesLen := uint16(w.seriesIDBuf.Len())
+	seriesIDBytesLen := uint16(w.seriesID.len())
 	timestampsBytesLen := uint16(w.timestampsBuf.Len())
 	entryLen := seriesIDLength + uint64(seriesIDBytesLen) + seriesCountLength + timestampsBinaryLength + uint64(timestampsBytesLen) + uint64(w.dataLen)
 
@@ -576,7 +598,7 @@ func (w *bufferWriter) AddSeries() error {
 	if err = w.writeSeriesIDLength(seriesIDBytesLen); err != nil {
 		return err
 	}
-	if err = w.writeSeriesID(w.seriesIDBuf.Bytes()); err != nil {
+	if err = w.writeSeriesID(w.seriesID); err != nil {
 		return err
 	}
 	if err = w.writeSeriesCount(w.seriesCount); err != nil {
@@ -601,13 +623,8 @@ func (w *bufferWriter) Bytes() []byte {
 	return w.rewriteBatchLength(batchBytes, batchLen)
 }
 
-func (w *bufferWriter) WriteSeriesID(s common.GlobalSeriesID) error {
-	if err := writeUint64(w.seriesIDBuf, uint64(s.SeriesID)); err != nil {
-		return err
-	}
-	if _, err := w.seriesIDBuf.WriteString(s.Name); err != nil {
-		return err
-	}
+func (w *bufferWriter) WriteSeriesID(seriesID logSeriesID) error {
+	w.seriesID = &seriesID
 	return nil
 }
 
@@ -661,8 +678,8 @@ func (w *bufferWriter) writeSeriesIDLength(data uint16) error {
 	return writeUint16(w.buf, data)
 }
 
-func (w *bufferWriter) writeSeriesID(data []byte) error {
-	_, err := w.buf.Write(data)
+func (w *bufferWriter) writeSeriesID(data *logSeriesID) error {
+	_, err := w.buf.WriteString(data.string())
 	return err
 }
 
@@ -713,7 +730,7 @@ func (segment *segment) parseLogEntries() error {
 	var batchLen uint64
 	var entryLen uint64
 	var seriesIDLen uint16
-	var seriesID common.GlobalSeriesID
+	var seriesID []byte
 	var seriesCount uint32
 	var timestampsBinaryLen uint16
 	var entryEndPosition uint64
@@ -853,11 +870,8 @@ func (segment *segment) parseSeriesIDLength(data []byte) (uint16, error) {
 	return seriesIDLen, nil
 }
 
-func (segment *segment) parseSeriesID(data []byte) common.GlobalSeriesID {
-	return common.GlobalSeriesID{
-		SeriesID: common.SeriesID(bytesToUint64(data[:8])),
-		Name:     string(data[8:]),
-	}
+func (segment *segment) parseSeriesID(data []byte) []byte {
+	return newLogSeriesID(data).bytes()
 }
 
 func (segment *segment) parseSeriesCountLength(data []byte) (uint32, error) {
@@ -910,7 +924,7 @@ func (segment *segment) parseValuesBinary(data []byte) (*list.List, error) {
 	return values, nil
 }
 
-func (logEntry *logEntry) GetSeriesID() common.GlobalSeriesID {
+func (logEntry *logEntry) GetSeriesID() []byte {
 	return logEntry.seriesID
 }
 
@@ -923,15 +937,15 @@ func (logEntry *logEntry) GetValues() *list.List {
 }
 
 func (buffer *buffer) write(request logRequest) {
-	seriesID := request.seriesID
-	buffer.timestampMap[seriesID] = append(buffer.timestampMap[seriesID], request.timestamp)
+	key := newLogSeriesID(request.seriesID)
+	buffer.timestampMap[key] = append(buffer.timestampMap[key], request.timestamp)
 
 	// Value item: binary-length(2-bytes) + binary data(n-bytes)
 	binaryLen := uint16(len(request.data))
-	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], byte(binaryLen), byte(binaryLen>>8))
-	buffer.valueMap[seriesID] = append(buffer.valueMap[seriesID], request.data...)
+	buffer.valueMap[key] = append(buffer.valueMap[key], byte(binaryLen), byte(binaryLen>>8))
+	buffer.valueMap[key] = append(buffer.valueMap[key], request.data...)
 
-	buffer.callbackMap[seriesID] = append(buffer.callbackMap[seriesID], request.callback)
+	buffer.callbackMap[key] = append(buffer.callbackMap[key], request.callback)
 	buffer.count++
 }
 
@@ -946,9 +960,11 @@ func (buffer *buffer) notifyRequests(err error) {
 		valuePos = 0
 		for index, callback := range callbacks {
 			valuePos, valueItem = readValuesBinary(values, valuePos, valuesBinaryLength)
-			buffer.runningCallback(func() {
-				callback(seriesID, timestamps[index], valueItem, err)
-			})
+			if callback != nil {
+				buffer.runningCallback(func() {
+					callback(seriesID.bytes(), timestamps[index], valueItem, err)
+				})
+			}
 		}
 	}
 }
@@ -973,7 +989,7 @@ func parseSegmentID(segmentName string) (uint64, error) {
 	if !strings.HasSuffix(segmentName, segmentNameSuffix) {
 		return 0, errors.New("Invalid segment name: " + segmentName)
 	}
-	return strconv.ParseUint(segmentName[3:19], 10, 64)
+	return strconv.ParseUint(segmentName[3:19], 16, 64)
 }
 
 func readValuesBinary(raw []byte, position int, offsetLen int) (int, []byte) {
@@ -1049,10 +1065,6 @@ func writeUint64(buffer *bytes.Buffer, data uint64) error {
 
 func bytesToUint16(buf []byte) uint16 {
 	return binary.LittleEndian.Uint16(buf)
-}
-
-func bytesToUint64(buf []byte) uint64 {
-	return binary.LittleEndian.Uint64(buf)
 }
 
 func timeToUnixNano(time time.Time) uint64 {

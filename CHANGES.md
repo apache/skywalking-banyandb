@@ -10,6 +10,7 @@ Release Notes.
 - Implement Write-ahead Logging
 - Document the clustering.
 - Support multiple roles for banyand server.
+- Support for recovery buffer using wal.
 
 ### Bugs
 

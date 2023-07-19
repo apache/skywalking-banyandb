@@ -41,6 +41,8 @@ import (
 const (
 	defaultNumBufferShards  = 2
 	defaultWriteConcurrency = 1000
+	defaultWriteWal         = false
+	wal                     = "wal"
 	plain                   = "tst"
 	encoded                 = "encoded"
 )
@@ -56,6 +58,7 @@ type tsTable struct {
 	buffer            *tsdb.Buffer
 	closeBufferTimer  *time.Timer
 	position          common.Position
+	path              string
 	bufferSize        int64
 	encoderBufferSize int64
 	lock              sync.Mutex
@@ -71,14 +74,15 @@ func (t *tsTable) openBuffer() (err error) {
 	if t.encoderBuffer != nil {
 		return nil
 	}
+	walPath := path.Join(t.path, wal)
 	bufferSize := int(t.encoderBufferSize / defaultNumBufferShards)
-	if t.encoderBuffer, err = tsdb.NewBuffer(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.encoderFlush); err != nil {
+	if t.encoderBuffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
+		defaultWriteConcurrency, defaultNumBufferShards, t.encoderFlush, defaultWriteWal, &walPath); err != nil {
 		return fmt.Errorf("failed to create encoder buffer: %w", err)
 	}
 	bufferSize = int(t.bufferSize / defaultNumBufferShards)
-	if t.buffer, err = tsdb.NewBuffer(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.flush); err != nil {
+	if t.buffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
+		defaultWriteConcurrency, defaultNumBufferShards, t.flush, defaultWriteWal, &walPath); err != nil {
 		return fmt.Errorf("failed to create buffer: %w", err)
 	}
 	end := t.EndTime()
@@ -153,21 +157,19 @@ func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
 
 func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 	if t.encoderBuffer != nil {
-		t.writeToBuffer(key, val, ts)
-		return nil
+		return t.writeToBuffer(key, val, ts)
 	}
 	if err := t.openBuffer(); err != nil {
 		return err
 	}
-	t.writeToBuffer(key, val, ts)
-	return nil
+	return t.writeToBuffer(key, val, ts)
 }
 
-func (t *tsTable) writeToBuffer(key []byte, val []byte, ts time.Time) {
+func (t *tsTable) writeToBuffer(key []byte, val []byte, ts time.Time) error {
 	if t.toEncode(key) {
-		t.encoderBuffer.Write(key, val, ts)
+		return t.encoderBuffer.Write(key, val, ts)
 	} else {
-		t.buffer.Write(key, val, ts)
+		return t.buffer.Write(key, val, ts)
 	}
 }
 
@@ -228,6 +230,7 @@ func (ttf *tsTableFactory) NewTSTable(blockExpiryTracker tsdb.BlockExpiryTracker
 		encoderSST:         encoderSST,
 		sst:                sst,
 		BlockExpiryTracker: &blockExpiryTracker,
+		path:               root,
 	}
 	if table.IsActive() {
 		if err := table.openBuffer(); err != nil {
