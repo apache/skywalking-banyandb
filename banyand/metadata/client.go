@@ -15,20 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package liaison implements a transmission layer between a data layer and a client.
-package liaison
+package metadata
 
-import (
-	"context"
+import "context"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-)
-
-// NewEndpoint return a new endpoint which is the entry point for the database server.
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) (run.Unit, error) {
-	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
+// NewClient returns a new metadata client.
+func NewClient(_ context.Context) (Repo, error) {
+	return nil, nil
 }

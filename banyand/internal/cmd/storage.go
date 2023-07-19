@@ -25,8 +25,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/liaison"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -40,20 +38,29 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var standaloneGroup = run.NewGroup("standalone")
+var storageGroup = run.NewGroup("storage")
 
-func newStandaloneCmd() *cobra.Command {
+const (
+	storageModeData  = "data"
+	storageModeQuery = "query"
+	storageModeMix   = "mix"
+)
+
+var flagStorageMode string
+
+func newStorageCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	repo, err := discovery.NewServiceRepo(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate service repository")
 	}
+	// nolint: staticcheck
 	pipeline, err := queue.NewQueue(ctx, repo)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
-	metaSvc, err := metadata.NewService(ctx)
+	metaSvc, err := metadata.NewClient(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -65,62 +72,70 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
+	// TODO: remove streamSVC and measureSvc from query processor. To use metaSvc instead.
 	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
-	}
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
-	httpServer := http.NewService()
 
 	units := []run.Unit{
 		new(signal.Handler),
 		repo,
 		pipeline,
-		metaSvc,
 		measureSvc,
 		streamSvc,
 		q,
-		tcp,
-		httpServer,
 		profSvc,
 	}
 	if metricSvc != nil {
 		units = append(units, metricSvc)
 	}
 	// Meta the run Group units.
-	standaloneGroup.Register(units...)
+	storageGroup.Register(units...)
 	logging := logger.Logging{}
-	standaloneCmd := &cobra.Command{
-		Use:     "standalone",
+	storageCmd := &cobra.Command{
+		Use:     "storage",
 		Version: version.Build(),
-		Short:   "Run as the standalone server",
+		Short:   "Run as the storage server",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
 			return logger.Init(logging)
 		},
+		PreRun: func(cmd *cobra.Command, args []string) {
+			if flagStorageMode == storageModeMix {
+				return
+			}
+			switch flagStorageMode {
+			case storageModeData:
+				storageGroup.Deregister(q)
+			case storageModeQuery:
+				storageGroup.Deregister(streamSvc)
+				storageGroup.Deregister(measureSvc)
+			default:
+				l.Fatal().Str("mode", flagStorageMode).Msg("unknown storage mode")
+			}
+		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			fmt.Print(logo)
-			logger.GetLogger().Info().Msg("starting as a standalone server")
+			logger.GetLogger().Info().Msg("starting as a storage server")
 			// Spawn our go routines and wait for shutdown.
-			if err := standaloneGroup.Run(); err != nil {
-				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
+			if err := storageGroup.Run(); err != nil {
+				logger.GetLogger().Error().Err(err).Stack().Str("name", storageGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
 
-	standaloneCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	standaloneCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
-	standaloneCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
-	standaloneCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
-	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
-	return standaloneCmd
+	storageCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
+	storageCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	storageCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
+	storageCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
+	storageCmd.Flags().StringVarP(&flagStorageMode, "mode", "m", storageModeMix, "the storage mode, one of [data, query, mix]")
+	storageCmd.Flags().AddFlagSet(storageGroup.RegisterFlags().FlagSet)
+	return storageCmd
 }
