@@ -17,6 +17,7 @@ Release Notes.
 - BanyanDB ui type error
 - Fix timer not released
 - BanyanDB ui misses fields when creating a group
+- Fix data duplicate writing
 
 ### Chores
 
