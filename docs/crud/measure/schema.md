@@ -48,7 +48,7 @@ tag_families:
 - name: default
   tags:
   - name: id
-    type: TAG_TYPE_ID
+    type: TAG_TYPE_STRING
   - name: entity_id
     type: TAG_TYPE_STRING
 fields:
@@ -86,7 +86,7 @@ Update operation changes a measure's schema.
 ### Examples of updating
 
 ```shell
-$ bydbctl measure create -f - <<EOF
+$ bydbctl measure update -f - <<EOF
 metadata:
   name: service_cpm_minute
   group: sw_metric

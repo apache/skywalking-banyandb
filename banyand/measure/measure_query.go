@@ -83,11 +83,14 @@ func (s *measure) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
 	if err != nil {
 		return nil, err
 	}
-	shard, err := s.Shard(common.ShardID(shardID))
+	shard, err := s.databaseSupplier.SupplyTSDB().Shard(common.ShardID(shardID))
 	if err != nil {
+		if errors.Is(err, tsdb.ErrUnknownShard) {
+			return []tsdb.Shard{}, nil
+		}
 		return nil, err
 	}
-	return []tsdb.Shard{shard}, nil
+	return []tsdb.Shard{tsdb.NewScopedShard(tsdb.Entry(s.name), shard)}, nil
 }
 
 func (s *measure) CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error) {

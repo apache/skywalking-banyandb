@@ -79,7 +79,7 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 	if err != nil {
 		return nil, err
 	}
-	o := ctx.Value(optionsKey)
+	o := ctx.Value(OptionsKey)
 	if o != nil {
 		options := o.(DatabaseOpts)
 		if options.EnableGlobalIndex {
@@ -90,7 +90,7 @@ func openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix
 			if s.globalIndex, err = kv.OpenStore(
 				indexPath,
 				kv.StoreWithLogger(s.l),
-				kv.StoreWithMemTableSize(memSize),
+				kv.StoreWithMemTableSize(int64(memSize)),
 			); err != nil {
 				return nil, err
 			}

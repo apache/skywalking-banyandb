@@ -18,13 +18,13 @@
 -->
 
 <script setup>
+import Editor from '@/components/Editor/index.vue'
 </script>
 
 <template>
-    <div class="about">
-    <h1>This is the create or edit measure page</h1>
+  <div class="about">
+    <Editor></Editor>
   </div>
 </template>
 
-<style lang="scss" scoped>
-</style>
+<style lang="scss" scoped></style>

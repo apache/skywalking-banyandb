@@ -22,7 +22,6 @@ import (
 	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/pkg/errors"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 )
 
@@ -61,7 +60,7 @@ func NewPostingList() posting.List {
 func NewPostingListWithInitialData(data ...uint64) posting.List {
 	list := NewPostingList()
 	for _, d := range data {
-		list.Insert(common.ItemID(d))
+		list.Insert(d)
 	}
 	return list
 }
@@ -75,19 +74,19 @@ func NewRange(start, end uint64) posting.List {
 	return list
 }
 
-func (p *postingsList) Contains(id common.ItemID) bool {
-	return p.bitmap.Contains(uint64(id))
+func (p *postingsList) Contains(id uint64) bool {
+	return p.bitmap.Contains(id)
 }
 
 func (p *postingsList) IsEmpty() bool {
 	return p.bitmap.IsEmpty()
 }
 
-func (p *postingsList) Max() (common.ItemID, error) {
+func (p *postingsList) Max() (uint64, error) {
 	if p.IsEmpty() {
 		return 0, posting.ErrListEmpty
 	}
-	return common.ItemID(p.bitmap.Maximum()), nil
+	return p.bitmap.Maximum(), nil
 }
 
 func (p *postingsList) Len() int {
@@ -126,8 +125,8 @@ func (p *postingsList) Equal(other posting.List) bool {
 	return true
 }
 
-func (p *postingsList) Insert(id common.ItemID) {
-	p.bitmap.Add(uint64(id))
+func (p *postingsList) Insert(id uint64) {
+	p.bitmap.Add(id)
 }
 
 func (p *postingsList) Intersect(other posting.List) error {
@@ -174,16 +173,16 @@ func (p *postingsList) AddIterator(iter posting.Iterator) error {
 	return nil
 }
 
-func (p *postingsList) AddRange(min, max common.ItemID) error {
+func (p *postingsList) AddRange(min, max uint64) error {
 	for i := min; i < max; i++ {
-		p.bitmap.Add(uint64(i))
+		p.bitmap.Add(i)
 	}
 	return nil
 }
 
-func (p *postingsList) RemoveRange(min, max common.ItemID) error {
+func (p *postingsList) RemoveRange(min, max uint64) error {
 	for i := min; i < max; i++ {
-		p.bitmap.Remove(uint64(i))
+		p.bitmap.Remove(i)
 	}
 	return nil
 }
@@ -198,11 +197,11 @@ func (p *postingsList) SizeInBytes() int64 {
 
 type roaringIterator struct {
 	iter    roaring64.IntIterable64
-	current common.ItemID
+	current uint64
 	closed  bool
 }
 
-func (it *roaringIterator) Current() common.ItemID {
+func (it *roaringIterator) Current() uint64 {
 	return it.current
 }
 
@@ -211,7 +210,7 @@ func (it *roaringIterator) Next() bool {
 		return false
 	}
 	v := it.iter.Next()
-	it.current = common.ItemID(v)
+	it.current = v
 	return true
 }
 
@@ -220,10 +219,10 @@ func (it *roaringIterator) Close() error {
 	return nil
 }
 
-func (p *postingsList) ToSlice() []common.ItemID {
+func (p *postingsList) ToSlice() []uint64 {
 	iter := p.Iterator()
 	defer iter.Close()
-	s := make([]common.ItemID, 0, p.Len())
+	s := make([]uint64, 0, p.Len())
 	for iter.Next() {
 		s = append(s, iter.Current())
 	}

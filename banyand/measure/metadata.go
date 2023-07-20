@@ -36,7 +36,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
@@ -48,7 +50,7 @@ type schemaRepo struct {
 }
 
 func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
-	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue,
+	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
 ) schemaRepo {
 	return schemaRepo{
 		l:        l,
@@ -57,7 +59,7 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 			metadata,
 			repo,
 			l,
-			newSupplier(path, metadata, dbOpts, l, pipeline),
+			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
 			event.MeasureTopicShardEvent,
 			event.MeasureTopicEntityEvent,
 		),
@@ -179,7 +181,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 				Tags: append([]*databasev1.TagSpec{
 					{
 						Name: "measure_id",
-						Type: databasev1.TagType_TAG_TYPE_ID,
+						Type: databasev1.TagType_TAG_TYPE_STRING,
 					},
 				}, seriesSpecs...),
 			},
@@ -278,20 +280,25 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata metadata.Repo
-	pipeline queue.Queue
-	l        *logger.Logger
-	path     string
-	dbOpts   tsdb.DatabaseOpts
+	metadata                      metadata.Repo
+	pipeline                      queue.Queue
+	l                             *logger.Logger
+	path                          string
+	dbOpts                        tsdb.DatabaseOpts
+	encoderBufferSize, bufferSize int64
 }
 
-func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue) *supplier {
+func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+	pipeline queue.Queue, encoderBufferSize, bufferSize int64,
+) *supplier {
 	return &supplier{
-		path:     path,
-		dbOpts:   dbOpts,
-		metadata: metadata,
-		l:        l,
-		pipeline: pipeline,
+		path:              path,
+		dbOpts:            dbOpts,
+		metadata:          metadata,
+		l:                 l,
+		pipeline:          pipeline,
+		encoderBufferSize: encoderBufferSize,
+		bufferSize:        bufferSize,
 	}
 }
 
@@ -315,14 +322,14 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
 	name := groupSchema.Metadata.Name
-	opts.EncodingMethod = tsdb.EncodingMethod{
-		EncoderPool:      newEncoderPool(name, intChunkNum, s.l),
-		DecoderPool:      newDecoderPool(name, intChunkNum, s.l),
-		ChunkSizeInBytes: intChunkSize,
-	}
-	opts.CompressionMethod = tsdb.CompressionMethod{
-		Type:             tsdb.CompressionTypeZSTD,
-		ChunkSizeInBytes: plainChunkSize,
+	opts.TSTableFactory = &tsTableFactory{
+		bufferSize:        s.bufferSize,
+		encoderBufferSize: s.encoderBufferSize,
+		encoderPool:       encoding.NewEncoderPool(name, intChunkNum, intervalFn),
+		decoderPool:       encoding.NewDecoderPool(name, intChunkNum, intervalFn),
+		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+		encodingChunkSize: intChunkSize,
+		plainChunkSize:    plainChunkSize,
 	}
 
 	var err error
@@ -343,4 +350,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 			return p
 		}),
 		opts)
+}
+
+func intervalFn(key []byte) time.Duration {
+	_, interval, err := pbv1.DecodeFieldFlag(key)
+	if err != nil {
+		panic(err)
+	}
+	return interval
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -41,7 +40,7 @@ func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err erro
 func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	list = roaring.NewPostingList()
 	err = s.lsm.GetAll(field.Marshal(), func(itemID []byte) error {
-		list.Insert(common.ItemID(convert.BytesToUint64(itemID)))
+		list.Insert(convert.BytesToUint64(itemID))
 		return nil
 	})
 	if errors.Is(err, kv.ErrKeyNotFound) {
@@ -64,7 +63,10 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	return newFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm,
+	if !s.closer.AddRunning() {
+		return nil, errors.New("lsm index store is closed")
+	}
+	return newFieldIteratorTemplate(s.l, fieldKey, termRange, order, s.lsm, s.closer,
 		func(term, value []byte, delegated kv.Iterator) (*index.PostingValue, error) {
 			pv := &index.PostingValue{
 				Term:  term,
@@ -87,7 +89,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 						Uint64("item_id", itemID).
 						Msg("fetched item from the index")
 				}
-				pv.Value.Insert(common.ItemID(itemID))
+				pv.Value.Insert(itemID)
 			}
 			return pv, nil
 		}), nil

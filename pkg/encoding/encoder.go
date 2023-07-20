@@ -158,8 +158,6 @@ func (ie *encoder) Append(ts uint64, value []byte) {
 	ie.bw.WriteBool(l > 0)
 	ie.values.Write(convert.BytesToUint64(value))
 	ie.num++
-	itemsNum.WithLabelValues(ie.name, "int").Inc()
-	rawSize.WithLabelValues(ie.name, "int").Add(float64(l + 8))
 }
 
 func (ie *encoder) IsFull() bool {
@@ -181,8 +179,6 @@ func (ie *encoder) Encode() error {
 	buffWriter := NewPacker(ie.buff)
 	buffWriter.PutUint64(ie.startTime)
 	buffWriter.PutUint16(uint16(ie.num))
-	bb := buffWriter.Bytes()
-	encodedSize.WithLabelValues(ie.name, "int").Add(float64(len(bb)))
 	return nil
 }
 

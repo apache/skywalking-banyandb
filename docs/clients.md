@@ -26,7 +26,9 @@ Users could select any HTTP client to access the HTTP based endpoints. The defau
 
 The java native client is hosted at [skywalking-banyandb-java-client](https://github.com/apache/skywalking-banyandb-java-client).
 
-## Web application (TBD)
+## Web application
+
+The web application is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 ## gRPC command-line tool
 

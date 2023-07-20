@@ -4,8 +4,8 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "1"
+            "str": {
+              "value": "svc1"
             }
           },
           {
@@ -34,8 +34,8 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "4"
+            "str": {
+              "value": "svc1"
             }
           },
           {
@@ -64,13 +64,13 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "5"
+            "str": {
+              "value": "svc1"
             }
           },
           {
             "str": {
-              "value": "entity_2"
+              "value": "entity_3"
             }
           }
         ]
@@ -94,13 +94,13 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "6"
+            "str": {
+              "value": "svc2"
             }
           },
           {
             "str": {
-              "value": "entity_3"
+              "value": "entity_4"
             }
           }
         ]
@@ -124,13 +124,13 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "2"
+            "str": {
+              "value": "svc2"
             }
           },
           {
             "str": {
-              "value": "entity_1"
+              "value": "entity_5"
             }
           }
         ]
@@ -154,13 +154,13 @@
       {
         "tags": [
           {
-            "id": {
-              "value": "3"
+            "str": {
+              "value": "svc3"
             }
           },
           {
             "str": {
-              "value": "entity_1"
+              "value": "entity_6"
             }
           }
         ]

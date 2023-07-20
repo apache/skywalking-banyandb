@@ -18,29 +18,6 @@
 // Package encoding implements encoding/decoding data points.
 package encoding
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
-var (
-	rawSize = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name:        "banyand_encoding_raw_size",
-		Help:        "The raw size of series",
-		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"name", "type"})
-	encodedSize = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name:        "banyand_encoding_encoded_size",
-		Help:        "The encoded size of series",
-		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"name", "type"})
-	itemsNum = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name:        "banyand_encoding_items_num",
-		Help:        "The number of items in a encoded series",
-		ConstLabels: prometheus.Labels{"model": "encoding"},
-	}, []string{"name", "type"})
-)
-
 // SeriesEncoderPool allows putting and getting SeriesEncoder.
 type SeriesEncoderPool interface {
 	Get(metadata []byte, buffer BufferWriter) SeriesEncoder

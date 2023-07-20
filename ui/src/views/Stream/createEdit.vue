@@ -18,12 +18,12 @@
 -->
 
 <script setup>
-import StreamEditor from '@/components2/StreamEditor/index.vue'
+import Editor from '@/components/Editor/index.vue'
 </script>
 
 <template>
     <div class="about">
-        <StreamEditor></StreamEditor>
+        <Editor></Editor>
     </div>
 </template>
 

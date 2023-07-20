@@ -16,24 +16,27 @@
 # under the License.
 
 dataPoints:
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_1
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_2
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: entity_id
-        value:
-          str:
-            value: entity_3
+- tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc1
+  timestamp: "2023-06-25T23:51:00Z"
+- tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc2
+  timestamp: "2023-06-25T23:54:00Z"
+- tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc3
+  timestamp: "2023-06-25T23:56:00Z"

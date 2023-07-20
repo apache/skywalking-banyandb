@@ -9,7 +9,7 @@
       "tags": [
         {
           "name": "id",
-          "type": "TAG_TYPE_ID"
+          "type": "TAG_TYPE_STRING"
         },
         {
           "name": "service_id",

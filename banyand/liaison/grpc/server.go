@@ -48,49 +48,55 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const defaultRecvSize = 1024 * 1024 * 10
+const defaultRecvSize = 10 << 20
 
 var (
-	errServerCert = errors.New("invalid server cert file")
-	errServerKey  = errors.New("invalid server key file")
-	errNoAddr     = errors.New("no address")
-	errQueryMsg   = errors.New("invalid query message")
+	errServerCert        = errors.New("invalid server cert file")
+	errServerKey         = errors.New("invalid server key file")
+	errNoAddr            = errors.New("no address")
+	errQueryMsg          = errors.New("invalid query message")
+	errAccessLogRootPath = errors.New("access log root path is required")
 )
 
 type server struct {
 	pipeline queue.Queue
 	creds    credentials.TransportCredentials
 	repo     discovery.ServiceRepo
-	stopCh   chan struct{}
-	*measureRegistryServer
-	log *logger.Logger
-	ser *grpclib.Server
+	*indexRuleRegistryServer
+	measureSVC *measureService
+	log        *logger.Logger
+	ser        *grpclib.Server
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
-	*indexRuleRegistryServer
-	streamSVC  *streamService
-	measureSVC *measureService
+	stopCh    chan struct{}
+	streamSVC *streamService
+	*measureRegistryServer
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
-	addr           string
-	keyFile        string
-	certFile       string
-	maxRecvMsgSize int
-	tls            bool
+	addr                     string
+	keyFile                  string
+	certFile                 string
+	accessLogRootPath        string
+	accessLogRecorders       []accessLogRecorder
+	maxRecvMsgSize           run.Bytes
+	tls                      bool
+	enableIngestionAccessLog bool
 }
 
 // NewServer returns a new gRPC server.
 func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) run.Unit {
-	return &server{
-		pipeline: pipeline,
-		repo:     repo,
-		streamSVC: &streamService{
-			discoveryService: newDiscoveryService(pipeline),
-		},
-		measureSVC: &measureService{
-			discoveryService: newDiscoveryService(pipeline),
-		},
+	streamSVC := &streamService{
+		discoveryService: newDiscoveryService(pipeline),
+	}
+	measureSVC := &measureService{
+		discoveryService: newDiscoveryService(pipeline),
+	}
+	s := &server{
+		pipeline:   pipeline,
+		repo:       repo,
+		streamSVC:  streamSVC,
+		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -113,6 +119,8 @@ func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRe
 			schemaRegistry: schemaRegistry,
 		},
 	}
+	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
+	return s
 }
 
 func (s *server) PreRun() error {
@@ -146,6 +154,14 @@ func (s *server) PreRun() error {
 			return err
 		}
 	}
+
+	if s.enableIngestionAccessLog {
+		for _, alr := range s.accessLogRecorders {
+			if err := alr.activeIngestionAccessLog(s.accessLogRootPath); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -155,11 +171,14 @@ func (s *server) Name() string {
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	fs.IntVarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", defaultRecvSize, "the size of max receiving message")
-	fs.BoolVarP(&s.tls, "tls", "", false, "connection uses TLS if true, else plain TCP")
-	fs.StringVarP(&s.certFile, "cert-file", "", "", "the TLS cert file")
-	fs.StringVarP(&s.keyFile, "key-file", "", "", "the TLS key file")
-	fs.StringVarP(&s.addr, "addr", "", ":17912", "the address of banyand listens")
+	s.maxRecvMsgSize = defaultRecvSize
+	fs.VarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", "the size of max receiving message")
+	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
+	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
+	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
+	fs.StringVar(&s.addr, "addr", ":17912", "the address of banyand listens")
+	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	return fs
 }
 
@@ -167,6 +186,10 @@ func (s *server) Validate() error {
 	if s.addr == "" {
 		return errNoAddr
 	}
+	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
+		return errAccessLogRootPath
+	}
+	observability.UpdateAddress("grpc", s.addr)
 	if !s.tls {
 		return nil
 	}
@@ -211,7 +234,7 @@ func (s *server) Serve() run.StopNotify {
 		unaryChain = append(unaryChain, unaryMetrics)
 	}
 
-	opts = append(opts, grpclib.MaxRecvMsgSize(s.maxRecvMsgSize),
+	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
 		grpclib.ChainStreamInterceptor(streamChain...),
 	)
@@ -252,6 +275,11 @@ func (s *server) GracefulStop() {
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
+		if s.enableIngestionAccessLog {
+			for _, alr := range s.accessLogRecorders {
+				_ = alr.Close()
+			}
+		}
 		close(stopped)
 	}()
 
@@ -264,4 +292,9 @@ func (s *server) GracefulStop() {
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
 	}
+}
+
+type accessLogRecorder interface {
+	activeIngestionAccessLog(root string) error
+	Close() error
 }

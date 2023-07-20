@@ -521,3 +521,64 @@ func Test_Notify(t *testing.T) {
 		})
 	}
 }
+
+func Test_Etcd_Entity_Update(t *testing.T) {
+	tester := assert.New(t)
+	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
+	tester.NoError(err)
+	tester.NotNil(registry)
+	defer registry.Close()
+
+	err = preloadSchema(registry)
+	tester.NoError(err)
+
+	tests := []struct {
+		updateFunc     func(context.Context, Registry) error
+		validationFunc func(context.Context, Registry) bool
+		name           string
+	}{
+		{
+			name: "update indexRule when none metadata-id",
+			updateFunc: func(ctx context.Context, r Registry) error {
+				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
+					Name:  "db.instance",
+					Group: "default",
+				})
+				if err != nil {
+					return err
+				}
+				// reset
+				ir.Metadata.Id = 0
+				ir.Type = databasev1.IndexRule_TYPE_TREE
+				return r.UpdateIndexRule(ctx, ir)
+			},
+			validationFunc: func(ctx context.Context, r Registry) bool {
+				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
+					Name:  "db.instance",
+					Group: "default",
+				})
+				if err != nil {
+					return false
+				}
+				if ir.Metadata.Id != 1 {
+					return false
+				}
+				if ir.Type != databasev1.IndexRule_TYPE_TREE {
+					return false
+				}
+				return true
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := require.New(t)
+
+			err := tt.updateFunc(context.TODO(), registry)
+			req.NoError(err)
+
+			req.True(tt.validationFunc(context.TODO(), registry))
+		})
+	}
+}

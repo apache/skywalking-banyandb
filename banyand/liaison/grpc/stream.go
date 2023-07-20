@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -38,11 +39,20 @@ import (
 type streamService struct {
 	streamv1.UnimplementedStreamServiceServer
 	*discoveryService
-	sampled *logger.Logger
+	sampled            *logger.Logger
+	ingestionAccessLog accesslog.Log
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
 	s.sampled = log.Sampled(10)
+}
+
+func (s *streamService) activeIngestionAccessLog(root string) (err error) {
+	if s.ingestionAccessLog, err = accesslog.
+		NewFileLog(root, "stream-ingest-%s", 10*time.Minute, s.log); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
@@ -77,6 +87,11 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
 			reply(stream, s.sampled)
 			continue
+		}
+		if s.ingestionAccessLog != nil {
+			if errAccessLog := s.ingestionAccessLog.Write(writeEntity); errAccessLog != nil {
+				s.sampled.Error().Err(errAccessLog).Msg("failed to write ingestion access log")
+			}
 		}
 		iwr := &streamv1.InternalWriteRequest{
 			Request:    writeEntity,
@@ -125,4 +140,8 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
 	return nil, nil
+}
+
+func (s *streamService) Close() error {
+	return s.ingestionAccessLog.Close()
 }

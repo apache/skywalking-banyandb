@@ -35,6 +35,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -179,7 +180,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	}
 
 	config := clientv3.Config{
-		Endpoints:            []string{e.Config().ACUrls[0].String()},
+		Endpoints:            []string{e.Config().AdvertiseClientUrls[0].String()},
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
@@ -401,12 +402,17 @@ func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logge
 	cfg := embed.NewConfig()
 	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
+	observability.UpdatePath(cfg.Dir)
 	cURL, _ := url.Parse(config.listenerClientURL)
 	pURL, _ := url.Parse(config.listenerPeerURL)
 
 	cfg.ClusterState = "new"
-	cfg.LCUrls, cfg.ACUrls = []url.URL{*cURL}, []url.URL{*cURL}
-	cfg.LPUrls, cfg.APUrls = []url.URL{*pURL}, []url.URL{*pURL}
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*cURL}, []url.URL{*cURL}
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*pURL}, []url.URL{*pURL}
 	cfg.InitialCluster = ",default=" + pURL.String()
+
+	cfg.BackendBatchInterval = 500 * time.Millisecond
+	cfg.BackendBatchLimit = 10000
+	cfg.MaxRequestBytes = 10 * 1024 * 1024
 	return cfg
 }

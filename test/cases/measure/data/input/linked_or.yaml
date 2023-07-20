@@ -29,28 +29,28 @@ criteria:
     op: "LOGICAL_OP_OR"
     left:
       condition:
-        name: "id"
+        name: "entity_id"
         op: "BINARY_OP_EQ"
         value:
-          id:
-            value: "4"
+          str:
+            value: "entity_4"
     right:
       le:
         op: "LOGICAL_OP_OR"
         left:
           condition:
-            name: "id"
+            name: "entity_id"
             op: "BINARY_OP_EQ"
             value:
-              id:
-                value: "5"
+              str:
+                value: "entity_5"
         right:
           le:
             op: "LOGICAL_OP_OR"
             left:
               condition:
-                name: "id"
+                name: "entity_id"
                 op: "BINARY_OP_EQ"
                 value:
-                  id:
+                  str:
                     value: "unknown"

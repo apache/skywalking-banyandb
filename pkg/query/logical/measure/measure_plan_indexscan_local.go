@@ -122,21 +122,33 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	var orderBy *tsdb.OrderBy
+	if i.order.Index != nil {
+		orderBy = &tsdb.OrderBy{
+			Index: i.order.Index,
+			Sort:  i.order.Sort,
+		}
+	}
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
-		shards, err := ec.Shards(e)
-		if err != nil {
-			return nil, err
+		shards, errInternal := ec.Shards(e)
+		if errInternal != nil {
+			return nil, errInternal
 		}
 		for _, shard := range shards {
-			sl, err := shard.Series().List(context.WithValue(
-				context.Background(),
-				logger.ContextKey,
-				i.l,
-			), tsdb.NewPath(e))
-			if err != nil {
-				return nil, err
+			sl, errInternal := shard.Series().Search(
+				context.WithValue(
+					context.Background(),
+					logger.ContextKey,
+					i.l,
+				),
+				tsdb.NewPath(e),
+				i.filter,
+				orderBy,
+			)
+			if errInternal != nil {
+				return nil, errInternal
 			}
 			seriesList = seriesList.Merge(sl)
 		}
@@ -145,30 +157,22 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (executor.
 		return dummyIter, nil
 	}
 	var builders []logical.SeekerBuilder
-	if i.order.Index != nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.order.Index, i.order.Sort)
-		})
-	} else {
+	if i.order.Index == nil {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
 			builder.OrderByTime(i.order.Sort)
 		})
 	}
-	if i.filter != nil {
-		builders = append(builders, func(b tsdb.SeekerBuilder) {
-			b.Filter(i.filter)
-		})
+	// CAVEAT: the order of series list matters when sorting by an index.
+	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	if err != nil {
+		return nil, err
 	}
-	iters, closers, innerErr := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
 	if len(closers) > 0 {
 		defer func(closers []io.Closer) {
 			for _, c := range closers {
-				_ = c.Close()
+				err = multierr.Append(err, c.Close())
 			}
 		}(closers)
-	}
-	if innerErr != nil {
-		return nil, innerErr
 	}
 
 	if len(iters) == 0 {
@@ -257,7 +261,7 @@ func (ism *indexScanIterator) Current() []*measurev1.DataPoint {
 }
 
 func (ism *indexScanIterator) Close() error {
-	return ism.err
+	return multierr.Combine(ism.err, ism.inner.Close())
 }
 
 var _ executor.MIterator = (*seriesIterator)(nil)

@@ -19,30 +19,38 @@
 package lsm
 
 import (
+	"sync"
+
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var _ index.Store = (*store)(nil)
 
 type store struct {
-	lsm kv.Store
-	l   *logger.Logger
+	lsm       kv.Store
+	l         *logger.Logger
+	closer    *run.Closer
+	closeOnce sync.Once
 }
 
-func (s *store) Close() error {
-	return s.lsm.Close()
+func (s *store) Close() (err error) {
+	s.closeOnce.Do(func() {
+		s.closer.Done()
+		s.closer.CloseThenWait()
+		err = s.lsm.Close()
+	})
+	return err
 }
 
-func (s *store) Write(fields []index.Field, itemID common.ItemID) (err error) {
+func (s *store) Write(fields []index.Field, docID uint64) (err error) {
 	for _, field := range fields {
-		itemIDInt := uint64(itemID)
-		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(itemIDInt), itemIDInt))
+		err = multierr.Append(err, s.lsm.PutWithVersion(field.Marshal(), convert.Uint64ToBytes(docID), docID))
 	}
 	return err
 }
@@ -69,7 +77,8 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 		return nil, err
 	}
 	return &store{
-		lsm: lsm,
-		l:   opts.Logger,
+		lsm:    lsm,
+		l:      opts.Logger,
+		closer: run.NewCloser(1),
 	}, nil
 }

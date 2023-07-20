@@ -42,6 +42,13 @@ func (c *Collector) Register(name string, getter MetricsGetter) {
 	c.getters[name] = getter
 }
 
+// Unregister unregisters a metrics getter.
+func (c *Collector) Unregister(name string) {
+	c.gMux.Lock()
+	defer c.gMux.Unlock()
+	delete(c.getters, name)
+}
+
 func (c *Collector) collect() {
 	c.gMux.RLock()
 	defer c.gMux.RUnlock()

@@ -42,7 +42,6 @@ const (
 var (
 	bufferMeterProvider meter.Provider
 	maxBytes            meter.Gauge
-	immutableBytes      meter.Gauge
 	mutableBytes        meter.Gauge
 )
 
@@ -51,7 +50,6 @@ func init() {
 	labelNames := append(common.LabelNames(), "bucket")
 	maxBytes = bufferMeterProvider.Gauge("max_bytes", labelNames...)
 	mutableBytes = bufferMeterProvider.Gauge("mutable_bytes", labelNames...)
-	immutableBytes = bufferMeterProvider.Gauge("immutable_bytes", labelNames...)
 }
 
 type operation struct {
@@ -163,6 +161,9 @@ func (b *Buffer) Read(key []byte, ts time.Time) ([]byte, bool) {
 
 // Close gracefully closes the Buffer and ensures that all pending operations are completed.
 func (b *Buffer) Close() error {
+	if b == nil {
+		return nil
+	}
 	b.closerOnce.Do(func() {
 		b.entryCloser.Done()
 		b.entryCloser.CloseThenWait()
@@ -209,7 +210,7 @@ func (bsb *bufferShardBucket) getAll() ([]*skl.Skiplist, func()) {
 func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 	go func() {
 		defer func() {
-			for _, g := range []meter.Gauge{maxBytes, immutableBytes, mutableBytes} {
+			for _, g := range []meter.Gauge{maxBytes, mutableBytes} {
 				g.Delete(bsb.labelValues...)
 			}
 		}()
@@ -228,12 +229,13 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 				break
 			}
 			flushLatency.Observe(time.Since(t1).Seconds(), bsb.shardLabelValues...)
-			immutableBytes.Add(float64(-memSize), bsb.labelValues...)
 			flushBytes.Inc(float64(memSize), bsb.shardLabelValues...)
 			flushNum.Inc(1, append(bsb.shardLabelValues, "false")...)
 
 			bsb.mutex.Lock()
-			bsb.immutables = bsb.immutables[1:]
+			if len(bsb.immutables) > 0 {
+				bsb.immutables = bsb.immutables[1:]
+			}
 			bsb.mutex.Unlock()
 			oldSkipList.DecrRef()
 		}
@@ -272,6 +274,5 @@ func (bsb *bufferShardBucket) triggerFlushing() {
 
 func (bsb *bufferShardBucket) swap() {
 	bsb.immutables = append(bsb.immutables, bsb.mutable)
-	immutableBytes.Add(float64(bsb.mutable.MemSize()), bsb.labelValues...)
 	bsb.mutable = skl.NewSkiplist(int64(bsb.capacity))
 }
