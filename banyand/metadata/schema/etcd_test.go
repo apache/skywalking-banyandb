@@ -34,6 +34,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -118,30 +119,34 @@ func randomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
 
-func useRandomTempDir() RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = randomTempDir()
+func initServerAndRegister(t *testing.T) (Registry, func()) {
+	req := require.New(t)
+	ports, err := test.AllocateFreePorts(2)
+	if err != nil {
+		panic("fail to find free ports")
 	}
-}
-
-func useRandomPort() RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		ports, err := test.AllocateFreePorts(2)
-		if err != nil {
-			panic("fail to find free ports")
-		}
-		config.listenerClientURL, config.listenerPeerURL = fmt.Sprintf("http://127.0.0.1:%d", ports[0]), fmt.Sprintf("http://127.0.0.1:%d", ports[1])
+	endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+	server, err := embeddedetcd.NewServer(
+		embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+		embeddedetcd.RootDir(randomTempDir()))
+	req.NoError(err)
+	req.NotNil(server)
+	<-server.ReadyNotify()
+	schemaRegistry, err := NewEtcdSchemaRegistry(ConfigureServerEndpoints(endpoints))
+	req.NoError(err)
+	req.NotNil(server)
+	return schemaRegistry, func() {
+		server.Close()
+		<-server.StopNotify()
+		schemaRegistry.Close()
 	}
 }
 
 func Test_Etcd_Entity_Get(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
-
-	err = preloadSchema(registry)
+	registry, closer := initServerAndRegister(t)
+	defer closer()
+	err := preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
@@ -228,12 +233,10 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 func Test_Etcd_Entity_List(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
+	registry, closer := initServerAndRegister(t)
+	defer closer()
 
-	err = preloadSchema(registry)
+	err := preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
@@ -310,12 +313,10 @@ func Test_Etcd_Entity_List(t *testing.T) {
 
 func Test_Etcd_Delete(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
+	registry, closer := initServerAndRegister(t)
+	defer closer()
 
-	err = preloadSchema(registry)
+	err := preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
@@ -379,12 +380,10 @@ func Test_Etcd_Delete(t *testing.T) {
 
 func Test_Notify(t *testing.T) {
 	req := require.New(t)
-	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
-	req.NoError(err)
-	req.NotNil(registry)
-	defer registry.Close()
+	registry, closer := initServerAndRegister(t)
+	defer closer()
 
-	err = preloadSchema(registry)
+	err := preloadSchema(registry)
 	req.NoError(err)
 
 	tests := []struct {
@@ -524,12 +523,10 @@ func Test_Notify(t *testing.T) {
 
 func Test_Etcd_Entity_Update(t *testing.T) {
 	tester := assert.New(t)
-	registry, err := NewEtcdSchemaRegistry(useRandomPort(), useRandomTempDir())
-	tester.NoError(err)
-	tester.NotNil(registry)
-	defer registry.Close()
+	registry, closer := initServerAndRegister(t)
+	defer closer()
 
-	err = preloadSchema(registry)
+	err := preloadSchema(registry)
 	tester.NoError(err)
 
 	tests := []struct {
