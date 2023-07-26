@@ -27,12 +27,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -40,34 +37,23 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var standaloneGroup = run.NewGroup("standalone")
+var liaisonGroup = run.NewGroup("liaison")
 
-func newStandaloneCmd() *cobra.Command {
+func newLiaisonCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	repo, err := discovery.NewServiceRepo(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate service repository")
 	}
+	// nolint: staticcheck
 	pipeline, err := queue.NewQueue(ctx, repo)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
-	metaSvc, err := metadata.NewService(ctx)
+	metaSvc, err := metadata.NewClient(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
-	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate stream service")
-	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate measure service")
-	}
-	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
 	if err != nil {
@@ -81,10 +67,6 @@ func newStandaloneCmd() *cobra.Command {
 		new(signal.Handler),
 		repo,
 		pipeline,
-		metaSvc,
-		measureSvc,
-		streamSvc,
-		q,
 		tcp,
 		httpServer,
 		profSvc,
@@ -93,12 +75,12 @@ func newStandaloneCmd() *cobra.Command {
 		units = append(units, metricSvc)
 	}
 	// Meta the run Group units.
-	standaloneGroup.Register(units...)
+	liaisonGroup.Register(units...)
 	logging := logger.Logging{}
-	standaloneCmd := &cobra.Command{
-		Use:     "standalone",
+	liaisonCmd := &cobra.Command{
+		Use:     "liaison",
 		Version: version.Build(),
-		Short:   "Run as the standalone server",
+		Short:   "Run as the liaison server",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
@@ -107,20 +89,20 @@ func newStandaloneCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			fmt.Print(logo)
-			logger.GetLogger().Info().Msg("starting as a standalone server")
+			logger.GetLogger().Info().Msg("starting as a liaison server")
 			// Spawn our go routines and wait for shutdown.
-			if err := standaloneGroup.Run(); err != nil {
-				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
+			if err := liaisonGroup.Run(); err != nil {
+				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
 
-	standaloneCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	standaloneCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
-	standaloneCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
-	standaloneCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
-	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
-	return standaloneCmd
+	liaisonCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
+	liaisonCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	liaisonCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
+	liaisonCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
+	liaisonCmd.Flags().AddFlagSet(liaisonGroup.RegisterFlags().FlagSet)
+	return liaisonCmd
 }
