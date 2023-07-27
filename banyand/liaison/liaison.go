@@ -29,6 +29,6 @@ import (
 )
 
 // NewEndpoint return a new endpoint which is the entry point for the database server.
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) (run.Unit, error) {
+func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) (run.Unit, error) {
 	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
 }

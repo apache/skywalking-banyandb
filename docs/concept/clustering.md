@@ -35,6 +35,14 @@ BanyanDB integrates multiple roles into a single process in the standalone mode,
 
 In this mode, the single process performs the roles of the Liaison Node, Query Node, Data Node, and Meta Node. It receives requests, maintains metadata, processes queries, and handles data, all within a unified setup.
 
+### 1.6 Mix Mode in Storage Nodes
+
+Query nodes and data nodes are implemented by a same executable binary, Storage Node. With the flag "mode", the storage node can be started as a query node or a data node. The default mode is "mix", which means the storage node is both a query node and a data node.
+
+If the workload of query is high, you can start more storage nodes with the flag "mode" set to "query". If the workload of write is high, you can start more storage nodes with the flag "mode" set to "data".
+
+Or you can start storage nodes with the flag "mode" set to "mix" to balance the workload of query and write.
+
 ## 2. Communication within a Cluster
 
 All nodes within a BanyanDB cluster communicate with other nodes according to their roles:
