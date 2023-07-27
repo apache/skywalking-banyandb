@@ -47,6 +47,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	is.NoError(err)
 	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 	is.NoError(err)
+	is.NoError(s.Validate())
 	err = s.PreRun()
 	is.NoError(err)
 	defer func() {

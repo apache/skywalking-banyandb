@@ -61,9 +61,6 @@ type ListOpt struct {
 // Registry allowing depositing resources.
 type Registry interface {
 	io.Closer
-	ReadyNotify() <-chan struct{}
-	StopNotify() <-chan struct{}
-	StoppingNotify() <-chan struct{}
 	Stream
 	IndexRule
 	IndexRuleBinding

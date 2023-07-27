@@ -32,7 +32,7 @@ import (
 
 type streamRegistryServer struct {
 	databasev1.UnimplementedStreamRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (rs *streamRegistryServer) Create(ctx context.Context,
@@ -123,7 +123,7 @@ func groupExist(ctx context.Context, errResource error, metadata *commonv1.Metad
 
 type indexRuleBindingRegistryServer struct {
 	databasev1.UnimplementedIndexRuleBindingRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
@@ -205,7 +205,7 @@ func (rs *indexRuleBindingRegistryServer) Exist(ctx context.Context, req *databa
 
 type indexRuleRegistryServer struct {
 	databasev1.UnimplementedIndexRuleRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (rs *indexRuleRegistryServer) Create(ctx context.Context, req *databasev1.IndexRuleRegistryServiceCreateRequest) (
@@ -281,7 +281,7 @@ func (rs *indexRuleRegistryServer) Exist(ctx context.Context, req *databasev1.In
 
 type measureRegistryServer struct {
 	databasev1.UnimplementedMeasureRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureRegistryServiceCreateRequest) (
@@ -355,7 +355,7 @@ func (rs *measureRegistryServer) Exist(ctx context.Context, req *databasev1.Meas
 
 type groupRegistryServer struct {
 	databasev1.UnimplementedGroupRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
@@ -429,7 +429,7 @@ func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupR
 
 type topNAggregationRegistryServer struct {
 	databasev1.UnimplementedTopNAggregationRegistryServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (ts *topNAggregationRegistryServer) Create(ctx context.Context,

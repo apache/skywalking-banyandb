@@ -85,7 +85,7 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Service) run.Unit {
+func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) run.Unit {
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(pipeline),
 	}

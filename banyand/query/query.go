@@ -21,7 +21,6 @@ package query
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -31,11 +30,10 @@ import (
 
 // NewService return a new query service.
 func NewService(_ context.Context, streamService stream.Service, measureService measure.Service,
-	metaService metadata.Service, serviceRepo discovery.ServiceRepo, pipeline queue.Queue,
+	metaService metadata.Repo, pipeline queue.Queue,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
-		serviceRepo: serviceRepo,
 		pipeline:    pipeline,
 	}
 	// measure query processor
