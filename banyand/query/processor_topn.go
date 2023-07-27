@@ -21,6 +21,9 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	logical_topn "github.com/apache/skywalking-banyandb/pkg/query/logical/topn"
 	"time"
 
 	"github.com/pkg/errors"
@@ -50,9 +53,14 @@ type topNQueryProcessor struct {
 
 func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	request, ok := message.Data().(*measurev1.TopNRequest)
+	now := time.Now().UnixNano()
 	if !ok {
 		t.log.Warn().Msg("invalid event data type")
 		return
+	}
+	ml := t.log.Named("topn", request.Metadata.Group, request.Metadata.Name)
+	if e := ml.Debug(); e.Enabled() {
+		e.RawJSON("req", logger.Proto(request)).Msg("received a topn event")
 	}
 	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 		t.log.Warn().Msg("invalid requested sort direction")
@@ -74,71 +82,103 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("unmatched sort direction")
 		return
 	}
-	sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
+	meta := topNSchema.GetSourceMeasure()
+	sourceMeasure, err := t.measureService.Measure(meta)
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to find source measure")
 		return
 	}
-	shards, err := sourceMeasure.CompanionShards(topNMetadata)
+
+	s, err := logical_topn.BuildSchema(sourceMeasure, topNSchema)
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
-			Msg("fail to list shards")
-		return
-	}
-	aggregator := createTopNPostAggregator(request.GetTopN(),
-		request.GetAgg(), request.GetFieldValueSort())
-	entity, err := locateEntity(topNSchema, request.GetFieldValueSort(), request.GetConditions())
-	if err != nil {
-		t.log.Error().Err(err).
-			Str("topN", topNMetadata.GetName()).
-			Msg("fail to parse entity")
-		return
-	}
-	for _, shard := range shards {
-		// TODO: support condition
-		sl, innerErr := shard.Series().List(context.WithValue(
-			context.Background(),
-			logger.ContextKey,
-			t.log,
-		), tsdb.NewPath(entity))
-		if innerErr != nil {
-			t.log.Error().Err(innerErr).
-				Str("topN", topNMetadata.GetName()).
-				Msg("fail to list series")
-			return
-		}
-		for _, series := range sl {
-			iters, scanErr := t.scanSeries(series, request)
-			if scanErr != nil {
-				t.log.Error().Err(innerErr).
-					Str("topN", topNMetadata.GetName()).
-					Msg("fail to scan series")
-				return
-			}
-			if len(iters) < 1 {
-				continue
-			}
-			for _, iter := range iters {
-				for iter.Next() {
-					tuple, parseErr := parseTopNFamily(iter.Val(), sourceMeasure.GetInterval())
-					if parseErr != nil {
-						t.log.Error().Err(parseErr).
-							Str("topN", topNMetadata.GetName()).
-							Msg("fail to parse topN family")
-						return
-					}
-					_ = aggregator.put(tuple.V1.([]*modelv1.TagValue), tuple.V2.(int64), iter.Val().Time())
-				}
-				_ = iter.Close()
-			}
-		}
+			Msg("fail to build schema")
 	}
 
-	now := time.Now().UnixNano()
-	resp = bus.NewMessage(bus.MessageID(now), aggregator.val(sourceMeasure.GetSchema().GetEntity().GetTagNames()))
+	plan, err := logical_topn.Analyze(context.TODO(), request, topNMetadata, s)
+	if err != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", meta.GetName(), err))
+		return
+	}
+
+	if e := ml.Debug(); e.Enabled() {
+		e.Str("plan", plan.String()).Msg("topn plan")
+	}
+
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(sourceMeasure)
+	if err != nil {
+		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", meta.GetName(), err))
+	}
+	defer func() {
+		if err = mIterator.Close(); err != nil {
+			ml.Error().Err(err).RawJSON("req", logger.Proto(request))
+		}
+	}()
+	//shards, err := sourceMeasure.CompanionShards(topNMetadata)
+	//if err != nil {
+	//    t.log.Error().Err(err).
+	//        Str("topN", topNMetadata.GetName()).
+	//        Msg("fail to list shards")
+	//    return
+	//}
+	//aggregator := createTopNPostAggregator(request.GetTopN(),
+	//    request.GetAgg(), request.GetFieldValueSort())
+	//entity, err := locateEntity(topNSchema, request.GetFieldValueSort(), request.GetConditions())
+	//if err != nil {
+	//    t.log.Error().Err(err).
+	//        Str("topN", topNMetadata.GetName()).
+	//        Msg("fail to parse entity")
+	//    return
+	//}
+	//var seriesList tsdb.SeriesList
+	//for _, shard := range shards {
+	//    // TODO: support condition
+	//    sl, innerErr := shard.Series().List(context.WithValue(
+	//        context.Background(),
+	//        logger.ContextKey,
+	//        t.log,
+	//    ), tsdb.NewPath(entity))
+	//    if innerErr != nil {
+	//        t.log.Error().Err(innerErr).
+	//            Str("topN", topNMetadata.GetName()).
+	//            Msg("fail to list series")
+	//        return
+	//    }
+	//    seriesList.Merge(sl)
+	//    for _, series := range sl {
+	//        iters, scanErr := t.scanSeries(series, request)
+	//        if scanErr != nil {
+	//            t.log.Error().Err(innerErr).
+	//                Str("topN", topNMetadata.GetName()).
+	//                Msg("fail to scan series")
+	//            return
+	//        }
+	//        if len(iters) < 1 {
+	//            continue
+	//        }
+	//
+	//        for _, iter := range iters {
+	//            for iter.Next() {
+	//                tuple, parseErr := parseTopNFamily(iter.Val(), sourceMeasure.GetInterval())
+	//                if parseErr != nil {
+	//                    t.log.Error().Err(parseErr).
+	//                        Str("topN", topNMetadata.GetName()).
+	//                        Msg("fail to parse topN family")
+	//                    return
+	//                }
+	//                _ = aggregator.put(tuple.V1.([]*modelv1.TagValue), tuple.V2.(int64), iter.Val().Time())
+	//            }
+	//            _ = iter.Close()
+	//        }
+	//    }
+	//}
+	//seriesList.Len()
+	//
+	//resp = bus.NewMessage(bus.MessageID(now), aggregator.val(sourceMeasure.GetSchema().GetEntity().GetTagNames()))
 
 	return
 }
