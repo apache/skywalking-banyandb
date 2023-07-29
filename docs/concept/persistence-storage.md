@@ -2,6 +2,15 @@
 Persistence storage is used for unifying data of BanyanDB persistence, including write-ahead logging(WAL), index, and data collected from skywalking and other observability platforms or APM systems. It provides various implementations and IO modes to satisfy the need of different components.
 BanyanDB provides a concise interface that shields the complexity of the implementation from the upper layer. By exposing necessary interfaces, upper components do not need to care how persistence is implemented and avoid dealing with differences between different operating systems.
 
+# Architecture
+![](/assets/fs_architecture.jpg)
+BanyanDB uses third-party storage for actual storage, and the file system shields the differences between different platforms and storage systems, allowing developers to operate files as easily as the local file system without worrying about specific details.
+
+The architecture of the file system is divided into three layers. 
+- The first layer is the API interface, which developers only need to care about. 
+- The second layer is the storage system adapter, which is used to mask the differences between different storage systems. 
+- The last layer is the actual storage system. With the use of remote storage architecture, the local system can still play its role and can borrow the local system to speed up reading and writing.
+
 # IO Mode
 Persistence storage offers a range of IO modes to cater to various throughput requirements. The interface can be accessed by developers and can be configured through settings, which can be set in the configuration file.
 
