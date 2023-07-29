@@ -28,6 +28,10 @@ catalog:
     catalog:
       - name: "Data Model"
         path: "/concept/data-model"
+      - name: "Clustering"
+        path: "/concept/clustering"
+      - name: "TSDB"
+        path: "/concept/tsdb"
   - name: "CRUD Operations"
     catalog:
       - name: "Group"
