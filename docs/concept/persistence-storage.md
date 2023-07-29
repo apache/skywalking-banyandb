@@ -4,6 +4,7 @@ BanyanDB provides a concise interface that shields the complexity of the impleme
 
 # Architecture
 ![](/assets/fs_architecture.jpg)
+
 BanyanDB uses third-party storage for actual storage, and the file system shields the differences between different platforms and storage systems, allowing developers to operate files as easily as the local file system without worrying about specific details.
 
 The architecture of the file system is divided into three layers. 
