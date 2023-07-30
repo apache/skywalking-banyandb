@@ -7,12 +7,17 @@ Release Notes.
 ### Features
 
 - List all properties in a group.
+- Implement Write-ahead Logging
+- Document the clustering.
+- Support multiple roles for banyand server.
 
 ### Bugs
 
 - BanyanDB ui unable to load icon.
 - BanyanDB ui type error
 - Fix timer not released
+- BanyanDB ui misses fields when creating a group
+- Fix data duplicate writing
 
 ### Chores
 

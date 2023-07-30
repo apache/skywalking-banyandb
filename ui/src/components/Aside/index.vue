@@ -57,10 +57,18 @@ const data = reactive({
     setGroup: 'create',
     groupForm: {
         name: null,
-        catalog: 'CATALOG_STREAM'
+        catalog: 'CATALOG_STREAM',
+        shardNum: 1,
+        blockIntervalUnit: "UNIT_UNSPECIFIED",
+        blockIntervalNum: 1,
+        segmentIntervalUnit: "UNIT_UNSPECIFIED",
+        segmentIntervalNum: 1,
+        ttlUnit: "UNIT_UNSPECIFIED",
+        ttlNum: 1
     },
     activeMenu: '',
-    search: ''
+    search: '',
+    formLabelWidth: "170px"
 })
 
 watch(() => data.search, () => {
@@ -167,6 +175,41 @@ const rules = {
     catalog: [
         {
             required: true, message: 'Please select the type of the group', trigger: 'blur'
+        }
+    ],
+    shardNum: [
+        {
+            required: true, message: 'Please select the shard num of the group', trigger: 'blur'
+        }
+    ],
+    blockIntervalUnit: [
+        {
+            required: true, message: 'Please select the block interval unit of the group', trigger: 'blur'
+        }
+    ],
+    blockIntervalNum: [
+        {
+            required: true, message: 'Please select the block Interval num of the group', trigger: 'blur'
+        }
+    ],
+    segmentIntervalUnit: [
+        {
+            required: true, message: 'Please select the segment interval unit of the group', trigger: 'blur'
+        }
+    ],
+    segmentIntervalNum: [
+        {
+            required: true, message: 'Please select the segment Interval num of the group', trigger: 'blur'
+        }
+    ],
+    ttlUnit: [
+        {
+            required: true, message: 'Please select the ttl unit of the group', trigger: 'blur'
+        }
+    ],
+    ttlNum: [
+        {
+            required: true, message: 'Please select the ttl num of the group', trigger: 'blur'
         }
     ]
 }
@@ -515,6 +558,13 @@ function openCreateGroup() {
 function openEditGroup() {
     data.groupForm.name = data.groupLists[data.clickIndex].metadata.name
     data.groupForm.catalog = data.groupLists[data.clickIndex].catalog
+    data.groupForm.shardNum = data.groupLists[data.clickIndex].resourceOpts?.shardNum
+    data.groupForm.blockIntervalUnit = data.groupLists[data.clickIndex].resourceOpts?.blockInterval?.unit
+    data.groupForm.blockIntervalNum = data.groupLists[data.clickIndex].resourceOpts?.blockInterval?.num
+    data.groupForm.segmentIntervalUnit = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.unit
+    data.groupForm.segmentIntervalNum = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.num
+    data.groupForm.ttlUnit = data.groupLists[data.clickIndex].resourceOpts?.ttl?.unit
+    data.groupForm.ttlNum = data.groupLists[data.clickIndex].resourceOpts?.ttl?.num
     data.dialogGroupVisible = true
     data.setGroup = 'edit'
 }
@@ -655,7 +705,22 @@ function createGroupFunction() {
                         group: "",
                         name: data.groupForm.name
                     },
-                    catalog: data.groupForm.catalog
+                    catalog: data.groupForm.catalog,
+                    resourceOpts: {
+                        shardNum: data.groupForm.shardNum,
+                        blockInterval: {
+                            unit: data.groupForm.blockIntervalUnit,
+                            num: data.groupForm.blockIntervalNum
+                        },
+                        segmentInterval: {
+                            unit: data.groupForm.segmentIntervalUnit,
+                            num: data.groupForm.segmentIntervalNum
+                        },
+                        ttl: {
+                            unit: data.groupForm.ttlUnit,
+                            num: data.groupForm.ttlNum
+                        }
+                    }
                 }
             }
             $loadingCreate()
@@ -687,7 +752,22 @@ function editGroupFunction() {
                         group: "",
                         name: data.groupForm.name
                     },
-                    catalog: data.groupForm.catalog
+                    catalog: data.groupForm.catalog,
+                    resourceOpts: {
+                        shardNum: data.groupForm.shardNum,
+                        blockInterval: {
+                            unit: data.groupForm.blockIntervalUnit,
+                            num: data.groupForm.blockIntervalNum
+                        },
+                        segmentInterval: {
+                            unit: data.groupForm.segmentIntervalUnit,
+                            num: data.groupForm.segmentIntervalNum
+                        },
+                        ttl: {
+                            unit: data.groupForm.ttlUnit,
+                            num: data.groupForm.ttlNum
+                        }
+                    }
                 }
             }
             $loadingCreate()
@@ -717,7 +797,14 @@ function cancelCreateEditDialog() {
 function clearGroupForm() {
     data.groupForm = {
         name: null,
-        catalog: 'CATALOG_STREAM'
+        catalog: 'CATALOG_STREAM',
+        shardNum: 1,
+        blockIntervalUnit: "UNIT_UNSPECIFIED",
+        blockIntervalNum: 1,
+        segmentIntervalUnit: "UNIT_UNSPECIFIED",
+        segmentIntervalNum: 1,
+        ttlUnit: "UNIT_UNSPECIFIED",
+        ttlNum: 1
     }
 }
 function initActiveMenu() {
@@ -885,15 +972,48 @@ initActiveMenu()
         <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible"
             :show-close="false">
             <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
-                <el-form-item label="group name" label-width="120px" prop="name">
+                <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
                     <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off">
                     </el-input>
                 </el-form-item>
-                <el-form-item label="group type" label-width="120px" prop="catalog">
+                <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
                     <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
                         <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
                         <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
                     </el-select>
+                </el-form-item>
+                <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
+                    <el-input-number v-model="data.groupForm.shardNum" :min="1" />
+                </el-form-item>
+                <el-form-item label="block interval unit" :label-width="data.formLabelWidth" prop="blockIntervalUnit">
+                    <el-select v-model="data.groupForm.blockIntervalUnit" placeholder="please select" style="width: 100%">
+                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
+                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
+                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="block interval num" :label-width="data.formLabelWidth" prop="blockIntervalNum">
+                    <el-input-number v-model="data.groupForm.blockIntervalNum" :min="1" />
+                </el-form-item>
+                <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
+                    <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
+                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
+                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
+                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
+                    <el-input-number v-model="data.groupForm.segmentIntervalNum" :min="1" />
+                </el-form-item>
+                <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
+                    <el-select v-model="data.groupForm.ttlUnit" placeholder="please select" style="width: 100%">
+                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
+                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
+                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">
+                    <el-input-number v-model="data.groupForm.ttlNum" :min="1" />
                 </el-form-item>
             </el-form>
             <div slot="footer" class="dialog-footer footer">

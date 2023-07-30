@@ -27,7 +27,6 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 ### Distributed manager (v1.0.0)
 
 - [ ] Sharding
-- [ ] Replication and consistency model
 - [ ] Load balance
 - [ ] Distributed query optimizer
 - [ ] Node discovery

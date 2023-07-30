@@ -26,7 +26,7 @@ import (
 
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
-	schemaRegistry metadata.Service
+	schemaRegistry metadata.Repo
 }
 
 func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (*propertyv1.ApplyResponse, error) {

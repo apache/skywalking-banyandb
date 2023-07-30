@@ -15,20 +15,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package liaison implements a transmission layer between a data layer and a client.
-package liaison
+package run
 
 import (
-	"context"
-
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"sync"
 )
 
-// NewEndpoint return a new endpoint which is the entry point for the database server.
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) (run.Unit, error) {
-	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
+// ChannelGroupCloser can close a goroutine group then wait for it to stop.
+type ChannelGroupCloser struct {
+	group  []*ChannelCloser
+	lock   sync.RWMutex
+	closed bool
+}
+
+// NewChannelGroupCloser instances a new ChannelGroupCloser.
+func NewChannelGroupCloser(closer ...*ChannelCloser) *ChannelGroupCloser {
+	return &ChannelGroupCloser{group: closer}
+}
+
+// CloseThenWait closes all closer then waits till they are done.
+func (c *ChannelGroupCloser) CloseThenWait() {
+	if c == nil {
+		return
+	}
+
+	c.lock.Lock()
+	c.closed = true
+	c.lock.Unlock()
+
+	for _, closer := range c.group {
+		closer.CloseThenWait()
+	}
+}
+
+// Closed returns whether the ChannelGroupCloser is closed.
+func (c *ChannelGroupCloser) Closed() bool {
+	if c == nil {
+		return true
+	}
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.closed
 }

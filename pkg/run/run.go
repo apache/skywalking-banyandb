@@ -176,6 +176,42 @@ func (g *Group) Register(units ...Unit) []bool {
 	return hasRegistered
 }
 
+// Deregister will remove the provided objects implementing the Unit interface
+// from the Group.
+// The returned array of booleans is of the same size as the amount of provided
+// Units, signaling for each provided Unit if it successfully deregistered from
+// Group or if it was ignored.
+func (g *Group) Deregister(units ...Unit) []bool {
+	hasDeregistered := make([]bool, len(units))
+	for idx := range units {
+		if c, ok := units[idx].(Config); ok {
+			for i := range g.c {
+				if g.c[i] == c {
+					g.c[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+		if p, ok := units[idx].(PreRunner); ok {
+			for i := range g.p {
+				if g.p[i] == p {
+					g.p[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+		if s, ok := units[idx].(Service); ok {
+			for i := range g.s {
+				if g.s[i] == s {
+					g.s[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+	}
+	return hasDeregistered
+}
+
 // RegisterFlags returns FlagSet contains Flags in all modules.
 func (g *Group) RegisterFlags() *FlagSet {
 	// run configuration stage

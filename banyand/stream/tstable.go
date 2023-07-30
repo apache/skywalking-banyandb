@@ -114,6 +114,7 @@ func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
 func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 	if t.buffer != nil {
 		t.buffer.Write(key, val, ts)
+		return nil
 	}
 
 	if err := t.openBuffer(); err != nil {
