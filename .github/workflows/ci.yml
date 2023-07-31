@@ -70,6 +70,8 @@ jobs:
         run: make generate
       - name: Lint
         run: make lint
+      - name: Generate dependencies licenses
+        run: make license-dep
       - name: Check
         run: make check
   build:
