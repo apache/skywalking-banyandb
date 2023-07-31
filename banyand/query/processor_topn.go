@@ -19,10 +19,11 @@ package query
 
 import (
 	"context"
+	"time"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_topn "github.com/apache/skywalking-banyandb/pkg/query/logical/topn"
-	"time"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -105,7 +106,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}()
 
 	for mIterator.Next() {
-
 	}
 
 	return
