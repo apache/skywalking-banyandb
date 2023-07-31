@@ -18,6 +18,7 @@
 package topn
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -26,12 +27,15 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/proto"
 	"io"
 	"time"
 )
@@ -101,7 +105,7 @@ type localScan struct {
 	entity    tsdb.Entity
 }
 
-func (ls *localScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (ls *localScan) Execute(ec executor.TopNExecutionContext) (mit executor.TIterator, err error) {
 	var seriesList tsdb.SeriesList
 	shards, err := ec.(measure.Measure).CompanionShards(ls.metadata)
 	if err != nil {
@@ -147,7 +151,7 @@ func (ls *localScan) Execute(ec executor.MeasureExecutionContext) (mit executor.
 		return dummyIter, nil
 	}
 
-	return
+	return newSeriesMIterator(iters, ec, 100), nil
 }
 
 func (ls *localScan) String() string {
@@ -164,41 +168,85 @@ func (ls *localScan) Schema() logical.Schema {
 }
 
 type seriesIterator struct {
-	err     error
-	ec      executor.MeasureExecutionContext
-	inner   []tsdb.Iterator
-	current []*measurev1.DataPoint
-	index   int
-	num     int
-	max     int
+	err      error
+	interval time.Duration
+	inner    []tsdb.Iterator
+	current  []*streaming.Tuple2
+	index    int
+	num      int
+	max      int
 }
 
 func (si *seriesIterator) Next() bool {
-	//TODO implement me
-	panic("implement me")
+	if si.err != nil || si.num > si.max {
+		return false
+	}
+	si.index++
+	if si.index >= len(si.inner) {
+		return false
+	}
+	iter := si.inner[si.index]
+	if si.current != nil {
+		si.current = si.current[:0]
+	}
+	for iter.Next() {
+		tuple, err := transform(iter.Val(), si.interval)
+		if err != nil {
+			si.err = err
+			return false
+		}
+		si.current = append(si.current, tuple)
+	}
+	si.num++
+	return true
 }
 
-func (si *seriesIterator) Current() []*measurev1.DataPoint {
-	//TODO implement me
-	panic("implement me")
+func (si *seriesIterator) Current() []*streaming.Tuple2 {
+	return si.current
 }
 
 func (si *seriesIterator) Close() error {
-	//TODO implement me
-	panic("implement me")
+	for _, i := range si.inner {
+		si.err = multierr.Append(si.err, i.Close())
+	}
+	return si.err
 }
 
-func newSeriesMIterator(inner []tsdb.Iterator, ec executor.MeasureExecutionContext, max int) executor.MIterator {
+func newSeriesMIterator(inner []tsdb.Iterator, ec executor.TopNExecutionContext, max int) executor.TIterator {
 	return &seriesIterator{
-		inner: inner,
-		ec:    ec,
-		max:   max,
+		inner:    inner,
+		interval: ec.(measure.Measure).GetInterval(),
+		max:      max,
 	}
 }
 
-//func transform(item tsdb.Item, ec executor.MeasureExecutionContext) (*streaming.Tuple2, error) {
-//
-//}
+func transform(item tsdb.Item, interval time.Duration) (*streaming.Tuple2, error) {
+	familyRawBytes, err := item.Family(familyIdentity(measure.TopNTagFamily, pbv1.TagFlag))
+	if err != nil {
+		return nil, err
+	}
+	tagFamily := &modelv1.TagFamilyForWrite{}
+	err = proto.Unmarshal(familyRawBytes, tagFamily)
+	if err != nil {
+		return nil, err
+	}
+	fieldBytes, err := item.Family(familyIdentity(measure.TopNValueFieldSpec.GetName(),
+		pbv1.EncoderFieldFlag(measure.TopNValueFieldSpec, interval)))
+	if err != nil {
+		return nil, err
+	}
+	fieldValue, err := pbv1.DecodeFieldValue(fieldBytes, measure.TopNValueFieldSpec)
+	return &streaming.Tuple2{
+		// GroupValues
+		V1: tagFamily.GetTags()[1:],
+		// FieldValue
+		V2: fieldValue.GetInt().GetValue(),
+	}, nil
+}
+
+func familyIdentity(name string, flag []byte) []byte {
+	return bytes.Join([][]byte{tsdb.Hash([]byte(name)), flag}, nil)
+}
 
 var dummyIter = dummyIterator{}
 
@@ -208,7 +256,7 @@ func (ei dummyIterator) Next() bool {
 	return false
 }
 
-func (ei dummyIterator) Current() []*measurev1.DataPoint {
+func (ei dummyIterator) Current() []*streaming.Tuple2 {
 	return nil
 }
 
