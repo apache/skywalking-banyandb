@@ -22,6 +22,7 @@ Release Notes.
 ### Chores
 
 - Bump several dependencies and tools.
+- Drop redundant "discovery" module from banyand. "metadata" module is enough to play the node and shard discovery role.
 
 ## 0.4.0
 

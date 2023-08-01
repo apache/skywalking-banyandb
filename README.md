@@ -29,7 +29,6 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [ ] Sharding
 - [ ] Load balance
 - [ ] Distributed query optimizer
-- [ ] Node discovery
 - [ ] Data queue
 
 ### Data processor

@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -61,9 +60,7 @@ type service struct {
 	writeListener          bus.MessageListener
 	metadata               metadata.Repo
 	pipeline               queue.Queue
-	repo                   discovery.ServiceRepo
 	l                      *logger.Logger
-	stopCh                 chan struct{}
 	root                   string
 	dbOpts                 tsdb.DatabaseOpts
 	BlockEncoderBufferSize run.Bytes
@@ -116,7 +113,7 @@ func (s *service) PreRun() error {
 	}
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
-	s.schemaRepo = newSchemaRepo(path, s.metadata, s.repo, s.dbOpts,
+	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
 		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
@@ -144,6 +141,11 @@ func (s *service) PreRun() error {
 			}
 		}
 	}
+	// run a serial watcher
+	go s.schemaRepo.Watcher()
+	s.metadata.
+		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			&s.schemaRepo)
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
@@ -177,31 +179,18 @@ func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databas
 }
 
 func (s *service) Serve() run.StopNotify {
-	_ = s.schemaRepo.NotifyAll()
-	// run a serial watcher
-	go s.schemaRepo.Watcher()
-
-	s.metadata.MeasureRegistry().
-		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
-			&s.schemaRepo)
-
-	return s.stopCh
+	return s.schemaRepo.StopCh()
 }
 
 func (s *service) GracefulStop() {
 	s.schemaRepo.Close()
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,
-		repo:     repo,
 		pipeline: pipeline,
-		stopCh:   make(chan struct{}),
 		dbOpts: tsdb.DatabaseOpts{
 			IndexGranularity: tsdb.IndexGranularitySeries,
 		},
