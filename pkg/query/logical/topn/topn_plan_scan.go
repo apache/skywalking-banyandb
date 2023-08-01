@@ -84,7 +84,7 @@ func (us *unresolvedScan) Analyze(s logical.Schema) (logical.Plan, error) {
 			return nil, err
 		}
 
-		entity = append(entity, es[0]...)
+		entity = es[0]
 	}
 
 	return &localScan{
@@ -107,7 +107,7 @@ type localScan struct {
 
 func (ls *localScan) Execute(ec executor.TopNExecutionContext) (mit executor.TIterator, err error) {
 	var seriesList tsdb.SeriesList
-	shards, err := ec.(measure.Measure).CompanionShards(ls.metadata)
+	shards, err := ec.CompanionShards(ls.metadata)
 	if err != nil {
 		ls.l.Error().Err(err).
 			Str("topN", ls.metadata.GetName()).
@@ -217,6 +217,7 @@ func newSeriesMIterator(inner []tsdb.Iterator, ec executor.TopNExecutionContext,
 		inner:    inner,
 		interval: ec.(measure.Measure).GetInterval(),
 		max:      max,
+		index:    -1,
 	}
 }
 
@@ -240,7 +241,7 @@ func transform(item tsdb.Item, interval time.Duration) (*streaming.Tuple2, error
 		// GroupValues
 		V1: tagFamily.GetTags()[1:],
 		// FieldValue
-		V2: fieldValue.GetInt().GetValue(),
+		V2: fieldValue,
 	}, nil
 }
 
