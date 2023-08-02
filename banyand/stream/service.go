@@ -26,7 +26,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -55,10 +54,8 @@ type service struct {
 	schemaRepo      schemaRepo
 	metadata        metadata.Repo
 	pipeline        queue.Queue
-	repo            discovery.ServiceRepo
 	writeListener   *writeCallback
 	l               *logger.Logger
-	stopCh          chan struct{}
 	root            string
 	dbOpts          tsdb.DatabaseOpts
 	blockBufferSize run.Bytes
@@ -106,7 +103,7 @@ func (s *service) PreRun() error {
 	}
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
-	s.schemaRepo = newSchemaRepo(path, s.metadata, s.repo, int64(s.blockBufferSize), s.dbOpts, s.l)
+	s.schemaRepo = newSchemaRepo(path, s.metadata, int64(s.blockBufferSize), s.dbOpts, s.l)
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			continue
@@ -127,6 +124,10 @@ func (s *service) PreRun() error {
 			}
 		}
 	}
+	// run a serial watcher
+	s.schemaRepo.Watcher()
+	s.metadata.RegisterHandler(schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
+		&s.schemaRepo)
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 
@@ -138,32 +139,21 @@ func (s *service) PreRun() error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	_ = s.schemaRepo.NotifyAll()
-	// run a serial watcher
-	s.schemaRepo.Watcher()
-
-	s.metadata.StreamRegistry().RegisterHandler(schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
-		&s.schemaRepo)
-	return s.stopCh
+	return s.schemaRepo.StopCh()
 }
 
 func (s *service) GracefulStop() {
 	s.schemaRepo.Close()
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,
-		repo:     repo,
 		pipeline: pipeline,
 		dbOpts: tsdb.DatabaseOpts{
 			EnableGlobalIndex: true,
 			IndexGranularity:  tsdb.IndexGranularityBlock,
 		},
-		stopCh: make(chan struct{}),
 	}, nil
 }

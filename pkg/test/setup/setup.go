@@ -24,7 +24,6 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -77,37 +76,37 @@ func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (str
 }
 
 func modules(schemaLoaders []SchemaLoader, flags []string) func() {
-	// Init `Discovery` module
-	repo, err := discovery.NewServiceRepo(context.Background())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	pipeline, err := queue.NewQueue(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Stream` module
-	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
+	streamSvc, err := stream.NewService(context.TODO(), metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Measure` module
-	measureSvc, err := measure.NewService(context.TODO(), metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(context.TODO(), metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Query` module
 	q, err := query.NewService(context.TODO(), streamSvc, measureSvc, metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
+	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc)
 	httpServer := http.NewService()
 
 	units := []run.Unit{
-		repo,
 		pipeline,
 		metaSvc,
+		streamSvc,
+		measureSvc,
+		q,
+		tcp,
+		httpServer,
 	}
 	for _, sl := range schemaLoaders {
 		sl.SetMeta(metaSvc)
 		units = append(units, sl)
 	}
-	units = append(units, streamSvc, measureSvc, q, tcp, httpServer)
 
 	return test.SetupModules(
 		flags,
