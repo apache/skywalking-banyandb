@@ -25,9 +25,6 @@ import (
 	"github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 
-	"github.com/apache/skywalking-banyandb/api/event"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -64,26 +61,15 @@ func (p *preloadMeasureService) PreRun() error {
 type services struct {
 	measure         measure.Service
 	metadataService metadata.Service
-	repo            *discovery.MockServiceRepo
 	pipeline        queue.Queue
 }
 
 func setUp() (*services, func()) {
 	ctrl := gomock.NewController(ginkgo.GinkgoT())
 	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
-	// Init Discovery
-	repo := discovery.NewMockServiceRepo(ctrl)
-	repo.EXPECT().NodeID().AnyTimes()
-	repo.EXPECT().Name().AnyTimes()
-	stopCh := make(chan struct{})
-	repo.EXPECT().Serve().Return(stopCh).Times(1)
-	repo.EXPECT().GracefulStop().Do(func() { close(stopCh) }).Times(1)
-	// Both PreRun and Serve phases send events
-	repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).AnyTimes()
-	repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).AnyTimes()
 
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	pipeline, err := queue.NewQueue(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Metadata Service
@@ -91,7 +77,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Measure Service
-	measureService, err := measure.NewService(context.TODO(), metadataService, repo, pipeline)
+	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	var flags []string
@@ -106,7 +92,6 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetupModules(
 		flags,
-		repo,
 		pipeline,
 		metadataService,
 		preloadMeasureSvc,
@@ -115,7 +100,6 @@ func setUp() (*services, func()) {
 	return &services{
 			measure:         measureService,
 			metadataService: metadataService,
-			repo:            repo,
 			pipeline:        pipeline,
 		}, func() {
 			moduleDeferFunc()

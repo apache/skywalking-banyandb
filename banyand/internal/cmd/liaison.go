@@ -24,7 +24,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -42,12 +41,8 @@ var liaisonGroup = run.NewGroup("liaison")
 func newLiaisonCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	repo, err := discovery.NewServiceRepo(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate service repository")
-	}
 	// nolint: staticcheck
-	pipeline, err := queue.NewQueue(ctx, repo)
+	pipeline, err := queue.NewQueue(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
@@ -55,7 +50,7 @@ func newLiaisonCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
+	tcp, err := liaison.NewEndpoint(ctx, pipeline, metaSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
@@ -65,7 +60,6 @@ func newLiaisonCmd() *cobra.Command {
 
 	units := []run.Unit{
 		new(signal.Handler),
-		repo,
 		pipeline,
 		tcp,
 		httpServer,

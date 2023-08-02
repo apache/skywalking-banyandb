@@ -27,9 +27,10 @@ option java_package = "org.apache.skywalking.banyandb.database.v1";
 
 message Node {
   string id = 1;
-  string addr = 2;
-  google.protobuf.Timestamp updated_at = 3;
-  google.protobuf.Timestamp created_at = 4;
+  common.v1.Metadata metadata = 2;
+  string addr = 3;
+  google.protobuf.Timestamp updated_at = 4;
+  google.protobuf.Timestamp created_at = 5;
 }
 
 message Shard {

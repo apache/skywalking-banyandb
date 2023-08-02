@@ -24,7 +24,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -51,12 +50,8 @@ var flagStorageMode string
 func newStorageCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	repo, err := discovery.NewServiceRepo(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate service repository")
-	}
 	// nolint: staticcheck
-	pipeline, err := queue.NewQueue(ctx, repo)
+	pipeline, err := queue.NewQueue(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
@@ -64,11 +59,11 @@ func newStorageCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -82,7 +77,6 @@ func newStorageCmd() *cobra.Command {
 
 	units := []run.Unit{
 		new(signal.Handler),
-		repo,
 		pipeline,
 		measureSvc,
 		streamSvc,
