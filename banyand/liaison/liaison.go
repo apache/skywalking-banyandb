@@ -21,7 +21,6 @@ package liaison
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -29,6 +28,6 @@ import (
 )
 
 // NewEndpoint return a new endpoint which is the entry point for the database server.
-func NewEndpoint(ctx context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) (run.Unit, error) {
-	return grpc.NewServer(ctx, pipeline, repo, schemaRegistry), nil
+func NewEndpoint(ctx context.Context, pipeline queue.Queue, schemaRegistry metadata.Repo) (run.Unit, error) {
+	return grpc.NewServer(ctx, pipeline, schemaRegistry), nil
 }

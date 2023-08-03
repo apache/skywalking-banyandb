@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -39,8 +40,13 @@ func NewClient(_ context.Context) (Service, error) {
 
 type clientService struct {
 	schemaRegistry schema.Registry
+	alc            *allocator
 	closer         *run.Closer
 	endpoints      []string
+}
+
+func (s *clientService) SchemaRegistry() schema.Registry {
+	return s.schemaRegistry
 }
 
 func (s *clientService) FlagSet() *run.FlagSet {
@@ -62,6 +68,9 @@ func (s *clientService) PreRun() error {
 	if err != nil {
 		return err
 	}
+
+	s.alc = newAllocator(s.schemaRegistry, logger.GetLogger(s.Name()).Named("allocator"))
+	s.schemaRegistry.RegisterHandler(schema.KindGroup|schema.KindNode, s.alc)
 	return nil
 }
 
@@ -75,8 +84,8 @@ func (s *clientService) GracefulStop() {
 	_ = s.schemaRegistry.Close()
 }
 
-func (s *clientService) SchemaRegistry() schema.Registry {
-	return s.schemaRegistry
+func (s *clientService) RegisterHandler(kind schema.Kind, handler schema.EventHandler) {
+	s.schemaRegistry.RegisterHandler(kind, handler)
 }
 
 func (s *clientService) StreamRegistry() schema.Stream {
@@ -104,6 +113,10 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
+	return s.schemaRegistry
+}
+
+func (s *clientService) ShardRegistry() schema.Shard {
 	return s.schemaRegistry
 }
 

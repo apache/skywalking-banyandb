@@ -24,7 +24,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -45,11 +44,7 @@ var standaloneGroup = run.NewGroup("standalone")
 func newStandaloneCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	repo, err := discovery.NewServiceRepo(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate service repository")
-	}
-	pipeline, err := queue.NewQueue(ctx, repo)
+	pipeline, err := queue.NewQueue(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
 	}
@@ -57,11 +52,11 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -69,7 +64,7 @@ func newStandaloneCmd() *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
-	tcp, err := liaison.NewEndpoint(ctx, pipeline, repo, metaSvc)
+	tcp, err := liaison.NewEndpoint(ctx, pipeline, metaSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate Endpoint transport layer")
 	}
@@ -79,7 +74,6 @@ func newStandaloneCmd() *cobra.Command {
 
 	units := []run.Unit{
 		new(signal.Handler),
-		repo,
 		pipeline,
 		metaSvc,
 		measureSvc,

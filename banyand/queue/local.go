@@ -19,7 +19,6 @@
 package queue
 
 import (
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -31,7 +30,6 @@ var (
 
 type local struct {
 	local  *bus.Bus
-	repo   discovery.ServiceRepo
 	stopCh chan struct{}
 }
 

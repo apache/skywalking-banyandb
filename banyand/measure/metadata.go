@@ -28,10 +28,8 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -49,7 +47,7 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
+func newSchemaRepo(path string, metadata metadata.Repo,
 	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
 ) schemaRepo {
 	return schemaRepo{
@@ -57,11 +55,8 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
 			metadata,
-			repo,
 			l,
 			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
-			event.MeasureTopicShardEvent,
-			event.MeasureTopicEntityEvent,
 		),
 	}
 }
