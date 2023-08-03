@@ -50,7 +50,11 @@ const (
 	KindIndexRule
 	KindTopNAggregation
 	KindProperty
-	KindMask = KindGroup | KindStream | KindMeasure | KindIndexRuleBinding | KindIndexRule | KindTopNAggregation
+	KindNode
+	KindShard
+	KindMask = KindGroup | KindStream | KindMeasure |
+		KindIndexRuleBinding | KindIndexRule |
+		KindTopNAggregation | KindProperty | KindNode | KindShard
 )
 
 // ListOpt contains options to list resources.
@@ -68,6 +72,9 @@ type Registry interface {
 	Group
 	TopNAggregation
 	Property
+	Node
+	Shard
+	RegisterHandler(Kind, EventHandler)
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -103,6 +110,10 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 		m = &propertyv1.Property{}
 	case KindTopNAggregation:
 		m = &databasev1.TopNAggregation{}
+	case KindNode:
+		m = &databasev1.Node{}
+	case KindShard:
+		m = &databasev1.Shard{}
 	default:
 		return nil, errUnsupportedEntityType
 	}
@@ -144,6 +155,17 @@ func (m Metadata) key() (string, error) {
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
+	case KindNode:
+		r, err := strToRole(m.Group)
+		if err != nil {
+			return "", err
+		}
+		return formatNodeKey(r, m.Name), nil
+	case KindShard:
+		return formatShardKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		}), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
@@ -168,7 +190,6 @@ type Stream interface {
 	CreateStream(ctx context.Context, stream *databasev1.Stream) error
 	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
-	RegisterHandler(Kind, EventHandler)
 }
 
 // IndexRule allows CRUD index rule schemas in a group.
@@ -196,7 +217,6 @@ type Measure interface {
 	CreateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
-	RegisterHandler(Kind, EventHandler)
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }
 
@@ -225,4 +245,38 @@ type Property interface {
 	ListProperty(ctx context.Context, container *commonv1.Metadata, ids []string, tags []string) ([]*propertyv1.Property, error)
 	ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, error)
 	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
+}
+
+// Role is the role of node.
+type Role string
+
+const (
+	// RoleMeta is the role of meta node.
+	RoleMeta = "meta"
+	// RoleData is the role of data node.
+	RoleData = "data"
+	// RoleQuery is the role of query node.
+	RoleQuery = "query"
+	// RoleLiaison is the role of liaison node.
+	RoleLiaison = "liaison"
+)
+
+func strToRole(role string) (Role, error) {
+	switch role {
+	case RoleMeta, RoleData, RoleQuery, RoleLiaison:
+		return Role(role), nil
+	default:
+		return "", errors.New("invalid role")
+	}
+}
+
+// Node allows CRUD node schemas in a group.
+type Node interface {
+	ListNode(ctx context.Context, role Role) ([]*databasev1.Node, error)
+}
+
+// Shard allows CRUD shard schemas in a group.
+type Shard interface {
+	CreateOrUpdateShard(ctx context.Context, shard *databasev1.Shard) error
+	ListShard(ctx context.Context, opt ListOpt) ([]*databasev1.Shard, error)
 }

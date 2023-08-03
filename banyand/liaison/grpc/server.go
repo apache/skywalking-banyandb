@@ -34,16 +34,14 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/apache/skywalking-banyandb/api/event"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -61,7 +59,6 @@ var (
 type server struct {
 	pipeline queue.Queue
 	creds    credentials.TransportCredentials
-	repo     discovery.ServiceRepo
 	*indexRuleRegistryServer
 	measureSVC *measureService
 	log        *logger.Logger
@@ -85,16 +82,15 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Queue, repo discovery.ServiceRepo, schemaRegistry metadata.Repo) run.Unit {
+func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.Repo) run.Unit {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline),
+		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline),
+		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry),
 	}
 	s := &server{
 		pipeline:   pipeline,
-		repo:       repo,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -127,30 +123,13 @@ func (s *server) PreRun() error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
-	components := []struct {
-		discoverySVC *discoveryService
-		shardEvent   bus.Topic
-		entityEvent  bus.Topic
-	}{
-		{
-			shardEvent:   event.StreamTopicShardEvent,
-			entityEvent:  event.StreamTopicEntityEvent,
-			discoverySVC: s.streamSVC.discoveryService,
-		},
-		{
-			shardEvent:   event.MeasureTopicShardEvent,
-			entityEvent:  event.MeasureTopicEntityEvent,
-			discoverySVC: s.measureSVC.discoveryService,
-		},
+	components := []*discoveryService{
+		s.streamSVC.discoveryService,
+		s.measureSVC.discoveryService,
 	}
 	for _, c := range components {
-		c.discoverySVC.SetLogger(s.log)
-		err := s.repo.Subscribe(c.shardEvent, c.discoverySVC.shardRepo)
-		if err != nil {
-			return err
-		}
-		err = s.repo.Subscribe(c.entityEvent, c.discoverySVC.entityRepo)
-		if err != nil {
+		c.SetLogger(s.log)
+		if err := c.initialize(); err != nil {
 			return err
 		}
 	}

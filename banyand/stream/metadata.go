@@ -23,10 +23,8 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -41,7 +39,7 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
+func newSchemaRepo(path string, metadata metadata.Repo,
 	bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
 ) schemaRepo {
 	return schemaRepo{
@@ -49,11 +47,8 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
 			metadata,
-			repo,
 			l,
 			newSupplier(path, metadata, bufferSize, dbOpts, l),
-			event.StreamTopicShardEvent,
-			event.StreamTopicEntityEvent,
 		),
 	}
 }
