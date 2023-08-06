@@ -44,10 +44,14 @@ type Dir interface {
 type File interface {
 	// Append mode, which adds new data to the end of a file.
 	AppendWriteFile(buffer []byte) error
+	// Vector Append mode, which supports appending consecutive buffers to the end of the file.
+	AppendWritevFile(iov [][]byte) error
 	// Delete the file.
 	DeleteFile() error
 	// Reading a specified location of file.
 	ReadFile(offset int, buffer []byte) error
+	// Reading contiguous regions of a file and dispersing them into discontinuous buffers.
+	ReadvFile(iov [][]byte) error
 	// Read the entire file using streaming read
 	StreamReadFile(offset int, buffer []byte) (*Iter, error)
 	// Rename the file.
