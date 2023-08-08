@@ -12,6 +12,7 @@ For index and data, the architecture of the file system is divided into three la
 - The first layer is the API interface, which developers only need to care about how to operate the remote file system.
 - The second layer is the storage system adapter, which is used to mask the differences between different storage systems. 
 - The last layer is the actual storage system. With the use of remote storage architecture, the local system can still play its role and can borrow the local system to speed up reading and writing.
+
 ![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/remote_file_system.png)
 
 # IO Mode
