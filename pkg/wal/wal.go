@@ -162,11 +162,11 @@ type buffer struct {
 type bufferWriter struct {
 	buf           *bytes.Buffer
 	timestampsBuf *bytes.Buffer
-	dataBuf       []byte
-	dataLen       int
 	seriesID      *logSeriesID
-	seriesCount   uint32
+	dataBuf       []byte
 	batchLen      uint64
+	seriesCount   uint32
+	dataLen       int
 }
 
 type logSeriesID struct {
