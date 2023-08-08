@@ -106,7 +106,8 @@ func NewBuffer(log *logger.Logger, position common.Position, flushSize, writeCon
 }
 
 // NewBufferWithWal creates a new Buffer instance with the given parameters.
-func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int, onFlushFn onFlush, enableWal bool, walPath *string) (*Buffer, error) {
+func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int, onFlushFn onFlush, enableWal bool, walPath *string,
+) (*Buffer, error) {
 	buckets := make([]bufferShardBucket, numShards)
 	buffer := &Buffer{
 		buckets:     buckets,
