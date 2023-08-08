@@ -166,9 +166,8 @@ func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 func (t *tsTable) writeToBuffer(key []byte, val []byte, ts time.Time) error {
 	if t.toEncode(key) {
 		return t.encoderBuffer.Write(key, val, ts)
-	} else {
-		return t.buffer.Write(key, val, ts)
 	}
+	return t.buffer.Write(key, val, ts)
 }
 
 func (t *tsTable) encoderFlush(shardIndex int, skl *skl.Skiplist) error {

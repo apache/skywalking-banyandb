@@ -299,9 +299,7 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 			volume += len(k) + int(v.EncodedSize()) + skl.MaxNodeSize + nodeAlign
 			memSize := bsb.mutable.MemSize()
 			mutableBytes.Set(float64(memSize), bsb.labelValues...)
-			if bsb.enableWal && op.recoveryDoneFn != nil {
-				// If it's a recovery write, we don't need to trigger the flushing.
-			} else if volume >= bsb.capacity || memSize >= int64(bsb.capacity) {
+			if op.recoveryDoneFn == nil && (volume >= bsb.capacity || memSize >= int64(bsb.capacity)) {
 				if err := bsb.triggerFlushing(); err != nil {
 					bsb.log.Err(err).Msg("triggering flushing failed")
 				} else {
