@@ -3,21 +3,23 @@ Persistence storage is used for unifying data of BanyanDB persistence, including
 BanyanDB provides a concise interface that shields the complexity of the implementation from the upper layer. By exposing necessary interfaces, upper components do not need to care how persistence is implemented and avoid dealing with differences between different operating systems.
 
 # Architecture
-![](/assets/fs_architecture.jpg)
-
 BanyanDB uses third-party storage for actual storage, and the file system shields the differences between different platforms and storage systems, allowing developers to operate files as easily as the local file system without worrying about specific details.
 
-The architecture of the file system is divided into three layers. 
-- The first layer is the API interface, which developers only need to care about. 
+For different data models, stored in different locations, such as for meta and wal data, BanyanDB uses a local file system for storage.
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/local_file_system.png)
+
+For index and data, the architecture of the file system is divided into three layers.
+- The first layer is the API interface, which developers only need to care about how to operate the remote file system.
 - The second layer is the storage system adapter, which is used to mask the differences between different storage systems. 
 - The last layer is the actual storage system. With the use of remote storage architecture, the local system can still play its role and can borrow the local system to speed up reading and writing.
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/remote_file_system.png)
 
 # IO Mode
 Persistence storage offers a range of IO modes to cater to various throughput requirements. The interface can be accessed by developers and can be configured through settings, which can be set in the configuration file.
 
 ## Io_uring
 Io_uring is a new feature in Linux 5.1, which is fully asynchronous and offers high throughput. In the scene of massive storage, io_uring can bring significant benefits. The following is the diagram about how io_uring works.
-![](/assets/io_uring.jpg)
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/io_uring.png)
 If the user sets io_uring for use, the read and write requests will first be placed in the submission queue buffer when calling the operation API. When the threshold is reached, batch submissions will be made to SQ. After the kernel threads complete execution, the requests will be placed in the CQ, and the user can obtain the request results.
 
 ## Synchronous IO
