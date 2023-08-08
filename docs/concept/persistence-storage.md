@@ -118,7 +118,7 @@ param:
 
 iov: The data in consecutive buffers.
 
-`File.AppendWritevFile(iov [][]byte) (error)`
+`File.AppendWritevFile(iov *[][]byte) (error)`
 
 For flush mode:
 
@@ -162,7 +162,7 @@ param:
 
 iov: Discontinuous buffers in memory.
 
-`File.ReadvFile(iov [][]byte) (error)`
+`File.ReadvFile(iov *[][]byte) (error)`
 
 For stream reading:
 
