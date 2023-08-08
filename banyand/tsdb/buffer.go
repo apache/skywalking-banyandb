@@ -137,7 +137,7 @@ func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, w
 			if walPath == nil {
 				return nil, errors.New("wal path is required")
 			}
-			shardWalPath := fmt.Sprintf("%s/shard-%d", *walPath, i)
+			shardWalPath := fmt.Sprintf("%s/buffer-%d", *walPath, i)
 			if err := buckets[i].startWal(shardWalPath, defaultWalSyncMode); err != nil {
 				return nil, errors.Wrap(err, "failed to start wal")
 			}

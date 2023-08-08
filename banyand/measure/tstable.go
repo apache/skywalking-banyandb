@@ -41,8 +41,7 @@ import (
 const (
 	defaultNumBufferShards  = 2
 	defaultWriteConcurrency = 1000
-	defaultWriteWal         = false
-	wal                     = "wal"
+	defaultWriteWal         = true
 	plain                   = "tst"
 	encoded                 = "encoded"
 )
@@ -74,15 +73,14 @@ func (t *tsTable) openBuffer() (err error) {
 	if t.encoderBuffer != nil {
 		return nil
 	}
-	walPath := path.Join(t.path, wal)
 	bufferSize := int(t.encoderBufferSize / defaultNumBufferShards)
 	if t.encoderBuffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.encoderFlush, defaultWriteWal, &walPath); err != nil {
+		defaultWriteConcurrency, defaultNumBufferShards, t.encoderFlush, defaultWriteWal, &t.path); err != nil {
 		return fmt.Errorf("failed to create encoder buffer: %w", err)
 	}
 	bufferSize = int(t.bufferSize / defaultNumBufferShards)
 	if t.buffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.flush, defaultWriteWal, &walPath); err != nil {
+		defaultWriteConcurrency, defaultNumBufferShards, t.flush, defaultWriteWal, &t.path); err != nil {
 		return fmt.Errorf("failed to create buffer: %w", err)
 	}
 	end := t.EndTime()

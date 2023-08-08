@@ -156,14 +156,16 @@ var _ = Describe("Buffer", func() {
 		writeConcurrency := 2
 		numShards := 2
 		flushSize := 1024
-		walPath := "wal"
 		baseTime := time.Now()
+		var walPath string
 		var shardWalFileHistory map[int][]string
 
 		BeforeEach(func() {
 			var err error
 			var mutex sync.Mutex
 
+			walPath, err = os.MkdirTemp("", "banyandb-test-wal-*")
+			Expect(err).ToNot(HaveOccurred())
 			shardWalFileHistory = make(map[int][]string)
 			buffer, err = tsdb.NewBufferWithWal(
 				log,
@@ -175,9 +177,7 @@ var _ = Describe("Buffer", func() {
 					mutex.Lock()
 					defer mutex.Unlock()
 
-					var shardWalDir string
-					shardWalDir, err = filepath.Abs(filepath.Join(walPath, "shard-"+strconv.Itoa(shardIndex)))
-					Expect(err).ToNot(HaveOccurred())
+					shardWalDir := filepath.Join(walPath, "buffer-"+strconv.Itoa(shardIndex))
 					var shardWalList []os.DirEntry
 					shardWalList, err = os.ReadDir(shardWalDir)
 					Expect(err).ToNot(HaveOccurred())
@@ -223,8 +223,7 @@ var _ = Describe("Buffer", func() {
 				// Check wal rotate
 				Expect(len(shardWalFileHistory[shardIndex]) > 1).To(BeTrue())
 
-				shardWalDir, err := filepath.Abs(filepath.Join(walPath, "shard-"+strconv.Itoa(shardIndex)))
-				Expect(err).ToNot(HaveOccurred())
+				shardWalDir := filepath.Join(walPath, "buffer-"+strconv.Itoa(shardIndex))
 				currentShardWalFiles, err := os.ReadDir(shardWalDir)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(len(currentShardWalFiles) <= 2).To(BeTrue())
@@ -233,7 +232,7 @@ var _ = Describe("Buffer", func() {
 			}
 		})
 
-		It("should recover wal file correctly", func() {
+		It("should recover buffer from wal file correctly", func() {
 			var err error
 			for i := 0; i < numShards; i++ {
 				buffer.Write(
