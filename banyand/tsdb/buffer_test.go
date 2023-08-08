@@ -199,6 +199,7 @@ var _ = Describe("Buffer", func() {
 				true,
 				&path)
 			Expect(err).ToNot(HaveOccurred())
+			defer buffer.Close()
 
 			// Write buffer & wal
 			var wg sync.WaitGroup
@@ -286,6 +287,7 @@ var _ = Describe("Buffer", func() {
 				true,
 				&path)
 			Expect(err).ToNot(HaveOccurred())
+			defer buffer.Close()
 
 			// Check buffer was recovered from wal
 			for i := 0; i < numShards; i++ {
@@ -296,8 +298,6 @@ var _ = Describe("Buffer", func() {
 				Expect(exist).To(BeTrue())
 				Expect(bytes.Equal(expectValue, value)).To(BeTrue())
 			}
-
-			buffer.Close()
 		})
 	})
 })
