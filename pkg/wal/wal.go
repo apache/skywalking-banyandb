@@ -36,6 +36,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -175,7 +176,7 @@ type logSeriesID struct {
 }
 
 func newLogSeriesID(b []byte) logSeriesID {
-	return logSeriesID{key: string(b), byteLen: len(b)}
+	return logSeriesID{key: convert.BytesToString(b), byteLen: len(b)}
 }
 
 func (s logSeriesID) string() string {
@@ -183,7 +184,7 @@ func (s logSeriesID) string() string {
 }
 
 func (s logSeriesID) bytes() []byte {
-	return []byte(s.key)
+	return convert.StringToBytes(s.key)
 }
 
 func (s logSeriesID) len() int {
