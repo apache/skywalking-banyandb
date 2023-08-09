@@ -12,6 +12,7 @@ For index and data, the architecture of the file system is divided into three la
 - The first layer is the API interface, which developers only need to care about how to operate the remote file system.
 - The second layer is the storage system adapter, which is used to mask the differences between different storage systems. 
 - The last layer is the actual storage system. With the use of remote storage architecture, the local system can still play its role and can borrow the local system to speed up reading and writing.
+
 ![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/remote_file_system.png)
 
 # IO Mode
@@ -112,7 +113,7 @@ return: File pointer, you can use it for various operations.
 
 ### Write
 BanyanDB provides two methods for writing files.
-Append mode, which adds new data to the end of a file. This mode is typically used for WAL.
+Append mode, which adds new data to the end of a file. This mode is typically used for WAL. And BanyanDB supports vector Append mode, which supports appending consecutive buffers to the end of the file.
 Flush mode, which flushes all data to one file. It will return an error when writing a directory, the file does not exist or there is not enough space, and the incomplete file will be discarded. The flush operation is atomic, which means the file won't be created if an error happens during the flush process.
 The following is the pseudocode that calls the API in the go style.
 
@@ -123,6 +124,14 @@ param:
 buffer: The data append to the file.
 
 `File.AppendWriteFile(buffer []byte) (error)`
+
+For vector append mode:
+
+param:
+
+iov: The data in consecutive buffers.
+
+`File.AppendWritevFile(iov *[][]byte) (error)`
 
 For flush mode:
 
@@ -145,7 +154,7 @@ The following is the pseudocode that calls the API in the go style.
 
 ### Read
 For reading operation, two read methods are provided:
-Reading a specified location of data, which relies on a specified offset and a buffer.
+Reading a specified location of data, which relies on a specified offset and a buffer. And BanyanDB supports reading contiguous regions of a file and dispersing them into discontinuous buffers.
 Read the entire file, BanyanDB provides stream reading, which can use when the file is too large, the size gets each time can be set when using stream reading.
 If entering incorrect parameters such as incorrect offset or non-existent file, it will return an error.
 The following is the pseudocode that calls the API in the go style.
@@ -159,6 +168,14 @@ offset: Read begin location of the file.
 buffer: The read length is the same as the buffer length.
 
 `File.ReadFile(offset int, buffer []byte) (error)`
+
+For vector reading:
+
+param:
+
+iov: Discontinuous buffers in memory.
+
+`File.ReadvFile(iov *[][]byte) (error)`
 
 For stream reading:
 
