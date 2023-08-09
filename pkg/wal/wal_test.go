@@ -31,7 +31,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/wal"
 )
@@ -83,20 +82,17 @@ var _ = ginkgo.Describe("WAL", func() {
 			wg.Add(writeLogCount)
 			baseTime := time.Now()
 			for i := 0; i < seriesIDCount; i++ {
-				seriesID := &common.GlobalSeriesID{
-					SeriesID: common.SeriesID(i),
-					Name:     fmt.Sprintf("series-%d", i),
-				}
+				seriesID := []byte(fmt.Sprintf("series-%d", i))
 				go func() {
 					for j := 0; j < seriesIDElementCount; j++ {
 						timestamp := time.UnixMilli(baseTime.UnixMilli() + int64(j))
 						value := []byte(fmt.Sprintf("value-%d", j))
-						callback := func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {
+						callback := func(seriesID []byte, t time.Time, bytes []byte, err error) {
 							gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 							wg.Done()
 						}
-						log.Write(*seriesID, timestamp, value, callback)
+						log.Write(seriesID, timestamp, value, callback)
 					}
 				}()
 			}
@@ -114,13 +110,8 @@ var _ = ginkgo.Describe("WAL", func() {
 				entries := segment.GetLogEntries()
 				for _, entity := range entries {
 					seriesID := entity.GetSeriesID()
-					seriesIDSequence := seriesID.SeriesID
-					expectSeriesID := common.GlobalSeriesID{
-						SeriesID: seriesIDSequence,
-						Name:     fmt.Sprintf("series-%d", seriesIDSequence),
-					}
 					// Check seriesID
-					gomega.Expect(expectSeriesID == seriesID).To(gomega.BeTrue())
+					gomega.Expect(seriesID != nil).To(gomega.BeTrue())
 
 					timestamps := entity.GetTimestamps()
 					values := entity.GetValues()
@@ -171,15 +162,12 @@ var _ = ginkgo.Describe("WAL", func() {
 			writeLogCount := 3
 
 			wg.Add(writeLogCount)
-			expectSegments := make(map[wal.SegmentID]common.GlobalSeriesID)
+			expectSegments := make(map[wal.SegmentID][]byte)
 			for i := 0; i < writeLogCount; i++ {
-				seriesID := &common.GlobalSeriesID{
-					SeriesID: common.SeriesID(i),
-					Name:     fmt.Sprintf("series-%d", i),
-				}
+				seriesID := []byte(fmt.Sprintf("series-%d", i))
 				timestamp := time.Now()
 				value := []byte(fmt.Sprintf("value-%d", i))
-				callback := func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {
+				callback := func(seriesID []byte, t time.Time, bytes []byte, err error) {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 					// Rotate
@@ -189,7 +177,7 @@ var _ = ginkgo.Describe("WAL", func() {
 
 					wg.Done()
 				}
-				log.Write(*seriesID, timestamp, value, callback)
+				log.Write(seriesID, timestamp, value, callback)
 			}
 			wg.Wait()
 
@@ -205,7 +193,7 @@ var _ = ginkgo.Describe("WAL", func() {
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				entries := segment.GetLogEntries()
 				gomega.Expect(len(entries) == 1).To(gomega.BeTrue())
-				gomega.Expect(entries[0].GetSeriesID() == seriesID).To(gomega.BeTrue())
+				gomega.Expect(bytes.Equal(entries[0].GetSeriesID(), seriesID)).To(gomega.BeTrue())
 			}
 		})
 	})
