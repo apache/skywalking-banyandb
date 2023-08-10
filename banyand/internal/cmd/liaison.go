@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -82,10 +83,14 @@ func newLiaisonCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			nodeID, err := common.GenerateNodeID("liaison", "")
+			if err != nil {
+				return err
+			}
 			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a liaison server")
 			// Spawn our go routines and wait for shutdown.
-			if err := liaisonGroup.Run(); err != nil {
+			if err := liaisonGroup.Run(context.WithValue(context.Background(), common.ContextNodeIDKey, nodeID)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}

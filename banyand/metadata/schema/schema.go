@@ -52,9 +52,10 @@ const (
 	KindProperty
 	KindNode
 	KindShard
+	KindEndpoint
 	KindMask = KindGroup | KindStream | KindMeasure |
 		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode | KindShard
+		KindTopNAggregation | KindProperty | KindNode | KindShard | KindEndpoint
 )
 
 // ListOpt contains options to list resources.
@@ -74,6 +75,7 @@ type Registry interface {
 	Property
 	Node
 	Shard
+	Endpoint
 	RegisterHandler(Kind, EventHandler)
 }
 
@@ -114,6 +116,8 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 		m = &databasev1.Node{}
 	case KindShard:
 		m = &databasev1.Shard{}
+	case KindEndpoint:
+		m = &databasev1.Endpoint{}
 	default:
 		return nil, errUnsupportedEntityType
 	}
@@ -156,16 +160,14 @@ func (m Metadata) key() (string, error) {
 			Name:  m.Name,
 		}), nil
 	case KindNode:
-		r, err := strToRole(m.Group)
-		if err != nil {
-			return "", err
-		}
-		return formatNodeKey(r, m.Name), nil
+		return formatNodeKey(m.Name), nil
 	case KindShard:
 		return formatShardKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
+	case KindEndpoint:
+		return formatEndpointKey(m.Name), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
@@ -247,32 +249,16 @@ type Property interface {
 	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
 }
 
-// Role is the role of node.
-type Role string
-
-const (
-	// RoleMeta is the role of meta node.
-	RoleMeta = "meta"
-	// RoleData is the role of data node.
-	RoleData = "data"
-	// RoleQuery is the role of query node.
-	RoleQuery = "query"
-	// RoleLiaison is the role of liaison node.
-	RoleLiaison = "liaison"
-)
-
-func strToRole(role string) (Role, error) {
-	switch role {
-	case RoleMeta, RoleData, RoleQuery, RoleLiaison:
-		return Role(role), nil
-	default:
-		return "", errors.New("invalid role")
-	}
-}
-
 // Node allows CRUD node schemas in a group.
 type Node interface {
-	ListNode(ctx context.Context, role Role) ([]*databasev1.Node, error)
+	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
+	RegisterNode(ctx context.Context, node *databasev1.Node) error
+}
+
+// Endpoint allows CRUD endpoint schemas in a group.
+type Endpoint interface {
+	ListEndpoint(ctx context.Context, nodeRole databasev1.Role) ([]*databasev1.Endpoint, error)
+	RegisterEndpoint(ctx context.Context, endpoint *databasev1.Endpoint) error
 }
 
 // Shard allows CRUD shard schemas in a group.

@@ -48,6 +48,7 @@ type Repo interface {
 	PropertyRegistry() schema.Property
 	ShardRegistry() schema.Shard
 	RegisterHandler(schema.Kind, schema.EventHandler)
+	EndpointRegistry() schema.Endpoint
 }
 
 // Service is the metadata repository.

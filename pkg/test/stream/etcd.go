@@ -43,12 +43,12 @@ var (
 )
 
 // PreloadSchema loads schemas from files in the booting process.
-func PreloadSchema(e schema.Registry) error {
+func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	g := &commonv1.Group{}
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
 	}
-	if innerErr := e.CreateGroup(context.TODO(), g); innerErr != nil {
+	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
 		return innerErr
 	}
 
@@ -56,7 +56,7 @@ func PreloadSchema(e schema.Registry) error {
 	if unmarshalErr := protojson.Unmarshal([]byte(streamJSON), s); unmarshalErr != nil {
 		return unmarshalErr
 	}
-	if innerErr := e.CreateStream(context.TODO(), s); innerErr != nil {
+	if innerErr := e.CreateStream(ctx, s); innerErr != nil {
 		return innerErr
 	}
 
@@ -64,7 +64,7 @@ func PreloadSchema(e schema.Registry) error {
 	if unmarshalErr := protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); unmarshalErr != nil {
 		return unmarshalErr
 	}
-	if innerErr := e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding); innerErr != nil {
+	if innerErr := e.CreateIndexRuleBinding(ctx, indexRuleBinding); innerErr != nil {
 		return innerErr
 	}
 
@@ -82,7 +82,7 @@ func PreloadSchema(e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		if innerErr := e.CreateIndexRule(context.TODO(), &idxRule); innerErr != nil {
+		if innerErr := e.CreateIndexRule(ctx, &idxRule); innerErr != nil {
 			return innerErr
 		}
 	}

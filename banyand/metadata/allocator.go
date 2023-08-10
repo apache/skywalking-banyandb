@@ -21,8 +21,6 @@ import (
 	"context"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -51,8 +49,6 @@ func (a *allocator) OnAddOrUpdate(metadata schema.Metadata) {
 		if groupSchema.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 			return
 		}
-		now := time.Now()
-		nowPb := timestamppb.New(now)
 		shardNum := groupSchema.GetResourceOpts().GetShardNum()
 		syncShard := func(id uint64) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -63,12 +59,7 @@ func (a *allocator) OnAddOrUpdate(metadata schema.Metadata) {
 				Metadata: &commonv1.Metadata{
 					Name: groupSchema.GetMetadata().GetName(),
 				},
-				Node: &databasev1.Node{
-					Id:        "TODO",
-					CreatedAt: nowPb,
-					UpdatedAt: nowPb,
-					Addr:      "TODO",
-				},
+				Node: "TODO",
 			})
 		}
 		for i := 0; i < int(shardNum); i++ {

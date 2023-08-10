@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/config"
@@ -67,10 +68,17 @@ func newMetaCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if flagNodeID == "" {
+				return fmt.Errorf("data node id is required")
+			}
+			nodeID, err := common.GenerateNodeID("meta", flagNodeID)
+			if err != nil {
+				return err
+			}
 			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a meta server")
 			// Spawn our go routines and wait for shutdown.
-			if err := metaGroup.Run(); err != nil {
+			if err := metaGroup.Run(context.WithValue(context.Background(), common.ContextNodeIDKey, nodeID)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", metaGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
@@ -78,6 +86,7 @@ func newMetaCmd() *cobra.Command {
 		},
 	}
 
+	metaCmd.Flags().StringVar(&flagNodeID, "meta-node-id", "", "the meta node id")
 	metaCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	metaCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	metaCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")

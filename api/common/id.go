@@ -19,6 +19,8 @@ package common
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -110,3 +112,45 @@ func NewError(tpl string, args ...any) Error {
 func (e Error) Msg() string {
 	return e.msg
 }
+
+// NodeID identities a node in a cluster.
+type NodeID string
+
+// GenerateNodeID generates a node id.
+func GenerateNodeID(prefix string, statefulID string) (NodeID, error) {
+	// If statefulID is empty, return prefix + random suffix.
+	if statefulID == "" {
+		suffix, err := generateRandomString(8)
+		if err != nil {
+			return NodeID(""), err
+		}
+		return NodeID(fmt.Sprintf("%s-%s", prefix, suffix)), nil
+	}
+	return NodeID(fmt.Sprintf("%s-%s", prefix, statefulID)), nil
+}
+
+func generateRandomString(length int) (string, error) {
+	randomBytes := make([]byte, length)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", err
+	}
+
+	// Encode random bytes to base64 URL encoding
+	randomString := base64.RawURLEncoding.EncodeToString(randomBytes)
+
+	// Trim any padding characters '=' from the end of the string
+	randomString = randomString[:length]
+
+	return randomString, nil
+}
+
+// ContextNodeIDKey is a context key to store the node id.
+var ContextNodeIDKey = contextNodeIDKey{}
+
+type contextNodeIDKey struct{}
+
+// ContextNodeRolesKey is a context key to store the node roles.
+var ContextNodeRolesKey = contextNodeRolesKey{}
+
+type contextNodeRolesKey struct{}

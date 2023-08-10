@@ -49,3 +49,5 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.AddCommand(newLiaisonCmd())
 	return cmd
 }
+
+var flagNodeID string

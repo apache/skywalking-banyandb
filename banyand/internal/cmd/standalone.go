@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/liaison"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -100,10 +101,17 @@ func newStandaloneCmd() *cobra.Command {
 			return logger.Init(logging)
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if flagNodeID == "" {
+				return fmt.Errorf("data node id is required")
+			}
+			nodeID, err := common.GenerateNodeID("standalone", flagNodeID)
+			if err != nil {
+				return err
+			}
 			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
-			if err := standaloneGroup.Run(); err != nil {
+			if err := standaloneGroup.Run(context.WithValue(context.Background(), common.ContextNodeIDKey, nodeID)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
@@ -111,6 +119,7 @@ func newStandaloneCmd() *cobra.Command {
 		},
 	}
 
+	standaloneCmd.Flags().StringVar(&flagNodeID, "data-node-id", "", "the data node id of the standalone server")
 	standaloneCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	standaloneCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	standaloneCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")

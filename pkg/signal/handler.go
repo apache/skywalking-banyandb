@@ -19,6 +19,7 @@
 package signal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -46,7 +47,7 @@ func (h *Handler) Name() string {
 }
 
 // PreRun implements run.PreRunner to initialize the handler.
-func (h *Handler) PreRun() error {
+func (h *Handler) PreRun(_ context.Context) error {
 	h.cancel = make(chan struct{})
 	h.signal = make(chan os.Signal, 1)
 	signal.Notify(h.signal,

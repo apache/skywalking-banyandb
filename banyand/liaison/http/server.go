@@ -114,7 +114,7 @@ func (p *service) Name() string {
 	return "liaison-http"
 }
 
-func (p *service) PreRun() error {
+func (p *service) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
 

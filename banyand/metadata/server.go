@@ -22,6 +22,7 @@ import (
 	"errors"
 	"strings"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -36,6 +37,10 @@ type server struct {
 
 func (s *server) Name() string {
 	return "metadata"
+}
+
+func (s *server) Role() databasev1.Role {
+	return databasev1.Role_ROLE_META
 }
 
 func (s *server) FlagSet() *run.FlagSet {
@@ -63,14 +68,14 @@ func (s *server) Validate() error {
 	return s.Service.Validate()
 }
 
-func (s *server) PreRun() error {
+func (s *server) PreRun(ctx context.Context) error {
 	var err error
 	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL))
 	if err != nil {
 		return err
 	}
 	<-s.metaServer.ReadyNotify()
-	return s.Service.PreRun()
+	return s.Service.PreRun(ctx)
 }
 
 func (s *server) Serve() run.StopNotify {

@@ -212,6 +212,6 @@ func (p *preloadStreamService) Name() string {
 	return "preload-stream"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadStreamService) PreRun(ctx context.Context) error {
+	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }

@@ -129,11 +129,11 @@ func (p *preloadService) Name() string {
 	return "preload-" + p.name
 }
 
-func (p *preloadService) PreRun() error {
+func (p *preloadService) PreRun(ctx context.Context) error {
 	if p.name == "stream" {
-		return test_stream.PreloadSchema(p.metaSvc.SchemaRegistry())
+		return test_stream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 	}
-	return test_measure.PreloadSchema(p.metaSvc.SchemaRegistry())
+	return test_measure.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 func (p *preloadService) SetMeta(meta metadata.Service) {

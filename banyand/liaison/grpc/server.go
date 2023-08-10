@@ -119,7 +119,7 @@ func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.
 	return s
 }
 
-func (s *server) PreRun() error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
@@ -129,7 +129,7 @@ func (s *server) PreRun() error {
 	}
 	for _, c := range components {
 		c.SetLogger(s.log)
-		if err := c.initialize(); err != nil {
+		if err := c.initialize(ctx); err != nil {
 			return err
 		}
 	}

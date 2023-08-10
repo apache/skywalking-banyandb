@@ -25,24 +25,25 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-var nodeKeyPrefix = "/nodes/"
+var endpointKeyPrefix = "/endpoints/"
 
-func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	if role == databasev1.Role_ROLE_UNSPECIFIED {
-		return nil, BadRequest("group", "group should not be empty")
+func (e *etcdSchemaRegistry) ListEndpoint(ctx context.Context, nodeRole databasev1.Role) ([]*databasev1.Endpoint, error) {
+	nn, err := e.ListNode(ctx, nodeRole)
+	if err != nil {
+		return nil, err
 	}
-	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, endpointKeyPrefix, func() proto.Message {
 		return &databasev1.Node{}
 	})
 	if err != nil {
 		return nil, err
 	}
-	entities := make([]*databasev1.Node, 0, len(messages))
+	entities := make([]*databasev1.Endpoint, 0, len(messages))
 	for _, message := range messages {
-		node := message.(*databasev1.Node)
-		for _, r := range node.Roles {
-			if r == role {
-				entities = append(entities, node)
+		endpoint := message.(*databasev1.Endpoint)
+		for _, n := range nn {
+			if n.Name == endpoint.Node {
+				entities = append(entities, endpoint)
 				break
 			}
 		}
@@ -50,16 +51,16 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role)
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node) error {
+func (e *etcdSchemaRegistry) RegisterEndpoint(ctx context.Context, endpoint *databasev1.Endpoint) error {
 	return e.register(ctx, Metadata{
 		TypeMeta: TypeMeta{
-			Kind: KindNode,
-			Name: node.Name,
+			Kind: KindEndpoint,
+			Name: endpoint.Name,
 		},
-		Spec: node,
+		Spec: endpoint,
 	})
 }
 
-func formatNodeKey(name string) string {
-	return nodeKeyPrefix + name
+func formatEndpointKey(name string) string {
+	return endpointKeyPrefix + name
 }

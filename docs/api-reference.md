@@ -13,15 +13,12 @@
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
 - [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
+    - [Endpoint](#banyandb-database-v1-Endpoint)
     - [Node](#banyandb-database-v1-Node)
     - [Shard](#banyandb-database-v1-Shard)
   
-- [banyandb/database/v1/event.proto](#banyandb_database_v1_event-proto)
-    - [EntityEvent](#banyandb-database-v1-EntityEvent)
-    - [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator)
-    - [ShardEvent](#banyandb-database-v1-ShardEvent)
-  
-    - [Action](#banyandb-database-v1-Action)
+    - [Protocol](#banyandb-database-v1-Protocol)
+    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
@@ -332,6 +329,26 @@ Metadata is for multi-tenant, multi-model use
 
 
 
+<a name="banyandb-database-v1-Endpoint"></a>
+
+### Endpoint
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| node | [string](#string) |  |  |
+| addresses | [string](#string) | repeated |  |
+| port | [uint32](#uint32) |  |  |
+| protocol | [Protocol](#banyandb-database-v1-Protocol) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-Node"></a>
 
 ### Node
@@ -340,10 +357,8 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  |  |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| addr | [string](#string) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| name | [string](#string) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
@@ -362,7 +377,7 @@ Metadata is for multi-tenant, multi-model use
 | id | [uint64](#uint64) |  |  |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 | catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [Node](#banyandb-database-v1-Node) |  |  |
+| node | [string](#string) |  |  |
 | total | [uint32](#uint32) |  |  |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
@@ -373,84 +388,32 @@ Metadata is for multi-tenant, multi-model use
 
  
 
- 
 
- 
+<a name="banyandb-database-v1-Protocol"></a>
 
- 
-
-
-
-<a name="banyandb_database_v1_event-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/event.proto
-
-
-
-<a name="banyandb-database-v1-EntityEvent"></a>
-
-### EntityEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| subject | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| entity_locator | [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator) | repeated |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-EntityEvent-TagLocator"></a>
-
-### EntityEvent.TagLocator
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| family_offset | [uint32](#uint32) |  |  |
-| tag_offset | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-ShardEvent"></a>
-
-### ShardEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard | [Shard](#banyandb-database-v1-Shard) |  |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Action"></a>
-
-### Action
+### Protocol
 
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
-| ACTION_UNSPECIFIED | 0 |  |
-| ACTION_PUT | 1 |  |
-| ACTION_DELETE | 2 |  |
+| PROTOCOL_UNSPECIFIED | 0 |  |
+| PROTOCOL_HTTP | 1 |  |
+| PROTOCOL_GRPC | 2 |  |
+
+
+
+<a name="banyandb-database-v1-Role"></a>
+
+### Role
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_QUERY | 3 |  |
+| ROLE_LIAISON | 4 |  |
 
 
  
