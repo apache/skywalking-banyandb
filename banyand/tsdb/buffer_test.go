@@ -21,6 +21,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -118,7 +121,8 @@ var _ = Describe("Buffer", func() {
 				}(ch)
 			}
 
-			buffer, err := tsdb.NewBuffer(log, common.Position{}, 1024, 16, numShards, onFlushFn)
+			var err error
+			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024, 16, numShards, onFlushFn)
 			defer func() {
 				_ = buffer.Close()
 			}()
@@ -144,6 +148,155 @@ var _ = Describe("Buffer", func() {
 				if elem != nil {
 					Fail(fmt.Sprintf("%d in doneChs is not nil", i))
 				}
+			}
+		})
+	})
+
+	Context("Write and Recover of wal correctly", func() {
+		writeConcurrency := 2
+		numShards := 2
+		flushSize := 1024
+		baseTime := time.Now()
+		var path string
+
+		BeforeEach(func() {
+			var err error
+			path, err = os.MkdirTemp("", "banyandb-test-buffer-wal-*")
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			err := os.RemoveAll(path)
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("should write and rotate wal file correctly", func() {
+			var err error
+			var flushMutex sync.Mutex
+
+			shardWalFileHistory := make(map[int][]string)
+			buffer, err = tsdb.NewBufferWithWal(
+				log,
+				common.Position{},
+				flushSize,
+				writeConcurrency,
+				numShards,
+				func(shardIndex int, skl *skl.Skiplist) error {
+					flushMutex.Lock()
+					defer flushMutex.Unlock()
+
+					shardWalDir := filepath.Join(path, "buffer-"+strconv.Itoa(shardIndex))
+					var shardWalList []os.DirEntry
+					shardWalList, err = os.ReadDir(shardWalDir)
+					Expect(err).ToNot(HaveOccurred())
+					for _, shardWalFile := range shardWalList {
+						Expect(shardWalFile.IsDir()).To(BeFalse())
+						Expect(shardWalFile.Name()).To(HaveSuffix(".wal"))
+						shardWalFileHistory[shardIndex] = append(shardWalFileHistory[shardIndex], shardWalFile.Name())
+					}
+					return nil
+				},
+				true,
+				&path)
+			Expect(err).ToNot(HaveOccurred())
+			defer buffer.Close()
+
+			// Write buffer & wal
+			var wg sync.WaitGroup
+			wg.Add(writeConcurrency)
+			for i := 0; i < writeConcurrency; i++ {
+				go func(writerIndex int) {
+					for j := 0; j < numShards; j++ {
+						for k := 0; k < flushSize; k++ {
+							buffer.Write(
+								[]byte(fmt.Sprintf("writer-%d-shard-%d-key-%d", writerIndex, j, k)),
+								[]byte(fmt.Sprintf("writer-%d-shard-%d-value-%d", writerIndex, j, k)),
+								time.UnixMilli(baseTime.UnixMilli()+int64(writerIndex+j+k)))
+						}
+					}
+					wg.Done()
+				}(i)
+			}
+			wg.Wait()
+
+			flushMutex.Lock()
+			defer flushMutex.Unlock()
+
+			// Check wal
+			Expect(len(shardWalFileHistory) == numShards).To(BeTrue())
+			for shardIndex := 0; shardIndex < numShards; shardIndex++ {
+				// Check wal rotate
+				Expect(len(shardWalFileHistory[shardIndex]) > 1).To(BeTrue())
+
+				shardWalDir := filepath.Join(path, "buffer-"+strconv.Itoa(shardIndex))
+				currentShardWalFiles, err := os.ReadDir(shardWalDir)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(len(currentShardWalFiles) <= 2).To(BeTrue())
+				// Check wal delete
+				Expect(len(shardWalFileHistory[shardIndex]) > len(currentShardWalFiles)).To(BeTrue())
+			}
+		})
+
+		It("should recover buffer from wal file correctly", func() {
+			var err error
+			var flushMutex sync.Mutex
+			var bufferFlushed bool
+
+			buffer, err = tsdb.NewBufferWithWal(
+				log,
+				common.Position{},
+				flushSize,
+				writeConcurrency,
+				numShards,
+				func(shardIndex int, skl *skl.Skiplist) error {
+					flushMutex.Lock()
+					defer flushMutex.Unlock()
+
+					if !bufferFlushed {
+						bufferFlushed = true
+					}
+					return nil
+				},
+				true,
+				&path)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Write buffer & wal
+			for i := 0; i < numShards; i++ {
+				buffer.Write(
+					[]byte(fmt.Sprintf("shard-%d-key-1", i)),
+					[]byte(fmt.Sprintf("shard-%d-value-1", i)),
+					time.UnixMilli(baseTime.UnixMilli()+int64(i)))
+			}
+
+			flushMutex.Lock()
+			Expect(bufferFlushed).To(BeFalse())
+			flushMutex.Unlock()
+
+			// Restart buffer
+			buffer.Close()
+			buffer, err = tsdb.NewBufferWithWal(
+				log,
+				common.Position{},
+				flushSize,
+				writeConcurrency,
+				numShards,
+				func(shardIndex int, skl *skl.Skiplist) error {
+					return nil
+				},
+				true,
+				&path)
+			Expect(err).ToNot(HaveOccurred())
+			defer buffer.Close()
+
+			// Check buffer was recovered from wal
+			for i := 0; i < numShards; i++ {
+				expectValue := []byte(fmt.Sprintf("shard-%d-value-1", i))
+				value, exist := buffer.Read(
+					[]byte(fmt.Sprintf("shard-%d-key-1", i)),
+					time.UnixMilli(baseTime.UnixMilli()+int64(i)))
+				Expect(exist).To(BeTrue())
+				Expect(bytes.Equal(expectValue, value)).To(BeTrue())
 			}
 		})
 	})
