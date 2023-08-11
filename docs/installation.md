@@ -129,10 +129,12 @@ The banyand-server would be listening on the `0.0.0.0:17912` if no errors occurr
 The standalone node is running as a standalone process by
 
 ```shell
-$ ./banyand-server standalone <flags> -id n1
-$ ./banyand-server standalone <flags> -id n2
-$ ./banyand-server standalone <flags> -id n3
+$ ./banyand-server standalone <flags> --data-node-id n1
+$ ./banyand-server standalone <flags> --data-node-id n2
+$ ./banyand-server standalone <flags> --data-node-id n3
 ```
+
+`data-node-id` is the unique identifier of the standalone node.
 
 The standalone node would be listening on the `<ports>` if no errors occurred.
 
@@ -150,7 +152,7 @@ The meta node would be listening on the `<ports>` if no errors occurred.
 Data nodes, query nodes and liaison nodes are running as independent processes by
 
 ```shell
-$ ./banyand-server storage --mode data <flags>
+$ ./banyand-server storage --mode data --data-node-id n1 <flags>
 $ ./banyand-server storage --mode query <flags>
 $ ./banyand-server liaison <flags>
 ```
@@ -160,6 +162,6 @@ The data node, query node and liaison node would be listening on the `<ports>` i
 If you want to use a `mix` mode instead of separate query and data nodes, you can run the banyand-server as processes by
 
 ```shell
-$ ./banyand-server storage <flags>
+$ ./banyand-server storage --data-node-id n1 <flags>
 $ ./banyand-server liaison <flags>
 ```
