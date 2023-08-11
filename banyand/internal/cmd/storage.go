@@ -90,6 +90,7 @@ func newStorageCmd() *cobra.Command {
 	// Meta the run Group units.
 	storageGroup.Register(units...)
 	logging := logger.Logging{}
+	var flagNodeID string
 	storageCmd := &cobra.Command{
 		Use:     "storage",
 		Version: version.Build(),

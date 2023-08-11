@@ -90,6 +90,8 @@ func newStandaloneCmd() *cobra.Command {
 	// Meta the run Group units.
 	standaloneGroup.Register(units...)
 	logging := logger.Logging{}
+
+	var flagNodeID string
 	standaloneCmd := &cobra.Command{
 		Use:     "standalone",
 		Version: version.Build(),
@@ -119,7 +121,7 @@ func newStandaloneCmd() *cobra.Command {
 		},
 	}
 
-	standaloneCmd.Flags().StringVar(&flagNodeID, "data-node-id", "", "the data node id of the standalone server")
+	standaloneCmd.Flags().StringVar(&flagNodeID, "data-node-id", "single-node", "the data node id of the standalone server")
 	standaloneCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	standaloneCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	standaloneCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")

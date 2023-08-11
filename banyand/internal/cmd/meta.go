@@ -57,6 +57,7 @@ func newMetaCmd() *cobra.Command {
 	// Meta the run Group units.
 	metaGroup.Register(units...)
 	logging := logger.Logging{}
+	var flagNodeID string
 	metaCmd := &cobra.Command{
 		Use:     "meta",
 		Version: version.Build(),

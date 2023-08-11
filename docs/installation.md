@@ -153,9 +153,14 @@ Data nodes, query nodes and liaison nodes are running as independent processes b
 
 ```shell
 $ ./banyand-server storage --mode data --data-node-id n1 <flags>
+$ ./banyand-server storage --mode data --data-node-id n2 <flags>
+$ ./banyand-server storage --mode data --data-node-id n3 <flags>
+$ ./banyand-server storage --mode query <flags>
 $ ./banyand-server storage --mode query <flags>
 $ ./banyand-server liaison <flags>
 ```
+
+`data-node-id` is the unique identifier of the data node.
 
 The data node, query node and liaison node would be listening on the `<ports>` if no errors occurred.
 
@@ -163,5 +168,7 @@ If you want to use a `mix` mode instead of separate query and data nodes, you ca
 
 ```shell
 $ ./banyand-server storage --data-node-id n1 <flags>
+$ ./banyand-server storage --data-node-id n2 <flags>
+$ ./banyand-server storage --data-node-id n3 <flags>
 $ ./banyand-server liaison <flags>
 ```
