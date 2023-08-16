@@ -40,6 +40,6 @@ The node discovery is based on the etcd cluster. The etcd cluster is required fo
 
 The host is registered to the etcd cluster by the `banyand-server` automatically based on `node-host-provider` :
 
-- `node-host-provider=hostname` : The OS's hostname is registered as the host part in the address.
-- `node-host-provider=ip` : The OS's the first public active IP address(IPv4) is registered as the host part in the address.
+- `node-host-provider=hostname` : Default. The OS's hostname is registered as the host part in the address.
+- `node-host-provider=ip` : The OS's the first non-loopback active IP address(IPv4) is registered as the host part in the address.
 - `node-host-provider=flag` : `node-host` is registered as the host part in the address.
