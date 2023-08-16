@@ -19,7 +19,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -90,7 +89,6 @@ func newStorageCmd() *cobra.Command {
 	// Meta the run Group units.
 	storageGroup.Register(units...)
 	logging := logger.Logging{}
-	var flagNodeID string
 	storageCmd := &cobra.Command{
 		Use:     "storage",
 		Version: version.Build(),
@@ -116,29 +114,19 @@ func newStorageCmd() *cobra.Command {
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			if flagNodeID == "" && flagStorageMode != storageModeQuery {
-				return fmt.Errorf("data node id is required")
-			}
-			nodeID, err := common.GenerateNodeID(flagStorageMode, flagNodeID)
+			node, err := common.GenerateNode(nil, nil)
 			if err != nil {
 				return err
 			}
-			fmt.Print(logo)
 			logger.GetLogger().Info().Msg("starting as a storage server")
 			// Spawn our go routines and wait for shutdown.
-			if err := storageGroup.Run(context.WithValue(context.Background(), common.ContextNodeIDKey, nodeID)); err != nil {
+			if err := storageGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", storageGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
-
-	storageCmd.Flags().StringVar(&flagNodeID, "data-node-id", "", "the data node id")
-	storageCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	storageCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
-	storageCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
-	storageCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
 	storageCmd.Flags().StringVarP(&flagStorageMode, "mode", "m", storageModeMix, "the storage mode, one of [data, query, mix]")
 	storageCmd.Flags().AddFlagSet(storageGroup.RegisterFlags().FlagSet)
 	return storageCmd

@@ -49,7 +49,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 	is.NoError(err)
 	is.NoError(s.Validate())
-	ctx = context.WithValue(ctx, common.ContextNodeIDKey, common.NodeID("test-node-id"))
+	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})
 	ctx = context.WithValue(ctx, common.ContextNodeRolesKey, []databasev1.Role{databasev1.Role_ROLE_META})
 	err = s.PreRun(ctx)
 	is.NoError(err)

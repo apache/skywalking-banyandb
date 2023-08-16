@@ -354,16 +354,6 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) er
 	if err != nil {
 		return err
 	}
-	getResp, err := e.client.Get(ctx, key)
-	if err != nil {
-		return err
-	}
-	if getResp.Count > 1 {
-		return errUnexpectedNumberOfEntities
-	}
-	if getResp.Count > 0 {
-		return errGRPCAlreadyExists
-	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
 		return err
@@ -373,9 +363,17 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) er
 	if err != nil {
 		return err
 	}
-	_, err = e.client.Put(ctx, key, string(val), clientv3.WithLease(lease.ID))
+	var ops []clientv3.Cmp
+	ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
+	txn := e.client.Txn(ctx).If(ops...)
+	txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
+	txn = txn.Else(clientv3.OpGet(key))
+	response, err := txn.Commit()
 	if err != nil {
 		return err
+	}
+	if !response.Succeeded {
+		return errGRPCAlreadyExists
 	}
 	// Keep the lease alive
 	// nolint:contextcheck

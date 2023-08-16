@@ -42,7 +42,7 @@ func SetupModules(flags []string, units ...run.Unit) func() {
 		defer func() {
 			wg.Done()
 		}()
-		errRun := g.Run(context.WithValue(context.Background(), common.ContextNodeIDKey, common.NodeID("test-node-id")))
+		errRun := g.Run(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{NodeID: "test"}))
 		gomega.Expect(errRun).ShouldNot(gomega.HaveOccurred())
 	}()
 	g.WaitTillReady()

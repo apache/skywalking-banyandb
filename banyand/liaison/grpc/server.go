@@ -22,6 +22,7 @@ import (
 	"context"
 	"net"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -56,33 +57,58 @@ var (
 	errAccessLogRootPath = errors.New("access log root path is required")
 )
 
+// // Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Server defines the gRPC server.
+type Server interface {
+	run.Unit
+	GetPort() *uint32
+}
+
 type server struct {
 	pipeline queue.Queue
 	creds    credentials.TransportCredentials
-	*indexRuleRegistryServer
-	measureSVC *measureService
-	log        *logger.Logger
-	ser        *grpclib.Server
+	*streamRegistryServer
+	log *logger.Logger
+	*indexRuleBindingRegistryServer
+	ser *grpclib.Server
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
-	stopCh    chan struct{}
-	streamSVC *streamService
+	stopCh chan struct{}
+	*indexRuleRegistryServer
 	*measureRegistryServer
-	*streamRegistryServer
-	*indexRuleBindingRegistryServer
-	addr                     string
+	streamSVC                *streamService
+	measureSVC               *measureService
+	host                     string
 	keyFile                  string
 	certFile                 string
 	accessLogRootPath        string
+	addr                     string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
-	tls                      bool
+	port                     uint32
 	enableIngestionAccessLog bool
+	tls                      bool
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.Repo) run.Unit {
+func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.Repo) Server {
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
 	}
@@ -148,6 +174,14 @@ func (s *server) Name() string {
 	return "grpc"
 }
 
+func (s *server) Role() databasev1.Role {
+	return databasev1.Role_ROLE_LIAISON
+}
+
+func (s *server) GetPort() *uint32 {
+	return &s.port
+}
+
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	s.maxRecvMsgSize = defaultRecvSize
@@ -155,14 +189,16 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
-	fs.StringVar(&s.addr, "addr", ":17912", "the address of banyand listens")
+	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
+	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	return fs
 }
 
 func (s *server) Validate() error {
-	if s.addr == "" {
+	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
+	if s.addr == ":" {
 		return errNoAddr
 	}
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {

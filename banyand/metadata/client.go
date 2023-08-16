@@ -70,11 +70,11 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	val := ctx.Value(common.ContextNodeIDKey)
+	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")
 	}
-	nodeID := val.(common.NodeID)
+	node := val.(common.Node)
 	val = ctx.Value(common.ContextNodeRolesKey)
 	if val == nil {
 		return errors.New("node roles is empty")
@@ -83,9 +83,11 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	ctxRegister, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 	if err = s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
-		Name:      string(nodeID),
-		Roles:     nodeRoles,
-		CreatedAt: timestamppb.Now(),
+		Name:        node.NodeID,
+		GrpcAddress: node.GrpcAddress,
+		HttpAddress: node.HTTPAddress,
+		Roles:       nodeRoles,
+		CreatedAt:   timestamppb.Now(),
 	}); err != nil {
 		return err
 	}
@@ -137,10 +139,6 @@ func (s *clientService) PropertyRegistry() schema.Property {
 }
 
 func (s *clientService) ShardRegistry() schema.Shard {
-	return s.schemaRegistry
-}
-
-func (s *clientService) EndpointRegistry() schema.Endpoint {
 	return s.schemaRegistry
 }
 

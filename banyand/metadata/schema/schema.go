@@ -52,10 +52,9 @@ const (
 	KindProperty
 	KindNode
 	KindShard
-	KindEndpoint
 	KindMask = KindGroup | KindStream | KindMeasure |
 		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode | KindShard | KindEndpoint
+		KindTopNAggregation | KindProperty | KindNode | KindShard
 )
 
 // ListOpt contains options to list resources.
@@ -75,7 +74,6 @@ type Registry interface {
 	Property
 	Node
 	Shard
-	Endpoint
 	RegisterHandler(Kind, EventHandler)
 }
 
@@ -116,8 +114,6 @@ func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
 		m = &databasev1.Node{}
 	case KindShard:
 		m = &databasev1.Shard{}
-	case KindEndpoint:
-		m = &databasev1.Endpoint{}
 	default:
 		return nil, errUnsupportedEntityType
 	}
@@ -166,8 +162,6 @@ func (m Metadata) key() (string, error) {
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
-	case KindEndpoint:
-		return formatEndpointKey(m.Name), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
@@ -253,12 +247,6 @@ type Property interface {
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node) error
-}
-
-// Endpoint allows CRUD endpoint schemas in a group.
-type Endpoint interface {
-	ListEndpoint(ctx context.Context, nodeRole databasev1.Role) ([]*databasev1.Endpoint, error)
-	RegisterEndpoint(ctx context.Context, endpoint *databasev1.Endpoint) error
 }
 
 // Shard allows CRUD shard schemas in a group.

@@ -36,22 +36,9 @@ enum Role {
 message Node {
   string name = 1;
   repeated Role roles = 2;
-  google.protobuf.Timestamp created_at = 3;
-}
-
-message Endpoint {
-  string name = 1;
-  string node = 2;
-  repeated string addresses = 3;
-  uint32 port = 4;
-  Protocol protocol = 5;
-  google.protobuf.Timestamp created_at = 6;
-}
-
-enum Protocol {
-  PROTOCOL_UNSPECIFIED = 0;
-  PROTOCOL_HTTP = 1;
-  PROTOCOL_GRPC = 2;
+  string grpc_address = 3;
+  string http_address = 4;
+  google.protobuf.Timestamp created_at = 5;
 }
 
 message Shard {

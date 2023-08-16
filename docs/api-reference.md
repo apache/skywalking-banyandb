@@ -13,11 +13,9 @@
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
 - [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
-    - [Endpoint](#banyandb-database-v1-Endpoint)
     - [Node](#banyandb-database-v1-Node)
     - [Shard](#banyandb-database-v1-Shard)
   
-    - [Protocol](#banyandb-database-v1-Protocol)
     - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
@@ -329,26 +327,6 @@ Metadata is for multi-tenant, multi-model use
 
 
 
-<a name="banyandb-database-v1-Endpoint"></a>
-
-### Endpoint
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| node | [string](#string) |  |  |
-| addresses | [string](#string) | repeated |  |
-| port | [uint32](#uint32) |  |  |
-| protocol | [Protocol](#banyandb-database-v1-Protocol) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
-
 <a name="banyandb-database-v1-Node"></a>
 
 ### Node
@@ -359,6 +337,8 @@ Metadata is for multi-tenant, multi-model use
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
@@ -387,19 +367,6 @@ Metadata is for multi-tenant, multi-model use
 
 
  
-
-
-<a name="banyandb-database-v1-Protocol"></a>
-
-### Protocol
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| PROTOCOL_UNSPECIFIED | 0 |  |
-| PROTOCOL_HTTP | 1 |  |
-| PROTOCOL_GRPC | 2 |  |
-
 
 
 <a name="banyandb-database-v1-Role"></a>
