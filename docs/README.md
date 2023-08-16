@@ -6,9 +6,9 @@ Here you can learn all you need to know about BanyanDB.
 
 - **Installation**. Instruments about how to download and onboard BanyanDB server, Banyand.
 - **Clients**. Some native clients to access Banyand.
-- **Schema**. Pivotal database native resources.
-- **CRUD Operations**. To create, read, update, and delete data points or entities on resources in the schema.
 - **Observability**. Learn how to effectively monitor, diagnose and optimize Banyand.
+- **Concept**. Learn the concepts of Banyand. Includes the architecture, data model, and so on.
+- **CRUD Operations**. To create, read, update, and delete data points or entities on resources in the schema.
 
 You might also find these links interesting:
 

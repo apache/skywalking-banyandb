@@ -85,6 +85,7 @@ func (e *server) StoppingNotify() <-chan struct{} {
 
 func (e *server) Close() error {
 	e.server.Close()
+	<-e.server.Server.StopNotify()
 	return nil
 }
 

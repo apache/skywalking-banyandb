@@ -103,11 +103,15 @@ func (s *service) Name() string {
 	return "measure"
 }
 
-func (s *service) PreRun() error {
+func (s *service) Role() databasev1.Role {
+	return databasev1.Role_ROLE_DATA
+}
+
+func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
-	cancel()
+	ctxGroup, cancelGroup := context.WithTimeout(ctx, 5*time.Second)
+	groups, err := s.metadata.GroupRegistry().ListGroup(ctxGroup)
+	cancelGroup()
 	if err != nil {
 		return err
 	}
@@ -123,20 +127,20 @@ func (s *service) PreRun() error {
 		if innerErr != nil {
 			return innerErr
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctxMeasure, cancelMeasure := context.WithTimeout(ctx, 5*time.Second)
 		allMeasureSchemas, innerErr := s.metadata.MeasureRegistry().
-			ListMeasure(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
-		cancel()
+			ListMeasure(ctxMeasure, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
+		cancelMeasure()
 		if innerErr != nil {
 			return innerErr
 		}
 		for _, measureSchema := range allMeasureSchemas {
 			// sanity check before calling StoreResource
 			// since StoreResource may be called inside the event loop
-			if checkErr := s.sanityCheck(gp, measureSchema); checkErr != nil {
+			if checkErr := s.sanityCheck(ctx, gp, measureSchema); checkErr != nil {
 				return checkErr
 			}
-			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
+			if _, innerErr := gp.StoreResource(ctx, measureSchema); innerErr != nil {
 				return innerErr
 			}
 		}
@@ -155,20 +159,20 @@ func (s *service) PreRun() error {
 	return nil
 }
 
-func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databasev1.Measure) error {
+func (s *service) sanityCheck(ctx context.Context, group resourceSchema.Group, measureSchema *databasev1.Measure) error {
 	var topNAggrs []*databasev1.TopNAggregation
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctxLocal, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctx, measureSchema.GetMetadata())
+	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctxLocal, measureSchema.GetMetadata())
 	if err != nil || len(topNAggrs) == 0 {
 		return err
 	}
 
 	for _, topNAggr := range topNAggrs {
-		topNMeasure, innerErr := createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr)
+		topNMeasure, innerErr := createOrUpdateTopNMeasure(ctx, s.metadata.MeasureRegistry(), topNAggr)
 		err = multierr.Append(err, innerErr)
 		if topNMeasure != nil {
-			_, storeErr := group.StoreResource(topNMeasure)
+			_, storeErr := group.StoreResource(ctx, topNMeasure)
 			if storeErr != nil {
 				err = multierr.Append(err, storeErr)
 			}

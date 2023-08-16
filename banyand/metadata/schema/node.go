@@ -27,11 +27,11 @@ import (
 
 var nodeKeyPrefix = "/nodes/"
 
-func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role Role) ([]*databasev1.Node, error) {
-	if role == "" {
+func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
+	if role == databasev1.Role_ROLE_UNSPECIFIED {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(string(role), nodeKeyPrefix), func() proto.Message {
+	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, func() proto.Message {
 		return &databasev1.Node{}
 	})
 	if err != nil {
@@ -39,15 +39,27 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role Role) ([]*databa
 	}
 	entities := make([]*databasev1.Node, 0, len(messages))
 	for _, message := range messages {
-		entities = append(entities, message.(*databasev1.Node))
+		node := message.(*databasev1.Node)
+		for _, r := range node.Roles {
+			if r == role {
+				entities = append(entities, node)
+				break
+			}
+		}
 	}
 	return entities, nil
 }
 
-func formatNodePrefix(role Role) string {
-	return nodeKeyPrefix + string(role)
+func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node) error {
+	return e.register(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind: KindNode,
+			Name: node.Name,
+		},
+		Spec: node,
+	})
 }
 
-func formatNodeKey(role Role, id string) string {
-	return formatNodePrefix(role) + "/" + id
+func formatNodeKey(name string) string {
+	return nodeKeyPrefix + name
 }

@@ -11,6 +11,7 @@ Release Notes.
 - Document the clustering.
 - Support multiple roles for banyand server.
 - Support for recovery buffer using wal.
+- Register the node role to the metadata registry.
 
 ### Bugs
 

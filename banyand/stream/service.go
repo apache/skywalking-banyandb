@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -93,10 +94,14 @@ func (s *service) Name() string {
 	return "stream"
 }
 
-func (s *service) PreRun() error {
+func (s *service) Role() databasev1.Role {
+	return databasev1.Role_ROLE_DATA
+}
+
+func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
+	ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
+	groups, err := s.metadata.GroupRegistry().ListGroup(ctxLocal)
 	cancel()
 	if err != nil {
 		return err
@@ -112,14 +117,14 @@ func (s *service) PreRun() error {
 		if err != nil {
 			return err
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		schemas, err := s.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().Name})
+		ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
+		schemas, err := s.metadata.StreamRegistry().ListStream(ctxLocal, schema.ListOpt{Group: gp.GetSchema().GetMetadata().Name})
 		cancel()
 		if err != nil {
 			return err
 		}
 		for _, sa := range schemas {
-			if _, innerErr := gp.StoreResource(sa); innerErr != nil {
+			if _, innerErr := gp.StoreResource(ctx, sa); innerErr != nil {
 				return innerErr
 			}
 		}

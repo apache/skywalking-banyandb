@@ -54,8 +54,8 @@ func (p *preloadMeasureService) Name() string {
 	return "preload-measure"
 }
 
-func (p *preloadMeasureService) PreRun() error {
-	return testmeasure.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadMeasureService) PreRun(ctx context.Context) error {
+	return testmeasure.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 type services struct {

@@ -19,11 +19,11 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -114,21 +114,19 @@ func newStorageCmd() *cobra.Command {
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			fmt.Print(logo)
+			node, err := common.GenerateNode(nil, nil)
+			if err != nil {
+				return err
+			}
 			logger.GetLogger().Info().Msg("starting as a storage server")
 			// Spawn our go routines and wait for shutdown.
-			if err := storageGroup.Run(); err != nil {
+			if err := storageGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", storageGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
-
-	storageCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	storageCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
-	storageCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
-	storageCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
 	storageCmd.Flags().StringVarP(&flagStorageMode, "mode", "m", storageModeMix, "the storage mode, one of [data, query, mix]")
 	storageCmd.Flags().AddFlagSet(storageGroup.RegisterFlags().FlagSet)
 	return storageCmd
