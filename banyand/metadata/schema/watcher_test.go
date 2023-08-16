@@ -88,13 +88,15 @@ var _ = ginkgo.Describe("Watcher", func() {
 			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		var modRevision int64
 		for i := 0; i < 2; i++ {
-			err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			modRevision, err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
 				Metadata: &commonv1.Metadata{
 					Name:  fmt.Sprintf("testkey%d", i+1),
 					Group: "testgroup-measure",
 				},
 			})
+			gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
@@ -126,12 +128,14 @@ var _ = ginkgo.Describe("Watcher", func() {
 			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		err = registry.CreateStream(context.Background(), &databasev1.Stream{
+		var modRevision int64
+		modRevision, err = registry.CreateStream(context.Background(), &databasev1.Stream{
 			Metadata: &commonv1.Metadata{
 				Name:  "testkey",
 				Group: "testgroup-stream",
 			},
 		})
+		gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ok, err := registry.DeleteStream(context.Background(), &commonv1.Metadata{
 			Name:  "testkey",

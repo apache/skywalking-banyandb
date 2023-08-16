@@ -59,7 +59,7 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 	if indexRuleBinding.UpdatedAt != nil {
 		indexRuleBinding.UpdatedAt = timestamppb.Now()
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
@@ -67,10 +67,11 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 		},
 		Spec: indexRuleBinding,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
@@ -78,6 +79,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 		},
 		Spec: indexRuleBinding,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -129,7 +131,7 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 		buf = append(buf, indexRule.Metadata.Name...)
 		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
@@ -137,6 +139,7 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 		},
 		Spec: indexRule,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
@@ -147,7 +150,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 		}
 		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
 	}
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
@@ -155,6 +158,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 		},
 		Spec: indexRule,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

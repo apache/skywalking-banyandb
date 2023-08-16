@@ -168,86 +168,90 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // update will first ensure the existence of the entity with the metadata,
 // and overwrite the existing value if so.
 // Otherwise, it will return ErrGRPCResourceNotFound.
-func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return 0, ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if getResp.Count > 1 {
-		return errUnexpectedNumberOfEntities
+		return 0, errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	replace := getResp.Count > 0
-	if replace {
-		existingVal, innerErr := metadata.Kind.Unmarshal(getResp.Kvs[0])
-		if innerErr != nil {
-			return innerErr
-		}
-		// directly return if we have the same entity
-		if metadata.equal(existingVal) {
-			return nil
-		}
-
-		modRevision := getResp.Kvs[0].ModRevision
-		txnResp, txnErr := e.client.Txn(ctx).
-			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
-			Then(clientv3.OpPut(key, string(val))).
-			Commit()
-		if txnErr != nil {
-			return txnErr
-		}
-		if !txnResp.Succeeded {
-			return errConcurrentModification
-		}
-	} else {
-		return ErrGRPCResourceNotFound
+	if !replace {
+		return 0, ErrGRPCResourceNotFound
 	}
-	return nil
+	existingVal, innerErr := metadata.Kind.Unmarshal(getResp.Kvs[0])
+	if innerErr != nil {
+		return 0, innerErr
+	}
+	// directly return if we have the same entity
+	if metadata.equal(existingVal) {
+		return 0, nil
+	}
+
+	modRevision := metadata.ModRevision
+	if modRevision == 0 {
+		modRevision = getResp.Kvs[0].ModRevision
+	}
+	txnResp, txnErr := e.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
+		Then(clientv3.OpPut(key, string(val))).
+		Commit()
+	if txnErr != nil {
+		return 0, txnErr
+	}
+	if !txnResp.Succeeded {
+		return 0, errConcurrentModification
+	}
+
+	return txnResp.Responses[0].GetResponsePut().Header.Revision, nil
 }
 
 // create will first check existence of the entity with the metadata,
 // and put the value if it does not exist.
 // Otherwise, it will return ErrGRPCAlreadyExists.
-func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return 0, ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if getResp.Count > 1 {
-		return errUnexpectedNumberOfEntities
+		return 0, errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	replace := getResp.Count > 0
 	if replace {
-		return errGRPCAlreadyExists
+		return 0, errGRPCAlreadyExists
 	}
-	_, err = e.client.Put(ctx, key, string(val))
+	putResp, err := e.client.Put(ctx, key, string(val))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+
+	return putResp.Header.Revision, nil
 }
 
 func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, kind Kind) ([]proto.Message, error) {

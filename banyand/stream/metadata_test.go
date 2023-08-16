@@ -122,7 +122,9 @@ var _ = Describe("Metadata", func() {
 				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
 				entitySize := len(streamSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)).Should(Succeed())
+				modRevision, err := svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)
+				Expect(modRevision).ShouldNot(BeZero())
+				Expect(err).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
 					val, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{

@@ -89,23 +89,25 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 	if group.UpdatedAt != nil {
 		group.UpdatedAt = timestamppb.Now()
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
 			Name: group.GetMetadata().GetName(),
 		},
 		Spec: group,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
 			Name: group.GetMetadata().GetName(),
 		},
 		Spec: group,
 	})
+	return err
 }
 
 func formatGroupKey(group string) string {

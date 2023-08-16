@@ -77,7 +77,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.CreateStream(context.Background(), s)
+	_, err := e.CreateStream(context.Background(), s)
 	if err != nil {
 		return err
 	}

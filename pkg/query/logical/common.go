@@ -39,7 +39,6 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
-	errInvalidData               = errors.New("data is invalid")
 
 	nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 )
@@ -60,25 +59,30 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		if len(refs) == 0 {
 			continue
 		}
-		tags := make([]*modelv1.Tag, len(refs))
 		familyName := refs[0].Tag.getFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, errors.WithMessage(err, "parse projection")
 		}
+
+		var tags []*modelv1.Tag
 		if len(refs) > len(parsedTagFamily.Tags) {
-			return nil, errors.Wrapf(errInvalidData,
-				"the number of tags %d in %s is less then expected %d",
-				len(parsedTagFamily.Tags), familyName, len(refs))
-		}
-		for j, ref := range refs {
-			if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
-				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-			} else {
-				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+			tags = make([]*modelv1.Tag, len(parsedTagFamily.GetTags()))
+			for j, ref := range refs {
+				if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
+					tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
+				}
+			}
+		} else {
+			tags = make([]*modelv1.Tag, len(refs))
+			for j, ref := range refs {
+				if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
+					tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
+				} else {
+					tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+				}
 			}
 		}
-
 		tagFamily[i] = &modelv1.TagFamily{
 			Name: familyName,
 			Tags: tags,

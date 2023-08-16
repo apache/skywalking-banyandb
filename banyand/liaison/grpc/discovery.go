@@ -50,7 +50,7 @@ type discoveryService struct {
 
 func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
-	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
+	er := &entityRepo{entitiesMap: make(map[identity]*partition.EntityLocator)}
 	return &discoveryService{
 		shardRepo:    sr,
 		entityRepo:   er,
@@ -223,7 +223,7 @@ var _ schema.EventHandler = (*entityRepo)(nil)
 
 type entityRepo struct {
 	log         *logger.Logger
-	entitiesMap map[identity]partition.EntityLocator
+	entitiesMap map[identity]*partition.EntityLocator
 	sync.RWMutex
 }
 
@@ -231,14 +231,17 @@ type entityRepo struct {
 func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	var el partition.EntityLocator
 	var id identity
+	var modRevision int64
 	switch schemaMetadata.Kind {
 	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
-		el = partition.NewEntityLocator(measure.TagFamilies, measure.Entity)
+		modRevision = measure.GetMetadata().GetModRevision()
+		el = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
 		id = getID(measure.GetMetadata())
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
-		el = partition.NewEntityLocator(stream.TagFamilies, stream.Entity)
+		modRevision = stream.GetMetadata().GetModRevision()
+		el = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
 		id = getID(stream.GetMetadata())
 	default:
 		return
@@ -259,8 +262,8 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("kind", kind).
 			Msg("entity added or updated")
 	}
-	en := make(partition.EntityLocator, 0, len(el))
-	for _, l := range el {
+	en := make([]partition.TagLocator, 0, len(el.TagLocators))
+	for _, l := range el.TagLocators {
 		en = append(en, partition.TagLocator{
 			FamilyOffset: l.FamilyOffset,
 			TagOffset:    l.TagOffset,
@@ -268,7 +271,7 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
-	e.entitiesMap[id] = en
+	e.entitiesMap[id] = &partition.EntityLocator{TagLocators: en, ModRevision: modRevision}
 }
 
 // OnDelete implements schema.EventHandler.
@@ -305,7 +308,7 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	delete(e.entitiesMap, id)
 }
 
-func (e *entityRepo) getLocator(id identity) (partition.EntityLocator, bool) {
+func (e *entityRepo) getLocator(id identity) (*partition.EntityLocator, bool) {
 	e.RWMutex.RLock()
 	defer e.RWMutex.RUnlock()
 	el, ok := e.entitiesMap[id]

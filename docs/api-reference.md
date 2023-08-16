@@ -174,6 +174,8 @@
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
+    - [Status](#banyandb-measure-v1-Status)
+  
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
@@ -205,6 +207,8 @@
     - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-stream-v1-WriteRequest)
     - [WriteResponse](#banyandb-stream-v1-WriteResponse)
+  
+    - [Status](#banyandb-stream-v1-Status)
   
 - [banyandb/stream/v1/rpc.proto](#banyandb_stream_v1_rpc-proto)
     - [StreamService](#banyandb-stream-v1-StreamService)
@@ -1671,6 +1675,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1817,6 +1826,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1840,6 +1854,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceCreateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -1986,6 +2005,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceUpdateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -2562,10 +2586,33 @@ WriteRequest is the request contract for write
 WriteResponse is the response contract for write
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| status | [Status](#banyandb-measure-v1-Status) |  | status indicates the request processing result |
+
+
 
 
 
  
+
+
+<a name="banyandb-measure-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_RECEIVE_ERROR | 2 |  |
+| STATUS_INVALID_TIMESTAMP | 3 |  |
+| STATUS_INVALID_METADATA | 4 |  |
+| STATUS_EXPIRED_REVISION | 5 |  |
+| STATUS_INTERNAL_ERROR | 6 |  |
+
 
  
 
@@ -2942,7 +2989,7 @@ QueryResponse is the response for a query to the Query module.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is only required in the first write. |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
 
 
@@ -2956,10 +3003,33 @@ QueryResponse is the response for a query to the Query module.
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| status | [Status](#banyandb-stream-v1-Status) |  | status indicates the request processing result |
+
+
 
 
 
  
+
+
+<a name="banyandb-stream-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_RECEIVE_ERROR | 2 |  |
+| STATUS_INVALID_TIMESTAMP | 3 |  |
+| STATUS_INVALID_METADATA | 4 |  |
+| STATUS_EXPIRED_REVISION | 5 |  |
+| STATUS_INTERNAL_ERROR | 6 |  |
+
 
  
 

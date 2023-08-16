@@ -147,7 +147,8 @@ func (p *preloadService) PreRun(_ context.Context) error {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		return e.CreateMeasure(context.TODO(), measure)
+		_, innerErr := e.CreateMeasure(context.TODO(), measure)
+		return innerErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}

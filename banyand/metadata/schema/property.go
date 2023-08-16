@@ -100,7 +100,7 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 		Spec: property,
 	}
 	tagsNum := uint32(len(property.Tags))
-	err := e.create(ctx, md)
+	_, err := e.create(ctx, md)
 	if err == nil {
 		return true, tagsNum, nil
 	}
@@ -124,7 +124,7 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 		existed.Tags = append(existed.Tags, property.Tags...)
 		md.Spec = existed
 	}
-	if err = e.update(ctx, md); err != nil {
+	if _, err = e.update(ctx, md); err != nil {
 		return false, 0, err
 	}
 	return false, tagsNum, nil

@@ -38,19 +38,25 @@ type streamRegistryServer struct {
 func (rs *streamRegistryServer) Create(ctx context.Context,
 	req *databasev1.StreamRegistryServiceCreateRequest,
 ) (*databasev1.StreamRegistryServiceCreateResponse, error) {
-	if err := rs.schemaRegistry.StreamRegistry().CreateStream(ctx, req.GetStream()); err != nil {
+	modRevision, err := rs.schemaRegistry.StreamRegistry().CreateStream(ctx, req.GetStream())
+	if err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamRegistryServiceCreateResponse{}, nil
+	return &databasev1.StreamRegistryServiceCreateResponse{
+		ModRevision: modRevision,
+	}, nil
 }
 
 func (rs *streamRegistryServer) Update(ctx context.Context,
 	req *databasev1.StreamRegistryServiceUpdateRequest,
 ) (*databasev1.StreamRegistryServiceUpdateResponse, error) {
-	if err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream()); err != nil {
+	modRevision, err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream())
+	if err != nil {
 		return nil, err
 	}
-	return &databasev1.StreamRegistryServiceUpdateResponse{}, nil
+	return &databasev1.StreamRegistryServiceUpdateResponse{
+		ModRevision: modRevision,
+	}, nil
 }
 
 func (rs *streamRegistryServer) Delete(ctx context.Context,
@@ -287,19 +293,25 @@ type measureRegistryServer struct {
 func (rs *measureRegistryServer) Create(ctx context.Context, req *databasev1.MeasureRegistryServiceCreateRequest) (
 	*databasev1.MeasureRegistryServiceCreateResponse, error,
 ) {
-	if err := rs.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, req.GetMeasure()); err != nil {
+	modRevision, err := rs.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, req.GetMeasure())
+	if err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureRegistryServiceCreateResponse{}, nil
+	return &databasev1.MeasureRegistryServiceCreateResponse{
+		ModRevision: modRevision,
+	}, nil
 }
 
 func (rs *measureRegistryServer) Update(ctx context.Context, req *databasev1.MeasureRegistryServiceUpdateRequest) (
 	*databasev1.MeasureRegistryServiceUpdateResponse, error,
 ) {
-	if err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure()); err != nil {
+	modRevision, err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure())
+	if err != nil {
 		return nil, err
 	}
-	return &databasev1.MeasureRegistryServiceUpdateResponse{}, nil
+	return &databasev1.MeasureRegistryServiceUpdateResponse{
+		ModRevision: modRevision,
+	}, nil
 }
 
 func (rs *measureRegistryServer) Delete(ctx context.Context, req *databasev1.MeasureRegistryServiceDeleteRequest) (

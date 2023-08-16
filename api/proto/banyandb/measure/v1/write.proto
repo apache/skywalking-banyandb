@@ -45,8 +45,23 @@ message WriteRequest {
   DataPointValue data_point = 2 [(validate.rules).message.required = true];
 }
 
+// Status is the response status for write
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_SUCCEED = 1;
+  STATUS_RECEIVE_ERROR = 2;
+  STATUS_INVALID_TIMESTAMP = 3;
+  STATUS_INVALID_METADATA = 4;
+  STATUS_EXPIRED_REVISION = 5;
+  STATUS_INTERNAL_ERROR = 6;
+}
+
 // WriteResponse is the response contract for write
-message WriteResponse {}
+message WriteResponse {
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // status indicates the request processing result
+  Status status = 2 [(validate.rules).enum.defined_only = true];
+}
 
 message InternalWriteRequest {
   uint32 shard_id = 1;

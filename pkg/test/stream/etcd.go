@@ -56,7 +56,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if unmarshalErr := protojson.Unmarshal([]byte(streamJSON), s); unmarshalErr != nil {
 		return unmarshalErr
 	}
-	if innerErr := e.CreateStream(ctx, s); innerErr != nil {
+	if _, innerErr := e.CreateStream(ctx, s); innerErr != nil {
 		return innerErr
 	}
 

@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
@@ -56,8 +57,8 @@ func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
-	reply := func(measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
-		if errResp := measure.Send(&measurev1.WriteResponse{}); errResp != nil {
+	reply := func(metadata *commonv1.Metadata, status measurev1.Status, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
+		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status}); errResp != nil {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
@@ -76,18 +77,29 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		if err != nil {
 			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
-			reply(measure, ms.sampled)
+			reply(nil, measurev1.Status_STATUS_SUCCEED, measure, ms.sampled)
 			continue
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 			ms.sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
-			reply(measure, ms.sampled)
+			reply(writeRequest.GetMetadata(), measurev1.Status_STATUS_INVALID_TIMESTAMP, measure, ms.sampled)
+			continue
+		}
+		measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
+		if !existed {
+			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to get measure cache")
+			reply(writeRequest.GetMetadata(), measurev1.Status_STATUS_INVALID_METADATA, measure, ms.sampled)
+			continue
+		}
+		if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
+			ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure mod revision is invalid")
+			reply(writeRequest.GetMetadata(), measurev1.Status_STATUS_EXPIRED_REVISION, measure, ms.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
 			ms.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-			reply(measure, ms.sampled)
+			reply(writeRequest.GetMetadata(), measurev1.Status_STATUS_INTERNAL_ERROR, measure, ms.sampled)
 			continue
 		}
 		if ms.ingestionAccessLog != nil {
@@ -107,7 +119,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
 		}
-		reply(measure, ms.sampled)
+		reply(writeRequest.GetMetadata(), measurev1.Status_STATUS_SUCCEED, measure, ms.sampled)
 	}
 }
 
