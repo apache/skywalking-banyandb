@@ -113,14 +113,13 @@ func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
 
 func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 	if t.buffer != nil {
-		t.buffer.Write(key, val, ts)
+		return t.buffer.Write(key, val, ts)
 	}
 
 	if err := t.openBuffer(); err != nil {
 		return err
 	}
-	t.buffer.Write(key, val, ts)
-	return nil
+	return t.buffer.Write(key, val, ts)
 }
 
 func (t *tsTable) flush(shardIndex int, skl *skl.Skiplist) error {

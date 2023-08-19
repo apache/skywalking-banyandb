@@ -15,29 +15,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package event
+package run
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"sync"
 )
 
-var (
-	// MeasureShardEventKindVersion is the version tag of measure shard event kind.
-	MeasureShardEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "measure-event-shard",
+// ChannelGroupCloser can close a goroutine group then wait for it to stop.
+type ChannelGroupCloser struct {
+	group  []*ChannelCloser
+	lock   sync.RWMutex
+	closed bool
+}
+
+// NewChannelGroupCloser instances a new ChannelGroupCloser.
+func NewChannelGroupCloser(closer ...*ChannelCloser) *ChannelGroupCloser {
+	return &ChannelGroupCloser{group: closer}
+}
+
+// CloseThenWait closes all closer then waits till they are done.
+func (c *ChannelGroupCloser) CloseThenWait() {
+	if c == nil {
+		return
 	}
 
-	// MeasureTopicShardEvent is the measure shard event publishing topic.
-	MeasureTopicShardEvent = bus.UniTopic(MeasureShardEventKindVersion.String())
+	c.lock.Lock()
+	c.closed = true
+	c.lock.Unlock()
 
-	// MeasureEntityEventKindVersion is the version tag of measure entity kind.
-	MeasureEntityEventKindVersion = common.KindVersion{
-		Version: "v1",
-		Kind:    "measure-event-entity",
+	for _, closer := range c.group {
+		closer.CloseThenWait()
 	}
+}
 
-	// MeasureTopicEntityEvent is the measure entity event publishing topic.
-	MeasureTopicEntityEvent = bus.UniTopic(MeasureEntityEventKindVersion.String())
-)
+// Closed returns whether the ChannelGroupCloser is closed.
+func (c *ChannelGroupCloser) Closed() bool {
+	if c == nil {
+		return true
+	}
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.closed
+}

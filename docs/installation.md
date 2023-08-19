@@ -92,7 +92,10 @@ Usage:
 Available Commands:
   completion  generate the autocompletion script for the specified shell
   help        Help about any command
-  standalone  Run as the standalone mode
+  liaison     Run as the liaison server
+  meta        Run as the meta server
+  standalone  Run as the standalone server
+  storage     Run as the storage server
 
 Flags:
   -h, --help      help for this command
@@ -101,7 +104,7 @@ Flags:
 Use " [command] --help" for more information about a command.
 ```
 
-Banyand is running as a standalone process by
+Banyand is running as a standalone server by
 
 ```shell
 $ ./banyand-server standalone
@@ -119,46 +122,53 @@ $ ./banyand-server standalone
 
 The banyand-server would be listening on the `0.0.0.0:17912` if no errors occurred.
 
-To discover more options to configure the banyand by
+## Setup Multiple Banyand as Cluster(TBD)
+
+### Setup Standalone Nodes
+
+The standalone node is running as a standalone process by
 
 ```shell
-$ ./banyand-server standalone -h
-Usage:
-   standalone [flags]
+$ ./banyand-server standalone <flags> --data-node-id n1
+$ ./banyand-server standalone <flags> --data-node-id n2
+$ ./banyand-server standalone <flags> --data-node-id n3
+```
 
-Flags:
-      --addr string                          the address of banyand listens (default ":17912")
-      --cert-file string                     the TLS cert file
-      --etcd-listen-client-url string        A URL to listen on for client traffic (default "http://localhost:2379")
-      --etcd-listen-peer-url string          A URL to listen on for peer traffic (default "http://localhost:2380")
-  -h, --help                                 help for standalone
-      --http-addr string                     listen addr for http (default ":17913")
-      --http-cert-file string                the TLS cert file of http server
-      --http-grpc-addr string                http server redirect grpc requests to this address (default "localhost:17912")
-      --http-grpc-cert-file string           the grpc TLS cert file if grpc server enables tls
-      --http-key-file string                 the TLS key file of http server
-      --http-tls                             connection uses TLS if true, else plain HTTP
-      --key-file string                      the TLS key file
-      --logging-env string                   the logging (default "prod")
-      --logging-level string                 the root level of logging (default "info")
-      --logging-levels stringArray           the level logging of logging
-      --logging-modules stringArray          the specific module
-      --max-recv-msg-size bytes              the size of max receiving message (default 10.00MiB)
-      --measure-buffer-size bytes            block buffer size (default 4.00MiB)
-      --measure-encoder-buffer-size bytes    block fields buffer size (default 12.00MiB)
-      --measure-idx-batch-wait-sec int       index batch wait in second (default 1)
-      --measure-root-path string             the root path of database (default "/tmp")
-      --measure-seriesmeta-mem-size bytes    series metadata memory size (default 1.00MiB)
-      --metadata-root-path string            the root path of metadata (default "/tmp")
-  -n, --name string                          name of this service (default "standalone")
-      --observability-listener-addr string   listen addr for observability (default ":2121")
-      --pprof-listener-addr string           listen addr for pprof (default ":6060")
-      --show-rungroup-units                  show rungroup units
-      --stream-block-buffer-size bytes       block buffer size (default 8.00MiB)
-      --stream-global-index-mem-size bytes   global index memory size (default 2.00MiB)
-      --stream-idx-batch-wait-sec int        index batch wait in second (default 1)
-      --stream-root-path string              the root path of database (default "/tmp")
-      --stream-seriesmeta-mem-size bytes     series metadata memory size (default 1.00MiB)
-      --tls                                  connection uses TLS if true, else plain TCP
-  -v, --version                              version for standalone
+`data-node-id` is the unique identifier of the standalone node.
+
+The standalone node would be listening on the `<ports>` if no errors occurred.
+
+### Setup Role-Based Nodes
+
+The meta nodes should boot up firstly to provide the metadata service for the whole cluster. The meta node is running as a standalone process by
+
+```shell
+$ ./banyand-server meta <flags>
+```
+
+The meta node would be listening on the `<ports>` if no errors occurred.
+
+
+Data nodes, query nodes and liaison nodes are running as independent processes by
+
+```shell
+$ ./banyand-server storage --mode data --data-node-id n1 <flags>
+$ ./banyand-server storage --mode data --data-node-id n2 <flags>
+$ ./banyand-server storage --mode data --data-node-id n3 <flags>
+$ ./banyand-server storage --mode query <flags>
+$ ./banyand-server storage --mode query <flags>
+$ ./banyand-server liaison <flags>
+```
+
+`data-node-id` is the unique identifier of the data node.
+
+The data node, query node and liaison node would be listening on the `<ports>` if no errors occurred.
+
+If you want to use a `mix` mode instead of separate query and data nodes, you can run the banyand-server as processes by
+
+```shell
+$ ./banyand-server storage --data-node-id n1 <flags>
+$ ./banyand-server storage --data-node-id n2 <flags>
+$ ./banyand-server storage --data-node-id n3 <flags>
+$ ./banyand-server liaison <flags>
 ```

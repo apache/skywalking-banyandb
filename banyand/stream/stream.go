@@ -27,7 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -43,7 +42,6 @@ type stream struct {
 	indexWriter            *index.Writer
 	name                   string
 	group                  string
-	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
 	maxObservedModRevision int64
 	shardNum               uint32
@@ -69,17 +67,12 @@ func (s *stream) GetTopN() []*databasev1.TopNAggregation {
 	return nil
 }
 
-func (s *stream) EntityLocator() partition.EntityLocator {
-	return s.entityLocator
-}
-
 func (s *stream) Close() error {
 	return nil
 }
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
 	s.maxObservedModRevision = schema.ParseMaxModRevision(s.indexRules)
 }
 

@@ -25,18 +25,27 @@ import "google/protobuf/timestamp.proto";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
 option java_package = "org.apache.skywalking.banyandb.database.v1";
 
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_META = 1;
+  ROLE_DATA = 2;
+  ROLE_QUERY = 3;
+  ROLE_LIAISON = 4;
+}
+
 message Node {
-  string id = 1;
-  string addr = 2;
-  google.protobuf.Timestamp updated_at = 3;
-  google.protobuf.Timestamp created_at = 4;
+  string name = 1;
+  repeated Role roles = 2;
+  string grpc_address = 3;
+  string http_address = 4;
+  google.protobuf.Timestamp created_at = 5;
 }
 
 message Shard {
   uint64 id = 1;
   common.v1.Metadata metadata = 2;
   common.v1.Catalog catalog = 3;
-  Node node = 4;
+  string node = 4;
   uint32 total = 5;
   google.protobuf.Timestamp updated_at = 6;
   google.protobuf.Timestamp created_at = 7;

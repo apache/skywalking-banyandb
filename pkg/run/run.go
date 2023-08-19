@@ -19,9 +19,11 @@
 package run
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"sync"
 
 	"github.com/oklog/run"
@@ -29,6 +31,8 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -55,6 +59,12 @@ type Unit interface {
 	Name() string
 }
 
+// Role is an interface that should be implemented by Group Unit objects that
+// need to be able to return their Role.
+type Role interface {
+	Role() databasev1.Role
+}
+
 // Config interface should be implemented by Group Unit objects that manage
 // their own configuration through the use of flags.
 // If a Unit's Validate returns an error it will stop the Group immediately.
@@ -73,26 +83,7 @@ type Config interface {
 type PreRunner interface {
 	// Unit for Group registration and identification
 	Unit
-	PreRun() error
-}
-
-// NewPreRunner takes a name and a standalone pre runner compatible function
-// and turns them into a Group compatible PreRunner, ready for registration.
-func NewPreRunner(name string, fn func() error) PreRunner {
-	return preRunner{name: name, fn: fn}
-}
-
-type preRunner struct {
-	fn   func() error
-	name string
-}
-
-func (p preRunner) Name() string {
-	return p.name
-}
-
-func (p preRunner) PreRun() error {
-	return p.fn()
+	PreRun(context.Context) error
 }
 
 // StopNotify sends the stopped event to the running system.
@@ -128,6 +119,7 @@ type Group struct {
 	c            []Config
 	p            []PreRunner
 	s            []Service
+	rr           []Role
 	showRunGroup bool
 	configured   bool
 }
@@ -172,8 +164,56 @@ func (g *Group) Register(units ...Unit) []bool {
 			g.s = append(g.s, s)
 			hasRegistered[idx] = true
 		}
+		if r, ok := units[idx].(Role); ok {
+			g.rr = append(g.rr, r)
+			hasRegistered[idx] = true
+		}
 	}
 	return hasRegistered
+}
+
+// Deregister will remove the provided objects implementing the Unit interface
+// from the Group.
+// The returned array of booleans is of the same size as the amount of provided
+// Units, signaling for each provided Unit if it successfully deregistered from
+// Group or if it was ignored.
+func (g *Group) Deregister(units ...Unit) []bool {
+	hasDeregistered := make([]bool, len(units))
+	for idx := range units {
+		if c, ok := units[idx].(Config); ok {
+			for i := range g.c {
+				if g.c[i] == c {
+					g.c[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+		if p, ok := units[idx].(PreRunner); ok {
+			for i := range g.p {
+				if g.p[i] == p {
+					g.p[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+		if s, ok := units[idx].(Service); ok {
+			for i := range g.s {
+				if g.s[i] == s {
+					g.s[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+		if r, ok := units[idx].(Role); ok {
+			for i := range g.rr {
+				if g.rr[i] == r {
+					g.rr[i] = nil
+					hasDeregistered[idx] = true
+				}
+			}
+		}
+	}
+	return hasDeregistered
 }
 
 // RegisterFlags returns FlagSet contains Flags in all modules.
@@ -289,7 +329,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 //	  - Validate()       Validate Config Units. Exit on first error.
 //
 //	PreRunner phase (serially, in order of Unit registration)
-//	  - PreRun()         Execute PreRunner Units. Exit on first error.
+//	  - PreRun(ctx context.Context)         Execute PreRunner Units. Exit on first error.
 //
 //	Service phase (concurrently)
 //	  - Serve()          Execute all Service Units in separate Go routines.
@@ -298,9 +338,11 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 //
 //	Run will return with the originating error on:
 //	- first Config.Validate()  returning an error
-//	- first PreRunner.PreRun() returning an error
+//	- first PreRunner.PreRun(ctx context.Context) returning an error
 //	- first Service.Serve()    returning (error or nil)
-func (g *Group) Run() (err error) {
+//
+//nolint:contextcheck
+func (g *Group) Run(ctx context.Context) (err error) {
 	// run config registration and flag parsing stages
 	if interrupted, errRun := g.RunConfig(); interrupted || errRun != nil {
 		return errRun
@@ -310,7 +352,38 @@ func (g *Group) Run() (err error) {
 			g.log.Fatal().Err(err).Stack().Msg("unexpected exit")
 		}
 	}()
+	rr := make([]databasev1.Role, 0, len(g.rr))
+	for idx := range g.rr {
+		if g.rr[idx] == nil || g.rr[idx].Role() == databasev1.Role_ROLE_UNSPECIFIED {
+			continue
+		}
+		rr = append(rr, g.rr[idx].Role())
+	}
+	// Sort and deduplicate roles
+	sort.Slice(rr, func(i, j int) bool {
+		return rr[i] < rr[j]
+	})
+	deduplicateRoles := func(rr []databasev1.Role) []databasev1.Role {
+		if len(rr) < 2 {
+			return rr
+		}
+		// deduplicate roles
+		rrDedup := make([]databasev1.Role, 0, len(rr))
+		for i := 0; i < len(rr)-1; i++ {
+			if rr[i] != rr[i+1] {
+				rrDedup = append(rrDedup, rr[i])
+			}
+		}
+		rrDedup = append(rrDedup, rr[len(rr)-1])
+		return rrDedup
+	}
+	rr = deduplicateRoles(rr)
 
+	g.log.Info().Interface("roles", rr).Msg("the node will run as")
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// execute pre run stage and exit on error
 	for idx := range g.p {
 		// a PreRunner might have been deregistered during Run
@@ -318,7 +391,7 @@ func (g *Group) Run() (err error) {
 			continue
 		}
 		g.log.Debug().Uint32("ran", uint32(idx+1)).Uint32("total", uint32(len(g.p))).Str("name", g.p[idx].Name()).Msg("pre-run")
-		if err := g.p[idx].PreRun(); err != nil {
+		if err := g.p[idx].PreRun(context.WithValue(ctx, common.ContextNodeRolesKey, rr)); err != nil {
 			return err
 		}
 	}

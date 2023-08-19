@@ -24,11 +24,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -54,7 +52,6 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the group", func() {
-			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
 			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
@@ -65,8 +62,6 @@ var _ = Describe("Metadata", func() {
 		})
 
 		It("should add shards", func() {
-			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).AnyTimes()
-			svcs.repo.EXPECT().Publish(event.MeasureTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).AnyTimes()
 			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(groupSchema).ShouldNot(BeNil())
@@ -95,7 +90,6 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the measure", func() {
-			svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
 			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
 				Name:  "service_cpm_minute",
 				Group: "sw_metric",
@@ -126,7 +120,6 @@ var _ = Describe("Metadata", func() {
 			})
 
 			It("should update a new measure", func() {
-				svcs.repo.EXPECT().Publish(event.MeasureTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).AnyTimes()
 				// Remove the first tag from the entity
 				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
 				entitySize := len(measureSchema.Entity.TagNames)

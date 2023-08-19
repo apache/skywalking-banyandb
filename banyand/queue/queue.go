@@ -20,7 +20,6 @@ package queue
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -35,10 +34,9 @@ type Queue interface {
 	run.Service
 }
 
-// NewQueue return a new Queue which relies on the discovery service.
-func NewQueue(_ context.Context, repo discovery.ServiceRepo) (Queue, error) {
+// NewQueue return a new Queue.
+func NewQueue(_ context.Context) (Queue, error) {
 	return &local{
-		repo:   repo,
 		local:  bus.NewBus(),
 		stopCh: make(chan struct{}),
 	}, nil

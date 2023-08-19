@@ -24,7 +24,6 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -58,8 +57,10 @@ func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (str
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	ff := []string{
-		"--addr=" + addr,
-		"--http-addr=" + httpAddr,
+		"--grpc-host=" + host,
+		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		"--http-host=" + host,
+		fmt.Sprintf("--http-port=%d", ports[1]),
 		"--http-grpc-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
@@ -77,37 +78,37 @@ func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (str
 }
 
 func modules(schemaLoaders []SchemaLoader, flags []string) func() {
-	// Init `Discovery` module
-	repo, err := discovery.NewServiceRepo(context.Background())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	pipeline, err := queue.NewQueue(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Stream` module
-	streamSvc, err := stream.NewService(context.TODO(), metaSvc, repo, pipeline)
+	streamSvc, err := stream.NewService(context.TODO(), metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Measure` module
-	measureSvc, err := measure.NewService(context.TODO(), metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(context.TODO(), metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	// Init `Query` module
-	q, err := query.NewService(context.TODO(), streamSvc, measureSvc, metaSvc, repo, pipeline)
+	q, err := query.NewService(context.TODO(), streamSvc, measureSvc, metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
-	httpServer := http.NewService()
+	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc)
+	httpServer := http.NewServer()
 
 	units := []run.Unit{
-		repo,
 		pipeline,
 		metaSvc,
+		streamSvc,
+		measureSvc,
+		q,
+		tcp,
+		httpServer,
 	}
 	for _, sl := range schemaLoaders {
 		sl.SetMeta(metaSvc)
 		units = append(units, sl)
 	}
-	units = append(units, streamSvc, measureSvc, q, tcp, httpServer)
 
 	return test.SetupModules(
 		flags,
@@ -130,11 +131,11 @@ func (p *preloadService) Name() string {
 	return "preload-" + p.name
 }
 
-func (p *preloadService) PreRun() error {
+func (p *preloadService) PreRun(ctx context.Context) error {
 	if p.name == "stream" {
-		return test_stream.PreloadSchema(p.metaSvc.SchemaRegistry())
+		return test_stream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 	}
-	return test_measure.PreloadSchema(p.metaSvc.SchemaRegistry())
+	return test_measure.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 func (p *preloadService) SetMeta(meta metadata.Service) {

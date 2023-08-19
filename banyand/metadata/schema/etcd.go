@@ -19,15 +19,11 @@ package schema
 
 import (
 	"context"
-	"net/url"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -35,7 +31,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -61,18 +56,10 @@ type HasMetadata interface {
 // RegistryOption is the option to create Registry.
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
-// RootDir sets the root directory of Registry.
-func RootDir(rootDir string) RegistryOption {
+// ConfigureServerEndpoints sets a list of the server urls.
+func ConfigureServerEndpoints(url []string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.rootDir = rootDir
-	}
-}
-
-// ConfigureListener sets client and peer urls of listeners.
-func ConfigureListener(lc, lp string) RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.listenerClientURL = lc
-		config.listenerPeerURL = lp
+		config.serverEndpoints = url
 	}
 }
 
@@ -86,7 +73,6 @@ func (eh *eventHandler) interestOf(kind Kind) bool {
 }
 
 type etcdSchemaRegistry struct {
-	server   *embed.Etcd
 	client   *clientv3.Client
 	closer   *run.Closer
 	handlers []*eventHandler
@@ -94,12 +80,7 @@ type etcdSchemaRegistry struct {
 }
 
 type etcdSchemaRegistryConfig struct {
-	// rootDir is the root directory for etcd storage
-	rootDir string
-	// listenerClientURL is the listener for client
-	listenerClientURL string
-	// listenerPeerURL is the listener for peer
-	listenerPeerURL string
+	serverEndpoints []string
 }
 
 func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
@@ -133,34 +114,20 @@ func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
 	}
 }
 
-func (e *etcdSchemaRegistry) ReadyNotify() <-chan struct{} {
-	return e.server.Server.ReadyNotify()
-}
-
-func (e *etcdSchemaRegistry) StopNotify() <-chan struct{} {
-	return e.server.Server.StopNotify()
-}
-
-func (e *etcdSchemaRegistry) StoppingNotify() <-chan struct{} {
-	return e.server.Server.StoppingNotify()
-}
-
 func (e *etcdSchemaRegistry) Close() error {
+	e.closer.Done()
 	e.closer.CloseThenWait()
-	_ = e.client.Close()
-	e.server.Close()
-	return nil
+	return e.client.Close()
 }
 
 // NewEtcdSchemaRegistry returns a Registry powered by Etcd.
 func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
-	registryConfig := &etcdSchemaRegistryConfig{
-		rootDir:           os.TempDir(),
-		listenerClientURL: embed.DefaultListenClientURLs,
-		listenerPeerURL:   embed.DefaultListenPeerURLs,
-	}
+	registryConfig := &etcdSchemaRegistryConfig{}
 	for _, opt := range options {
 		opt(registryConfig)
+	}
+	if registryConfig.serverEndpoints == nil {
+		return nil, errors.New("server address is not set")
 	}
 	zapCfg := logger.GetLogger("etcd").ToZapConfig()
 
@@ -169,18 +136,9 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if l, err = zapCfg.Build(); err != nil {
 		return nil, err
 	}
-	// TODO: allow use cluster setting
-	embedConfig := newStandaloneEtcdConfig(registryConfig, l)
-	e, err := embed.StartEtcd(embedConfig)
-	if err != nil {
-		return nil, err
-	}
-	if e != nil {
-		<-e.Server.ReadyNotify() // wait for e.Server to join the cluster
-	}
 
 	config := clientv3.Config{
-		Endpoints:            []string{e.Config().AdvertiseClientUrls[0].String()},
+		Endpoints:            registryConfig.serverEndpoints,
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
@@ -192,9 +150,8 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		return nil, err
 	}
 	reg := &etcdSchemaRegistry{
-		server: e,
 		client: client,
-		closer: run.NewCloser(0),
+		closer: run.NewCloser(1),
 	}
 	return reg, nil
 }
@@ -388,6 +345,65 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	return false, nil
 }
 
+func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) error {
+	if !e.closer.AddRunning() {
+		return ErrClosed
+	}
+	defer e.closer.Done()
+	key, err := metadata.key()
+	if err != nil {
+		return err
+	}
+	val, err := proto.Marshal(metadata.Spec.(proto.Message))
+	if err != nil {
+		return err
+	}
+	// Create a lease with a short TTL
+	lease, err := e.client.Grant(ctx, 5) // 5 seconds
+	if err != nil {
+		return err
+	}
+	var ops []clientv3.Cmp
+	ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
+	txn := e.client.Txn(ctx).If(ops...)
+	txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
+	txn = txn.Else(clientv3.OpGet(key))
+	response, err := txn.Commit()
+	if err != nil {
+		return err
+	}
+	if !response.Succeeded {
+		return errGRPCAlreadyExists
+	}
+	// Keep the lease alive
+	// nolint:contextcheck
+	keepAliveChan, err := e.client.KeepAlive(context.Background(), lease.ID)
+	if err != nil {
+		return err
+	}
+	go func() {
+		if !e.closer.AddRunning() {
+			return
+		}
+		defer func() {
+			_, _ = e.client.Lease.Revoke(context.Background(), lease.ID)
+			e.closer.Done()
+		}()
+		for {
+			select {
+			case <-e.closer.CloseNotify():
+				return
+			case keepAliveResp := <-keepAliveChan:
+				if keepAliveResp == nil {
+					// The channel has been closed
+					return
+				}
+			}
+		}
+	}()
+	return nil
+}
+
 func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 	return groupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
 }
@@ -396,23 +412,4 @@ func incrementLastByte(key string) string {
 	bb := []byte(key)
 	bb[len(bb)-1]++
 	return string(bb)
-}
-
-func newStandaloneEtcdConfig(config *etcdSchemaRegistryConfig, logger *zap.Logger) *embed.Config {
-	cfg := embed.NewConfig()
-	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
-	cfg.Dir = filepath.Join(config.rootDir, "metadata")
-	observability.UpdatePath(cfg.Dir)
-	cURL, _ := url.Parse(config.listenerClientURL)
-	pURL, _ := url.Parse(config.listenerPeerURL)
-
-	cfg.ClusterState = "new"
-	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*cURL}, []url.URL{*cURL}
-	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*pURL}, []url.URL{*pURL}
-	cfg.InitialCluster = ",default=" + pURL.String()
-
-	cfg.BackendBatchInterval = 500 * time.Millisecond
-	cfg.BackendBatchLimit = 10000
-	cfg.MaxRequestBytes = 10 * 1024 * 1024
-	return cfg
 }

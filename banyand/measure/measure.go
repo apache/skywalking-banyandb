@@ -31,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -51,7 +50,6 @@ type measure struct {
 	processorManager       *topNProcessorManager
 	name                   string
 	group                  string
-	entityLocator          partition.EntityLocator
 	indexRules             []*databasev1.IndexRule
 	topNAggregations       []*databasev1.TopNAggregation
 	maxObservedModRevision int64
@@ -98,10 +96,6 @@ func (s *measure) MaxObservedModRevision() int64 {
 	return s.maxObservedModRevision
 }
 
-func (s *measure) EntityLocator() partition.EntityLocator {
-	return s.entityLocator
-}
-
 func (s *measure) Close() error {
 	if s.processorManager == nil {
 		return nil
@@ -111,7 +105,6 @@ func (s *measure) Close() error {
 
 func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
 	s.maxObservedModRevision = int64(math.Max(float64(resourceSchema.ParseMaxModRevision(s.indexRules)), float64(resourceSchema.ParseMaxModRevision(s.topNAggregations))))
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)

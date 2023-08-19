@@ -25,9 +25,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -54,8 +54,7 @@ var (
 type queryService struct {
 	log *logger.Logger
 	// TODO: remove the metaService once https://github.com/apache/skywalking/issues/10121 is fixed.
-	metaService metadata.Service
-	serviceRepo discovery.ServiceRepo
+	metaService metadata.Repo
 	pipeline    queue.Queue
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
@@ -182,7 +181,11 @@ func (q *queryService) Name() string {
 	return moduleName
 }
 
-func (q *queryService) PreRun() error {
+func (q *queryService) Role() databasev1.Role {
+	return databasev1.Role_ROLE_QUERY
+}
+
+func (q *queryService) PreRun(_ context.Context) error {
 	q.log = logger.GetLogger(moduleName)
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),

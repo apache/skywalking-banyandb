@@ -28,10 +28,8 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -49,7 +47,7 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRepo,
+func newSchemaRepo(path string, metadata metadata.Repo,
 	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
 ) schemaRepo {
 	return schemaRepo{
@@ -57,11 +55,8 @@ func newSchemaRepo(path string, metadata metadata.Repo, repo discovery.ServiceRe
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
 			metadata,
-			repo,
 			l,
 			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
-			event.MeasureTopicShardEvent,
-			event.MeasureTopicEntityEvent,
 		),
 	}
 }
@@ -124,7 +119,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		}
 	case schema.KindTopNAggregation:
 		// createOrUpdate TopN schemas in advance
-		_, err := createOrUpdateTopNMeasure(sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
+		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
 		if err != nil {
 			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
 			return
@@ -139,13 +134,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	}
 }
 
-func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
-	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(context.TODO(), topNSchema.GetMetadata())
+func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
+	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
 		return nil, err
 	}
 
-	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(context.Background(), topNSchema.GetSourceMeasure())
+	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +184,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		if innerErr := measureSchemaRegistry.CreateMeasure(context.Background(), newTopNMeasure); innerErr != nil {
+		if innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
 			return nil, innerErr
 		}
 		return newTopNMeasure, nil
@@ -203,7 +198,7 @@ func createOrUpdateTopNMeasure(measureSchemaRegistry schema.Measure, topNSchema 
 		return oldTopNSchema, nil
 	}
 	// update
-	if err = measureSchemaRegistry.UpdateMeasure(context.Background(), newTopNMeasure); err != nil {
+	if err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
 		return nil, err
 	}
 	return newTopNMeasure, nil

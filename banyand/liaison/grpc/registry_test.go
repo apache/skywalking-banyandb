@@ -31,7 +31,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -173,17 +172,14 @@ var _ = Describe("Registry", func() {
 })
 
 func setupForRegistry() func() {
-	// Init `Discovery` module
-	repo, err := discovery.NewServiceRepo(context.Background())
-	Expect(err).NotTo(HaveOccurred())
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
+	pipeline, err := queue.NewQueue(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
 
-	tcp := grpc.NewServer(context.TODO(), pipeline, repo, metaSvc)
+	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
@@ -194,7 +190,6 @@ func setupForRegistry() func() {
 		"--etcd-listen-peer-url="+listenPeerURL)
 	deferFunc := test.SetupModules(
 		flags,
-		repo,
 		pipeline,
 		metaSvc,
 		preloadStreamSvc,
@@ -217,6 +212,6 @@ func (p *preloadStreamService) Name() string {
 	return "preload-stream"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadStreamService) PreRun(ctx context.Context) error {
+	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }

@@ -7,16 +7,24 @@ Release Notes.
 ### Features
 
 - List all properties in a group.
+- Implement Write-ahead Logging
+- Document the clustering.
+- Support multiple roles for banyand server.
+- Support for recovery buffer using wal.
+- Register the node role to the metadata registry.
 
 ### Bugs
 
 - BanyanDB ui unable to load icon.
 - BanyanDB ui type error
 - Fix timer not released
+- BanyanDB ui misses fields when creating a group
+- Fix data duplicate writing
 
 ### Chores
 
 - Bump several dependencies and tools.
+- Drop redundant "discovery" module from banyand. "metadata" module is enough to play the node and shard discovery role.
 
 ## 0.4.0
 

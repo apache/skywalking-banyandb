@@ -22,7 +22,9 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,39 +47,48 @@ import (
 )
 
 var (
-	_ run.Config  = (*service)(nil)
-	_ run.Service = (*service)(nil)
+	_ run.Config  = (*server)(nil)
+	_ run.Service = (*server)(nil)
 
 	errServerCert = errors.New("http: invalid server cert file")
 	errServerKey  = errors.New("http: invalid server key file")
 	errNoAddr     = errors.New("http: no address")
 )
 
-// NewService return a http service.
-func NewService() run.Unit {
-	return &service{
+// NewServer return a http service.
+func NewServer() Server {
+	return &server{
 		stopCh: make(chan struct{}),
 	}
 }
 
-type service struct {
-	mux          *chi.Mux
-	stopCh       chan struct{}
-	clientCloser context.CancelFunc
+// Server is the http service.
+type Server interface {
+	run.Unit
+	GetPort() *uint32
+}
+
+type server struct {
+	creds        credentials.TransportCredentials
 	l            *logger.Logger
+	clientCloser context.CancelFunc
+	mux          *chi.Mux
 	srv          *http.Server
+	stopCh       chan struct{}
+	host         string
 	listenAddr   string
 	grpcAddr     string
-	creds        credentials.TransportCredentials
 	keyFile      string
 	certFile     string
 	grpcCert     string
+	port         uint32
 	tls          bool
 }
 
-func (p *service) FlagSet() *run.FlagSet {
+func (p *server) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("http")
-	flagSet.StringVar(&p.listenAddr, "http-addr", ":17913", "listen addr for http")
+	flagSet.StringVar(&p.host, "http-host", "localhost", "listen host for http")
+	flagSet.Uint32Var(&p.port, "http-port", 17913, "listen port for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
 	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
 	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
@@ -86,8 +97,9 @@ func (p *service) FlagSet() *run.FlagSet {
 	return flagSet
 }
 
-func (p *service) Validate() error {
-	if p.listenAddr == "" {
+func (p *server) Validate() error {
+	p.listenAddr = net.JoinHostPort(p.host, strconv.FormatUint(uint64(p.port), 10))
+	if p.listenAddr == ":" {
 		return errNoAddr
 	}
 	observability.UpdateAddress("http", p.listenAddr)
@@ -110,11 +122,19 @@ func (p *service) Validate() error {
 	return nil
 }
 
-func (p *service) Name() string {
+func (p *server) Name() string {
 	return "liaison-http"
 }
 
-func (p *service) PreRun() error {
+func (p *server) Role() databasev1.Role {
+	return databasev1.Role_ROLE_LIAISON
+}
+
+func (p *server) GetPort() *uint32 {
+	return &p.port
+}
+
+func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
 
@@ -134,7 +154,7 @@ func (p *service) PreRun() error {
 	return nil
 }
 
-func (p *service) Serve() run.StopNotify {
+func (p *server) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := make([]grpc.DialOption, 0, 1)
@@ -183,7 +203,7 @@ func (p *service) Serve() run.StopNotify {
 	return p.stopCh
 }
 
-func (p *service) GracefulStop() {
+func (p *server) GracefulStop() {
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}
