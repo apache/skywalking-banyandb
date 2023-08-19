@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -61,9 +60,7 @@ type service struct {
 	writeListener          bus.MessageListener
 	metadata               metadata.Repo
 	pipeline               queue.Queue
-	repo                   discovery.ServiceRepo
 	l                      *logger.Logger
-	stopCh                 chan struct{}
 	root                   string
 	dbOpts                 tsdb.DatabaseOpts
 	BlockEncoderBufferSize run.Bytes
@@ -106,17 +103,21 @@ func (s *service) Name() string {
 	return "measure"
 }
 
-func (s *service) PreRun() error {
+func (s *service) Role() databasev1.Role {
+	return databasev1.Role_ROLE_DATA
+}
+
+func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
-	cancel()
+	ctxGroup, cancelGroup := context.WithTimeout(ctx, 5*time.Second)
+	groups, err := s.metadata.GroupRegistry().ListGroup(ctxGroup)
+	cancelGroup()
 	if err != nil {
 		return err
 	}
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
-	s.schemaRepo = newSchemaRepo(path, s.metadata, s.repo, s.dbOpts,
+	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
 		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
 	for _, g := range groups {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
@@ -126,24 +127,29 @@ func (s *service) PreRun() error {
 		if innerErr != nil {
 			return innerErr
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctxMeasure, cancelMeasure := context.WithTimeout(ctx, 5*time.Second)
 		allMeasureSchemas, innerErr := s.metadata.MeasureRegistry().
-			ListMeasure(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
-		cancel()
+			ListMeasure(ctxMeasure, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
+		cancelMeasure()
 		if innerErr != nil {
 			return innerErr
 		}
 		for _, measureSchema := range allMeasureSchemas {
 			// sanity check before calling StoreResource
 			// since StoreResource may be called inside the event loop
-			if checkErr := s.sanityCheck(gp, measureSchema); checkErr != nil {
+			if checkErr := s.sanityCheck(ctx, gp, measureSchema); checkErr != nil {
 				return checkErr
 			}
-			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
+			if _, innerErr := gp.StoreResource(ctx, measureSchema); innerErr != nil {
 				return innerErr
 			}
 		}
 	}
+	// run a serial watcher
+	go s.schemaRepo.Watcher()
+	s.metadata.
+		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			&s.schemaRepo)
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
@@ -153,20 +159,20 @@ func (s *service) PreRun() error {
 	return nil
 }
 
-func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databasev1.Measure) error {
+func (s *service) sanityCheck(ctx context.Context, group resourceSchema.Group, measureSchema *databasev1.Measure) error {
 	var topNAggrs []*databasev1.TopNAggregation
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctxLocal, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctx, measureSchema.GetMetadata())
+	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctxLocal, measureSchema.GetMetadata())
 	if err != nil || len(topNAggrs) == 0 {
 		return err
 	}
 
 	for _, topNAggr := range topNAggrs {
-		topNMeasure, innerErr := createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr)
+		topNMeasure, innerErr := createOrUpdateTopNMeasure(ctx, s.metadata.MeasureRegistry(), topNAggr)
 		err = multierr.Append(err, innerErr)
 		if topNMeasure != nil {
-			_, storeErr := group.StoreResource(topNMeasure)
+			_, storeErr := group.StoreResource(ctx, topNMeasure)
 			if storeErr != nil {
 				err = multierr.Append(err, storeErr)
 			}
@@ -177,31 +183,18 @@ func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databas
 }
 
 func (s *service) Serve() run.StopNotify {
-	_ = s.schemaRepo.NotifyAll()
-	// run a serial watcher
-	go s.schemaRepo.Watcher()
-
-	s.metadata.MeasureRegistry().
-		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
-			&s.schemaRepo)
-
-	return s.stopCh
+	return s.schemaRepo.StopCh()
 }
 
 func (s *service) GracefulStop() {
 	s.schemaRepo.Close()
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Queue) (Service, error) {
 	return &service{
 		metadata: metadata,
-		repo:     repo,
 		pipeline: pipeline,
-		stopCh:   make(chan struct{}),
 		dbOpts: tsdb.DatabaseOpts{
 			IndexGranularity: tsdb.IndexGranularitySeries,
 		},

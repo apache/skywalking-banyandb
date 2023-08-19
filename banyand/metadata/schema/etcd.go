@@ -345,6 +345,65 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	return false, nil
 }
 
+func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) error {
+	if !e.closer.AddRunning() {
+		return ErrClosed
+	}
+	defer e.closer.Done()
+	key, err := metadata.key()
+	if err != nil {
+		return err
+	}
+	val, err := proto.Marshal(metadata.Spec.(proto.Message))
+	if err != nil {
+		return err
+	}
+	// Create a lease with a short TTL
+	lease, err := e.client.Grant(ctx, 5) // 5 seconds
+	if err != nil {
+		return err
+	}
+	var ops []clientv3.Cmp
+	ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
+	txn := e.client.Txn(ctx).If(ops...)
+	txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
+	txn = txn.Else(clientv3.OpGet(key))
+	response, err := txn.Commit()
+	if err != nil {
+		return err
+	}
+	if !response.Succeeded {
+		return errGRPCAlreadyExists
+	}
+	// Keep the lease alive
+	// nolint:contextcheck
+	keepAliveChan, err := e.client.KeepAlive(context.Background(), lease.ID)
+	if err != nil {
+		return err
+	}
+	go func() {
+		if !e.closer.AddRunning() {
+			return
+		}
+		defer func() {
+			_, _ = e.client.Lease.Revoke(context.Background(), lease.ID)
+			e.closer.Done()
+		}()
+		for {
+			select {
+			case <-e.closer.CloseNotify():
+				return
+			case keepAliveResp := <-keepAliveChan:
+				if keepAliveResp == nil {
+					// The channel has been closed
+					return
+				}
+			}
+		}
+	}()
+	return nil
+}
+
 func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 	return groupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
 }

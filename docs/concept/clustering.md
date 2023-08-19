@@ -16,7 +16,7 @@ In addition to persistent raw data, Data Nodes also handle TopN aggregation calc
 
 ### 1.2 Meta Nodes
 
-Meta Nodes are responsible for maintaining high-level metadata of the cluster, which includes:
+Meta Nodes is implemented by etcd. They are responsible for maintaining high-level metadata of the cluster, which includes:
 
 - All nodes in the cluster
 - All database schemas
@@ -51,6 +51,10 @@ All nodes within a BanyanDB cluster communicate with other nodes according to th
 - Data Nodes store and manage the raw time series data and communicate with Meta Nodes.
 - Query Nodes interact with Data Nodes to execute queries and return results to the Liaison Nodes.
 - Liaison Nodes distribute incoming requests to the appropriate Query Nodes or Data Nodes.
+
+### Nodes Discovery
+
+All nodes in the cluster are discovered by the Meta Nodes. When a node starts up, it registers itself with the Meta Nodes. The Meta Nodes then share this information with the Liaison Nodes and Query Nodes, which use it to route requests to the appropriate nodes.
 
 ## 3. **Data Organization**
 

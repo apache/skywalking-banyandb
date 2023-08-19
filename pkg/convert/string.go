@@ -15,36 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package convert
 
-package banyandb.database.v1;
+import (
+	"reflect"
+	"unsafe"
+)
 
-import "banyandb/common/v1/common.proto";
-import "banyandb/database/v1/database.proto";
-import "google/protobuf/timestamp.proto";
-
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-option java_package = "org.apache.skywalking.banyandb.database.v1";
-
-enum Action {
-  ACTION_UNSPECIFIED = 0;
-  ACTION_PUT = 1;
-  ACTION_DELETE = 2;
+// StringToBytes converts string to bytes.
+func StringToBytes(s string) (b []byte) {
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	bh.Data = sh.Data
+	bh.Cap = sh.Len
+	bh.Len = sh.Len
+	return b
 }
 
-message ShardEvent {
-  Shard shard = 1;
-  Action action = 2;
-  google.protobuf.Timestamp time = 3;
-}
-
-message EntityEvent {
-  common.v1.Metadata subject = 1;
-  message TagLocator {
-    uint32 family_offset = 1;
-    uint32 tag_offset = 2;
-  }
-  repeated TagLocator entity_locator = 2;
-  Action action = 3;
-  google.protobuf.Timestamp time = 4;
+// BytesToString converts bytes to string.
+func BytesToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }

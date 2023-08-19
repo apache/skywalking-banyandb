@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -41,11 +40,11 @@ var (
 	seriesID100  = newSeriesIDList(100)
 	seriesID500  = newSeriesIDList(500)
 	seriesID1000 = newSeriesIDList(1000)
-	callback     = func(seriesID common.GlobalSeriesID, t time.Time, bytes []byte, err error) {}
+	callback     = func(seriesID []byte, t time.Time, bytes []byte, err error) {}
 )
 
 func Benchmark_SeriesID_1(b *testing.B) {
-	wal := newWAL(nil)
+	wal := newWAL(&Options{SyncFlush: true})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1
@@ -53,13 +52,13 @@ func Benchmark_SeriesID_1(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_20(b *testing.B) {
-	wal := newWAL(nil)
+	wal := newWAL(&Options{SyncFlush: true})
 	defer closeWAL(wal)
 
 	seriesID := seriesID20
@@ -67,13 +66,13 @@ func Benchmark_SeriesID_20(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_100(b *testing.B) {
-	wal := newWAL(nil)
+	wal := newWAL(&Options{SyncFlush: true})
 	defer closeWAL(wal)
 
 	seriesID := seriesID100
@@ -81,13 +80,13 @@ func Benchmark_SeriesID_100(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_500(b *testing.B) {
-	wal := newWAL(nil)
+	wal := newWAL(&Options{SyncFlush: true})
 	defer closeWAL(wal)
 
 	seriesID := seriesID500
@@ -95,13 +94,13 @@ func Benchmark_SeriesID_500(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000(b *testing.B) {
-	wal := newWAL(nil)
+	wal := newWAL(&Options{SyncFlush: true})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -109,13 +108,13 @@ func Benchmark_SeriesID_1000(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_64K(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 64})
+	wal := newWAL(&Options{SyncFlush: true, BufferSize: 1024 * 64})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -123,13 +122,13 @@ func Benchmark_SeriesID_1000_Buffer_64K(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_128K(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 128})
+	wal := newWAL(&Options{SyncFlush: true, BufferSize: 1024 * 128})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -137,13 +136,13 @@ func Benchmark_SeriesID_1000_Buffer_128K(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_512K(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 512})
+	wal := newWAL(&Options{SyncFlush: true, BufferSize: 1024 * 512})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -151,13 +150,13 @@ func Benchmark_SeriesID_1000_Buffer_512K(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_1MB(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 1024})
+	wal := newWAL(&Options{SyncFlush: true, BufferSize: 1024 * 1024})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -165,13 +164,13 @@ func Benchmark_SeriesID_1000_Buffer_1MB(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_2MB(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 1024 * 2})
+	wal := newWAL(&Options{SyncFlush: true, BufferSize: 1024 * 1024 * 2})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -179,13 +178,13 @@ func Benchmark_SeriesID_1000_Buffer_2MB(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 64, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 64, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -193,13 +192,13 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_128K_NoSyncFlush(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 128, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 128, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -207,13 +206,13 @@ func Benchmark_SeriesID_1000_Buffer_128K_NoSyncFlush(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_512K_NoSyncFlush(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 512, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 512, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -221,13 +220,13 @@ func Benchmark_SeriesID_1000_Buffer_512K_NoSyncFlush(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_1MB_NoSyncFlush(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 1024, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 1024, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -235,13 +234,13 @@ func Benchmark_SeriesID_1000_Buffer_1MB_NoSyncFlush(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_2MB_NoSyncFlush(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 1024 * 2, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 1024 * 2, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -249,13 +248,13 @@ func Benchmark_SeriesID_1000_Buffer_2MB_NoSyncFlush(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), data[i%dataLen].binary, callback)
 	}
 	b.StopTimer()
 }
 
 func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_16MB(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 64, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 64, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -281,7 +280,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_16MB(b *testing.B
 	}()
 	for i := 0; i < b.N; i++ {
 		binaryData = data[i%dataLen].binary
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), binaryData, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), binaryData, callback)
 
 		logVolume += seriesIDVolume + timeVolume + len(binaryData)
 		if logVolume >= rotateSize {
@@ -293,7 +292,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_16MB(b *testing.B
 }
 
 func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_32MB(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 64, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 64, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -319,7 +318,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_32MB(b *testing.B
 	}()
 	for i := 0; i < b.N; i++ {
 		binaryData = data[i%dataLen].binary
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), binaryData, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), binaryData, callback)
 
 		logVolume += seriesIDVolume + timeVolume + len(binaryData)
 		if logVolume >= rotateSize {
@@ -331,7 +330,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_32MB(b *testing.B
 }
 
 func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_64MB(b *testing.B) {
-	wal := newWAL(&Options{BufferSize: 1024 * 64, NoSync: true})
+	wal := newWAL(&Options{BufferSize: 1024 * 64, SyncFlush: false})
 	defer closeWAL(wal)
 
 	seriesID := seriesID1000
@@ -357,7 +356,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_64MB(b *testing.B
 	}()
 	for i := 0; i < b.N; i++ {
 		binaryData = data[i%dataLen].binary
-		wal.Write(seriesID[i%seriesIDLen], time.UnixMilli(baseTime+1), binaryData, callback)
+		wal.Write(seriesID[i%seriesIDLen].key, time.UnixMilli(baseTime+1), binaryData, callback)
 
 		logVolume += seriesIDVolume + timeVolume + len(binaryData)
 		if logVolume >= rotateSize {
@@ -398,13 +397,14 @@ func closeWAL(wal WAL) {
 	}
 }
 
-func newSeriesIDList(series int) []common.GlobalSeriesID {
-	var seriesIDSet []common.GlobalSeriesID
+type SeriesID struct {
+	key []byte
+}
+
+func newSeriesIDList(series int) []SeriesID {
+	var seriesIDSet []SeriesID
 	for i := 0; i < series; i++ {
-		seriesID := common.GlobalSeriesID{
-			SeriesID: common.SeriesID(i),
-			Name:     fmt.Sprintf("series-%d", i),
-		}
+		seriesID := SeriesID{key: []byte(fmt.Sprintf("series-%d", i))}
 		seriesIDSet = append(seriesIDSet, seriesID)
 	}
 	return seriesIDSet
