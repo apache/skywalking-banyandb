@@ -19,7 +19,7 @@
 
 <script setup>
 import RigheMenu from '@/components/RightMenu/index.vue'
-import { deleteIndexRuleOrIndexRuleBinding, getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup, createResources } from '@/api/index'
+import { deleteIndexRuleOrIndexRuleBinding, getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
@@ -270,6 +270,11 @@ function getGroupLists() {
                 let group = res.data.group
                 data.groupLists = group
                 deleteOtherGroup()
+                if (props.type == 'property') {
+                    data.showSearch = true
+                    $loadingClose()
+                    return
+                }
                 let promise = data.groupLists.map((item) => {
                     let type = props.type
                     let name = item.metadata.name
@@ -339,7 +344,7 @@ function deleteOtherGroup() {
     let flag = {
         'CATALOG_MEASURE': 'measure',
         'CATALOG_STREAM': 'stream',
-        'STRATEGY_UNSPECIFIED': 'property'
+        'CATALOG_UNSPECIFIED': 'property'
     }
     for (let i = 0; i < data.groupLists.length; i++) {
         let type = flag[data.groupLists[i].catalog]
@@ -351,6 +356,25 @@ function deleteOtherGroup() {
 }
 // to resources
 function openResources(index, childIndex) {
+    if (props.type == 'property') {
+        const group = data.groupLists[index].metadata.name
+        const route = {
+            name: 'property',
+            params: {
+                group: group,
+                operator: 'read',
+                type: props.type
+            }
+        }
+        router.push(route)
+        const add = {
+            label: group,
+            type: 'Read',
+            route
+        }
+        data.active = `${group}`
+        return $bus.emit('AddTabs', add)
+    }
     const group = data.groupLists[index].children[childIndex].metadata.group
     const name = data.groupLists[index].children[childIndex].metadata.name
     const route = {
@@ -409,11 +433,13 @@ function shrinkDown(e) {
 function rightClickGroup(e, index) {
     data.rightMenuList = groupMenu
     if (props.type == 'measure') {
-        data.rightMenuList.push({
+        const rightMenuList = JSON.parse(JSON.stringify(groupMenu))
+        rightMenuList.push({
             icon: "el-icon-document",
             name: "new resources",
             id: "create resources"
         })
+        data.rightMenuList = rightMenuList
     }
     data.clickIndex = index
     data.rightClickType = 'group'
@@ -821,7 +847,10 @@ $bus.on('changeIsCollapse', (obj) => {
     emit('setWidth', obj.width)
 })
 $bus.on('changeAside', (obj) => {
-    data.activeMenu = `${obj.group}-${obj.name}`
+    if (obj.group && obj.name)
+        data.activeMenu = `${obj.group}-${obj.name}`
+    else
+        data.activeMenu = `${obj.group}`
 })
 $bus.on('resetAside', () => {
     data.activeMenu = ''
@@ -832,7 +861,6 @@ $bus.on('resetAside', () => {
 $bus.on('refreshAside', () => {
     getGroupLists()
 })
-
 getGroupLists()
 initActiveMenu()
 
@@ -842,12 +870,23 @@ initActiveMenu()
 <template>
     <div style="display: flex; flex-direction: column; width: 100%;">
         <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
-            <el-input v-if="data.showSearch && props.type == 'measure'" class="aside-search" v-model="data.search"
+            <el-input v-if="data.showSearch && props.type != 'stream'" class="aside-search" v-model="data.search"
                 placeholder="Search" :prefix-icon="Search" clearable />
             <el-menu v-if="data.groupLists.length > 0" :collapse="data.isCollapse" :default-active="data.activeMenu">
                 <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
                     @contextmenu.prevent="rightClickGroup($event, index)">
-                    <el-sub-menu :index="`${item.metadata.name}-${index}`">
+                    <el-menu-item v-if="props.type == 'property'" @click="openResources(index)"
+                        :index="`${item.metadata.name}`">
+                        <template #title>
+                            <el-icon>
+                                <Document />
+                            </el-icon>
+                            <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">
+                                {{ item.metadata.name }}
+                            </span>
+                        </template>
+                    </el-menu-item>
+                    <el-sub-menu v-else :index="`${item.metadata.name}-${index}`">
                         <template #title>
                             <el-icon>
                                 <Folder />
@@ -958,6 +997,25 @@ initActiveMenu()
                                 </div>
                             </div>
                         </div>
+                        <!-- <div v-if="props.type == 'property'">
+                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.id">
+                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
+                                    <el-menu-item
+                                        :index="`${child.metadata.container.group}-${child.metadata.container.name}`"
+                                        @click="openResources(index, childIndex)">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.container.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.container.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </div> -->
                     </el-sub-menu>
                 </div>
             </el-menu>
@@ -980,6 +1038,7 @@ initActiveMenu()
                     <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
                         <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
                         <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
+                        <el-option label="CATALOG_UNSPECIFIED" value="CATALOG_UNSPECIFIED"></el-option>
                     </el-select>
                 </el-form-item>
                 <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">

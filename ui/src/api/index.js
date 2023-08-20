@@ -141,30 +141,37 @@ export function deleteIndexRuleOrIndexRuleBinding(type, group, name) {
     })
 }
 
+export function getPropertyByGroup(group) {
+    return request({
+        url: `/api/v1/property/lists/${group}`,
+        method: 'get'
+    })
+}
+
 export function getPropertyList(group, name, ids, tags) {
     return request({
-        url: `/v1/property/lists/${group}/${name}/${ids}/${tags}`,
+        url: `/api/v1/property/lists/${group}/${name}/${ids}/${tags}`,
         method: 'get'
     })
 }
 
 export function getPropertyDetail(group, name, id, tags) {
     return request({
-        url: `/v1/property/${group}/${name}/${id}/${tags}`,
+        url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
         method: 'get'
     })
 }
 
 export function deleteProperty(group, name, id, tags) {
     return request({
-        url: `/v1/property/${group}/${name}/${id}/${tags}`,
+        url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
         method: 'delete'
     })
 }
 
 export function applyProperty(group, name, id, data) {
     return request({
-        url: `/v1/property/${group}/${name}/${id}`,
+        url: `/api/v1/property/${group}/${name}/${id}`,
         method: 'put',
         data: data
     })

@@ -33,9 +33,8 @@ const data = reactive({
 function tabClick() {
     router.push(data.tabsList[data.activeTabIndex].route)
     const group = data.tabsList[data.activeTabIndex].route.params.group
-    const name = data.tabsList[data.activeTabIndex].route.params.name
-
-    if (group && name) {
+    const name = data.tabsList[data.activeTabIndex].route.params.name ? data.tabsList[data.activeTabIndex].route.params.name : null
+    if (group) {
         $bus.emit('changeAside', { group, name })
     }
 }
@@ -67,7 +66,7 @@ function initData() {
     const add = { route: routeData }
     if (operator == 'read') {
         routeData.name = type
-        add.label = name
+        add.label = type == 'property' ? group : name
         add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Read-${type}` : 'Read'
     } else if (operator == 'edit') {
         routeData.name = `edit-${type}`
@@ -79,6 +78,7 @@ function initData() {
         add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Create-${type}` : 'Create'
     }
     data.tabsList.push(add)
+    $bus.emit('changeAside', { group, name })
 }
 $bus.on('AddTabs', (tab) => {
     const index = data.tabsList.findIndex(item => {

@@ -19,7 +19,6 @@
 
 <script setup>
 import Aside from '@/components/Aside/index.vue'
-import propertyAside from '@/components/Aside/propertyAside.vue';
 import TopNav from '@/components/TopNav/index.vue'
 import { reactive } from 'vue';
 
@@ -36,7 +35,7 @@ function setWidth(width) {
   <div class="size">
     <el-container>
       <el-aside :width="data.width" class="bd-top flex" style="position:relative; background-color: white;">
-        <propertyAside type="property" @setWidth="setWidth"></propertyAside>
+        <Aside type="property" @setWidth="setWidth"></Aside>
       </el-aside>
       <el-main>
         <TopNav></TopNav>
