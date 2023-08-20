@@ -16,10 +16,16 @@ const data = reactive({
 })
 const getProperty = () => {
     $loadingCreate()
-    getPropertyByGroup(route.params.group)
+    const group = route.params.group
+    getPropertyByGroup(group)
         .then(res => {
-            if (res.status == 200) {
-                
+            if (res.status == 200 && group == route.params.group) {
+                data.tableData = res.data.property.map(item => {
+                    item.tags.forEach(tag => {
+                        tag.value = JSON.stringify(tag.value)
+                    })
+                    return item
+                })
             }
         })
         .catch((err) => {
@@ -36,8 +42,13 @@ const getProperty = () => {
 const openAddProperty = () => {
 
 }
+const deleteTableData = () => {
+
+}
 watch(() => route, () => {
     data.group = route.params.group
+    data.tableData = []
+    getProperty()
 }, {
     deep: true,
     immediate: true
@@ -60,16 +71,25 @@ onMounted(() => {
             <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Add
                 Property</el-button>
             <el-table :data="data.tableData" style="width: 100%; margin-top: 20px;" border>
-                <el-table-column label="container.group" prop="containerGroup"></el-table-column>
-                <el-table-column label="container.name" prop="containerName"></el-table-column>
-                <el-table-column label="container.ID" prop="containerId"></el-table-column>
-                <el-table-column label="container.modRevision" prop="containerModRevision"></el-table-column>
-                <el-table-column label="container.createRevision" prop="containerCreateRevision"></el-table-column>
-                <el-table-column label="ID" prop="containerCreateRevision"></el-table-column>
-                <el-table-column label="tags.configuration" prop="containerCreateRevision"></el-table-column>
-                <el-table-column label="tags.disabled" prop="containerCreateRevision"></el-table-column>
-                <el-table-column label="tags.update_time" prop="containerCreateRevision"></el-table-column>
-                <el-table-column label="Operator">
+                <el-table-column label="Container">
+                    <el-table-column label="Group" prop="metadata.container.group" width="100"></el-table-column>
+                    <el-table-column label="Name" prop="metadata.container.name" width="120"></el-table-column>
+                    <el-table-column label="ID" prop="metadata.container.id" width="100"></el-table-column>
+                    <el-table-column label="ModRevision" prop="metadata.container.modRevision"
+                        width="120"></el-table-column>
+                    <el-table-column label="CreateRevision" prop="metadata.container.createRevision"
+                        width="140"></el-table-column>
+                </el-table-column>
+                <el-table-column label="ID" prop="metadata.id" width="150"></el-table-column>
+                <el-table-column label="Tags">
+                    <template #default="scope">
+                        <el-table :data="scope.row.tags">
+                            <el-table-column label="Key" prop="key" width="150"></el-table-column>
+                            <el-table-column label="Value" prop="value"></el-table-column>
+                        </el-table>
+                    </template>
+                </el-table-column>
+                <el-table-column label="Operator" width="150">
                     <template #default="scope">
                         <el-button link type="primary" @click.prevent="openEditField(scope.$index)"
                             style="color: var(--color-main); font-weight: bold;">Edit</el-button>
