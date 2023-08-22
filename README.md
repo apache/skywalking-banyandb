@@ -17,6 +17,13 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 
 The database research community usually uses [RUM conjecture](http://daslab.seas.harvard.edu/rum-conjecture/) to describe how a database access data. BanyanDB combines several access methods to build a comprehensive APM database to balance read cost, update cost, and memory overhead.
 
+## Contact us
+
+* Submit [an issue](https://github.com/apache/skywalking/issues/new) by selecting the [BanyanDB](https://github.com/apache/skywalking/issues?q=is%3Aopen+is%3Aissue+label%3Adatabase) component.
+* Mail list: **dev@skywalking.apache.org**. Mail to dev-subscribe@skywalking.apache.org, follow the reply to subscribe the mail list.
+* Join `skywalking` channel at [Apache Slack](http://s.apache.org/slack-invite). If the link is not working, find the latest one at [Apache INFRA WIKI](https://cwiki.apache.org/confluence/display/INFRA/Slack+Guest+Invites).
+* Twitter, [ASFSkyWalking](https://twitter.com/ASFSkyWalking)
+
 ## Documents
 
 [Documents](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
