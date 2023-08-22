@@ -21,7 +21,8 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 
 * Submit [an issue](https://github.com/apache/skywalking/issues/new) by selecting the [BanyanDB](https://github.com/apache/skywalking/issues?q=is%3Aopen+is%3Aissue+label%3Adatabase) component.
 * Mail list: **dev@skywalking.apache.org**. Mail to dev-subscribe@skywalking.apache.org, follow the reply to subscribe the mail list.
-* Join `skywalking` channel at [Apache Slack](http://s.apache.org/slack-invite). If the link is not working, find the latest one at [Apache INFRA WIKI](https://cwiki.apache.org/confluence/display/INFRA/Slack+Guest+Invites).
+* Send `Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
+* For Chinese speaker, send `[CN] Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
 * Twitter, [ASFSkyWalking](https://twitter.com/ASFSkyWalking)
 
 ## Documents
