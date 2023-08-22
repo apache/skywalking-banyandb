@@ -20,7 +20,6 @@ package schema
 import (
 	"context"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -41,9 +40,7 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, streamKeyPrefix), func() proto.Message {
-		return &databasev1.Stream{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, streamKeyPrefix), KindStream)
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,7 @@ Release Notes.
 - Fix timer not released
 - BanyanDB ui misses fields when creating a group
 - Fix data duplicate writing
+- Syncing metadata change events from etcd instead of a local channel.
 
 ### Chores
 

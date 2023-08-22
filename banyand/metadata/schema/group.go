@@ -65,25 +65,23 @@ func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, 
 }
 
 func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, error) {
-	g, err := e.GetGroup(ctx, group)
+	_, err := e.GetGroup(ctx, group)
 	if err != nil {
 		return false, errors.Wrap(err, group)
 	}
-	keyPrefix := groupsKeyPrefix + g.GetMetadata().GetName() + "/"
-	resp, err := e.client.Delete(ctx, keyPrefix, clientv3.WithRange(incrementLastByte(keyPrefix)))
+	keysToDelete := allKeys()
+	deleteOPs := make([]clientv3.Op, 0, len(keysToDelete)+1)
+	for _, key := range keysToDelete {
+		deleteOPs = append(deleteOPs, clientv3.OpDelete(listPrefixesForEntity(group, key), clientv3.WithPrefix()))
+	}
+	deleteOPs = append(deleteOPs, clientv3.OpDelete(formatGroupKey(group), clientv3.WithPrefix()))
+	txnResponse, err := e.client.Txn(ctx).Then(deleteOPs...).Commit()
 	if err != nil {
 		return false, err
 	}
-	if resp.Deleted > 0 {
-		e.notifyDelete(Metadata{
-			TypeMeta: TypeMeta{
-				Kind: KindGroup,
-				Name: group,
-			},
-			Spec: g,
-		})
+	if !txnResponse.Succeeded {
+		return false, errConcurrentModification
 	}
-
 	return true, nil
 }
 

@@ -20,10 +20,8 @@ package measure
 import (
 	"context"
 	"path"
-	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -107,79 +105,23 @@ func (s *service) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) PreRun(ctx context.Context) error {
+func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	ctxGroup, cancelGroup := context.WithTimeout(ctx, 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctxGroup)
-	cancelGroup()
-	if err != nil {
-		return err
-	}
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
 		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
-	for _, g := range groups {
-		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
-			continue
-		}
-		gp, innerErr := s.schemaRepo.StoreGroup(g.Metadata)
-		if innerErr != nil {
-			return innerErr
-		}
-		ctxMeasure, cancelMeasure := context.WithTimeout(ctx, 5*time.Second)
-		allMeasureSchemas, innerErr := s.metadata.MeasureRegistry().
-			ListMeasure(ctxMeasure, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
-		cancelMeasure()
-		if innerErr != nil {
-			return innerErr
-		}
-		for _, measureSchema := range allMeasureSchemas {
-			// sanity check before calling StoreResource
-			// since StoreResource may be called inside the event loop
-			if checkErr := s.sanityCheck(ctx, gp, measureSchema); checkErr != nil {
-				return checkErr
-			}
-			if _, innerErr := gp.StoreResource(ctx, measureSchema); innerErr != nil {
-				return innerErr
-			}
-		}
-	}
 	// run a serial watcher
 	go s.schemaRepo.Watcher()
 	s.metadata.
-		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
 			&s.schemaRepo)
-
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
-	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func (s *service) sanityCheck(ctx context.Context, group resourceSchema.Group, measureSchema *databasev1.Measure) error {
-	var topNAggrs []*databasev1.TopNAggregation
-	ctxLocal, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctxLocal, measureSchema.GetMetadata())
-	if err != nil || len(topNAggrs) == 0 {
-		return err
-	}
-
-	for _, topNAggr := range topNAggrs {
-		topNMeasure, innerErr := createOrUpdateTopNMeasure(ctx, s.metadata.MeasureRegistry(), topNAggr)
-		err = multierr.Append(err, innerErr)
-		if topNMeasure != nil {
-			_, storeErr := group.StoreResource(ctx, topNMeasure)
-			if storeErr != nil {
-				err = multierr.Append(err, storeErr)
-			}
-		}
-	}
-
-	return err
 }
 
 func (s *service) Serve() run.StopNotify {

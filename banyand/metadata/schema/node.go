@@ -20,8 +20,6 @@ package schema
 import (
 	"context"
 
-	"google.golang.org/protobuf/proto"
-
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
@@ -31,9 +29,7 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role)
 	if role == databasev1.Role_ROLE_UNSPECIFIED {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, func() proto.Message {
-		return &databasev1.Node{}
-	})
+	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, KindNode)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +50,7 @@ func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.
 	return e.register(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindNode,
-			Name: node.Name,
+			Name: node.Metadata.Name,
 		},
 		Spec: node,
 	})
