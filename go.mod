@@ -44,6 +44,8 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
+require github.com/golang/mock v1.6.0
+
 require (
 	github.com/axiomhq/hyperloglog v0.0.0-20191112132149-a4c4c47bc57f // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
