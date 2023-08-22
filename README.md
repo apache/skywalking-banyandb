@@ -1,6 +1,10 @@
 # BanyanDB
 
-![](https://github.com/apache/skywalking-banyandb/workflows/Build/badge.svg?branch=main)
+[![Continuous Integration](https://github.com/apache/skywalking-banyandb/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/apache/skywalking-banyandb/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/apache/skywalking-banyandb)](https://goreportcard.com/report/github.com/apache/skywalking-banyandb)
+[![GitHub release](https://img.shields.io/github/tag/apache/skywalking-banyandb.svg?label=release)](https://github.com/apache/skywalking-banyandb/releases)
+[![GitHub release date](https://img.shields.io/github/release-date/apache/skywalking-banyandb.svg)](https://github.com/apache/skywalking-banyandb/releases)
+[![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/apache/skywalking-banyandb)
 
 ![](./assets/banyandb_small.jpg)
 
@@ -74,4 +78,4 @@ For developers who want to contribute to this project, see the [Contribution Gui
 
 ## License
 
-[Apache 2.0 License.](/LICENSE)
+[Apache 2.0 License.](LICENSE)
