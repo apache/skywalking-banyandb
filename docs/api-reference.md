@@ -335,7 +335,7 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 | roles | [Role](#banyandb-database-v1-Role) | repeated |  |
 | grpc_address | [string](#string) |  |  |
 | http_address | [string](#string) |  |  |

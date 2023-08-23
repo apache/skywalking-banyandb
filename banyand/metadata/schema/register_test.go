@@ -25,6 +25,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -41,7 +42,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			Name: "test",
 			Kind: KindNode,
 		},
-		Spec: &databasev1.Node{},
+		Spec: &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: "test",
+			},
+		},
 	}
 	ginkgo.BeforeEach(func() {
 		goods = gleak.Goroutines()

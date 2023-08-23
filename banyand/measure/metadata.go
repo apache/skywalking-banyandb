@@ -93,7 +93,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 			cancel()
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -107,7 +106,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		defer cancel()
 		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to get subjects(measure)")
 			return
 		}
 		for _, sub := range subjects {
@@ -121,7 +119,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		// createOrUpdate TopN schemas in advance
 		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
 			return
 		}
 		// reload source measure
@@ -231,7 +228,6 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 				Group: metadata.Group,
 			})
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			// we should update instead of delete
@@ -245,7 +241,6 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	case schema.KindTopNAggregation:
 		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to remove topN measure")
 			return
 		}
 		// we should update instead of delete

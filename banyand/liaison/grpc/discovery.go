@@ -130,8 +130,8 @@ func (ds *discoveryService) initialize(ctx context.Context) error {
 			return fmt.Errorf("unsupported kind: %d", ds.kind)
 		}
 	}
-	ds.metadataRepo.RegisterHandler(schema.KindShard, ds.shardRepo)
-	ds.metadataRepo.RegisterHandler(ds.kind, ds.entityRepo)
+	ds.metadataRepo.RegisterHandler("liaison", schema.KindShard, ds.shardRepo)
+	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	return nil
 }
 

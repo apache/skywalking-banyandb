@@ -34,7 +34,7 @@ enum Role {
 }
 
 message Node {
-  string name = 1;
+  common.v1.Metadata metadata = 1;
   repeated Role roles = 2;
   string grpc_address = 3;
   string http_address = 4;

@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -63,9 +62,7 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 	if container.Group == "" {
 		return nil, BadRequest("container.group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group, propertyKeyPrefix+container.Name), func() proto.Message {
-		return &propertyv1.Property{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group+"/"+container.Name, propertyKeyPrefix), KindProperty)
 	if err != nil {
 		return nil, err
 	}

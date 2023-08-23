@@ -99,16 +99,17 @@ func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	units := []run.Unit{
 		pipeline,
 		metaSvc,
-		streamSvc,
-		measureSvc,
-		q,
-		tcp,
-		httpServer,
 	}
 	for _, sl := range schemaLoaders {
 		sl.SetMeta(metaSvc)
 		units = append(units, sl)
 	}
+	units = append(units,
+		streamSvc,
+		measureSvc,
+		q,
+		tcp,
+		httpServer)
 
 	return test.SetupModules(
 		flags,

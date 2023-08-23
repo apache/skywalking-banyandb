@@ -83,7 +83,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	ctxRegister, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 	if err = s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
-		Name:        node.NodeID,
+		Metadata: &commonv1.Metadata{
+			Name: node.NodeID,
+		},
 		GrpcAddress: node.GrpcAddress,
 		HttpAddress: node.HTTPAddress,
 		Roles:       nodeRoles,
@@ -92,7 +94,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		return err
 	}
 	s.alc = newAllocator(s.schemaRegistry, logger.GetLogger(s.Name()).Named("allocator"))
-	s.schemaRegistry.RegisterHandler(schema.KindGroup|schema.KindNode, s.alc)
+	s.schemaRegistry.RegisterHandler("shard-allocator", schema.KindGroup|schema.KindNode, s.alc)
 	return nil
 }
 
@@ -106,8 +108,8 @@ func (s *clientService) GracefulStop() {
 	_ = s.schemaRegistry.Close()
 }
 
-func (s *clientService) RegisterHandler(kind schema.Kind, handler schema.EventHandler) {
-	s.schemaRegistry.RegisterHandler(kind, handler)
+func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
+	s.schemaRegistry.RegisterHandler(name, kind, handler)
 }
 
 func (s *clientService) StreamRegistry() schema.Stream {

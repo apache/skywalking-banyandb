@@ -47,7 +47,7 @@ type Repo interface {
 	TopNAggregationRegistry() schema.TopNAggregation
 	PropertyRegistry() schema.Property
 	ShardRegistry() schema.Shard
-	RegisterHandler(schema.Kind, schema.EventHandler)
+	RegisterHandler(string, schema.Kind, schema.EventHandler)
 }
 
 // Service is the metadata repository.

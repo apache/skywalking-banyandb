@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -58,9 +57,7 @@ func (e *etcdSchemaRegistry) ListShard(ctx context.Context, opt ListOpt) ([]*dat
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, shardKeyPrefix), func() proto.Message {
-		return &databasev1.Shard{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, shardKeyPrefix), KindShard)
 	if err != nil {
 		return nil, err
 	}
