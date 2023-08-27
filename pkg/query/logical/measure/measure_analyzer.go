@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -27,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-const defaultLimit uint32 = 100
+const defaultLimit int64 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
 func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
@@ -54,61 +55,67 @@ func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
-	groupByEntity := false
+func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+	groupByEntity := true
 	var groupByTags [][]*logical.Tag
-	if criteria.GetGroupBy() != nil {
-		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
+	if request.GetGroupBy() != nil {
+		groupByProjectionTags := request.GetGroupBy().GetTagProjection()
 		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
 		tags := make([]string, 0)
 		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
 			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
 			tags = append(tags, tagFamily.GetTags()...)
 		}
-		if logical.StringSlicesEqual(s.EntityList(), tags) {
-			groupByEntity = true
+		if !logical.StringSlicesEqual(s.EntityList(), tags) {
+			groupByEntity = false
 		}
 	}
 
 	// parse fields
-	plan := parseFields(criteria, metadata, groupByEntity)
+	plan := parseFields(request, metadata, groupByEntity)
 
 	// parse limit and offset
-	limitParameter := criteria.GetLimit()
+	limitParameter := request.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
-	pushedLimit := int(limitParameter + criteria.GetOffset())
+	pushedLimit := limitParameter + request.GetOffset()
 
-	if criteria.GetGroupBy() != nil {
+	if request.GetGroupBy() != nil {
 		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
 		pushedLimit = math.MaxInt
 	}
 
-	if criteria.GetAgg() != nil {
+	if request.GetAgg() != nil {
 		plan = newUnresolvedAggregation(plan,
-			logical.NewField(criteria.GetAgg().GetFieldName()),
-			criteria.GetAgg().GetFunction(),
-			criteria.GetGroupBy() != nil,
+			logical.NewField(request.GetAgg().GetFieldName()),
+			request.GetAgg().GetFunction(),
+			request.GetGroupBy() != nil,
 		)
 		pushedLimit = math.MaxInt
 	}
 
-	if criteria.GetTop() != nil {
-		plan = top(plan, criteria.GetTop())
+	if request.GetTop() != nil {
+		plan = top(plan, request.GetTop())
 	}
 
-	plan = limit(plan, criteria.GetOffset(), limitParameter)
+	if request.GetLimit() != -1 {
+		plan = limit(plan, uint32(request.GetOffset()), uint32(limitParameter))
+	}
+
 	p, err := plan.Analyze(s)
 	if err != nil {
 		return nil, err
 	}
-	rules := []logical.OptimizeRule{
-		logical.NewPushDownOrder(criteria.OrderBy),
-		logical.NewPushDownMaxSize(pushedLimit),
-	}
-	if err := logical.ApplyRules(p, rules...); err != nil {
-		return nil, err
+
+	if !request.IsTop() {
+		rules := []logical.OptimizeRule{
+			logical.NewPushDownOrder(request.GetOrderBy()),
+			logical.NewPushDownMaxSize(int(pushedLimit)),
+		}
+		if err := logical.ApplyRules(p, rules...); err != nil {
+			return nil, err
+		}
 	}
 	return p, nil
 }
@@ -117,12 +124,166 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards
 // 2 - If criteria is given, but all of those fields exist in the "entity" definition.
-func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, groupByEntity bool) logical.UnresolvedPlan {
-	projFields := make([]*logical.Field, len(criteria.GetFieldProjection().GetNames()))
-	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
+func parseFields(criteria *WrapRequest, metadata *commonv1.Metadata, groupByEntity bool) logical.UnresolvedPlan {
+	projFields := make([]*logical.Field, len(criteria.GetFieldProjection()))
+	for i, fieldNameProj := range criteria.GetFieldProjection() {
 		projFields[i] = logical.NewField(fieldNameProj)
 	}
 	timeRange := criteria.GetTimeRange()
 	return indexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		logical.ToTags(criteria.GetTagProjection()), projFields, groupByEntity, criteria.GetCriteria())
+		logical.ToTags(criteria.GetTagProjection()), projFields, groupByEntity, criteria.GetCriteria(), criteria.GetFieldValueSort(), criteria.IsTop())
+}
+
+type WrapRequest struct {
+	*measurev1.QueryRequest
+	*measurev1.TopNRequest
+	projField string
+	projTag   []string
+}
+
+func (wr *WrapRequest) GetMetadata() *commonv1.Metadata {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.Metadata
+	} else {
+		return wr.TopNRequest.Metadata
+	}
+}
+
+func (wr *WrapRequest) GetTimeRange() *modelv1.TimeRange {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.TimeRange
+	} else {
+		return wr.TopNRequest.TimeRange
+	}
+}
+
+func (wr *WrapRequest) IsTop() bool {
+	if wr.QueryRequest != nil {
+		return false
+	} else {
+		return true
+	}
+}
+
+func (wr *WrapRequest) GetFieldProjection() []string {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetFieldProjection().GetNames()
+	} else {
+		return []string{wr.projField}
+	}
+}
+
+func (wr *WrapRequest) SetFieldProjection(fieldName string) {
+	wr.projField = fieldName
+}
+
+func (wr *WrapRequest) GetTagProjection() *modelv1.TagProjection {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetTagProjection()
+	} else {
+		return &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{
+					Name: measure.TopNTagFamily,
+					Tags: wr.projTag,
+				},
+			},
+		}
+	}
+}
+
+func (wr *WrapRequest) SetTagProjection(projTag []string) {
+	wr.projTag = projTag
+}
+
+func (wr *WrapRequest) GetLimit() int64 {
+	if wr.QueryRequest != nil {
+		return int64(wr.QueryRequest.GetLimit())
+	} else {
+		return -1
+	}
+}
+
+func (wr *WrapRequest) GetGroupBy() *measurev1.QueryRequest_GroupBy {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetGroupBy()
+	} else {
+		return nil
+	}
+}
+
+func (wr *WrapRequest) GetAgg() *measurev1.QueryRequest_Aggregation {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetAgg()
+	} else {
+		return &measurev1.QueryRequest_Aggregation{
+			FieldName: wr.projField,
+			Function:  wr.TopNRequest.GetAgg(),
+		}
+	}
+}
+
+func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetTop()
+	} else {
+		return &measurev1.QueryRequest_Top{
+			Number:         wr.TopNRequest.TopN,
+			FieldName:      wr.projField,
+			FieldValueSort: wr.TopNRequest.GetFieldValueSort(),
+		}
+	}
+}
+
+func (wr *WrapRequest) GetOffset() int64 {
+	if wr.QueryRequest != nil {
+		return int64(wr.QueryRequest.GetOffset())
+	} else {
+		return 0
+	}
+}
+
+func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetOrderBy()
+	} else {
+		return nil
+	}
+}
+
+func (wr *WrapRequest) GetConditions1() *modelv1.Criteria {
+	if wr.QueryRequest != nil {
+		return wr.QueryRequest.GetCriteria()
+	} else {
+		return buildCriteria(wr.TopNRequest.GetConditions())
+	}
+}
+
+func (wr *WrapRequest) GetFieldValueSort() modelv1.Sort {
+	if wr.QueryRequest != nil {
+		return modelv1.Sort_SORT_UNSPECIFIED
+	} else {
+		return wr.TopNRequest.GetFieldValueSort()
+	}
+}
+
+func buildCriteria(conditions []*modelv1.Condition) *modelv1.Criteria {
+	var criteria *modelv1.Criteria
+	for _, cond := range conditions {
+		sub := &modelv1.Criteria{
+			Exp: &modelv1.Criteria_Le{
+				Le: &modelv1.LogicalExpression{
+					Op: modelv1.LogicalExpression_LOGICAL_OP_AND,
+					Left: &modelv1.Criteria{
+						Exp: &modelv1.Criteria_Condition{
+							Condition: cond,
+						},
+					},
+					Right: criteria,
+				},
+			},
+		}
+		criteria = sub
+	}
+	return criteria
 }

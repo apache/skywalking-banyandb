@@ -50,6 +50,7 @@ type StreamExecutable interface {
 type MeasureExecutionContext interface {
 	ExecutionContext
 	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
+	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
 }
 
 // MIterator allows iterating in a measure data set.

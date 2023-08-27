@@ -19,6 +19,7 @@ package measure
 
 import (
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -275,4 +276,21 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
 
 func (ami *aggAllIterator[N]) Close() error {
 	return ami.prev.Close()
+}
+
+type aggregatorItem[N aggregation.Number] struct {
+	aggrFunc aggregation.Func[N]
+	key      string
+	values   tsdb.EntityValues
+}
+
+func (n *aggregatorItem[N]) GetTags(tagNames []string) []*modelv1.Tag {
+	tags := make([]*modelv1.Tag, len(n.values))
+	for i := 0; i < len(tags); i++ {
+		tags[i] = &modelv1.Tag{
+			Key:   tagNames[i],
+			Value: n.values[i],
+		}
+	}
+	return tags
 }

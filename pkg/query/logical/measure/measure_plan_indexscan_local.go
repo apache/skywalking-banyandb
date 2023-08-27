@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"io"
 	"time"
 
@@ -44,9 +45,11 @@ type unresolvedIndexScan struct {
 	endTime          time.Time
 	metadata         *commonv1.Metadata
 	criteria         *modelv1.Criteria
+	sort             modelv1.Sort
 	projectionTags   [][]*logical.Tag
 	projectionFields []*logical.Field
 	groupByEntity    bool
+	isTopN           bool
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -69,13 +72,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	}
 
 	entityList := s.EntityList()
-	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, len(entityList))
-	for idx, e := range entityList {
-		entityMap[e] = idx
-		// fill AnyEntry by default
-		entity[idx] = tsdb.AnyEntry
-	}
+	entityMap, entity := uis.locateEntity(entityList)
 	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
@@ -90,8 +87,30 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		filter:               filter,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		isTopN:               uis.isTopN,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 	}, nil
+}
+
+func (uis *unresolvedIndexScan) locateEntity(entityList []string) (map[string]int, []tsdb.Entry) {
+	var pos int
+	if uis.isTopN {
+		pos = 2
+	}
+
+	entityMap := make(map[string]int)
+	entity := make([]tsdb.Entry, pos+len(entityList))
+	if uis.isTopN {
+		// sortDirection
+		entity[0] = convert.Int64ToBytes(int64(uis.sort.Number()))
+		// rankNumber
+		entity[1] = tsdb.AnyEntry
+	}
+	for idx, e := range entityList {
+		entityMap[e] = idx + pos
+		entity[idx+pos] = tsdb.AnyEntry
+	}
+	return entityMap, entity
 }
 
 var (
@@ -111,6 +130,7 @@ type localIndexScan struct {
 	projectionFieldsRefs []*logical.FieldRef
 	entities             []tsdb.Entity
 	groupByEntity        bool
+	isTopN               bool
 	maxDataPointsSize    int
 }
 
@@ -123,34 +143,55 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
-	var orderBy *tsdb.OrderBy
-	if i.order.Index != nil {
+	var (
+		orderBy    *tsdb.OrderBy
+		seriesList tsdb.SeriesList
+	)
+	if !i.isTopN && i.order.Index != nil {
 		orderBy = &tsdb.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
 	}
-	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
-		shards, errInternal := ec.Shards(e)
-		if errInternal != nil {
-			return nil, errInternal
-		}
-		for _, shard := range shards {
-			sl, errInternal := shard.Series().Search(
-				context.WithValue(
+		var (
+			shards      []tsdb.Shard
+			errInternal error
+		)
+		if i.isTopN {
+			shards, errInternal = ec.CompanionShards(i.metadata)
+			for _, shard := range shards {
+				sl, errInternal := shard.Series().List(context.WithValue(
 					context.Background(),
 					logger.ContextKey,
 					i.l,
-				),
-				tsdb.NewPath(e),
-				i.filter,
-				orderBy,
-			)
-			if errInternal != nil {
-				return nil, errInternal
+				), tsdb.NewPath(e))
+				if errInternal != nil {
+					return nil, errInternal
+				}
+				seriesList = seriesList.Merge(sl)
 			}
-			seriesList = seriesList.Merge(sl)
+		} else {
+			shards, errInternal = ec.Shards(e)
+			for _, shard := range shards {
+				sl, errInternal := shard.Series().Search(
+					context.WithValue(
+						context.Background(),
+						logger.ContextKey,
+						i.l,
+					),
+					tsdb.NewPath(e),
+					i.filter,
+					orderBy,
+				)
+				if errInternal != nil {
+					return nil, errInternal
+				}
+				seriesList = seriesList.Merge(sl)
+			}
+		}
+		if errInternal != nil {
+			return nil, errInternal
 		}
 	}
 	if len(seriesList) == 0 {
@@ -208,7 +249,7 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projectionTags [][]*logical.Tag,
-	projectionFields []*logical.Field, groupByEntity bool, criteria *modelv1.Criteria,
+	projectionFields []*logical.Field, groupByEntity bool, criteria *modelv1.Criteria, sort modelv1.Sort, isTopN bool,
 ) logical.UnresolvedPlan {
 	return &unresolvedIndexScan{
 		startTime:        startTime,
@@ -218,6 +259,8 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 		projectionFields: projectionFields,
 		groupByEntity:    groupByEntity,
 		criteria:         criteria,
+		sort:             sort,
+		isTopN:           isTopN,
 	}
 }
 

@@ -141,7 +141,8 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	plan, err := logical_measure.Analyze(context.TODO(), queryCriteria, meta, s)
+	wrapRequest := &logical_measure.WrapRequest{QueryRequest: queryCriteria}
+	plan, err := logical_measure.Analyze(context.TODO(), wrapRequest, meta, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return

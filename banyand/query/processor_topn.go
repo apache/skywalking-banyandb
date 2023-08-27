@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -84,6 +85,9 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Msg("fail to build schema")
 	}
 
+	wrapRequest := &logical_measure.WrapRequest{TopNRequest: request}
+	wrapRequest.SetFieldProjection(topNSchema.GetFieldName())
+	wrapRequest.SetTagProjection(sourceMeasure.GetSchema().GetEntity().GetTagNames())
 	plan, err := logical_topn.Analyze(context.TODO(), request, topNMetadata, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", meta.GetName(), err))
