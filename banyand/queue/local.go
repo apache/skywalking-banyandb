@@ -33,6 +33,14 @@ type local struct {
 	stopCh chan struct{}
 }
 
+// Local return a new local Queue.
+func Local() Queue {
+	return &local{
+		local:  bus.NewBus(),
+		stopCh: make(chan struct{}),
+	}
+}
+
 // GracefulStop implements Queue.
 func (l *local) GracefulStop() {
 	l.local.Close()
@@ -56,4 +64,22 @@ func (l *local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, er
 
 func (l local) Name() string {
 	return "local-pipeline"
+}
+
+func (l local) NewBatchPublisher() BatchPublisher {
+	return &localBatchPublisher{
+		local: l.local,
+	}
+}
+
+type localBatchPublisher struct {
+	local *bus.Bus
+}
+
+func (l *localBatchPublisher) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
+	return l.local.Publish(topic, message...)
+}
+
+func (l *localBatchPublisher) Close() error {
+	return nil
 }

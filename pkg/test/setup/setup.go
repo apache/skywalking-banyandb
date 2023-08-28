@@ -79,8 +79,7 @@ func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (str
 
 func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	pipeline := queue.Local()
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

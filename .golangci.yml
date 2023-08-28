@@ -68,6 +68,8 @@ linters-settings:
         alias: measurev1
       - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
         alias: streamv1
+      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
+        alias: clusterv1
       - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
         alias: pbv1
   lll:

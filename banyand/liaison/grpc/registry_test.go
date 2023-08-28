@@ -173,8 +173,7 @@ var _ = Describe("Registry", func() {
 
 func setupForRegistry() func() {
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
+	pipeline := queue.Local()
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())

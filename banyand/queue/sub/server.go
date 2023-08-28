@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package grpc implements the gRPC services defined by APIs.
-package grpc
+package sub
 
 import (
 	"context"
 	"net"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -35,14 +35,11 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -50,115 +47,46 @@ import (
 const defaultRecvSize = 10 << 20
 
 var (
-	errServerCert        = errors.New("invalid server cert file")
-	errServerKey         = errors.New("invalid server key file")
-	errNoAddr            = errors.New("no address")
-	errQueryMsg          = errors.New("invalid query message")
-	errAccessLogRootPath = errors.New("access log root path is required")
+	errServerCert = errors.New("invalid server cert file")
+	errServerKey  = errors.New("invalid server key file")
+	errNoAddr     = errors.New("no address")
+
+	_ run.PreRunner = (*server)(nil)
+	_ run.Service   = (*server)(nil)
 )
 
-// Server defines the gRPC server.
-type Server interface {
-	run.Unit
-	GetPort() *uint32
-}
-
 type server struct {
-	pipeline queue.Client
-	creds    credentials.TransportCredentials
-	*streamRegistryServer
-	log *logger.Logger
-	*indexRuleBindingRegistryServer
-	ser *grpclib.Server
-	*propertyServer
-	*topNAggregationRegistryServer
-	*groupRegistryServer
-	stopCh chan struct{}
-	*indexRuleRegistryServer
-	*measureRegistryServer
-	streamSVC                *streamService
-	measureSVC               *measureService
-	host                     string
-	keyFile                  string
-	certFile                 string
-	accessLogRootPath        string
-	addr                     string
-	accessLogRecorders       []accessLogRecorder
-	maxRecvMsgSize           run.Bytes
-	port                     uint32
-	enableIngestionAccessLog bool
-	tls                      bool
+	creds     credentials.TransportCredentials
+	log       *logger.Logger
+	ser       *grpclib.Server
+	listeners map[bus.Topic][]bus.MessageListener
+	*clusterv1.UnimplementedServiceServer
+	addr           string
+	certFile       string
+	keyFile        string
+	host           string
+	maxRecvMsgSize run.Bytes
+	listenersLock  sync.RWMutex
+	port           uint32
+	tls            bool
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata.Repo) Server {
-	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
-	}
-	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry),
-	}
-	s := &server{
-		pipeline:   pipeline,
-		streamSVC:  streamSVC,
-		measureSVC: measureSVC,
-		streamRegistryServer: &streamRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		indexRuleBindingRegistryServer: &indexRuleBindingRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		indexRuleRegistryServer: &indexRuleRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		measureRegistryServer: &measureRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		groupRegistryServer: &groupRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		topNAggregationRegistryServer: &topNAggregationRegistryServer{
-			schemaRegistry: schemaRegistry,
-		},
-		propertyServer: &propertyServer{
-			schemaRegistry: schemaRegistry,
-		},
-	}
-	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
-	return s
+func NewServer() queue.Server {
+	return &server{}
 }
 
-func (s *server) PreRun(ctx context.Context) error {
-	s.log = logger.GetLogger("liaison-grpc")
-	s.streamSVC.setLogger(s.log)
-	s.measureSVC.setLogger(s.log)
-	components := []*discoveryService{
-		s.streamSVC.discoveryService,
-		s.measureSVC.discoveryService,
-	}
-	for _, c := range components {
-		c.SetLogger(s.log)
-		if err := c.initialize(ctx); err != nil {
-			return err
-		}
-	}
-
-	if s.enableIngestionAccessLog {
-		for _, alr := range s.accessLogRecorders {
-			if err := alr.activeIngestionAccessLog(s.accessLogRootPath); err != nil {
-				return err
-			}
-		}
-	}
+func (s *server) PreRun(_ context.Context) error {
+	s.log = logger.GetLogger("server-queue")
 	return nil
 }
 
 func (s *server) Name() string {
-	return "grpc"
+	return "server-queue"
 }
 
 func (s *server) Role() databasev1.Role {
-	return databasev1.Role_ROLE_LIAISON
+	return databasev1.Role_ROLE_DATA
 }
 
 func (s *server) GetPort() *uint32 {
@@ -174,8 +102,6 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
-	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
-	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	return fs
 }
 
@@ -183,9 +109,6 @@ func (s *server) Validate() error {
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr
-	}
-	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
-		return errAccessLogRootPath
 	}
 	observability.UpdateAddress("grpc", s.addr)
 	if !s.tls {
@@ -218,7 +141,6 @@ func (s *server) Serve() run.StopNotify {
 
 	unaryMetrics, streamMetrics := observability.MetricsServerInterceptor()
 	streamChain := []grpclib.StreamServerInterceptor{
-		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if streamMetrics != nil {
@@ -237,25 +159,15 @@ func (s *server) Serve() run.StopNotify {
 		grpclib.ChainStreamInterceptor(streamChain...),
 	)
 	s.ser = grpclib.NewServer(opts...)
-
-	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
-	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
-	// register *Registry
-	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
-	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
-	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
-	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
-	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
-	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
-	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
+	clusterv1.RegisterServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
-	s.stopCh = make(chan struct{})
-	go func() {
+	stopCh := make(chan struct{})
+	go func(stopCh chan struct{}) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
-			close(s.stopCh)
+			close(stopCh)
 			return
 		}
 		s.log.Info().Str("addr", s.addr).Msg("Listening to")
@@ -263,9 +175,9 @@ func (s *server) Serve() run.StopNotify {
 		if err != nil {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
-		close(s.stopCh)
-	}()
-	return s.stopCh
+		close(stopCh)
+	}(stopCh)
+	return stopCh
 }
 
 func (s *server) GracefulStop() {
@@ -273,11 +185,6 @@ func (s *server) GracefulStop() {
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
-		if s.enableIngestionAccessLog {
-			for _, alr := range s.accessLogRecorders {
-				_ = alr.Close()
-			}
-		}
 		close(stopped)
 	}()
 
@@ -290,9 +197,4 @@ func (s *server) GracefulStop() {
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
 	}
-}
-
-type accessLogRecorder interface {
-	activeIngestionAccessLog(root string) error
-	Close() error
 }

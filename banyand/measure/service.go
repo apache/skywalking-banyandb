@@ -57,7 +57,8 @@ type service struct {
 	schemaRepo             schemaRepo
 	writeListener          bus.MessageListener
 	metadata               metadata.Repo
-	pipeline               queue.Queue
+	pipeline               queue.Server
+	localPipeline          queue.Queue
 	l                      *logger.Logger
 	root                   string
 	dbOpts                 tsdb.DatabaseOpts
@@ -109,8 +110,9 @@ func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
+	s.localPipeline = queue.Local()
 	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
-		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
+		s.l, s.localPipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
 	// run a serial watcher
 	go s.schemaRepo.Watcher()
 	s.metadata.
@@ -121,7 +123,7 @@ func (s *service) PreRun(_ context.Context) error {
 	if err != nil {
 		return err
 	}
-	return nil
+	return s.localPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 }
 
 func (s *service) Serve() run.StopNotify {
@@ -129,11 +131,12 @@ func (s *service) Serve() run.StopNotify {
 }
 
 func (s *service) GracefulStop() {
+	s.localPipeline.GracefulStop()
 	s.schemaRepo.Close()
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,

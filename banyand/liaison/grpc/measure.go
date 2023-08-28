@@ -62,6 +62,8 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 	}
 	ctx := measure.Context()
+	publisher := ms.pipeline.NewBatchPublisher()
+	defer publisher.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,8 +101,9 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			SeriesHash:   tsdb.HashEntity(entity),
 			EntityValues: tagValues.Encode(),
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
-		_, errWritePub := ms.pipeline.Publish(data.TopicMeasureWrite, message)
+		// TODO: set node id
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "todo", iwr)
+		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
 		}

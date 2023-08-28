@@ -15,39 +15,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package queue
+syntax = "proto3";
 
-import (
-	"io"
+package banyandb.cluster.v1;
 
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-)
+import "banyandb/measure/v1/write.proto";
+import "banyandb/stream/v1/write.proto";
 
-// Queue builds a data transmission tunnel between subscribers and publishers.
-//
-//go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
-type Queue interface {
-	Client
-	Server
-	run.Service
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
+
+message WriteRequest {
+  string topic = 1;
+  uint64 message_id = 2;
+  oneof request {
+    stream.v1.InternalWriteRequest stream = 3;
+    measure.v1.InternalWriteRequest measure = 4;
+  }
 }
 
-// Client is the interface for publishing data to the queue.
-type Client interface {
-	run.Unit
-	bus.Publisher
-	NewBatchPublisher() BatchPublisher
-}
+message WriteResponse {}
 
-// Server is the interface for receiving data from the queue.
-type Server interface {
-	run.Unit
-	bus.Subscriber
-}
-
-// BatchPublisher is the interface for publishing data in batch.
-type BatchPublisher interface {
-	bus.Publisher
-	io.Closer
+service Service {
+  rpc Write(stream WriteRequest) returns (stream WriteResponse);
 }
