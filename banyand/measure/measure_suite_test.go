@@ -69,8 +69,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
 
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())

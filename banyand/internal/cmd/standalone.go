@@ -43,10 +43,7 @@ var standaloneGroup = run.NewGroup("standalone")
 func newStandaloneCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	pipeline, err := queue.NewQueue(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
-	}
+	pipeline := queue.Local()
 	metaSvc, err := metadata.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")

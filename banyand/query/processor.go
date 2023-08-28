@@ -55,7 +55,7 @@ type queryService struct {
 	log *logger.Logger
 	// TODO: remove the metaService once https://github.com/apache/skywalking/issues/10121 is fixed.
 	metaService metadata.Repo
-	pipeline    queue.Queue
+	pipeline    queue.Server
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor

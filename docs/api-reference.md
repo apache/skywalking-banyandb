@@ -12,12 +12,6 @@
     - [Catalog](#banyandb-common-v1-Catalog)
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
-- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
-    - [Node](#banyandb-database-v1-Node)
-    - [Shard](#banyandb-database-v1-Shard)
-  
-    - [Role](#banyandb-database-v1-Role)
-  
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
     - [Float](#banyandb-model-v1-Float)
@@ -29,6 +23,30 @@
     - [TagValue](#banyandb-model-v1-TagValue)
   
     - [AggregationFunction](#banyandb-model-v1-AggregationFunction)
+  
+- [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
+    - [DataPointValue](#banyandb-measure-v1-DataPointValue)
+    - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
+    - [WriteRequest](#banyandb-measure-v1-WriteRequest)
+    - [WriteResponse](#banyandb-measure-v1-WriteResponse)
+  
+- [banyandb/stream/v1/write.proto](#banyandb_stream_v1_write-proto)
+    - [ElementValue](#banyandb-stream-v1-ElementValue)
+    - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
+    - [WriteRequest](#banyandb-stream-v1-WriteRequest)
+    - [WriteResponse](#banyandb-stream-v1-WriteResponse)
+  
+- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [WriteRequest](#banyandb-cluster-v1-WriteRequest)
+    - [WriteResponse](#banyandb-cluster-v1-WriteResponse)
+  
+    - [Service](#banyandb-cluster-v1-Service)
+  
+- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
+    - [Node](#banyandb-database-v1-Node)
+    - [Shard](#banyandb-database-v1-Shard)
+  
+    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
@@ -162,12 +180,6 @@
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
   
-- [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
-    - [DataPointValue](#banyandb-measure-v1-DataPointValue)
-    - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
-    - [WriteRequest](#banyandb-measure-v1-WriteRequest)
-    - [WriteResponse](#banyandb-measure-v1-WriteResponse)
-  
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
@@ -193,12 +205,6 @@
     - [Element](#banyandb-stream-v1-Element)
     - [QueryRequest](#banyandb-stream-v1-QueryRequest)
     - [QueryResponse](#banyandb-stream-v1-QueryResponse)
-  
-- [banyandb/stream/v1/write.proto](#banyandb_stream_v1_write-proto)
-    - [ElementValue](#banyandb-stream-v1-ElementValue)
-    - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
-    - [WriteRequest](#banyandb-stream-v1-WriteRequest)
-    - [WriteResponse](#banyandb-stream-v1-WriteResponse)
   
 - [banyandb/stream/v1/rpc.proto](#banyandb_stream_v1_rpc-proto)
     - [StreamService](#banyandb-stream-v1-StreamService)
@@ -310,77 +316,6 @@ Metadata is for multi-tenant, multi-model use
 | UNIT_UNSPECIFIED | 0 |  |
 | UNIT_HOUR | 1 |  |
 | UNIT_DAY | 2 |  |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_database_v1_database-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/database.proto
-
-
-
-<a name="banyandb-database-v1-Node"></a>
-
-### Node
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
-| grpc_address | [string](#string) |  |  |
-| http_address | [string](#string) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Shard"></a>
-
-### Shard
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  |  |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [string](#string) |  |  |
-| total | [uint32](#uint32) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Role"></a>
-
-### Role
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ROLE_UNSPECIFIED | 0 |  |
-| ROLE_META | 1 |  |
-| ROLE_DATA | 2 |  |
-| ROLE_QUERY | 3 |  |
-| ROLE_LIAISON | 4 |  |
 
 
  
@@ -542,6 +477,285 @@ Metadata is for multi-tenant, multi-model use
 | AGGREGATION_FUNCTION_MIN | 3 |  |
 | AGGREGATION_FUNCTION_COUNT | 4 |  |
 | AGGREGATION_FUNCTION_SUM | 5 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_measure_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/measure/v1/write.proto
+
+
+
+<a name="banyandb-measure-v1-DataPointValue"></a>
+
+### DataPointValue
+DataPointValue is the data point for writing. It only contains values.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
+| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
+| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalWriteRequest"></a>
+
+### InternalWriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| series_hash | [bytes](#bytes) |  |  |
+| entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
+| request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-WriteRequest"></a>
+
+### WriteRequest
+WriteRequest is the request contract for write
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
+| data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-WriteResponse"></a>
+
+### WriteResponse
+WriteResponse is the response contract for write
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_stream_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/stream/v1/write.proto
+
+
+
+<a name="banyandb-stream-v1-ElementValue"></a>
+
+### ElementValue
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| element_id | [string](#string) |  | element_id could be span_id of a Span or segment_id of a Segment in the context of stream |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. It represents 1) either the start time of a Span/Segment, 2) or the timestamp of a log |
+| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the stream schema |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-InternalWriteRequest"></a>
+
+### InternalWriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| series_hash | [bytes](#bytes) |  |  |
+| entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
+| request | [WriteRequest](#banyandb-stream-v1-WriteRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-WriteRequest"></a>
+
+### WriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is only required in the first write. |
+| element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-WriteResponse"></a>
+
+### WriteResponse
+
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_cluster_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/cluster/v1/rpc.proto
+
+
+
+<a name="banyandb-cluster-v1-WriteRequest"></a>
+
+### WriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| stream | [banyandb.stream.v1.InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest) |  |  |
+| measure | [banyandb.measure.v1.InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-WriteResponse"></a>
+
+### WriteResponse
+
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-cluster-v1-Service"></a>
+
+### Service
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Write | [WriteRequest](#banyandb-cluster-v1-WriteRequest) stream | [WriteResponse](#banyandb-cluster-v1-WriteResponse) stream |  |
+
+ 
+
+
+
+<a name="banyandb_database_v1_database-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/database/v1/database.proto
+
+
+
+<a name="banyandb-database-v1-Node"></a>
+
+### Node
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Shard"></a>
+
+### Shard
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| node | [string](#string) |  |  |
+| total | [uint32](#uint32) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-database-v1-Role"></a>
+
+### Role
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_QUERY | 3 |  |
+| ROLE_LIAISON | 4 |  |
 
 
  
@@ -2433,83 +2647,6 @@ TopNResponse is the response for a query to the Query module.
 
 
 
-<a name="banyandb_measure_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/measure/v1/write.proto
-
-
-
-<a name="banyandb-measure-v1-DataPointValue"></a>
-
-### DataPointValue
-DataPointValue is the data point for writing. It only contains values.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
-| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
-| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-InternalWriteRequest"></a>
-
-### InternalWriteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
-| entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
-| request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-WriteRequest"></a>
-
-### WriteRequest
-WriteRequest is the request contract for write
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
-| data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-WriteResponse"></a>
-
-### WriteResponse
-WriteResponse is the response contract for write
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_measure_v1_rpc-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2812,83 +2949,6 @@ QueryResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | elements | [Element](#banyandb-stream-v1-Element) | repeated | elements are the actual data returned |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_stream_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/stream/v1/write.proto
-
-
-
-<a name="banyandb-stream-v1-ElementValue"></a>
-
-### ElementValue
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| element_id | [string](#string) |  | element_id could be span_id of a Span or segment_id of a Segment in the context of stream |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. It represents 1) either the start time of a Span/Segment, 2) or the timestamp of a log |
-| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the stream schema |
-
-
-
-
-
-
-<a name="banyandb-stream-v1-InternalWriteRequest"></a>
-
-### InternalWriteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
-| entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
-| request | [WriteRequest](#banyandb-stream-v1-WriteRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-stream-v1-WriteRequest"></a>
-
-### WriteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is only required in the first write. |
-| element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
-
-
-
-
-
-
-<a name="banyandb-stream-v1-WriteResponse"></a>
-
-### WriteResponse
-
 
 
 

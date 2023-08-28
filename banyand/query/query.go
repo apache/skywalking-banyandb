@@ -30,7 +30,7 @@ import (
 
 // NewService return a new query service.
 func NewService(_ context.Context, streamService stream.Service, measureService measure.Service,
-	metaService metadata.Repo, pipeline queue.Queue,
+	metaService metadata.Repo, pipeline queue.Server,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,

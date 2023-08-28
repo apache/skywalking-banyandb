@@ -12,6 +12,7 @@ Release Notes.
 - Support multiple roles for banyand server.
 - Support for recovery buffer using wal.
 - Register the node role to the metadata registry.
+- Implement the remote queue to spreading data to data nodes.
 
 ### Bugs
 
