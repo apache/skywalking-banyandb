@@ -173,8 +173,7 @@ var _ = Describe("Registry", func() {
 
 func setupForRegistry() func() {
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
+	pipeline := queue.Local()
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
@@ -212,6 +211,6 @@ func (p *preloadStreamService) Name() string {
 	return "preload-stream"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadStreamService) PreRun(ctx context.Context) error {
+	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }

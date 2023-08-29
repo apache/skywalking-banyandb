@@ -53,8 +53,8 @@ func (p *preloadStreamService) Name() string {
 	return "preload-stream"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadStreamService) PreRun(ctx context.Context) error {
+	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 type services struct {
@@ -66,8 +66,7 @@ func setUp() (*services, func()) {
 	ctrl := gomock.NewController(GinkgoT())
 	Expect(ctrl).ShouldNot(BeNil())
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
+	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())

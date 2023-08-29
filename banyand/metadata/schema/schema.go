@@ -32,30 +32,11 @@ import (
 
 var errUnsupportedEntityType = errors.New("unsupported entity type")
 
-// Kind is the type of a resource.
-type Kind int
-
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
 	OnAddOrUpdate(Metadata)
 	OnDelete(Metadata)
 }
-
-// KindMask tends to check whether an event is valid.
-const (
-	KindGroup Kind = 1 << iota
-	KindStream
-	KindMeasure
-	KindIndexRuleBinding
-	KindIndexRule
-	KindTopNAggregation
-	KindProperty
-	KindNode
-	KindShard
-	KindMask = KindGroup | KindStream | KindMeasure |
-		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode | KindShard
-)
 
 // ListOpt contains options to list resources.
 type ListOpt struct {
@@ -74,7 +55,7 @@ type Registry interface {
 	Property
 	Node
 	Shard
-	RegisterHandler(Kind, EventHandler)
+	RegisterHandler(string, Kind, EventHandler)
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -92,34 +73,6 @@ type Metadata struct {
 
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
-
-// Unmarshal encode bytes to proto.Message.
-func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
-	switch tm.Kind {
-	case KindGroup:
-		m = &commonv1.Group{}
-	case KindStream:
-		m = &databasev1.Stream{}
-	case KindMeasure:
-		m = &databasev1.Measure{}
-	case KindIndexRuleBinding:
-		m = &databasev1.IndexRuleBinding{}
-	case KindIndexRule:
-		m = &databasev1.IndexRule{}
-	case KindProperty:
-		m = &propertyv1.Property{}
-	case KindTopNAggregation:
-		m = &databasev1.TopNAggregation{}
-	case KindNode:
-		m = &databasev1.Node{}
-	case KindShard:
-		m = &databasev1.Shard{}
-	default:
-		return nil, errUnsupportedEntityType
-	}
-	err = proto.Unmarshal(data, m)
-	return
-}
 
 func (m Metadata) key() (string, error) {
 	switch m.Kind {
@@ -156,11 +109,7 @@ func (m Metadata) key() (string, error) {
 			Name:  m.Name,
 		}), nil
 	case KindNode:
-		r, err := strToRole(m.Group)
-		if err != nil {
-			return "", err
-		}
-		return formatNodeKey(r, m.Name), nil
+		return formatNodeKey(m.Name), nil
 	case KindShard:
 		return formatShardKey(&commonv1.Metadata{
 			Group: m.Group,
@@ -171,13 +120,13 @@ func (m Metadata) key() (string, error) {
 	}
 }
 
-func (m Metadata) equal(other proto.Message) bool {
-	if other == nil {
+func (m Metadata) equal(other Metadata) bool {
+	if other.Spec == nil {
 		return false
 	}
 
 	if checker, ok := checkerMap[m.Kind]; ok {
-		return checker(m.Spec.(proto.Message), other)
+		return checker(m.Spec.(proto.Message), other.Spec.(proto.Message))
 	}
 
 	return false
@@ -247,32 +196,10 @@ type Property interface {
 	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
 }
 
-// Role is the role of node.
-type Role string
-
-const (
-	// RoleMeta is the role of meta node.
-	RoleMeta = "meta"
-	// RoleData is the role of data node.
-	RoleData = "data"
-	// RoleQuery is the role of query node.
-	RoleQuery = "query"
-	// RoleLiaison is the role of liaison node.
-	RoleLiaison = "liaison"
-)
-
-func strToRole(role string) (Role, error) {
-	switch role {
-	case RoleMeta, RoleData, RoleQuery, RoleLiaison:
-		return Role(role), nil
-	default:
-		return "", errors.New("invalid role")
-	}
-}
-
 // Node allows CRUD node schemas in a group.
 type Node interface {
-	ListNode(ctx context.Context, role Role) ([]*databasev1.Node, error)
+	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
+	RegisterNode(ctx context.Context, node *databasev1.Node) error
 }
 
 // Shard allows CRUD shard schemas in a group.

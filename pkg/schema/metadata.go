@@ -60,7 +60,7 @@ const (
 // Group is the root node, allowing get resources from its sub nodes.
 type Group interface {
 	GetSchema() *commonv1.Group
-	StoreResource(resourceSchema ResourceSchema) (Resource, error)
+	StoreResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error)
 	LoadResource(name string) (Resource, bool)
 }
 
@@ -296,7 +296,7 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) (Resource, erro
 	if err != nil {
 		return nil, errors.WithMessage(err, "fails to get the resource")
 	}
-	return group.StoreResource(stm)
+	return group.StoreResource(context.Background(), stm)
 }
 
 func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
@@ -370,22 +370,24 @@ func (g *group) setDB(db tsdb.Database) {
 	g.db.Store(db)
 }
 
-func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
+func (g *group) StoreResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
 	g.mapMutex.Lock()
 	defer g.mapMutex.Unlock()
 	key := resourceSchema.GetMetadata().GetName()
 	preResource := g.schemaMap[key]
+	var localCtx context.Context
+	var cancel context.CancelFunc
 	if preResource != nil &&
 		resourceSchema.GetMetadata().GetModRevision() <= preResource.GetMetadata().GetModRevision() {
 		// we only need to check the max modifications revision observed for index rules
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		idxRules, errIndexRules := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
+		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		idxRules, errIndexRules := g.metadata.IndexRules(localCtx, resourceSchema.GetMetadata())
 		cancel()
 		if errIndexRules != nil {
 			return nil, errIndexRules
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		topNAggrs, errTopN := g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
+		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		topNAggrs, errTopN := g.metadata.MeasureRegistry().TopNAggregations(localCtx, resourceSchema.GetMetadata())
 		cancel()
 		if errTopN != nil {
 			return nil, errTopN
@@ -397,18 +399,18 @@ func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	idxRules, err := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
+	idxRules, err := g.metadata.IndexRules(localCtx, resourceSchema.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
 
 	var topNAggrs []*databasev1.TopNAggregation
 	if _, ok := resourceSchema.(*databasev1.Measure); ok {
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
 		var innerErr error
-		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
+		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(localCtx, resourceSchema.GetMetadata())
 		cancel()
 		if innerErr != nil {
 			return nil, innerErr

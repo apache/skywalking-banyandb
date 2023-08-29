@@ -45,6 +45,7 @@ type (
 // Message is send on the bus to all subscribed listeners.
 type Message struct {
 	payload payload
+	node    string
 	id      MessageID
 }
 
@@ -58,9 +59,24 @@ func (m Message) Data() interface{} {
 	return m.payload
 }
 
+// Node returns the node name of the Message.
+func (m Message) Node() string {
+	return m.node
+}
+
+// IsRemote returns true if the Message is sent from a remote node.
+func (m Message) IsRemote() bool {
+	return m.node != "local"
+}
+
 // NewMessage returns a new Message with a MessageID and embed data.
 func NewMessage(id MessageID, data interface{}) Message {
-	return Message{id: id, payload: data}
+	return Message{id: id, node: "local", payload: data}
+}
+
+// NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
+func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
+	return Message{id: id, node: node, payload: data}
 }
 
 // MessageListener is the signature of functions that can handle an EventMessage.
@@ -101,6 +117,11 @@ func UniTopic(id string) Topic {
 // BiTopic returns bidirectional Topic.
 func BiTopic(id string) Topic {
 	return Topic{id: id, typ: chTypeBidirectional}
+}
+
+// String returns the string representation of the Topic.
+func (t Topic) String() string {
+	return t.id
 }
 
 // The Bus allows publish-subscribe-style communication between components.

@@ -85,7 +85,6 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 			})
 			cancel()
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -99,7 +98,6 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 		subjects, err := sr.metadata.Subjects(ctx, m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
 		cancel()
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to get subjects(stream)")
 			return
 		}
 		for _, sub := range subjects {
@@ -140,7 +138,6 @@ func (sr *schemaRepo) OnDelete(m schema.Metadata) {
 			})
 			cancel()
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{

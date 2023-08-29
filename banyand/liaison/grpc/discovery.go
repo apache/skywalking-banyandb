@@ -40,7 +40,7 @@ import (
 var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
-	pipeline     queue.Queue
+	pipeline     queue.Client
 	metadataRepo metadata.Repo
 	shardRepo    *shardRepo
 	entityRepo   *entityRepo
@@ -48,7 +48,7 @@ type discoveryService struct {
 	kind         schema.Kind
 }
 
-func newDiscoveryService(pipeline queue.Queue, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
+func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
@@ -60,9 +60,9 @@ func newDiscoveryService(pipeline queue.Queue, kind schema.Kind, metadataRepo me
 	}
 }
 
-func (ds *discoveryService) initialize() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := ds.metadataRepo.GroupRegistry().ListGroup(ctx)
+func (ds *discoveryService) initialize(ctx context.Context) error {
+	ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
+	groups, err := ds.metadataRepo.GroupRegistry().ListGroup(ctxLocal)
 	cancel()
 	if err != nil {
 		return err
@@ -74,8 +74,8 @@ func (ds *discoveryService) initialize() error {
 		default:
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		shards, innerErr := ds.metadataRepo.ShardRegistry().ListShard(ctx, schema.ListOpt{Group: g.Metadata.Name})
+		ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
+		shards, innerErr := ds.metadataRepo.ShardRegistry().ListShard(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
 		cancel()
 		if innerErr != nil {
 			return innerErr
@@ -93,8 +93,8 @@ func (ds *discoveryService) initialize() error {
 
 		switch ds.kind {
 		case schema.KindMeasure:
-			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			mm, innerErr := ds.metadataRepo.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: g.Metadata.Name})
+			ctxLocal, cancel = context.WithTimeout(ctx, 5*time.Second)
+			mm, innerErr := ds.metadataRepo.MeasureRegistry().ListMeasure(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
 			cancel()
 			if innerErr != nil {
 				return innerErr
@@ -110,8 +110,8 @@ func (ds *discoveryService) initialize() error {
 				})
 			}
 		case schema.KindStream:
-			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			ss, innerErr := ds.metadataRepo.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: g.Metadata.Name})
+			ctxLocal, cancel = context.WithTimeout(ctx, 5*time.Second)
+			ss, innerErr := ds.metadataRepo.StreamRegistry().ListStream(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
 			cancel()
 			if innerErr != nil {
 				return innerErr
@@ -130,8 +130,8 @@ func (ds *discoveryService) initialize() error {
 			return fmt.Errorf("unsupported kind: %d", ds.kind)
 		}
 	}
-	ds.metadataRepo.RegisterHandler(schema.KindShard, ds.shardRepo)
-	ds.metadataRepo.RegisterHandler(ds.kind, ds.entityRepo)
+	ds.metadataRepo.RegisterHandler("liaison", schema.KindShard, ds.shardRepo)
+	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	return nil
 }
 

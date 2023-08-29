@@ -44,29 +44,29 @@ const (
 var store embed.FS
 
 // PreloadSchema loads schemas from files in the booting process.
-func PreloadSchema(e schema.Registry) error {
+func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return e.CreateGroup(context.TODO(), group)
+		return e.CreateGroup(ctx, group)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		return e.CreateMeasure(context.TODO(), measure)
+		return e.CreateMeasure(ctx, measure)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-		return e.CreateIndexRule(context.TODO(), indexRule)
+		return e.CreateIndexRule(ctx, indexRule)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-		return e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding)
+		return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
-		return e.CreateTopNAggregation(context.TODO(), topN)
+		return e.CreateTopNAggregation(ctx, topN)
 	}); err != nil {
 		return errors.WithStack(err)
 	}

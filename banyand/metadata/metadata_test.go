@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,14 +49,16 @@ func Test_service_RulesBySubject(t *testing.T) {
 	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
 	is.NoError(err)
 	is.NoError(s.Validate())
-	err = s.PreRun()
+	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})
+	ctx = context.WithValue(ctx, common.ContextNodeRolesKey, []databasev1.Role{databasev1.Role_ROLE_META})
+	err = s.PreRun(ctx)
 	is.NoError(err)
 	defer func() {
 		s.GracefulStop()
 		deferFn()
 	}()
 
-	err = test.PreloadSchema(s.SchemaRegistry())
+	err = test.PreloadSchema(ctx, s.SchemaRegistry())
 	is.NoError(err)
 
 	tests := []struct {

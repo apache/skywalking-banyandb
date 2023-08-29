@@ -18,10 +18,12 @@
 package test
 
 import (
+	"context"
 	"sync"
 
 	"github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -40,7 +42,7 @@ func SetupModules(flags []string, units ...run.Unit) func() {
 		defer func() {
 			wg.Done()
 		}()
-		errRun := g.Run()
+		errRun := g.Run(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{NodeID: "test"}))
 		gomega.Expect(errRun).ShouldNot(gomega.HaveOccurred())
 	}()
 	g.WaitTillReady()

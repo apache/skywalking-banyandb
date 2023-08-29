@@ -54,8 +54,8 @@ func (p *preloadMeasureService) Name() string {
 	return "preload-measure"
 }
 
-func (p *preloadMeasureService) PreRun() error {
-	return testmeasure.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadMeasureService) PreRun(ctx context.Context) error {
+	return testmeasure.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 type services struct {
@@ -69,8 +69,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
 
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
