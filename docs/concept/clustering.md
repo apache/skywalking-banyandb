@@ -4,7 +4,7 @@ BanyanDB Clustering introduces a robust and scalable architecture that comprises
 
 ## 1. Architectural Overview
 
-A BanyanDB installation includes four distinct types of nodes: Data Nodes, Meta Nodes, and Liaison Nodes.
+A BanyanDB installation includes three distinct types of nodes: Data Nodes, Meta Nodes, and Liaison Nodes.
 
 ### 1.1 Data Nodes
 
@@ -69,7 +69,9 @@ They also handle the computational tasks associated with data queries, interacti
 
 When creating a BanyanDB cluster, choosing the appropriate number of each node type to configure and connect is crucial. The number of Meta Nodes should always be odd, for instance, “3”. The number of Data Nodes scales based on your storage and query needs. The number of Liaison Nodes depends on the expected query load and routing complexity.
 
-If the write and read load is from different sources, it is recommended to separate the Liaison Nodes for write and read. This allows for more efficient routing of requests and better performance.
+If the write and read load is from different sources, it is recommended to separate the Liaison Nodes for write and read. For instance, if the write load is from metrics, trace or log collectors and the read load is from a web application, it is recommended to separate the Liaison Nodes for write and read.
+
+This separation allows for more efficient routing of requests and better performance. It also allows for scaling out of the cluster based on the specific needs of each type of request. For instance, if the write load is high, you can scale out the write Liaison Nodes to handle the increased load.
 
 The BanyanDB architecture allows for efficient clustering, scaling, and high availability, making it a robust choice for time series data management.
 
