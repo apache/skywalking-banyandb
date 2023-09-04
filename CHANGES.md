@@ -13,6 +13,7 @@ Release Notes.
 - Support for recovery buffer using wal.
 - Register the node role to the metadata registry.
 - Implement the remote queue to spreading data to data nodes.
+- Fix parse environment variables error
 
 ### Bugs
 
