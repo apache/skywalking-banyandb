@@ -59,14 +59,15 @@ func (t *globalIndexScan) Schema() logical.Schema {
 	return t.schema
 }
 
-func (t *globalIndexScan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (t *globalIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
+	ec := executor.FromStreamExecutionContext(ctx)
 	shards, err := ec.Shards(nil)
 	if err != nil {
 		return nil, err
 	}
 	var elements []*streamv1.Element
 	for _, shard := range shards {
-		elementsInShard, shardErr := t.executeForShard(ec, shard)
+		elementsInShard, shardErr := t.executeForShard(ctx, ec, shard)
 		if shardErr != nil {
 			return elements, shardErr
 		}
@@ -75,7 +76,7 @@ func (t *globalIndexScan) Execute(ec executor.StreamExecutionContext) ([]*stream
 	return elements, nil
 }
 
-func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, shard tsdb.Shard) ([]*streamv1.Element, error) {
+func (t *globalIndexScan) executeForShard(ctx context.Context, ec executor.StreamExecutionContext, shard tsdb.Shard) ([]*streamv1.Element, error) {
 	var elementsInShard []*streamv1.Element
 	for _, term := range t.expr.Bytes() {
 		itemIDs, err := shard.Index().Seek(index.Field{
@@ -98,9 +99,9 @@ func (t *globalIndexScan) executeForShard(ec executor.StreamExecutionContext, sh
 				return elementsInShard, errors.WithStack(err)
 			}
 			err = func() error {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctxSeries, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
-				item, closer, errInner := series.Get(ctx, itemID)
+				item, closer, errInner := series.Get(ctxSeries, itemID)
 				defer func(closer io.Closer) {
 					if closer != nil {
 						_ = closer.Close()

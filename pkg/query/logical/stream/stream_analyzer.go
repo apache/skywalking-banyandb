@@ -22,8 +22,8 @@ import (
 	"fmt"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -31,12 +31,10 @@ import (
 const defaultLimit uint32 = 20
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(streamSchema stream.Stream) (logical.Schema, error) {
-	sm := streamSchema.GetSchema()
-
+func BuildSchema(sm *databasev1.Stream, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	s := &schema{
 		common: &logical.CommonSchema{
-			IndexRules: streamSchema.GetIndexRules(),
+			IndexRules: indexRules,
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: sm.GetEntity().GetTagNames(),
 		},
@@ -93,7 +91,7 @@ type limit struct {
 	LimitNum uint32
 }
 
-func (l *limit) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (l *limit) Execute(ec context.Context) ([]*streamv1.Element, error) {
 	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -146,7 +144,7 @@ type offset struct {
 	offsetNum uint32
 }
 
-func (l *offset) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (l *offset) Execute(ec context.Context) ([]*streamv1.Element, error) {
 	elements, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

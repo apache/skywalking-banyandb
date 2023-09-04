@@ -22,21 +22,20 @@ import (
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const defaultLimit uint32 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
-	md := measureSchema.GetSchema()
+func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	md.GetEntity()
 
 	ms := &schema{
 		common: &logical.CommonSchema{
-			IndexRules: measureSchema.GetIndexRules(),
+			IndexRules: indexRules,
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: md.GetEntity().GetTagNames(),
 		},

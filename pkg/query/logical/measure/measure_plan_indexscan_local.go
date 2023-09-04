@@ -122,7 +122,7 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	var orderBy *tsdb.OrderBy
 	if i.order.Index != nil {
 		orderBy = &tsdb.OrderBy{
@@ -130,6 +130,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 			Sort:  i.order.Sort,
 		}
 	}
+	ec := executor.FromMeasureExecutionContext(ctx)
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, errInternal := ec.Shards(e)
@@ -139,7 +140,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		for _, shard := range shards {
 			sl, errInternal := shard.Series().Search(
 				context.WithValue(
-					context.Background(),
+					ctx,
 					logger.ContextKey,
 					i.l,
 				),
@@ -163,7 +164,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		})
 	}
 	// CAVEAT: the order of series list matters when sorting by an index.
-	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
 	if err != nil {
 		return nil, err
 	}
