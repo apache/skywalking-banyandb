@@ -94,7 +94,7 @@ func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	// Init `Query` module
 	q, err := query.NewService(context.TODO(), streamSvc, measureSvc, metaSvc, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc)
+	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc, grpc.NewLocalNodeRegistry())
 	httpServer := http.NewServer()
 
 	units := []run.Unit{

@@ -41,6 +41,7 @@ var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
 	pipeline     queue.Client
+	nodeRegistry NodeRegistry
 	metadataRepo metadata.Repo
 	shardRepo    *shardRepo
 	entityRepo   *entityRepo
@@ -48,10 +49,11 @@ type discoveryService struct {
 	kind         schema.Kind
 }
 
-func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
+func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
+		nodeRegistry: nodeRegistry,
 		shardRepo:    sr,
 		entityRepo:   er,
 		pipeline:     pipeline,

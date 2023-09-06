@@ -43,7 +43,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	pipeline := pub.New(metaSvc)
-	grpcServer := grpc.NewServer(ctx, pipeline, metaSvc)
+	grpcServer := grpc.NewServer(ctx, pipeline, metaSvc, grpc.NewClusterNodeRegistry(metaSvc))
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
 	httpServer := http.NewServer()
