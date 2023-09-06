@@ -18,11 +18,7 @@
 package topn
 
 import (
-	"context"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -38,27 +34,13 @@ func BuildSchema(topNSchema measure.Measure, metadata *databasev1.TopNAggregatio
 		fieldMap: make(map[string]*logical.FieldSpec),
 	}
 
+	tagFamilySpecs := topNSchema.GetSchema().GetTagFamilies()
+	tagFamilySpec := tagFamilySpecs[0]
+	temp := tagFamilySpec.Tags[1]
+	tagFamilySpec.Tags[1] = tagFamilySpec.Tags[2]
+	tagFamilySpec.Tags[2] = temp
 	ms.common.RegisterTagFamilies(md.GetTagFamilies())
 	ms.registerField(0, measure.TopNValueFieldSpec)
 
 	return ms, nil
-}
-
-func Analyze(_ context.Context, criteria *measurev1.TopNRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
-	plan := newUnresolvedScan(criteria)
-
-	if criteria.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-
-	}
-
-	if criteria.GetTopN() != 0 {
-
-	}
-
-	p, err := plan.Analyze(s)
-	if err != nil {
-		return nil, err
-	}
-
-	return p, nil
 }

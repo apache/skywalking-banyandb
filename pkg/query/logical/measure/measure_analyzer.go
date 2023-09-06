@@ -86,11 +86,13 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 		pushedLimit = math.MaxInt
 	}
 
-	if request.GetAgg() != nil {
+	if request.GetAgg() != nil &&
+		request.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(request.GetAgg().GetFieldName()),
 			request.GetAgg().GetFunction(),
 			request.GetGroupBy() != nil,
+			request.IsTop(),
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -251,7 +253,7 @@ func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
 	}
 }
 
-func (wr *WrapRequest) GetConditions1() *modelv1.Criteria {
+func (wr *WrapRequest) GetCriteria() *modelv1.Criteria {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetCriteria()
 	} else {

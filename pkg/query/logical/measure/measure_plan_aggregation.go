@@ -19,7 +19,9 @@ package measure
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -42,15 +44,18 @@ type unresolvedAggregation struct {
 	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field
 	aggrFunc         modelv1.AggregationFunction
+	aggrType         modelv1.AggregationFunction
 	isGroup          bool
+	isTop            bool
 }
 
-func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
+func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool, isTop bool) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
 		aggrFunc:         aggrFunc,
 		aggregationField: aggrField,
 		isGroup:          isGroup,
+		isTop:            isTop,
 	}
 }
 
@@ -86,6 +91,7 @@ type aggregationPlan[N aggregation.Number] struct {
 	aggrFunc            aggregation.Func[N]
 	aggrType            modelv1.AggregationFunction
 	isGroup             bool
+	isTop               bool
 }
 
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
@@ -102,8 +108,10 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 		},
 		schema:              measureSchema,
 		aggrFunc:            aggrFunc,
+		aggrType:            gba.aggrFunc,
 		aggregationFieldRef: fieldRef,
 		isGroup:             gba.isGroup,
+		isTop:               gba.isTop,
 	}, nil
 }
 
@@ -128,9 +136,12 @@ func (g *aggregationPlan[N]) Execute(ec executor.MeasureExecutionContext) (execu
 		return nil, err
 	}
 	if g.isGroup {
-		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+		return newAggGroupMIterator[N](iter, g.aggregationFieldRef, g.aggrFunc), nil
 	}
-	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+	if g.isTop {
+		return newAggTopIterator[N](iter, g.aggregationFieldRef, g.aggrType), nil
+	}
+	return newAggAllIterator[N](iter, g.aggregationFieldRef, g.aggrFunc), nil
 }
 
 type aggGroupIterator[N aggregation.Number] struct {
@@ -278,19 +289,109 @@ func (ami *aggAllIterator[N]) Close() error {
 	return ami.prev.Close()
 }
 
+type aggTopIterator[N aggregation.Number] struct {
+	prev                executor.MIterator
+	aggregationFieldRef *logical.FieldRef
+	aggrType            modelv1.AggregationFunction
+	cache               map[string]*aggregatorItem[N]
+	result              []*measurev1.DataPoint
+	err                 error
+}
+
+func newAggTopIterator[N aggregation.Number](
+	prev executor.MIterator,
+	aggregationFieldRef *logical.FieldRef,
+	aggrType modelv1.AggregationFunction,
+) executor.MIterator {
+	return &aggTopIterator[N]{
+		prev:                prev,
+		aggregationFieldRef: aggregationFieldRef,
+		aggrType:            aggrType,
+		cache:               make(map[string]*aggregatorItem[N]),
+	}
+}
+
+func (ati *aggTopIterator[N]) Next() bool {
+	var latestTimestamp int64
+	if ati.result != nil || ati.err != nil {
+		return false
+	}
+	var resultDps []*measurev1.DataPoint
+	for ati.prev.Next() {
+		group := ati.prev.Current()
+		for _, dp := range group {
+			timestampMillis := dp.GetTimestamp().AsTime().Unix()
+			if latestTimestamp < timestampMillis {
+				latestTimestamp = timestampMillis
+			}
+			value := dp.GetFields()[ati.aggregationFieldRef.Spec.FieldIdx].
+				GetValue()
+			v, err := aggregation.FromFieldValue[N](value)
+			if err != nil {
+				ati.err = err
+				return false
+			}
+
+			tagFamily := dp.GetTagFamilies()[0]
+			if tagFamily.GetName() == measure.TopNTagFamily {
+				key := tagFamily.String()
+				if item, found := ati.cache[key]; found {
+					item.aggrFunc.In(v)
+					continue
+				}
+
+				aggrFunc, err := aggregation.NewFunc[N](ati.aggrType)
+				if err != nil {
+					return false
+				}
+				item := &aggregatorItem[N]{
+					key:      key,
+					aggrFunc: aggrFunc,
+					values:   tagFamily,
+				}
+				item.aggrFunc.In(v)
+				ati.cache[key] = item
+			}
+		}
+	}
+
+	for _, item := range ati.cache {
+		val, err := aggregation.ToFieldValue(item.aggrFunc.Val())
+		if err != nil {
+			ati.err = err
+			return false
+		}
+		resultDp := &measurev1.DataPoint{
+			Timestamp: timestamppb.New(time.Unix(0, latestTimestamp)),
+			TagFamilies: []*modelv1.TagFamily{
+				item.values,
+			},
+			Fields: []*measurev1.DataPoint_Field{
+				{
+					Name:  ati.aggregationFieldRef.Field.Name,
+					Value: val,
+				},
+			},
+		}
+		resultDps = append(resultDps, resultDp)
+	}
+	ati.result = resultDps
+	return true
+}
+
+func (ati *aggTopIterator[N]) Current() []*measurev1.DataPoint {
+	if ati.result == nil {
+		return nil
+	}
+	return ati.result
+}
+
+func (ati *aggTopIterator[N]) Close() error {
+	return ati.prev.Close()
+}
+
 type aggregatorItem[N aggregation.Number] struct {
 	aggrFunc aggregation.Func[N]
 	key      string
-	values   tsdb.EntityValues
-}
-
-func (n *aggregatorItem[N]) GetTags(tagNames []string) []*modelv1.Tag {
-	tags := make([]*modelv1.Tag, len(n.values))
-	for i := 0; i < len(tags); i++ {
-		tags[i] = &modelv1.Tag{
-			Key:   tagNames[i],
-			Value: n.values[i],
-		}
-	}
-	return tags
+	values   *modelv1.TagFamily
 }

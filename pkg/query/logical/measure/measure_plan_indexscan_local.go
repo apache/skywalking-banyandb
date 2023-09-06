@@ -198,7 +198,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		return dummyIter, nil
 	}
 	var builders []logical.SeekerBuilder
-	if i.order.Index == nil {
+	if !i.isTopN && i.order.Index == nil {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
 			builder.OrderByTime(i.order.Sort)
 		})
@@ -225,7 +225,8 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
 	if i.groupByEntity {
-		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
+		// TODO
+		return newSeriesMIterator(iters, transformContext, 100), nil
 	}
 	it := logical.NewItemIter(iters, i.order.Sort)
 	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil

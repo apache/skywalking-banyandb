@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"time"
 
@@ -88,7 +89,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	wrapRequest := &logical_measure.WrapRequest{TopNRequest: request}
 	wrapRequest.SetFieldProjection(topNSchema.GetFieldName())
 	wrapRequest.SetTagProjection(sourceMeasure.GetSchema().GetEntity().GetTagNames())
-	plan, err := logical_topn.Analyze(context.TODO(), request, topNMetadata, s)
+	plan, err := logical_measure.Analyze(context.TODO(), wrapRequest, topNMetadata, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", meta.GetName(), err))
 		return
@@ -109,8 +110,33 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}()
 
+	result := make([]*measurev1.DataPoint, 0)
 	for mIterator.Next() {
+		current := mIterator.Current()
+		if len(current) > 0 {
+			result = append(result, current[0])
+		}
 	}
 
+	resp = bus.NewMessage(bus.MessageID(now), toTopNList(result))
 	return
+}
+
+func toTopNList(result []*measurev1.DataPoint) []*measurev1.TopNList {
+	topNItems := make([]*measurev1.TopNList_Item, len(result))
+
+	for i, dp := range result {
+		topNItems[i] = &measurev1.TopNList_Item{
+			Entity: dp.GetTagFamilies()[0].GetTags(),
+			Value:  dp.GetFields()[0].GetValue(),
+		}
+	}
+
+	fmt.Println(result[0].GetTimestamp().AsTime().UnixNano())
+	return []*measurev1.TopNList{
+		{
+			Timestamp: result[0].GetTimestamp(),
+			Items:     topNItems,
+		},
+	}
 }
