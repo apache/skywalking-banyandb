@@ -113,16 +113,16 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			SeriesHash:   tsdb.HashEntity(entity),
 			EntityValues: tagValues.Encode(),
 		}
-		nodeId, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))
+		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))
 		if errPickNode != nil {
 			ms.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
 			reply(measure, ms.sampled)
 			continue
 		}
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeId, iwr)
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
+			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
 		}
 		reply(nil, modelv1.Status_STATUS_SUCCEED, writeRequest.GetMessageId(), measure, ms.sampled)
 	}

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package node provides node selector for liaison
+// Package node provides node selector for liaison.
 package node
 
 import (
@@ -28,55 +28,58 @@ import (
 var (
 	_ Selector = (*pickFirstSelector)(nil)
 
+	// ErrNoAvailableNode will be returned if no node is available.
 	ErrNoAvailableNode = errors.New("selector: no available node")
 )
 
+// Selector keeps all data nodes in the memory and can provide different algorithm to pick an available node.
 type Selector interface {
-	AddNode(nodeId string)
-	RemoveNode(nodeId string)
-	Pick(group, name string, shardId uint32) (string, error)
+	AddNode(nodeID string)
+	RemoveNode(nodeID string)
+	Pick(group, name string, shardID uint32) (string, error)
 }
 
+// NewPickFirstSelector returns a simple selector that always returns the first node if exists.
 func NewPickFirstSelector() Selector {
 	return &pickFirstSelector{}
 }
 
-// pickFirstSelector always pick the first node in the sorted node ids list
+// pickFirstSelector always pick the first node in the sorted node ids list.
 type pickFirstSelector struct {
+	nodeIDMap map[string]struct{}
 	nodeIds   []string
-	nodeIdMap map[string]struct{}
 	mu        sync.RWMutex
 }
 
-func (p *pickFirstSelector) AddNode(nodeId string) {
+func (p *pickFirstSelector) AddNode(nodeID string) {
 	p.mu.RLock()
-	if _, ok := p.nodeIdMap[nodeId]; !ok {
+	if _, ok := p.nodeIDMap[nodeID]; !ok {
 		p.mu.RUnlock()
 		return
 	}
 	p.mu.RUnlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.nodeIdMap[nodeId] = struct{}{}
-	p.nodeIds = append(p.nodeIds, nodeId)
+	p.nodeIDMap[nodeID] = struct{}{}
+	p.nodeIds = append(p.nodeIds, nodeID)
 	slices.Sort(p.nodeIds)
 }
 
-func (p *pickFirstSelector) RemoveNode(nodeId string) {
+func (p *pickFirstSelector) RemoveNode(nodeID string) {
 	p.mu.RLock()
-	if _, ok := p.nodeIdMap[nodeId]; !ok {
+	if _, ok := p.nodeIDMap[nodeID]; !ok {
 		p.mu.RUnlock()
 		return
 	}
 	p.mu.RUnlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.nodeIdMap[nodeId] = struct{}{}
-	p.nodeIds = append(p.nodeIds, nodeId)
+	p.nodeIDMap[nodeID] = struct{}{}
+	p.nodeIds = append(p.nodeIds, nodeID)
 	slices.Sort(p.nodeIds)
 }
 
-func (p *pickFirstSelector) Pick(group, name string, shardId uint32) (string, error) {
+func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.nodeIds) == 0 {

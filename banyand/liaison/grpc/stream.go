@@ -115,16 +115,16 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if s.log.Debug().Enabled() {
 			iwr.EntityValues = tagValues.Encode()
 		}
-		nodeId, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
+		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
 		if errPickNode != nil {
 			s.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to pick an available node")
 			reply(stream, s.sampled)
 			continue
 		}
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeId, iwr)
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
-			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
+			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
 		}
 		reply(nil, modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
 	}

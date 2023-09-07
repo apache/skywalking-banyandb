@@ -30,8 +30,10 @@ var (
 	_ NodeRegistry        = (*clusterNodeService)(nil)
 )
 
+// NodeRegistry is for locating data node with group/name of the metadata
+// together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
-	Locate(group, name string, shardId uint32) (string, error)
+	Locate(group, name string, shardID uint32) (string, error)
 }
 
 type clusterNodeService struct {
@@ -39,6 +41,7 @@ type clusterNodeService struct {
 	sel      node.Selector
 }
 
+// NewClusterNodeRegistry creates a cluster-aware node registry.
 func NewClusterNodeRegistry(metaRepo metadata.Repo) NodeRegistry {
 	cns := &clusterNodeService{
 		metaRepo: metaRepo,
@@ -48,12 +51,12 @@ func NewClusterNodeRegistry(metaRepo metadata.Repo) NodeRegistry {
 	return cns
 }
 
-func (n *clusterNodeService) Locate(group, name string, shardId uint32) (string, error) {
-	nodeId, err := n.sel.Pick(group, name, shardId)
+func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {
+	nodeID, err := n.sel.Pick(group, name, shardID)
 	if err != nil {
-		return "", errors.Wrapf(err, "fail to locate %s/%s(%d)", group, name, shardId)
+		return "", errors.Wrapf(err, "fail to locate %s/%s(%d)", group, name, shardID)
 	}
-	return nodeId, nil
+	return nodeID, nil
 }
 
 func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
@@ -74,11 +77,12 @@ func (n *clusterNodeService) OnDelete(metadata schema.Metadata) {
 
 type localNodeService struct{}
 
+// NewLocalNodeRegistry creates a local(fake) node registry.
 func NewLocalNodeRegistry() NodeRegistry {
 	return localNodeService{}
 }
 
-// Locate of localNodeService always returns
-func (localNodeService) Locate(_group, _name string, _shardId uint32) (string, error) {
+// Locate of localNodeService always returns local.
+func (localNodeService) Locate(_, _ string, _ uint32) (string, error) {
 	return "local", nil
 }
