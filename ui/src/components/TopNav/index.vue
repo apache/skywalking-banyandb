@@ -133,30 +133,28 @@ initData()
     box-shadow: 0 0 10px 0 var(--color-placeholder-font);
 }
 
-::v-deep {
-    .el-tabs--card>.el-tabs__header .el-tabs__nav {
-        border-top: none !important;
-        padding: 0 !important;
-    }
+:deep(.el-tabs--card>.el-tabs__header .el-tabs__nav) {
+    border-top: none !important;
+    padding: 0 !important;
+}
 
-    .el-tabs__header.is-top {
-        padding: 0 !important;
-        margin: 0 !important;
-    }
+:deep(.el-tabs__header.is-top) {
+    padding: 0 !important;
+    margin: 0 !important;
+}
 
-    .el-tabs__item.is-active {
-        color: var(--color-main) !important;
-        background-color: var(--color-main-background) !important;
-        border: 1px solid var(--color-main) !important;
-        border-bottom: none !important;
-        border-top-left-radius: 4px;
-        border-top-right-radius: 4px;
-    }
+:deep(.el-tabs__item.is-active) {
+    color: var(--color-main) !important;
+    background-color: var(--color-main-background) !important;
+    border: 1px solid var(--color-main) !important;
+    border-bottom: none !important;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
 
-    .el-tabs__content {
-        padding: 0 !important;
-        margin: 0 !important;
-        height: 0 !important;
-    }
+:deep(.el-tabs__content) {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 0 !important;
 }
 </style>

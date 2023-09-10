@@ -1,15 +1,19 @@
 <script setup>
-import { getPropertyByGroup } from '@/api/index'
-import { watch, getCurrentInstance } from "@vue/runtime-core"
-import { useRouter, useRoute } from 'vue-router';
-import { ElMessage } from 'element-plus'
-import { onMounted, reactive } from 'vue';
+import { getPropertyByGroup, deleteProperty } from '@/api/index';
+import { watch, getCurrentInstance } from "@vue/runtime-core";
+import { useRoute } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import { onMounted, reactive, ref } from 'vue';
+import { RefreshRight } from '@element-plus/icons-vue';
+import PropertyEditror from './PropertyEditror.vue';
+
 const { proxy } = getCurrentInstance()
 // Loading
 const route = useRoute()
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
+const propertyEditorRef = ref()
 const data = reactive({
     group: "",
     tableData: []
@@ -39,11 +43,55 @@ const getProperty = () => {
             $loadingClose()
         })
 }
-const openAddProperty = () => {
-
+const openEditField = (index) => {
+    const item = data.tableData[index]
+    const param = {
+        group: item.metadata.container.group,
+        name: item.metadata.container.name,
+        containerID: item.metadata.container.id,
+        modRevision: item.metadata.container.modRevision,
+        createRevision: item.metadata.container.createRevision,
+        id: item.metadata.id,
+        tags: JSON.parse(JSON.stringify(item.tags))
+    }
+    propertyEditorRef?.value.openDialog(true, param)
+        .then(() => {
+            getProperty()
+        })
 }
-const deleteTableData = () => {
-
+const openAddProperty = () => {
+    let dataForm = {
+        group: data.group
+    }
+    propertyEditorRef?.value.openDialog(false, dataForm)
+        .then(() => {
+            getProperty()
+        })
+}
+const deleteTableData = (index) => {
+    const item = data.tableData[index]
+    $loadingCreate()
+    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id, item.tags)
+        .then((res) => {
+            if (res.status == 200) {
+                ElMessage({
+                    message: 'successed',
+                    type: "success",
+                    duration: 5000
+                })
+                getProperty()
+            }
+        })
+        .catch(err => {
+            ElMessage({
+                message: 'Please refresh and try again. Error: ' + err,
+                type: "error",
+                duration: 3000
+            })
+        })
+        .finally(() => {
+            $loadingClose()
+        })
 }
 watch(() => route, () => {
     data.group = route.params.group
@@ -68,8 +116,12 @@ onMounted(() => {
                     <span>Read</span>
                 </div>
             </template>
-            <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Add
-                Property</el-button>
+            <div class="button-group-operator">
+                <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply
+                    Property</el-button>
+                <el-button size="small" :icon="RefreshRight" @click="getProperty" plain></el-button>
+            </div>
+
             <el-table :data="data.tableData" style="width: 100%; margin-top: 20px;" border>
                 <el-table-column label="Container">
                     <el-table-column label="Group" prop="metadata.container.group" width="100"></el-table-column>
@@ -102,12 +154,17 @@ onMounted(() => {
                 </el-table-column>
             </el-table>
         </el-card>
+        <PropertyEditror ref="propertyEditorRef"></PropertyEditror>
     </div>
 </template>
 <style lang="scss" scoped>
-::v-deep {
-    .el-card {
-        margin: 15px;
-    }
+:deep(.el-card) {
+    margin: 15px;
+}
+
+.button-group-operator {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
 }
 </style>
