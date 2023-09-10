@@ -35,7 +35,7 @@ const rules = {
     modRevision: [{ required: true, message: 'Please enter the container Mod Revision.', trigger: 'blur' }],
     createRevision: [{ required: true, message: 'Please enter the container Create Revision.', trigger: 'blur' }],
     id: [{ required: true, message: 'Please enter the ID.', trigger: 'blur' }],
-    tags: [{ validator: validateTags, trigger: 'blur' }],
+    tags: [{ required: true, validator: validateTags, trigger: 'blur' }],
 }
 const strategyGroup = [
     { label: 'STRATEGY_UNSPECIFIED', value: 'STRATEGY_UNSPECIFIED' },
