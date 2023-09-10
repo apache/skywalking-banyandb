@@ -61,6 +61,8 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
+	publisher := s.pipeline.NewBatchPublisher()
+	defer publisher.Close()
 	ctx := stream.Context()
 	for {
 		select {
@@ -101,8 +103,8 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if s.log.Debug().Enabled() {
 			iwr.EntityValues = tagValues.Encode()
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
-		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "TODO", iwr)
+		_, errWritePub := publisher.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
 			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
 		}

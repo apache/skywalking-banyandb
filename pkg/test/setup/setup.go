@@ -79,8 +79,7 @@ func CommonWithSchemaLoaders(schemaLoaders []SchemaLoader, flags ...string) (str
 
 func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	// Init `Queue` module
-	pipeline, err := queue.NewQueue(context.TODO())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	pipeline := queue.Local()
 	// Init `Metadata` module
 	metaSvc, err := metadata.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -99,16 +98,17 @@ func modules(schemaLoaders []SchemaLoader, flags []string) func() {
 	units := []run.Unit{
 		pipeline,
 		metaSvc,
-		streamSvc,
-		measureSvc,
-		q,
-		tcp,
-		httpServer,
 	}
 	for _, sl := range schemaLoaders {
 		sl.SetMeta(metaSvc)
 		units = append(units, sl)
 	}
+	units = append(units,
+		streamSvc,
+		measureSvc,
+		q,
+		tcp,
+		httpServer)
 
 	return test.SetupModules(
 		flags,

@@ -17,36 +17,24 @@
 
 syntax = "proto3";
 
-package banyandb.database.v1;
+package banyandb.cluster.v1;
 
-import "banyandb/common/v1/common.proto";
-import "google/protobuf/timestamp.proto";
+import "banyandb/measure/v1/write.proto";
+import "banyandb/stream/v1/write.proto";
 
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
-option java_package = "org.apache.skywalking.banyandb.database.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
 
-enum Role {
-  ROLE_UNSPECIFIED = 0;
-  ROLE_META = 1;
-  ROLE_DATA = 2;
-  ROLE_QUERY = 3;
-  ROLE_LIAISON = 4;
+message WriteRequest {
+  string topic = 1;
+  uint64 message_id = 2;
+  oneof request {
+    stream.v1.InternalWriteRequest stream = 3;
+    measure.v1.InternalWriteRequest measure = 4;
+  }
 }
 
-message Node {
-  common.v1.Metadata metadata = 1;
-  repeated Role roles = 2;
-  string grpc_address = 3;
-  string http_address = 4;
-  google.protobuf.Timestamp created_at = 5;
-}
+message WriteResponse {}
 
-message Shard {
-  uint64 id = 1;
-  common.v1.Metadata metadata = 2;
-  common.v1.Catalog catalog = 3;
-  string node = 4;
-  uint32 total = 5;
-  google.protobuf.Timestamp updated_at = 6;
-  google.protobuf.Timestamp created_at = 7;
+service Service {
+  rpc Write(stream WriteRequest) returns (stream WriteResponse);
 }

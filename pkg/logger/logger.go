@@ -96,7 +96,7 @@ func (l *Logger) ToZapConfig() zap.Config {
 	}
 	if !l.development {
 		config := zap.NewProductionConfig()
-		config.Level = level
+		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 		return config
 	}
 	encoderConfig := zapcore.EncoderConfig{

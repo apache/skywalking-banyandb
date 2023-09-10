@@ -28,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -50,15 +50,11 @@ var flagStorageMode string
 func newStorageCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	// nolint: staticcheck
-	pipeline, err := queue.NewQueue(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
-	}
 	metaSvc, err := metadata.NewClient(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
+	pipeline := sub.NewServer()
 	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")

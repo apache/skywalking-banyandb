@@ -40,7 +40,7 @@ import (
 var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
-	pipeline     queue.Queue
+	pipeline     queue.Client
 	metadataRepo metadata.Repo
 	shardRepo    *shardRepo
 	entityRepo   *entityRepo
@@ -48,7 +48,7 @@ type discoveryService struct {
 	kind         schema.Kind
 }
 
-func newDiscoveryService(pipeline queue.Queue, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
+func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
@@ -130,8 +130,8 @@ func (ds *discoveryService) initialize(ctx context.Context) error {
 			return fmt.Errorf("unsupported kind: %d", ds.kind)
 		}
 	}
-	ds.metadataRepo.RegisterHandler(schema.KindShard, ds.shardRepo)
-	ds.metadataRepo.RegisterHandler(ds.kind, ds.entityRepo)
+	ds.metadataRepo.RegisterHandler("liaison", schema.KindShard, ds.shardRepo)
+	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	return nil
 }
 

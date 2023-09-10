@@ -21,7 +21,6 @@ import (
 	"context"
 	"hash/crc32"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -45,9 +44,7 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), func() proto.Message {
-		return &databasev1.IndexRuleBinding{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), KindIndexRuleBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +105,7 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), func() proto.Message {
-		return &databasev1.IndexRule{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), KindIndexRule)
 	if err != nil {
 		return nil, err
 	}
