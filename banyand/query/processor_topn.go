@@ -19,19 +19,19 @@ package query
 
 import (
 	"context"
-	"fmt"
-	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	logical_topn "github.com/apache/skywalking-banyandb/pkg/query/logical/topn"
+	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
 type topNQueryProcessor struct {
@@ -70,8 +70,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("unmatched sort direction")
 		return
 	}
-	meta := topNSchema.GetSourceMeasure()
-	sourceMeasure, err := t.measureService.Measure(meta)
+	sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
@@ -79,19 +78,27 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	s, err := logical_topn.BuildSchema(sourceMeasure, topNSchema)
+	ec, err := t.measureService.Measure(topNMetadata)
+	if err != nil {
+		t.log.Error().Err(err).
+			Str("topN", topNMetadata.GetName()).
+			Msg("fail to find topN measure")
+		return
+	}
+	s, err := logical_measure.BuildSchema(ec, topNSchema.GetGroupByTagNames())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
 
-	wrapRequest := &logical_measure.WrapRequest{TopNRequest: request}
-	wrapRequest.SetFieldProjection(topNSchema.GetFieldName())
-	wrapRequest.SetTagProjection(sourceMeasure.GetSchema().GetEntity().GetTagNames())
+	md := sourceMeasure.GetSchema()
+	md.TagFamilies = append(md.TagFamilies, ec.GetSchema().GetTagFamilies()...)
+
+	wrapRequest := logical_measure.WrapTopNRequest(request, topNSchema, sourceMeasure)
 	plan, err := logical_measure.Analyze(context.TODO(), wrapRequest, topNMetadata, s)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
 	}
 
@@ -102,7 +109,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(sourceMeasure)
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
 	}
 	defer func() {
 		if err = mIterator.Close(); err != nil {
@@ -110,33 +117,48 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}()
 
-	result := make([]*measurev1.DataPoint, 0)
+	groupMap := make(map[int64][]*measurev1.DataPoint)
 	for mIterator.Next() {
-		current := mIterator.Current()
-		if len(current) > 0 {
-			result = append(result, current[0])
+		dps := mIterator.Current()
+		for _, dp := range dps {
+			key := dp.GetTimestamp().AsTime().Unix()
+			group, ok := groupMap[key]
+			if !ok {
+				group = make([]*measurev1.DataPoint, 0)
+			}
+			group = append(group, dp)
+			groupMap[key] = group
 		}
 	}
 
-	resp = bus.NewMessage(bus.MessageID(now), toTopNList(result))
+	resp = bus.NewMessage(bus.MessageID(now), toTopNList(groupMap))
 	return
 }
 
-func toTopNList(result []*measurev1.DataPoint) []*measurev1.TopNList {
-	topNItems := make([]*measurev1.TopNList_Item, len(result))
+func toTopNList(groupMap map[int64][]*measurev1.DataPoint) []*measurev1.TopNList {
+	topNList := make([]*measurev1.TopNList, 0)
 
-	for i, dp := range result {
-		topNItems[i] = &measurev1.TopNList_Item{
-			Entity: dp.GetTagFamilies()[0].GetTags(),
-			Value:  dp.GetFields()[0].GetValue(),
+	for key, group := range groupMap {
+		topNItems := make([]*measurev1.TopNList_Item, len(group))
+		for i, dp := range group {
+			topNItems[i] = &measurev1.TopNList_Item{
+				Entity: dp.GetTagFamilies()[0].GetTags(),
+				Value:  dp.GetFields()[0].GetValue(),
+			}
 		}
+		topNList = append(topNList, &measurev1.TopNList{
+			Timestamp: timestamppb.New(time.Unix(0, key)),
+			Items:     topNItems,
+		})
 	}
 
-	fmt.Println(result[0].GetTimestamp().AsTime().UnixNano())
-	return []*measurev1.TopNList{
-		{
-			Timestamp: result[0].GetTimestamp(),
-			Items:     topNItems,
-		},
-	}
+	slices.SortStableFunc(topNList, func(a, b *measurev1.TopNList) bool {
+		if a.GetTimestamp().GetSeconds() < b.GetTimestamp().GetSeconds() {
+			return true
+		} else if a.GetTimestamp().GetSeconds() == b.GetTimestamp().GetSeconds() {
+			return a.GetTimestamp().GetNanos() < b.GetTimestamp().GetNanos()
+		}
+		return false
+	})
+	return topNList
 }

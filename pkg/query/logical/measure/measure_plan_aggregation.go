@@ -19,16 +19,16 @@ package measure
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -44,7 +44,6 @@ type unresolvedAggregation struct {
 	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field
 	aggrFunc         modelv1.AggregationFunction
-	aggrType         modelv1.AggregationFunction
 	isGroup          bool
 	isTop            bool
 }
@@ -376,7 +375,7 @@ func (ati *aggTopIterator[N]) Next() bool {
 		resultDps = append(resultDps, resultDp)
 	}
 	ati.result = resultDps
-	return true
+	return ati.result != nil
 }
 
 func (ati *aggTopIterator[N]) Current() []*measurev1.DataPoint {

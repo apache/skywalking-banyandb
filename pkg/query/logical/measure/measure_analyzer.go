@@ -19,11 +19,12 @@ package measure
 
 import (
 	"context"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -31,7 +32,7 @@ import (
 const defaultLimit int64 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
+func BuildSchema(measureSchema measure.Measure, entityList []string) (logical.Schema, error) {
 	md := measureSchema.GetSchema()
 	md.GetEntity()
 
@@ -39,7 +40,7 @@ func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
 		common: &logical.CommonSchema{
 			IndexRules: measureSchema.GetIndexRules(),
 			TagSpecMap: make(map[string]*logical.TagSpec),
-			EntityList: md.GetEntity().GetTagNames(),
+			EntityList: entityList,
 		},
 		measure:  md,
 		fieldMap: make(map[string]*logical.FieldSpec),
@@ -56,7 +57,7 @@ func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
-	groupByEntity := true
+	groupByEntity := false
 	var groupByTags [][]*logical.Tag
 	if request.GetGroupBy() != nil {
 		groupByProjectionTags := request.GetGroupBy().GetTagProjection()
@@ -66,8 +67,8 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
 			tags = append(tags, tagFamily.GetTags()...)
 		}
-		if !logical.StringSlicesEqual(s.EntityList(), tags) {
-			groupByEntity = false
+		if logical.StringSlicesEqual(s.EntityList(), tags) {
+			groupByEntity = true
 		}
 	}
 
@@ -82,12 +83,11 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 	pushedLimit := limitParameter + request.GetOffset()
 
 	if request.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity, request.IsTop())
 		pushedLimit = math.MaxInt
 	}
 
-	if request.GetAgg() != nil &&
-		request.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+	if request.GetAgg() != nil {
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(request.GetAgg().GetFieldName()),
 			request.GetAgg().GetFunction(),
@@ -98,7 +98,7 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 	}
 
 	if request.GetTop() != nil {
-		plan = top(plan, request.GetTop())
+		plan = top(plan, request.GetTop(), !request.hasAgg())
 	}
 
 	if request.GetLimit() != -1 {
@@ -141,6 +141,20 @@ type WrapRequest struct {
 	*measurev1.TopNRequest
 	projField string
 	projTag   []string
+}
+
+func WrapTopNRequest(request *measurev1.TopNRequest, topNSchema *databasev1.TopNAggregation, sourceMeasure measure.Measure) *WrapRequest {
+	return &WrapRequest{
+		TopNRequest: request,
+		projField:   topNSchema.GetFieldName(),
+		projTag:     sourceMeasure.GetSchema().GetEntity().GetTagNames(),
+	}
+}
+
+func WrapQueryRequest(request *measurev1.QueryRequest) *WrapRequest {
+	return &WrapRequest{
+		QueryRequest: request,
+	}
 }
 
 func (wr *WrapRequest) GetMetadata() *commonv1.Metadata {
@@ -209,20 +223,25 @@ func (wr *WrapRequest) GetLimit() int64 {
 func (wr *WrapRequest) GetGroupBy() *measurev1.QueryRequest_GroupBy {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetGroupBy()
-	} else {
-		return nil
+	} else if !wr.hasAgg() {
+		return &measurev1.QueryRequest_GroupBy{
+			FieldName:     wr.projField,
+			TagProjection: wr.GetTagProjection(),
+		}
 	}
+	return nil
 }
 
 func (wr *WrapRequest) GetAgg() *measurev1.QueryRequest_Aggregation {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetAgg()
-	} else {
+	} else if wr.hasAgg() {
 		return &measurev1.QueryRequest_Aggregation{
 			FieldName: wr.projField,
 			Function:  wr.TopNRequest.GetAgg(),
 		}
 	}
+	return nil
 }
 
 func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
@@ -249,7 +268,9 @@ func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetOrderBy()
 	} else {
-		return nil
+		return &modelv1.QueryOrder{
+			Sort: wr.TopNRequest.GetFieldValueSort(),
+		}
 	}
 }
 
@@ -266,6 +287,15 @@ func (wr *WrapRequest) GetFieldValueSort() modelv1.Sort {
 		return modelv1.Sort_SORT_UNSPECIFIED
 	} else {
 		return wr.TopNRequest.GetFieldValueSort()
+	}
+}
+
+func (wr *WrapRequest) hasAgg() bool {
+	if wr.QueryRequest != nil {
+		return true
+	} else {
+		function := wr.TopNRequest.GetAgg()
+		return function != 0
 	}
 }
 

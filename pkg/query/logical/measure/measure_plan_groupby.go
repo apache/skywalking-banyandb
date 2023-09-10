@@ -42,13 +42,15 @@ type unresolvedGroup struct {
 	// groupBy should be a subset of tag projection
 	groupBy       [][]*logical.Tag
 	groupByEntity bool
+	isTopN        bool
 }
 
-func newUnresolvedGroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool) logical.UnresolvedPlan {
+func newUnresolvedGroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool, isTopN bool) logical.UnresolvedPlan {
 	return &unresolvedGroup{
 		unresolvedInput: input,
 		groupBy:         groupBy,
 		groupByEntity:   groupByEntity,
+		isTopN:          isTopN,
 	}
 }
 
@@ -71,6 +73,7 @@ func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan,
 		schema:          schema,
 		groupByTagsRefs: groupByTagRefs,
 		groupByEntity:   gba.groupByEntity,
+		isTopN:          gba.isTopN,
 	}, nil
 }
 
@@ -79,6 +82,7 @@ type groupBy struct {
 	schema          logical.Schema
 	groupByTagsRefs [][]*logical.TagRef
 	groupByEntity   bool
+	isTopN          bool
 }
 
 func (g *groupBy) String() string {
@@ -130,7 +134,7 @@ func (g *groupBy) hash(ec executor.MeasureExecutionContext) (mit executor.MItera
 	for iter.Next() {
 		dataPoints := iter.Current()
 		for _, dp := range dataPoints {
-			key, innerErr := formatGroupByKey(dp, g.groupByTagsRefs)
+			key, innerErr := formatGroupByKey(dp, g.groupByTagsRefs, g.isTopN)
 			if innerErr != nil {
 				return nil, innerErr
 			}
@@ -149,7 +153,10 @@ func (g *groupBy) hash(ec executor.MeasureExecutionContext) (mit executor.MItera
 	return newGroupIterator(groupMap, groupLst), nil
 }
 
-func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
+func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef, isTopN bool) (uint64, error) {
+	if isTopN {
+		return uint64(point.GetTimestamp().AsTime().Unix()), nil
+	}
 	hash := xxhash.New()
 	for _, tagFamilyRef := range groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
@@ -240,7 +247,7 @@ func (gmi *groupSortIterator) Next() bool {
 			gmi.closed = true
 			return len(gmi.current) > 0
 		}
-		k, err := formatGroupByKey(dp, gmi.groupByTagsRefs)
+		k, err := formatGroupByKey(dp, gmi.groupByTagsRefs, false)
 		if err != nil {
 			gmi.closed = true
 			gmi.err = err

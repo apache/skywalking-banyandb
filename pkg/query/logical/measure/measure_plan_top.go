@@ -37,12 +37,14 @@ var (
 type unresolvedTop struct {
 	unresolvedInput logical.UnresolvedPlan
 	top             *measurev1.QueryRequest_Top
+	isGroup         bool
 }
 
-func top(input logical.UnresolvedPlan, top *measurev1.QueryRequest_Top) logical.UnresolvedPlan {
+func top(input logical.UnresolvedPlan, top *measurev1.QueryRequest_Top, isGroup bool) logical.UnresolvedPlan {
 	return &unresolvedTop{
 		unresolvedInput: input,
 		top:             top,
+		isGroup:         isGroup,
 	}
 }
 
@@ -69,6 +71,7 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 		},
 		topNStream: NewTopQueue(int(gba.top.Number), reverted),
 		fieldRef:   fieldRefs[0],
+		isGroup:    gba.isGroup,
 	}, nil
 }
 
@@ -76,6 +79,7 @@ type topOp struct {
 	*logical.Parent
 	topNStream *TopQueue
 	fieldRef   *logical.FieldRef
+	isGroup    bool
 }
 
 func (g *topOp) String() string {
@@ -91,6 +95,18 @@ func (g *topOp) Schema() logical.Schema {
 }
 
 func (g *topOp) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	if g.isGroup {
+		return g.group(ec)
+	}
+	return g.all(ec)
+}
+
+type topIterator struct {
+	elements []TopElement
+	index    int
+}
+
+func (g *topOp) all(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -109,12 +125,15 @@ func (g *topOp) Execute(ec executor.MeasureExecutionContext) (mit executor.MIter
 			g.topNStream.Insert(NewTopElement(dp, value))
 		}
 	}
-	return newTopIterator(g.topNStream.Elements()), nil
+	return newTopIterator(g.topNStream.Elements()), err
 }
 
-type topIterator struct {
-	elements []TopElement
-	index    int
+func (g *topOp) group(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+	return newTopGroupIterator(iter, g.fieldRef, g.topNStream), err
 }
 
 func newTopIterator(elements []TopElement) executor.MIterator {
@@ -135,4 +154,45 @@ func (ami *topIterator) Current() []*measurev1.DataPoint {
 
 func (ami *topIterator) Close() error {
 	return nil
+}
+
+type topGroupIterator struct {
+	iter       executor.MIterator
+	topNStream *TopQueue
+	fieldRef   *logical.FieldRef
+}
+
+func newTopGroupIterator(iter executor.MIterator, fieldRef *logical.FieldRef, topNStream *TopQueue) executor.MIterator {
+	return &topGroupIterator{
+		iter:       iter,
+		topNStream: topNStream,
+		fieldRef:   fieldRef,
+	}
+}
+
+func (tgi *topGroupIterator) Next() bool {
+	tgi.topNStream.Purge()
+	return tgi.iter.Next()
+}
+
+func (tgi *topGroupIterator) Current() []*measurev1.DataPoint {
+	dpp := tgi.iter.Current()
+	for _, dp := range dpp {
+		value := dp.GetFields()[tgi.fieldRef.Spec.FieldIdx].
+			GetValue().
+			GetInt().
+			GetValue()
+		tgi.topNStream.Insert(NewTopElement(dp, value))
+	}
+
+	result := make([]*measurev1.DataPoint, 0)
+	for _, element := range tgi.topNStream.Elements() {
+		result = append(result, element.dp)
+	}
+
+	return result
+}
+
+func (tgi *topGroupIterator) Close() error {
+	return tgi.iter.Close()
 }

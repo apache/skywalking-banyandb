@@ -20,7 +20,6 @@ package measure
 import (
 	"context"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"io"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -143,52 +143,26 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
-	var (
-		orderBy    *tsdb.OrderBy
-		seriesList tsdb.SeriesList
-	)
-	if !i.isTopN && i.order.Index != nil {
-		orderBy = &tsdb.OrderBy{
-			Index: i.order.Index,
-			Sort:  i.order.Sort,
-		}
+	if i.isTopN {
+		return i.topNExecute(ec)
 	}
+	return i.queryExecute(ec)
+}
+
+func (i *localIndexScan) topNExecute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
-		var (
-			shards      []tsdb.Shard
-			errInternal error
-		)
-		if i.isTopN {
-			shards, errInternal = ec.CompanionShards(i.metadata)
-			for _, shard := range shards {
-				sl, errInternal := shard.Series().List(context.WithValue(
-					context.Background(),
-					logger.ContextKey,
-					i.l,
-				), tsdb.NewPath(e))
-				if errInternal != nil {
-					return nil, errInternal
-				}
-				seriesList = seriesList.Merge(sl)
+		shards, errInternal := ec.CompanionShards(i.metadata)
+		for _, shard := range shards {
+			sl, errInternal := shard.Series().List(context.WithValue(
+				context.Background(),
+				logger.ContextKey,
+				i.l,
+			), tsdb.NewPath(e))
+			if errInternal != nil {
+				return nil, errInternal
 			}
-		} else {
-			shards, errInternal = ec.Shards(e)
-			for _, shard := range shards {
-				sl, errInternal := shard.Series().Search(
-					context.WithValue(
-						context.Background(),
-						logger.ContextKey,
-						i.l,
-					),
-					tsdb.NewPath(e),
-					i.filter,
-					orderBy,
-				)
-				if errInternal != nil {
-					return nil, errInternal
-				}
-				seriesList = seriesList.Merge(sl)
-			}
+			seriesList = seriesList.Merge(sl)
 		}
 		if errInternal != nil {
 			return nil, errInternal
@@ -198,7 +172,75 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		return dummyIter, nil
 	}
 	var builders []logical.SeekerBuilder
-	if !i.isTopN && i.order.Index == nil {
+	if i.order.Index == nil {
+		builders = append(builders, func(builder tsdb.SeekerBuilder) {
+			builder.OrderByTime(i.order.Sort)
+		})
+	}
+	// CAVEAT: the order of series list matters when sorting by an index.
+	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	if err != nil {
+		return nil, err
+	}
+	if len(closers) > 0 {
+		defer func(closers []io.Closer) {
+			for _, c := range closers {
+				err = multierr.Append(err, c.Close())
+			}
+		}(closers)
+	}
+
+	if len(iters) == 0 {
+		return dummyIter, nil
+	}
+	transformContext := transformContext{
+		ec:                   ec,
+		projectionTagsRefs:   i.projectionTagsRefs,
+		projectionFieldsRefs: i.projectionFieldsRefs,
+	}
+	if i.groupByEntity {
+		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
+	}
+	it := logical.NewItemIter(iters, i.order.Sort)
+	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
+}
+
+func (i *localIndexScan) queryExecute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+	var orderBy *tsdb.OrderBy
+	if i.order.Index != nil {
+		orderBy = &tsdb.OrderBy{
+			Index: i.order.Index,
+			Sort:  i.order.Sort,
+		}
+	}
+	var seriesList tsdb.SeriesList
+	for _, e := range i.entities {
+		shards, errInternal := ec.Shards(e)
+		for _, shard := range shards {
+			sl, errInternal := shard.Series().Search(
+				context.WithValue(
+					context.Background(),
+					logger.ContextKey,
+					i.l,
+				),
+				tsdb.NewPath(e),
+				i.filter,
+				orderBy,
+			)
+			if errInternal != nil {
+				return nil, errInternal
+			}
+			seriesList = seriesList.Merge(sl)
+		}
+		if errInternal != nil {
+			return nil, errInternal
+		}
+	}
+	if len(seriesList) == 0 {
+		return dummyIter, nil
+	}
+	var builders []logical.SeekerBuilder
+	if i.order.Index == nil {
 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
 			builder.OrderByTime(i.order.Sort)
 		})
@@ -226,7 +268,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 	}
 	if i.groupByEntity {
 		// TODO
-		return newSeriesMIterator(iters, transformContext, 100), nil
+		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
 	}
 	it := logical.NewItemIter(iters, i.order.Sort)
 	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
