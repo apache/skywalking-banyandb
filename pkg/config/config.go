@@ -88,8 +88,8 @@ func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 	fs.VisitAll(func(f *pflag.Flag) {
 		// Environment variables can't have dashes in them, so bind them to their equivalent
 		// keys with underscores.
-		if strings.Contains(f.Name, ".") {
-			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, ".", "_"))
+		if strings.Contains(f.Name, "-") {
+			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 			err = multierr.Append(err, v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix)))
 		}
 
