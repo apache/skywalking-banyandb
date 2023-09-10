@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"time"
 
@@ -50,7 +51,7 @@ type schemaRepo struct {
 func newSchemaRepo(path string, metadata metadata.Repo,
 	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
 ) schemaRepo {
-	return schemaRepo{
+	sr := schemaRepo{
 		l:        l,
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
@@ -59,6 +60,38 @@ func newSchemaRepo(path string, metadata metadata.Repo,
 			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
 		),
 	}
+	sr.start()
+	return sr
+}
+
+// NewPortableRepository creates a new portable repository.
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) Query {
+	r := &schemaRepo{
+		l:        l,
+		metadata: metadata,
+		Repository: resourceSchema.NewPortableRepository(
+			metadata,
+			l,
+			newPortableSupplier(metadata, l),
+		),
+	}
+	r.start()
+	return r
+}
+
+func (sr *schemaRepo) start() {
+	sr.Watcher()
+	sr.metadata.
+		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			sr)
+}
+
+func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
+	sm, ok := sr.loadMeasure(metadata)
+	if !ok {
+		return nil, errors.WithStack(ErrMeasureNotExist)
+	}
+	return sm, nil
 }
 
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
@@ -263,7 +296,7 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 	if !ok {
 		return nil, false
 	}
-	s, ok := r.(*measure)
+	s, ok := r.Delegated().(*measure)
 	return s, ok
 }
 
@@ -292,12 +325,12 @@ func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, 
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.ResourceSpec) (resourceSchema.Resource, error) {
-	measureSchema := spec.Schema.(*databasev1.Measure)
+func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(shardNum, db, measureSpec{
 		schema:           measureSchema,
-		indexRules:       spec.IndexRules,
-		topNAggregations: spec.Aggregations,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
 	}, s.l, s.pipeline)
 }
 
@@ -348,4 +381,22 @@ func intervalFn(key []byte) time.Duration {
 		panic(err)
 	}
 	return interval
+}
+
+type portableSupplier struct {
+	metadata metadata.Repo
+	l        *logger.Logger
+}
+
+func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
+	return &portableSupplier{
+		metadata: metadata,
+		l:        l,
+	}
+}
+
+func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }

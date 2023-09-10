@@ -26,6 +26,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
 // ExecutionContext allows retrieving data from tsdb.
@@ -94,4 +95,25 @@ type MIterator interface {
 // MeasureExecutable allows querying in the measure schema.
 type MeasureExecutable interface {
 	Execute(context.Context) (MIterator, error)
+}
+
+// DistributedExecutionContext allows retrieving data through the distributed module.
+type DistributedExecutionContext interface {
+	bus.Broadcaster
+	TimeRange() *modelv1.TimeRange
+}
+
+// DistributedExecutionContextKey is the key of distributed execution context in context.Context.
+type DistributedExecutionContextKey struct{}
+
+var distributedExecutionContextKeyInstance = DistributedExecutionContextKey{}
+
+// WithDistributedExecutionContext returns a new context with distributed execution context.
+func WithDistributedExecutionContext(ctx context.Context, ec DistributedExecutionContext) context.Context {
+	return context.WithValue(ctx, distributedExecutionContextKeyInstance, ec)
+}
+
+// FromDistributedExecutionContext returns the distributed execution context from context.Context.
+func FromDistributedExecutionContext(ctx context.Context) DistributedExecutionContext {
+	return ctx.Value(distributedExecutionContextKeyInstance).(DistributedExecutionContext)
 }

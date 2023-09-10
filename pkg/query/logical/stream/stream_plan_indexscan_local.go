@@ -122,8 +122,8 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	defer func() {
 		err = multierr.Append(err, it.Close())
 	}()
-	for it.HasNext() {
-		nextItem := it.Next()
+	for it.Next() {
+		nextItem := it.Val()
 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
 		if innerErr != nil {
 			return nil, innerErr

@@ -75,6 +75,22 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 	return p, nil
 }
 
+// DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
+func DistributedAnalyze(criteria *streamv1.QueryRequest, s logical.Schema) (logical.Plan, error) {
+	// parse fields
+	plan := newUnresolvedDistributed(criteria)
+	// parse offset
+	plan = newOffset(plan, criteria.GetOffset())
+
+	// parse limit
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = defaultLimit
+	}
+	plan = newLimit(plan, limitParameter)
+	return plan.Analyze(s)
+}
+
 var (
 	_ logical.Plan           = (*limit)(nil)
 	_ logical.UnresolvedPlan = (*limit)(nil)

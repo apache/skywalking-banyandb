@@ -18,7 +18,6 @@
 package logical
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"time"
@@ -28,6 +27,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -48,19 +48,7 @@ type (
 	// SeekerBuilder wraps the execution of tsdb.SeekerBuilder.
 	// TODO:// we could have a chance to remove this wrapper.
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
-
-	comparator func(a, b tsdb.Item) bool
 )
-
-func createComparator(sortDirection modelv1.Sort) comparator {
-	return func(a, b tsdb.Item) bool {
-		comp := bytes.Compare(a.SortedField(), b.SortedField())
-		if sortDirection == modelv1.Sort_SORT_DESC {
-			return comp == 1
-		}
-		return comp == -1
-	}
-}
 
 // ProjectItem parses the item within the StreamExecutionContext.
 // projectionFieldRefs must be prepared before calling this method, projectionFieldRefs should be a list of
@@ -221,4 +209,16 @@ func StringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []tsdb.Iterator, s modelv1.Sort) sort.Iterator[tsdb.Item] {
+	var ii []sort.Iterator[tsdb.Item]
+	for _, iter := range iters {
+		ii = append(ii, iter)
+	}
+	if s == modelv1.Sort_SORT_DESC {
+		return sort.NewItemIter[tsdb.Item](ii, true)
+	}
+	return sort.NewItemIter[tsdb.Item](ii, false)
 }

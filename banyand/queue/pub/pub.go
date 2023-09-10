@@ -68,6 +68,24 @@ func (p *pub) Serve() run.StopNotify {
 	return p.closer.CloseNotify()
 }
 
+func (p *pub) Broadcast(topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+	var names []string
+	p.mu.RLock()
+	for k := range p.clients {
+		names = append(names, k)
+	}
+	p.mu.RUnlock()
+	var futures []bus.Future
+	for _, n := range names {
+		f, err := p.Publish(topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
+		if err != nil {
+			return nil, err
+		}
+		futures = append(futures, f)
+	}
+	return futures, nil
+}
+
 func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	var err error
 	f := &future{}

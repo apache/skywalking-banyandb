@@ -445,8 +445,7 @@ Metadata is for multi-tenant, multi-model use
 | ROLE_UNSPECIFIED | 0 |  |
 | ROLE_META | 1 |  |
 | ROLE_DATA | 2 |  |
-| ROLE_QUERY | 3 |  |
-| ROLE_LIAISON | 4 |  |
+| ROLE_LIAISON | 3 |  |
 
 
  
