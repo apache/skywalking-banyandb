@@ -131,7 +131,7 @@ func (s *measure) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFam
 	tags := make([]*modelv1.Tag, len(tagFamily.GetTags()))
 	var tagSpec []*databasev1.TagSpec
 	for _, tf := range s.schema.GetTagFamilies() {
-		if tf.GetName() == family || family == TopNTagFamily {
+		if tf.GetName() == family {
 			tagSpec = tf.GetTags()
 		}
 	}
