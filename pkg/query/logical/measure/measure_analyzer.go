@@ -115,6 +115,67 @@ func Analyze(_ context.Context, criteria *WrapRequest, metadata *commonv1.Metada
 	return p, nil
 }
 
+// DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
+func DistributedAnalyze(criteria *WrapRequest, s logical.Schema) (logical.Plan, error) {
+	groupByEntity := false
+	var groupByTags [][]*logical.Tag
+	if criteria.GetGroupBy() != nil {
+		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
+		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
+		tags := make([]string, 0)
+		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
+			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
+			tags = append(tags, tagFamily.GetTags()...)
+		}
+		if logical.StringSlicesEqual(s.EntityList(), tags) {
+			groupByEntity = true
+		}
+	}
+
+	// parse fields
+	plan := newUnresolvedDistributed(criteria)
+
+	// parse limit and offset
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = defaultLimit
+	}
+	pushedLimit := int(limitParameter + criteria.GetOffset())
+
+	if criteria.GetGroupBy() != nil {
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity, criteria.IsTop())
+		pushedLimit = math.MaxInt
+	}
+
+	if criteria.GetAgg() != nil {
+		plan = newUnresolvedAggregation(plan,
+			logical.NewField(criteria.GetAgg().GetFieldName()),
+			criteria.GetAgg().GetFunction(),
+			criteria.GetGroupBy() != nil,
+			criteria.IsTop(),
+		)
+		pushedLimit = math.MaxInt
+	}
+
+	if criteria.GetTop() != nil {
+		plan = top(plan, criteria.GetTop(), !criteria.hasAgg())
+	}
+
+	plan = limit(plan, criteria.GetOffset(), limitParameter)
+	p, err := plan.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	rules := []logical.OptimizeRule{
+		logical.NewPushDownOrder(criteria.OrderBy),
+		logical.NewPushDownMaxSize(pushedLimit),
+	}
+	if err := logical.ApplyRules(p, rules...); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // parseFields parses the query request to decide which kind of plan should be generated
 // Basically,
 // 1 - If no criteria is given, we can only scan all shards

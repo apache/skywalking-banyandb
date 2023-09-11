@@ -38,12 +38,12 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
 type unresolvedDistributed struct {
-	originalQuery     *measurev1.QueryRequest
+	originalQuery     *WrapRequest
 	order             *logical.OrderBy
 	maxDataPointsSize int
 }
 
-func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedPlan {
+func newUnresolvedDistributed(query *WrapRequest) logical.UnresolvedPlan {
 	return &unresolvedDistributed{
 		originalQuery: query,
 	}
@@ -67,7 +67,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	temp := &measurev1.QueryRequest{
 		TagProjection:   ud.originalQuery.TagProjection,
 		FieldProjection: ud.originalQuery.FieldProjection,
-		Metadata:        ud.originalQuery.Metadata,
+		Metadata:        ud.originalQuery.GetMetadata(),
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           uint32(ud.maxDataPointsSize),
 		OrderBy: &modelv1.QueryOrder{

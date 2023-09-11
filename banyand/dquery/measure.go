@@ -62,7 +62,8 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	plan, err := logical_measure.DistributedAnalyze(queryCriteria, s)
+	wrapRequest := logical_measure.WrapQueryRequest(queryCriteria)
+	plan, err := logical_measure.DistributedAnalyze(wrapRequest, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return
