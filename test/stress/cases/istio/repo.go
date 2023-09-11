@@ -139,7 +139,7 @@ func (p *preloadService) Name() string {
 	return "preload-" + p.name
 }
 
-func (p *preloadService) PreRun() error {
+func (p *preloadService) PreRun(_ context.Context) error {
 	e := p.metaSvc.SchemaRegistry()
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
 		return e.CreateGroup(context.TODO(), group)

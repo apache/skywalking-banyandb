@@ -25,9 +25,6 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 
-	"github.com/apache/skywalking-banyandb/api/event"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -56,33 +53,20 @@ func (p *preloadStreamService) Name() string {
 	return "preload-stream"
 }
 
-func (p *preloadStreamService) PreRun() error {
-	return teststream.PreloadSchema(p.metaSvc.SchemaRegistry())
+func (p *preloadStreamService) PreRun(ctx context.Context) error {
+	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 type services struct {
 	stream          *service
 	metadataService metadata.Service
-	repo            *discovery.MockServiceRepo
 }
 
 func setUp() (*services, func()) {
 	ctrl := gomock.NewController(GinkgoT())
 	Expect(ctrl).ShouldNot(BeNil())
-	// Init Discovery
-	repo := discovery.NewMockServiceRepo(ctrl)
-	repo.EXPECT().NodeID().AnyTimes()
-	repo.EXPECT().Name().AnyTimes()
-	stopCh := make(chan struct{})
-	repo.EXPECT().Serve().Return(stopCh).Times(1)
-	repo.EXPECT().GracefulStop().Do(func() { close(stopCh) }).Times(1)
-	// Both PreRun and Serve phases send events
-	repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 1)
-	repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(2 * 2)
-
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO(), repo)
-	Expect(err).NotTo(HaveOccurred())
+	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
@@ -90,7 +74,7 @@ func setUp() (*services, func()) {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Init Stream Service
-	streamService, err := NewService(context.TODO(), metadataService, repo, pipeline)
+	streamService, err := NewService(context.TODO(), metadataService, pipeline)
 	Expect(err).NotTo(HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
 	var flags []string
@@ -105,7 +89,6 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetupModules(
 		flags,
-		repo,
 		pipeline,
 		metadataService,
 		preloadStreamSvc,
@@ -114,7 +97,6 @@ func setUp() (*services, func()) {
 	return &services{
 			stream:          streamService.(*service),
 			metadataService: metadataService,
-			repo:            repo,
 		}, func() {
 			moduleDeferFunc()
 			metaDeferFunc()

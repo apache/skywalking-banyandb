@@ -3,6 +3,12 @@
 
 ## Table of Contents
 
+- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [SendRequest](#banyandb-cluster-v1-SendRequest)
+    - [SendResponse](#banyandb-cluster-v1-SendResponse)
+  
+    - [Service](#banyandb-cluster-v1-Service)
+  
 - [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
     - [Group](#banyandb-common-v1-Group)
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
@@ -16,12 +22,7 @@
     - [Node](#banyandb-database-v1-Node)
     - [Shard](#banyandb-database-v1-Shard)
   
-- [banyandb/database/v1/event.proto](#banyandb_database_v1_event-proto)
-    - [EntityEvent](#banyandb-database-v1-EntityEvent)
-    - [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator)
-    - [ShardEvent](#banyandb-database-v1-ShardEvent)
-  
-    - [Action](#banyandb-database-v1-Action)
+    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
@@ -212,6 +213,66 @@
 
 
 
+<a name="banyandb_cluster_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/cluster/v1/rpc.proto
+
+
+
+<a name="banyandb-cluster-v1-SendRequest"></a>
+
+### SendRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SendResponse"></a>
+
+### SendResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  |  |
+| error | [string](#string) |  |  |
+| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-cluster-v1-Service"></a>
+
+### Service
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
+
+ 
+
+
+
 <a name="banyandb_common_v1_common-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -340,9 +401,10 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  |  |
-| addr | [string](#string) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
@@ -361,7 +423,7 @@ Metadata is for multi-tenant, multi-model use
 | id | [uint64](#uint64) |  |  |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 | catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [Node](#banyandb-database-v1-Node) |  |  |
+| node | [string](#string) |  |  |
 | total | [uint32](#uint32) |  |  |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
@@ -372,84 +434,18 @@ Metadata is for multi-tenant, multi-model use
 
  
 
- 
 
- 
+<a name="banyandb-database-v1-Role"></a>
 
- 
-
-
-
-<a name="banyandb_database_v1_event-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/event.proto
-
-
-
-<a name="banyandb-database-v1-EntityEvent"></a>
-
-### EntityEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| subject | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| entity_locator | [EntityEvent.TagLocator](#banyandb-database-v1-EntityEvent-TagLocator) | repeated |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-EntityEvent-TagLocator"></a>
-
-### EntityEvent.TagLocator
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| family_offset | [uint32](#uint32) |  |  |
-| tag_offset | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-ShardEvent"></a>
-
-### ShardEvent
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard | [Shard](#banyandb-database-v1-Shard) |  |  |
-| action | [Action](#banyandb-database-v1-Action) |  |  |
-| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Action"></a>
-
-### Action
+### Role
 
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
-| ACTION_UNSPECIFIED | 0 |  |
-| ACTION_PUT | 1 |  |
-| ACTION_DELETE | 2 |  |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_LIAISON | 3 |  |
 
 
  

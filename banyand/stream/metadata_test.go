@@ -24,10 +24,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/api/event"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -39,6 +37,10 @@ var _ = Describe("Metadata", func() {
 	BeforeEach(func() {
 		goods = gleak.Goroutines()
 		svcs, deferFn = setUp()
+		Eventually(func() bool {
+			_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+			return ok
+		}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	})
 
 	AfterEach(func() {
@@ -47,14 +49,7 @@ var _ = Describe("Metadata", func() {
 	})
 
 	Context("Manage group", func() {
-		It("should pass smoke test", func() {
-			Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
-				return ok
-			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
-		})
 		It("should close the group", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
 			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
@@ -65,8 +60,6 @@ var _ = Describe("Metadata", func() {
 		})
 
 		It("should add shards", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_DELETE)).Times(2)
-			svcs.repo.EXPECT().Publish(event.StreamTopicShardEvent, test.NewShardEventMatcher(databasev1.Action_ACTION_PUT)).Times(4)
 			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "default")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(groupSchema).ShouldNot(BeNil())
@@ -95,7 +88,6 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the stream", func() {
-			svcs.repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_DELETE)).Times(1)
 			deleted, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
 				Name:  "sw",
 				Group: "default",
@@ -126,7 +118,6 @@ var _ = Describe("Metadata", func() {
 			})
 
 			It("should update a new stream", func() {
-				svcs.repo.EXPECT().Publish(event.StreamTopicEntityEvent, test.NewEntityEventMatcher(databasev1.Action_ACTION_PUT)).Times(1)
 				// Remove the first tag from the entity
 				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
 				entitySize := len(streamSchema.Entity.TagNames)

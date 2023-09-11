@@ -19,17 +19,16 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -51,24 +50,16 @@ var flagStorageMode string
 func newStorageCmd() *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	repo, err := discovery.NewServiceRepo(ctx)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate service repository")
-	}
-	// nolint: staticcheck
-	pipeline, err := queue.NewQueue(ctx, repo)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate data pipeline")
-	}
 	metaSvc, err := metadata.NewClient(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, repo, pipeline)
+	pipeline := sub.NewServer()
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, repo, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -82,7 +73,6 @@ func newStorageCmd() *cobra.Command {
 
 	units := []run.Unit{
 		new(signal.Handler),
-		repo,
 		pipeline,
 		measureSvc,
 		streamSvc,
@@ -120,21 +110,19 @@ func newStorageCmd() *cobra.Command {
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			fmt.Print(logo)
+			node, err := common.GenerateNode(nil, nil)
+			if err != nil {
+				return err
+			}
 			logger.GetLogger().Info().Msg("starting as a storage server")
 			// Spawn our go routines and wait for shutdown.
-			if err := storageGroup.Run(); err != nil {
+			if err := storageGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", storageGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
-
-	storageCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	storageCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
-	storageCmd.Flags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
-	storageCmd.Flags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
 	storageCmd.Flags().StringVarP(&flagStorageMode, "mode", "m", storageModeMix, "the storage mode, one of [data, query, mix]")
 	storageCmd.Flags().AddFlagSet(storageGroup.RegisterFlags().FlagSet)
 	return storageCmd

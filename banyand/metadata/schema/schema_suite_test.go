@@ -18,23 +18,50 @@
 package schema
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestSchema(t *testing.T) {
-	RegisterFailHandler(ginkgo.Fail)
+	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Schema Suite")
 }
 
+var (
+	server   embeddedetcd.Server
+	registry *etcdSchemaRegistry
+)
+
 var _ = ginkgo.BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
+	})).To(gomega.Succeed())
+	ports, err := test.AllocateFreePorts(2)
+	if err != nil {
+		panic("fail to find free ports")
+	}
+	endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+	server, err = embeddedetcd.NewServer(
+		embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+		embeddedetcd.RootDir(randomTempDir()))
+	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+	<-server.ReadyNotify()
+	schemaRegistry, err := NewEtcdSchemaRegistry(ConfigureServerEndpoints(endpoints))
+	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+	registry = schemaRegistry.(*etcdSchemaRegistry)
+})
+
+var _ = ginkgo.AfterSuite(func() {
+	registry.Close()
+	server.Close()
+	<-server.StopNotify()
 })

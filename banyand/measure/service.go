@@ -20,17 +20,13 @@ package measure
 import (
 	"context"
 	"path"
-	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -60,10 +56,9 @@ type service struct {
 	schemaRepo             schemaRepo
 	writeListener          bus.MessageListener
 	metadata               metadata.Repo
-	pipeline               queue.Queue
-	repo                   discovery.ServiceRepo
+	pipeline               queue.Server
+	localPipeline          queue.Queue
 	l                      *logger.Logger
-	stopCh                 chan struct{}
 	root                   string
 	dbOpts                 tsdb.DatabaseOpts
 	BlockEncoderBufferSize run.Bytes
@@ -106,102 +101,41 @@ func (s *service) Name() string {
 	return "measure"
 }
 
-func (s *service) PreRun() error {
-	s.l = logger.GetLogger(s.Name())
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctx)
-	cancel()
-	if err != nil {
-		return err
-	}
-	path := path.Join(s.root, s.Name())
-	observability.UpdatePath(path)
-	s.schemaRepo = newSchemaRepo(path, s.metadata, s.repo, s.dbOpts,
-		s.l, s.pipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
-	for _, g := range groups {
-		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
-			continue
-		}
-		gp, innerErr := s.schemaRepo.StoreGroup(g.Metadata)
-		if innerErr != nil {
-			return innerErr
-		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		allMeasureSchemas, innerErr := s.metadata.MeasureRegistry().
-			ListMeasure(ctx, schema.ListOpt{Group: gp.GetSchema().GetMetadata().GetName()})
-		cancel()
-		if innerErr != nil {
-			return innerErr
-		}
-		for _, measureSchema := range allMeasureSchemas {
-			// sanity check before calling StoreResource
-			// since StoreResource may be called inside the event loop
-			if checkErr := s.sanityCheck(gp, measureSchema); checkErr != nil {
-				return checkErr
-			}
-			if _, innerErr := gp.StoreResource(measureSchema); innerErr != nil {
-				return innerErr
-			}
-		}
-	}
-
-	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
-	err = s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
-	if err != nil {
-		return err
-	}
-	return nil
+func (s *service) Role() databasev1.Role {
+	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) sanityCheck(group resourceSchema.Group, measureSchema *databasev1.Measure) error {
-	var topNAggrs []*databasev1.TopNAggregation
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	topNAggrs, err := s.metadata.MeasureRegistry().TopNAggregations(ctx, measureSchema.GetMetadata())
-	if err != nil || len(topNAggrs) == 0 {
+func (s *service) PreRun(_ context.Context) error {
+	s.l = logger.GetLogger(s.Name())
+	path := path.Join(s.root, s.Name())
+	observability.UpdatePath(path)
+	s.localPipeline = queue.Local()
+	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
+		s.l, s.localPipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
+	// run a serial watcher
+
+	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
+	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	if err != nil {
 		return err
 	}
-
-	for _, topNAggr := range topNAggrs {
-		topNMeasure, innerErr := createOrUpdateTopNMeasure(s.metadata.MeasureRegistry(), topNAggr)
-		err = multierr.Append(err, innerErr)
-		if topNMeasure != nil {
-			_, storeErr := group.StoreResource(topNMeasure)
-			if storeErr != nil {
-				err = multierr.Append(err, storeErr)
-			}
-		}
-	}
-
-	return err
+	return s.localPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 }
 
 func (s *service) Serve() run.StopNotify {
-	_ = s.schemaRepo.NotifyAll()
-	// run a serial watcher
-	go s.schemaRepo.Watcher()
-
-	s.metadata.MeasureRegistry().
-		RegisterHandler(schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
-			&s.schemaRepo)
-
-	return s.stopCh
+	return s.schemaRepo.StopCh()
 }
 
 func (s *service) GracefulStop() {
+	s.localPipeline.GracefulStop()
 	s.schemaRepo.Close()
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, repo discovery.ServiceRepo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server) (Service, error) {
 	return &service{
 		metadata: metadata,
-		repo:     repo,
 		pipeline: pipeline,
-		stopCh:   make(chan struct{}),
 		dbOpts: tsdb.DatabaseOpts{
 			IndexGranularity: tsdb.IndexGranularitySeries,
 		},

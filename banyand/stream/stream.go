@@ -22,35 +22,24 @@ package stream
 import (
 	"context"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 // a chunk is 1MB.
 const chunkSize = 1 << 20
 
-var _ schema.Resource = (*stream)(nil)
-
 type stream struct {
-	db                     tsdb.Supplier
-	l                      *logger.Logger
-	schema                 *databasev1.Stream
-	indexWriter            *index.Writer
-	name                   string
-	group                  string
-	entityLocator          partition.EntityLocator
-	indexRules             []*databasev1.IndexRule
-	maxObservedModRevision int64
-	shardNum               uint32
-}
-
-func (s *stream) GetMetadata() *commonv1.Metadata {
-	return s.schema.Metadata
+	db          tsdb.Supplier
+	l           *logger.Logger
+	schema      *databasev1.Stream
+	indexWriter *index.Writer
+	name        string
+	group       string
+	indexRules  []*databasev1.IndexRule
+	shardNum    uint32
 }
 
 func (s *stream) GetSchema() *databasev1.Stream {
@@ -61,26 +50,12 @@ func (s *stream) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
-func (s *stream) MaxObservedModRevision() int64 {
-	return s.maxObservedModRevision
-}
-
-func (s *stream) GetTopN() []*databasev1.TopNAggregation {
-	return nil
-}
-
-func (s *stream) EntityLocator() partition.EntityLocator {
-	return s.entityLocator
-}
-
 func (s *stream) Close() error {
 	return nil
 }
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.entityLocator = partition.NewEntityLocator(s.schema.GetTagFamilies(), s.schema.GetEntity())
-	s.maxObservedModRevision = schema.ParseMaxModRevision(s.indexRules)
 }
 
 type streamSpec struct {

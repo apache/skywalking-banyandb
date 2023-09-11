@@ -101,6 +101,7 @@ func (c *ChannelCloser) CloseThenWait() {
 		return
 	}
 
+	c.cancel()
 	c.lock.Lock()
 	c.closed = true
 	c.lock.Unlock()
@@ -108,7 +109,6 @@ func (c *ChannelCloser) CloseThenWait() {
 	c.sender.Done()
 	c.sender.Wait()
 
-	c.cancel()
 	c.receiver.Done()
 	c.receiver.Wait()
 }

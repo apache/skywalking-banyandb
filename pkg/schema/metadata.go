@@ -15,107 +15,77 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package schema implements a framework to sync schema info from the metadata repository.
 package schema
 
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/discovery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// EventType defines actions of events.
-type EventType uint8
+var _ Resource = (*resourceSpec)(nil)
 
-// EventType support Add/Update and Delete.
-// All events are idempotent.
-const (
-	EventAddOrUpdate EventType = iota
-	EventDelete
-)
-
-// EventKind defines category of events.
-type EventKind uint8
-
-// This framework groups events to a hierarchy. A group is the root node.
-const (
-	EventKindGroup EventKind = iota
-	EventKindResource
-)
-
-// Group is the root node, allowing get resources from its sub nodes.
-type Group interface {
-	GetSchema() *commonv1.Group
-	StoreResource(resourceSchema ResourceSchema) (Resource, error)
-	LoadResource(name string) (Resource, bool)
+type resourceSpec struct {
+	schema       ResourceSchema
+	delegated    io.Closer
+	indexRules   []*databasev1.IndexRule
+	aggregations []*databasev1.TopNAggregation
 }
 
-// MetadataEvent is the syncing message between metadata repo and this framework.
-type MetadataEvent struct {
-	Metadata *commonv1.Metadata
-	Typ      EventType
-	Kind     EventKind
+func (rs *resourceSpec) Delegated() io.Closer {
+	return rs.delegated
 }
 
-// ResourceSchema allows get the metadata.
-type ResourceSchema interface {
-	GetMetadata() *commonv1.Metadata
+func (rs *resourceSpec) Close() error {
+	return rs.delegated.Close()
 }
 
-// ResourceSpec wraps required fields to open a resource.
-type ResourceSpec struct {
-	Schema ResourceSchema
-	// IndexRules are index rules bound to the Schema
-	IndexRules []*databasev1.IndexRule
-	// Aggregations are topN aggregation bound to the Schema, e.g. TopNAggregation
-	Aggregations []*databasev1.TopNAggregation
+func (rs *resourceSpec) Schema() ResourceSchema {
+	return rs.schema
 }
 
-// Resource allows access metadata from a local cache.
-type Resource interface {
-	GetIndexRules() []*databasev1.IndexRule
-	GetTopN() []*databasev1.TopNAggregation
-	MaxObservedModRevision() int64
-	EntityLocator() partition.EntityLocator
-	ResourceSchema
-	io.Closer
+func (rs *resourceSpec) IndexRules() []*databasev1.IndexRule {
+	return rs.indexRules
 }
 
-// ResourceSupplier allows open a resource and its embedded tsdb.
-type ResourceSupplier interface {
-	OpenResource(shardNum uint32, db tsdb.Supplier, spec ResourceSpec) (Resource, error)
-	ResourceSchema(metdata *commonv1.Metadata) (ResourceSchema, error)
-	OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error)
+func (rs *resourceSpec) TopN() []*databasev1.TopNAggregation {
+	return rs.aggregations
 }
 
-// Repository is the collection of several hierarchies groups by a "Group".
-type Repository interface {
-	Watcher()
-	SendMetadataEvent(MetadataEvent)
-	StoreGroup(groupMeta *commonv1.Metadata) (*group, error)
-	LoadGroup(name string) (Group, bool)
-	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
-	NotifyAll() (err error)
-	Close()
+func (rs *resourceSpec) maxRevision() int64 {
+	return rs.schema.GetMetadata().GetModRevision()
+}
+
+func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
+	if other.maxRevision() > rs.maxRevision() {
+		return false
+	}
+	if len(rs.indexRules) != len(other.indexRules) {
+		return false
+	}
+	if len(rs.aggregations) != len(other.aggregations) {
+		return false
+	}
+	if parseMaxModRevision(other.indexRules) > parseMaxModRevision(rs.indexRules) {
+		return false
+	}
+	if parseMaxModRevision(other.aggregations) > parseMaxModRevision(rs.aggregations) {
+		return false
+	}
+	return true
 }
 
 const defaultWorkerNum = 10
@@ -123,51 +93,76 @@ const defaultWorkerNum = 10
 var _ Repository = (*schemaRepo)(nil)
 
 type schemaRepo struct {
-	metadata         metadata.Repo
-	repo             discovery.ServiceRepo
-	resourceSupplier ResourceSupplier
-	l                *logger.Logger
-	data             map[string]*group
-	closer           *run.Closer
-	eventCh          chan MetadataEvent
-	shardTopic       bus.Topic
-	entityTopic      bus.Topic
-	workerNum        int
+	metadata               metadata.Repo
+	resourceSupplier       ResourceSupplier
+	resourceSchemaSupplier ResourceSchemaSupplier
+	l                      *logger.Logger
+	data                   map[string]*group
+	closer                 *run.ChannelCloser
+	eventCh                chan MetadataEvent
+	workerNum              int
 	sync.RWMutex
+}
+
+func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
+	if !sr.closer.AddSender() {
+		return
+	}
+	defer sr.closer.SenderDone()
+	select {
+	case sr.eventCh <- event:
+	case <-sr.closer.CloseNotify():
+	}
+}
+
+// StopCh implements Repository.
+func (sr *schemaRepo) StopCh() <-chan struct{} {
+	return sr.closer.CloseNotify()
 }
 
 // NewRepository return a new Repository.
 func NewRepository(
 	metadata metadata.Repo,
-	repo discovery.ServiceRepo,
 	l *logger.Logger,
 	resourceSupplier ResourceSupplier,
-	shardTopic bus.Topic,
-	entityTopic bus.Topic,
 ) Repository {
 	return &schemaRepo{
-		metadata:         metadata,
-		repo:             repo,
-		l:                l,
-		resourceSupplier: resourceSupplier,
-		shardTopic:       shardTopic,
-		entityTopic:      entityTopic,
-		data:             make(map[string]*group),
-		eventCh:          make(chan MetadataEvent, defaultWorkerNum),
-		workerNum:        defaultWorkerNum,
-		closer:           run.NewCloser(defaultWorkerNum),
+		metadata:               metadata,
+		l:                      l,
+		resourceSupplier:       resourceSupplier,
+		resourceSchemaSupplier: resourceSupplier,
+		data:                   make(map[string]*group),
+		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
+		workerNum:              defaultWorkerNum,
+		closer:                 run.NewChannelCloser(),
 	}
 }
 
-func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
-	sr.eventCh <- event
+// NewPortableRepository return a new Repository without tsdb.
+func NewPortableRepository(
+	metadata metadata.Repo,
+	l *logger.Logger,
+	supplier ResourceSchemaSupplier,
+) Repository {
+	return &schemaRepo{
+		metadata:               metadata,
+		l:                      l,
+		resourceSchemaSupplier: supplier,
+		data:                   make(map[string]*group),
+		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
+		workerNum:              defaultWorkerNum,
+		closer:                 run.NewChannelCloser(),
+	}
 }
 
 func (sr *schemaRepo) Watcher() {
 	for i := 0; i < sr.workerNum; i++ {
 		go func() {
+			if !sr.closer.AddReceiver() {
+				return
+			}
 			defer func() {
-				sr.closer.Done()
+				sr.closer.ReceiverDone()
 				if err := recover(); err != nil {
 					sr.l.Warn().Interface("err", err).Msg("watching the events")
 				}
@@ -188,7 +183,7 @@ func (sr *schemaRepo) Watcher() {
 						case EventKindGroup:
 							_, err = sr.StoreGroup(evt.Metadata)
 						case EventKindResource:
-							_, err = sr.storeResource(evt.Metadata)
+							err = sr.storeResource(evt.Metadata)
 						}
 					case EventDelete:
 						switch evt.Kind {
@@ -199,12 +194,13 @@ func (sr *schemaRepo) Watcher() {
 						}
 					}
 					if err != nil && !errors.Is(err, schema.ErrClosed) {
-						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
 						select {
-						case sr.eventCh <- evt:
 						case <-sr.closer.CloseNotify():
 							return
+						default:
 						}
+						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
+						sr.SendMetadataEvent(evt)
 					}
 				case <-sr.closer.CloseNotify():
 					return
@@ -215,26 +211,29 @@ func (sr *schemaRepo) Watcher() {
 }
 
 func (sr *schemaRepo) StoreGroup(groupMeta *commonv1.Metadata) (*group, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groupSchema, err := sr.metadata.GroupRegistry().GetGroup(ctx, groupMeta.GetName())
-	if err != nil {
-		return nil, err
-	}
-	name := groupSchema.GetMetadata().GetName()
+	name := groupMeta.GetName()
 	sr.Lock()
 	defer sr.Unlock()
 	g, ok := sr.getGroup(name)
 	if !ok {
 		sr.l.Info().Str("group", name).Msg("creating a tsdb")
-		var db tsdb.Database
-		db, err = sr.resourceSupplier.OpenDB(groupSchema)
-		if err != nil {
+		g = sr.createGroup(name)
+		if err := g.init(name); err != nil {
 			return nil, err
 		}
-		g = newGroup(groupSchema, sr.repo, sr.metadata, db, sr.l, sr.resourceSupplier, sr.entityTopic)
-		sr.data[name] = g
-		return g, sr.notify(groupSchema, databasev1.Action_ACTION_PUT)
+		return g, nil
+	}
+	if !g.isInit() {
+		if err := g.init(name); err != nil {
+			return nil, err
+		}
+		return g, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
+	if err != nil {
+		return nil, err
 	}
 	prevGroupSchema := g.GetSchema()
 	if groupSchema.GetMetadata().GetModRevision() <= prevGroupSchema.Metadata.ModRevision {
@@ -243,22 +242,21 @@ func (sr *schemaRepo) StoreGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	sr.l.Info().Str("group", name).Msg("closing the previous tsdb")
 	db := g.SupplyTSDB()
 	db.Close()
-	err = sr.notify(prevGroupSchema, databasev1.Action_ACTION_DELETE)
-	if err != nil {
-		return nil, err
-	}
 	sr.l.Info().Str("group", name).Msg("creating a new tsdb")
-	newDB, err := sr.resourceSupplier.OpenDB(groupSchema)
-	if err != nil {
+	if err := g.init(name); err != nil {
 		return nil, err
 	}
-	g.setDB(newDB)
-	err = sr.notify(groupSchema, databasev1.Action_ACTION_PUT)
-	if err != nil {
-		return nil, err
-	}
-	g.groupSchema.Store(groupSchema)
 	return g, nil
+}
+
+func (sr *schemaRepo) createGroup(name string) (g *group) {
+	if sr.resourceSupplier != nil {
+		g = newGroup(sr.metadata, sr.l, sr.resourceSupplier)
+	} else {
+		g = newPortableGroup(sr.metadata, sr.l)
+	}
+	sr.data[name] = g
+	return
 }
 
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
@@ -274,7 +272,6 @@ func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	if err != nil {
 		return err
 	}
-	_ = sr.notify(g.GetSchema(), databasev1.Action_ACTION_DELETE)
 	delete(sr.data, name)
 	return nil
 }
@@ -290,7 +287,11 @@ func (sr *schemaRepo) getGroup(name string) (*group, bool) {
 func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
 	sr.RLock()
 	defer sr.RUnlock()
-	return sr.getGroup(name)
+	g, ok := sr.getGroup(name)
+	if !ok {
+		return nil, false
+	}
+	return g, g.isInit()
 }
 
 func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool) {
@@ -301,19 +302,26 @@ func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	return g.LoadResource(metadata.Name)
 }
 
-func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) (Resource, error) {
-	group, ok := sr.LoadGroup(metadata.Group)
+func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) error {
+	g, ok := sr.LoadGroup(metadata.Group)
 	if !ok {
 		var err error
-		if group, err = sr.StoreGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
-			return nil, errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
+		if g, err = sr.StoreGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
+			return errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
 		}
 	}
-	stm, err := sr.resourceSupplier.ResourceSchema(metadata)
+	stm, err := sr.resourceSchemaSupplier.ResourceSchema(metadata)
 	if err != nil {
-		return nil, errors.WithMessage(err, "fails to get the resource")
+		if errors.Is(err, schema.ErrGRPCResourceNotFound) {
+			if dl := sr.l.Debug(); dl.Enabled() {
+				dl.Interface("metadata", metadata).Msg("resource not found")
+			}
+			return nil
+		}
+		return errors.WithMessage(err, "fails to get the resource")
 	}
-	return group.StoreResource(stm)
+	_, err = g.(*group).storeResource(context.Background(), stm)
+	return err
 }
 
 func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
@@ -324,54 +332,6 @@ func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
 	return g.(*group).deleteResource(metadata)
 }
 
-func (sr *schemaRepo) notify(groupSchema *commonv1.Group, action databasev1.Action) (err error) {
-	now := time.Now()
-	nowPb := timestamppb.New(now)
-	shardNum := groupSchema.GetResourceOpts().GetShardNum()
-	for i := 0; i < int(shardNum); i++ {
-		_, errInternal := sr.repo.Publish(sr.shardTopic, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.ShardEvent{
-			Shard: &databasev1.Shard{
-				Id:    uint64(i),
-				Total: shardNum,
-				Metadata: &commonv1.Metadata{
-					Name: groupSchema.GetMetadata().GetName(),
-				},
-				Node: &databasev1.Node{
-					Id:        sr.repo.NodeID(),
-					CreatedAt: nowPb,
-					UpdatedAt: nowPb,
-					Addr:      "localhost",
-				},
-				UpdatedAt: nowPb,
-				CreatedAt: nowPb,
-			},
-			Time:   nowPb,
-			Action: action,
-		}))
-		if errors.Is(errInternal, bus.ErrTopicNotExist) {
-			return nil
-		}
-		if errInternal != nil {
-			err = multierr.Append(err, errInternal)
-		}
-	}
-	return err
-}
-
-func (sr *schemaRepo) NotifyAll() (err error) {
-	sr.RLock()
-	defer sr.RUnlock()
-	for _, g := range sr.data {
-		err = multierr.Append(err, sr.notify(g.GetSchema(), databasev1.Action_ACTION_PUT))
-		g.mapMutex.RLock()
-		for _, s := range g.schemaMap {
-			err = multierr.Append(err, g.notify(s, databasev1.Action_ACTION_PUT))
-		}
-		g.mapMutex.RUnlock()
-	}
-	return err
-}
-
 func (sr *schemaRepo) Close() {
 	defer func() {
 		if err := recover(); err != nil {
@@ -379,6 +339,7 @@ func (sr *schemaRepo) Close() {
 		}
 	}()
 	sr.closer.CloseThenWait()
+	close(sr.eventCh)
 
 	sr.RLock()
 	defer sr.RUnlock()
@@ -394,37 +355,66 @@ var _ Group = (*group)(nil)
 
 type group struct {
 	resourceSupplier ResourceSupplier
-	repo             discovery.ServiceRepo
 	metadata         metadata.Repo
 	db               atomic.Value
 	groupSchema      atomic.Pointer[commonv1.Group]
 	l                *logger.Logger
-	schemaMap        map[string]Resource
-	entityTopic      bus.Topic
+	schemaMap        map[string]*resourceSpec
 	mapMutex         sync.RWMutex
 }
 
 func newGroup(
-	groupSchema *commonv1.Group,
-	repo discovery.ServiceRepo,
 	metadata metadata.Repo,
-	db tsdb.Database,
 	l *logger.Logger,
 	resourceSupplier ResourceSupplier,
-	entityTopic bus.Topic,
 ) *group {
 	g := &group{
 		groupSchema:      atomic.Pointer[commonv1.Group]{},
-		repo:             repo,
 		metadata:         metadata,
 		l:                l,
-		schemaMap:        make(map[string]Resource),
+		schemaMap:        make(map[string]*resourceSpec),
 		resourceSupplier: resourceSupplier,
-		entityTopic:      entityTopic,
+	}
+	return g
+}
+
+func newPortableGroup(
+	metadata metadata.Repo,
+	l *logger.Logger,
+) *group {
+	g := &group{
+		groupSchema: atomic.Pointer[commonv1.Group]{},
+		metadata:    metadata,
+		l:           l,
+		schemaMap:   make(map[string]*resourceSpec),
+	}
+	return g
+}
+
+func (g *group) init(name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
+	if errors.As(err, schema.ErrGRPCResourceNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	g.groupSchema.Store(groupSchema)
+	if g.isPortable() {
+		return nil
+	}
+	db, err := g.resourceSupplier.OpenDB(groupSchema)
+	if err != nil {
+		return err
+	}
 	g.db.Store(db)
-	return g
+	return nil
+}
+
+func (g *group) isInit() bool {
+	return g.GetSchema() != nil
 }
 
 func (g *group) GetSchema() *commonv1.Group {
@@ -435,71 +425,47 @@ func (g *group) SupplyTSDB() tsdb.Database {
 	return g.db.Load().(tsdb.Database)
 }
 
-func (g *group) setDB(db tsdb.Database) {
-	g.db.Store(db)
-}
-
-func (g *group) StoreResource(resourceSchema ResourceSchema) (Resource, error) {
+func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
 	g.mapMutex.Lock()
 	defer g.mapMutex.Unlock()
-	key := resourceSchema.GetMetadata().GetName()
-	preResource := g.schemaMap[key]
-	if preResource != nil &&
-		resourceSchema.GetMetadata().GetModRevision() <= preResource.GetMetadata().GetModRevision() {
-		// we only need to check the max modifications revision observed for index rules
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		idxRules, errIndexRules := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
-		cancel()
-		if errIndexRules != nil {
-			return nil, errIndexRules
-		}
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		topNAggrs, errTopN := g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
-		cancel()
-		if errTopN != nil {
-			return nil, errTopN
-		}
-		if len(idxRules) == len(preResource.GetIndexRules()) && len(topNAggrs) == len(preResource.GetTopN()) {
-			maxModRevision := int64(math.Max(float64(ParseMaxModRevision(idxRules)), float64(ParseMaxModRevision(topNAggrs))))
-			if preResource.MaxObservedModRevision() >= maxModRevision {
-				return preResource, nil
-			}
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	localCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	idxRules, err := g.metadata.IndexRules(ctx, resourceSchema.GetMetadata())
+	idxRules, err := g.metadata.IndexRules(localCtx, resourceSchema.GetMetadata())
 	if err != nil {
 		return nil, err
 	}
-
 	var topNAggrs []*databasev1.TopNAggregation
 	if _, ok := resourceSchema.(*databasev1.Measure); ok {
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
 		var innerErr error
-		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(ctx, resourceSchema.GetMetadata())
+		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(localCtx, resourceSchema.GetMetadata())
 		cancel()
 		if innerErr != nil {
 			return nil, innerErr
 		}
 	}
-
-	sm, errTS := g.resourceSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, g, ResourceSpec{
-		Schema:       resourceSchema,
-		IndexRules:   idxRules,
-		Aggregations: topNAggrs,
-	})
-	if errTS != nil {
-		return nil, errTS
+	resource := &resourceSpec{
+		schema:       resourceSchema,
+		indexRules:   idxRules,
+		aggregations: topNAggrs,
 	}
-	if err := g.notify(sm, databasev1.Action_ACTION_PUT); err != nil {
-		return nil, err
+	key := resourceSchema.GetMetadata().GetName()
+	preResource := g.schemaMap[key]
+	if preResource != nil && preResource.isNewThan(resource) {
+		return preResource, nil
 	}
-	g.schemaMap[key] = sm
+	if !g.isPortable() {
+		sm, errTS := g.resourceSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, g, resource)
+		if errTS != nil {
+			return nil, errTS
+		}
+		resource.delegated = sm
+	}
+	g.schemaMap[key] = resource
 	if preResource != nil {
 		_ = preResource.Close()
 	}
-	return sm, nil
+	return resource, nil
 }
 
 func (g *group) deleteResource(metadata *commonv1.Metadata) error {
@@ -510,12 +476,13 @@ func (g *group) deleteResource(metadata *commonv1.Metadata) error {
 	if preResource == nil {
 		return nil
 	}
-	if err := g.notify(preResource, databasev1.Action_ACTION_DELETE); err != nil {
-		return err
-	}
 	delete(g.schemaMap, key)
 	_ = preResource.Close()
 	return nil
+}
+
+func (g *group) isPortable() bool {
+	return g.resourceSupplier == nil
 }
 
 func (g *group) LoadResource(name string) (Resource, bool) {
@@ -528,41 +495,19 @@ func (g *group) LoadResource(name string) (Resource, bool) {
 	return s, true
 }
 
-func (g *group) notify(resource Resource, action databasev1.Action) error {
-	defer ginkgo.GinkgoRecover()
-	now := time.Now()
-	nowPb := timestamppb.New(now)
-	entityLocator := resource.EntityLocator()
-	locator := make([]*databasev1.EntityEvent_TagLocator, 0, len(entityLocator))
-	for _, tagLocator := range entityLocator {
-		locator = append(locator, &databasev1.EntityEvent_TagLocator{
-			FamilyOffset: uint32(tagLocator.FamilyOffset),
-			TagOffset:    uint32(tagLocator.TagOffset),
-		})
-	}
-	_, err := g.repo.Publish(g.entityTopic, bus.NewMessage(bus.MessageID(now.UnixNano()), &databasev1.EntityEvent{
-		Subject:       resource.GetMetadata(),
-		EntityLocator: locator,
-		Time:          nowPb,
-		Action:        action,
-	}))
-	if errors.Is(err, bus.ErrTopicNotExist) {
-		return nil
-	}
-	return err
-}
-
 func (g *group) close() (err error) {
 	g.mapMutex.RLock()
 	for _, s := range g.schemaMap {
 		err = multierr.Append(err, s.Close())
 	}
 	g.mapMutex.RUnlock()
+	if !g.isInit() {
+		return nil
+	}
 	return multierr.Append(err, g.SupplyTSDB().Close())
 }
 
-// ParseMaxModRevision gives the max revision from resources' metadata.
-func ParseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {
+func parseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {
 	maxRevisionForIdxRules = int64(0)
 	for _, idxRule := range indexRules {
 		if idxRule.GetMetadata().GetModRevision() > maxRevisionForIdxRules {
