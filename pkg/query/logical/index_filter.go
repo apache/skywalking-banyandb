@@ -47,7 +47,9 @@ func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
 
 // BuildLocalFilter returns a new index.Filter for local indices.
 // It could parse series Path at the same time.
-func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
+	entity tsdb.Entity, mandatoryIndexRule bool,
+) (index.Filter, []tsdb.Entity, error) {
 	if criteria == nil {
 		return nil, []tsdb.Entity{entity}, nil
 	}
@@ -74,6 +76,8 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 				}
 			}
 			return parseCondition(cond, indexRule, expr, entity)
+		} else if mandatoryIndexRule {
+			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 		}
 		return eNode, []tsdb.Entity{entity}, nil
 	case *modelv1.Criteria_Le:
@@ -82,16 +86,16 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return BuildLocalFilter(le.Right, schema, entityDict, entity)
+			return BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
 		}
 		if le.GetRight() == nil {
-			return BuildLocalFilter(le.Left, schema, entityDict, entity)
+			return BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
 		}
-		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
 		if err != nil {
 			return nil, nil, err
 		}

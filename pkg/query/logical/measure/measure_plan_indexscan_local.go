@@ -77,7 +77,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
 	}
-	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity)
+	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity, true)
 	if err != nil {
 		return nil, err
 	}

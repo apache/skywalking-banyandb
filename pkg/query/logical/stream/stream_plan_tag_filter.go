@@ -59,7 +59,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = tsdb.AnyEntry
 	}
 	var err error
-	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity)
+	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity, false)
 	if err != nil {
 		var ge logical.GlobalIndexError
 		if errors.As(err, &ge) {
