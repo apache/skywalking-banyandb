@@ -57,7 +57,7 @@ const initData = () => {
     formData.strategy = 'STRATEGY_UNSPECIFIED'
     formData.group = ''
     formData.name = ''
-    formData.containerID = 0
+    formData.containerID = ''
     formData.modRevision = 0
     formData.createRevision = 0
     formData.id = ''
