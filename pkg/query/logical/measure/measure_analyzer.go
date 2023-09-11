@@ -110,14 +110,12 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 		return nil, err
 	}
 
-	if !request.IsTop() {
-		rules := []logical.OptimizeRule{
-			logical.NewPushDownOrder(request.GetOrderBy()),
-			logical.NewPushDownMaxSize(int(pushedLimit)),
-		}
-		if err := logical.ApplyRules(p, rules...); err != nil {
-			return nil, err
-		}
+	rules := []logical.OptimizeRule{
+		logical.NewPushDownOrder(request.GetOrderBy()),
+		logical.NewPushDownMaxSize(int(pushedLimit)),
+	}
+	if err := logical.ApplyRules(p, rules...); err != nil {
+		return nil, err
 	}
 	return p, nil
 }
