@@ -290,11 +290,11 @@ func (ami *aggAllIterator[N]) Close() error {
 
 type aggTopIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
+	err                 error
 	aggregationFieldRef *logical.FieldRef
-	aggrType            modelv1.AggregationFunction
 	cache               map[string]*aggregatorItem[N]
 	result              []*measurev1.DataPoint
-	err                 error
+	aggrType            modelv1.AggregationFunction
 }
 
 func newAggTopIterator[N aggregation.Number](
@@ -391,6 +391,6 @@ func (ati *aggTopIterator[N]) Close() error {
 
 type aggregatorItem[N aggregation.Number] struct {
 	aggrFunc aggregation.Func[N]
-	key      string
 	values   *modelv1.TagFamily
+	key      string
 }

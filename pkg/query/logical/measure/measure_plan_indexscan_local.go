@@ -45,9 +45,9 @@ type unresolvedIndexScan struct {
 	endTime          time.Time
 	metadata         *commonv1.Metadata
 	criteria         *modelv1.Criteria
-	sort             modelv1.Sort
 	projectionTags   [][]*logical.Tag
 	projectionFields []*logical.Field
+	sort             modelv1.Sort
 	groupByEntity    bool
 	isTopN           bool
 }
