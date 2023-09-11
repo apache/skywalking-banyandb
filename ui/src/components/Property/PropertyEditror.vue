@@ -46,7 +46,7 @@ const formConfig = [
     { label: 'Strategy', prop: 'strategy', type: 'select', selectGroup: strategyGroup },
     { label: 'Container Group', prop: 'group', type: 'input', disabled: true },
     { label: 'Container Name', prop: 'name', type: 'input' },
-    { label: 'Container ID', prop: 'containerID', type: 'number' },
+    { label: 'Container ID', prop: 'containerID', type: 'input' },
     { label: 'Container ModRevision', prop: 'modRevision', type: 'number' },
     { label: 'Container CreateRevision', prop: 'createRevision', type: 'number' },
     { label: 'ID', prop: 'id', type: 'input' },
