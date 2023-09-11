@@ -22,15 +22,20 @@ import (
 	"io"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-// Write implements v1.ServiceServer.
-func (s *server) Write(stream clusterv1.Service_WriteServer) error {
-	reply := func(stream clusterv1.Service_WriteServer) {
-		if errResp := stream.Send(&clusterv1.WriteResponse{}); errResp != nil {
+func (s *server) Send(stream clusterv1.Service_SendServer) error {
+	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
+		s.log.Error().Stringer("written", writeEntity).Err(err).Msg(message)
+		if errResp := stream.Send(&clusterv1.SendResponse{
+			MessageId: writeEntity.MessageId,
+			Error:     message,
+		}); errResp != nil {
 			s.log.Err(errResp).Msg("failed to send response")
 		}
 	}
@@ -47,8 +52,7 @@ func (s *server) Write(stream clusterv1.Service_WriteServer) error {
 			return nil
 		}
 		if err != nil {
-			s.log.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
-			reply(stream)
+			reply(writeEntity, err, "failed to receive message")
 			continue
 		}
 		if writeEntity.Topic != "" && topic == nil {
@@ -56,14 +60,36 @@ func (s *server) Write(stream clusterv1.Service_WriteServer) error {
 			topic = &t
 		}
 		if topic == nil {
-			s.log.Error().Stringer("written", writeEntity).Msg("topic is empty")
-			reply(stream)
+			reply(writeEntity, err, "topic is empty")
 			continue
 		}
-		for _, listener := range s.getListeners(*topic) {
-			_ = listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Request))
+		listener := s.getListeners(*topic)
+		if listener == nil {
+			reply(writeEntity, err, "no listener found")
+			continue
 		}
-		reply(stream)
+		m := listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Body))
+		if m.Data() == nil {
+			reply(writeEntity, err, "no response")
+			continue
+		}
+		message, ok := m.Data().(proto.Message)
+		if !ok {
+			reply(writeEntity, err, "invalid response")
+			continue
+		}
+		anyMessage, err := anypb.New(message)
+		if err != nil {
+			reply(writeEntity, err, "failed to marshal message")
+			continue
+		}
+		if err := stream.Send(&clusterv1.SendResponse{
+			MessageId: writeEntity.MessageId,
+			Body:      anyMessage,
+		}); err != nil {
+			reply(writeEntity, err, "failed to send response")
+			continue
+		}
 	}
 }
 
@@ -71,13 +97,13 @@ func (s *server) Subscribe(topic bus.Topic, listener bus.MessageListener) error 
 	s.listenersLock.Lock()
 	defer s.listenersLock.Unlock()
 	if _, ok := s.listeners[topic]; !ok {
-		s.listeners[topic] = make([]bus.MessageListener, 0)
+		s.listeners[topic] = listener
+		return nil
 	}
-	s.listeners[topic] = append(s.listeners[topic], listener)
-	return nil
+	return errors.New("topic already exists")
 }
 
-func (s *server) getListeners(topic bus.Topic) []bus.MessageListener {
+func (s *server) getListeners(topic bus.Topic) bus.MessageListener {
 	s.listenersLock.RLock()
 	defer s.listenersLock.RUnlock()
 	return s.listeners[topic]

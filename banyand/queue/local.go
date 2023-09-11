@@ -62,6 +62,14 @@ func (l *local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, er
 	return l.local.Publish(topic, message...)
 }
 
+func (l *local) Broadcast(topic bus.Topic, message bus.Message) ([]bus.Future, error) {
+	f, err := l.Publish(topic, message)
+	if err != nil {
+		return nil, err
+	}
+	return []bus.Future{f}, nil
+}
+
 func (l local) Name() string {
 	return "local-pipeline"
 }

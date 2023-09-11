@@ -26,10 +26,6 @@ catalog:
         path: "/installation/standalone"
       - name: "Cluster Mode"
         path: "/installation/cluster"
-  - name: "Clients"
-    path: "/clients"
-  - name: "Observability"
-    path: "/observability"
   - name: "Concept"
     catalog:
       - name: "Data Model"
@@ -60,3 +56,7 @@ catalog:
         path: "/crud/index_rule_binding"
       - name: "Property"
         path: "/crud/property"
+  - name: "Clients"
+    path: "/clients"
+  - name: "Observability"
+    path: "/observability"

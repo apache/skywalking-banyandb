@@ -94,6 +94,11 @@ type Publisher interface {
 	Publish(topic Topic, message ...Message) (Future, error)
 }
 
+// Broadcaster allow sending Messages to a Topic and receiving the responses.
+type Broadcaster interface {
+	Broadcast(topic Topic, message Message) ([]Future, error)
+}
+
 type channel chan event
 
 type chType int

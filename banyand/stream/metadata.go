@@ -19,8 +19,11 @@ package stream
 
 import (
 	"context"
+	"io"
 	"path"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -33,6 +36,8 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+var _ Query = (*schemaRepo)(nil)
+
 type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
@@ -42,7 +47,7 @@ type schemaRepo struct {
 func newSchemaRepo(path string, metadata metadata.Repo,
 	bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
 ) schemaRepo {
-	return schemaRepo{
+	r := schemaRepo{
 		l:        l,
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
@@ -51,6 +56,38 @@ func newSchemaRepo(path string, metadata metadata.Repo,
 			newSupplier(path, metadata, bufferSize, dbOpts, l),
 		),
 	}
+	r.start()
+	return r
+}
+
+// NewPortableRepository creates a new portable repository.
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) Query {
+	r := &schemaRepo{
+		l:        l,
+		metadata: metadata,
+		Repository: resourceSchema.NewPortableRepository(
+			metadata,
+			l,
+			newPortableSupplier(metadata, l),
+		),
+	}
+	r.start()
+	return r
+}
+
+func (sr *schemaRepo) start() {
+	sr.Watcher()
+	sr.metadata.RegisterHandler("stream",
+		schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
+		sr)
+}
+
+func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
+	sm, ok := sr.loadStream(metadata)
+	if !ok {
+		return nil, errors.WithStack(errStreamNotExist)
+	}
+	return sm, nil
 }
 
 func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
@@ -156,7 +193,7 @@ func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
 	if !ok {
 		return nil, false
 	}
-	s, ok := r.(*stream)
+	s, ok := r.Delegated().(*stream)
 	return s, ok
 }
 
@@ -180,11 +217,11 @@ func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts t
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.ResourceSpec) (resourceSchema.Resource, error) {
-	streamSchema := spec.Schema.(*databasev1.Stream)
+func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+	streamSchema := resource.Schema().(*databasev1.Stream)
 	return openStream(shardNum, db, streamSpec{
 		schema:     streamSchema,
-		indexRules: spec.IndexRules,
+		indexRules: resource.IndexRules(),
 	}, s.l), nil
 }
 
@@ -221,4 +258,22 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
 			return p
 		}),
 		opts)
+}
+
+type portableSupplier struct {
+	metadata metadata.Repo
+	l        *logger.Logger
+}
+
+func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
+	return &portableSupplier{
+		metadata: metadata,
+		l:        l,
+	}
+}
+
+func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.metadata.StreamRegistry().GetStream(ctx, md)
 }

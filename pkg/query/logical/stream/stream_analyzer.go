@@ -22,8 +22,8 @@ import (
 	"fmt"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -31,12 +31,10 @@ import (
 const defaultLimit uint32 = 20
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(streamSchema stream.Stream) (logical.Schema, error) {
-	sm := streamSchema.GetSchema()
-
+func BuildSchema(sm *databasev1.Stream, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	s := &schema{
 		common: &logical.CommonSchema{
-			IndexRules: streamSchema.GetIndexRules(),
+			IndexRules: indexRules,
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: sm.GetEntity().GetTagNames(),
 		},
@@ -77,6 +75,22 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 	return p, nil
 }
 
+// DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
+func DistributedAnalyze(criteria *streamv1.QueryRequest, s logical.Schema) (logical.Plan, error) {
+	// parse fields
+	plan := newUnresolvedDistributed(criteria)
+	// parse offset
+	plan = newOffset(plan, criteria.GetOffset())
+
+	// parse limit
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = defaultLimit
+	}
+	plan = newLimit(plan, limitParameter)
+	return plan.Analyze(s)
+}
+
 var (
 	_ logical.Plan           = (*limit)(nil)
 	_ logical.UnresolvedPlan = (*limit)(nil)
@@ -93,7 +107,7 @@ type limit struct {
 	LimitNum uint32
 }
 
-func (l *limit) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (l *limit) Execute(ec context.Context) ([]*streamv1.Element, error) {
 	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -146,7 +160,7 @@ type offset struct {
 	offsetNum uint32
 }
 
-func (l *offset) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (l *offset) Execute(ec context.Context) ([]*streamv1.Element, error) {
 	elements, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

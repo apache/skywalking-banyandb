@@ -19,26 +19,25 @@ package measure
 
 import (
 	"context"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-const defaultLimit int64 = 100
+const defaultLimit uint32 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(measureSchema measure.Measure, entityList []string) (logical.Schema, error) {
-	md := measureSchema.GetSchema()
+func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule, entityList []string) (logical.Schema, error) {
 	md.GetEntity()
 
 	ms := &schema{
 		common: &logical.CommonSchema{
-			IndexRules: measureSchema.GetIndexRules(),
+			IndexRules: indexRules,
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: entityList,
 		},
@@ -56,11 +55,11 @@ func BuildSchema(measureSchema measure.Measure, entityList []string) (logical.Sc
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func Analyze(_ context.Context, criteria *WrapRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
 	groupByEntity := false
 	var groupByTags [][]*logical.Tag
-	if request.GetGroupBy() != nil {
-		groupByProjectionTags := request.GetGroupBy().GetTagProjection()
+	if criteria.GetGroupBy() != nil {
+		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
 		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
 		tags := make([]string, 0)
 		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
@@ -73,46 +72,42 @@ func Analyze(_ context.Context, request *WrapRequest, metadata *commonv1.Metadat
 	}
 
 	// parse fields
-	plan := parseFields(request, metadata, groupByEntity)
+	plan := parseFields(criteria, metadata, groupByEntity)
 
 	// parse limit and offset
-	limitParameter := request.GetLimit()
+	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
-	pushedLimit := limitParameter + request.GetOffset()
+	pushedLimit := int(limitParameter + criteria.GetOffset())
 
-	if request.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity, request.IsTop())
+	if criteria.GetGroupBy() != nil {
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity, criteria.IsTop())
 		pushedLimit = math.MaxInt
 	}
 
-	if request.GetAgg() != nil {
+	if criteria.GetAgg() != nil {
 		plan = newUnresolvedAggregation(plan,
-			logical.NewField(request.GetAgg().GetFieldName()),
-			request.GetAgg().GetFunction(),
-			request.GetGroupBy() != nil,
-			request.IsTop(),
+			logical.NewField(criteria.GetAgg().GetFieldName()),
+			criteria.GetAgg().GetFunction(),
+			criteria.GetGroupBy() != nil,
+			criteria.IsTop(),
 		)
 		pushedLimit = math.MaxInt
 	}
 
-	if request.GetTop() != nil {
-		plan = top(plan, request.GetTop(), !request.hasAgg())
+	if criteria.GetTop() != nil {
+		plan = top(plan, criteria.GetTop(), !criteria.hasAgg())
 	}
 
-	if request.GetLimit() != -1 {
-		plan = limit(plan, uint32(request.GetOffset()), uint32(limitParameter))
-	}
-
+	plan = limit(plan, criteria.GetOffset(), limitParameter)
 	p, err := plan.Analyze(s)
 	if err != nil {
 		return nil, err
 	}
-
 	rules := []logical.OptimizeRule{
-		logical.NewPushDownOrder(request.GetOrderBy()),
-		logical.NewPushDownMaxSize(int(pushedLimit)),
+		logical.NewPushDownOrder(criteria.OrderBy),
+		logical.NewPushDownMaxSize(pushedLimit),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {
 		return nil, err
@@ -210,11 +205,11 @@ func (wr *WrapRequest) SetTagProjection(projTag []string) {
 	wr.projTag = projTag
 }
 
-func (wr *WrapRequest) GetLimit() int64 {
+func (wr *WrapRequest) GetLimit() uint32 {
 	if wr.QueryRequest != nil {
-		return int64(wr.QueryRequest.GetLimit())
+		return wr.QueryRequest.GetLimit()
 	} else {
-		return -1
+		return 0
 	}
 }
 
@@ -254,9 +249,9 @@ func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
 	}
 }
 
-func (wr *WrapRequest) GetOffset() int64 {
+func (wr *WrapRequest) GetOffset() uint32 {
 	if wr.QueryRequest != nil {
-		return int64(wr.QueryRequest.GetOffset())
+		return wr.QueryRequest.GetOffset()
 	} else {
 		return 0
 	}

@@ -37,6 +37,7 @@ type Queue interface {
 type Client interface {
 	run.Unit
 	bus.Publisher
+	bus.Broadcaster
 	NewBatchPublisher() BatchPublisher
 }
 

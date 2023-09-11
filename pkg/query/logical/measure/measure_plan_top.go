@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pkg/errors"
@@ -94,7 +95,7 @@ func (g *topOp) Schema() logical.Schema {
 	return g.Input.Schema()
 }
 
-func (g *topOp) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) {
 	if g.isGroup {
 		return g.group(ec)
 	}
@@ -106,7 +107,7 @@ type topIterator struct {
 	index    int
 }
 
-func (g *topOp) all(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (g *topOp) all(ec context.Context) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -125,10 +126,10 @@ func (g *topOp) all(ec executor.MeasureExecutionContext) (mit executor.MIterator
 			g.topNStream.Insert(NewTopElement(dp, value))
 		}
 	}
-	return newTopIterator(g.topNStream.Elements()), err
+	return newTopIterator(g.topNStream.Elements()), nil
 }
 
-func (g *topOp) group(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (g *topOp) group(ec context.Context) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -134,7 +135,7 @@ func (g *aggregationPlan[N]) Schema() logical.Schema {
 	return g.schema.ProjFields(g.aggregationFieldRef)
 }
 
-func (g *aggregationPlan[N]) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (g *aggregationPlan[N]) Execute(ec context.Context) (executor.MIterator, error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

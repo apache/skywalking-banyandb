@@ -59,7 +59,7 @@ type server struct {
 	creds     credentials.TransportCredentials
 	log       *logger.Logger
 	ser       *grpclib.Server
-	listeners map[bus.Topic][]bus.MessageListener
+	listeners map[bus.Topic]bus.MessageListener
 	*clusterv1.UnimplementedServiceServer
 	addr           string
 	certFile       string

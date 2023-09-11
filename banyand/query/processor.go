@@ -25,7 +25,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -83,8 +82,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
 		return
 	}
-
-	s, err := logical_stream.BuildSchema(ec)
+	s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
 		return
@@ -99,8 +97,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-
-	entities, err := plan.(executor.StreamExecutable).Execute(ec)
+	entities, err := plan.(executor.StreamExecutable).Execute(executor.WithStreamExecutionContext(context.Background(), ec))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
@@ -136,7 +133,8 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	s, err := logical_measure.BuildSchema(ec, ec.GetSchema().GetEntity().GetTagNames())
+	md := ec.GetSchema()
+	s, err := logical_measure.BuildSchema(md, ec.GetIndexRules(), md.GetEntity().GetTagNames())
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
 		return
@@ -153,7 +151,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(ec)
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), ec))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
@@ -180,10 +178,6 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 func (q *queryService) Name() string {
 	return moduleName
-}
-
-func (q *queryService) Role() databasev1.Role {
-	return databasev1.Role_ROLE_QUERY
 }
 
 func (q *queryService) PreRun(_ context.Context) error {

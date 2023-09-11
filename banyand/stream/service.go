@@ -27,7 +27,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -62,11 +61,7 @@ type service struct {
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
-	sm, ok := s.schemaRepo.loadStream(metadata)
-	if !ok {
-		return nil, errors.WithStack(errStreamNotExist)
-	}
-	return sm, nil
+	return s.schemaRepo.Stream(metadata)
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -102,11 +97,6 @@ func (s *service) PreRun(_ context.Context) error {
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.schemaRepo = newSchemaRepo(path, s.metadata, int64(s.blockBufferSize), s.dbOpts, s.l)
-	// run a serial watcher
-	s.schemaRepo.Watcher()
-	s.metadata.RegisterHandler("stream", schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
-		&s.schemaRepo)
-
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 
 	errWrite := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)

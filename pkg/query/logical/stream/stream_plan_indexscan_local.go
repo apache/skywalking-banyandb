@@ -62,8 +62,9 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) (elements []*streamv1.Element, err error) {
+func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Element, err error) {
 	var seriesList tsdb.SeriesList
+	ec := executor.FromStreamExecutionContext(ctx)
 	for _, e := range i.entities {
 		shards, errInternal := ec.Shards(e)
 		if errInternal != nil {
@@ -71,7 +72,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) (elements [
 		}
 		for _, shard := range shards {
 			sl, errInternal := shard.Series().List(context.WithValue(
-				context.Background(),
+				ctx,
 				logger.ContextKey,
 				i.l,
 			), tsdb.NewPath(e))
@@ -99,7 +100,7 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) (elements [
 			b.Filter(i.filter)
 		})
 	}
-	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +122,8 @@ func (i *localIndexScan) Execute(ec executor.StreamExecutionContext) (elements [
 	defer func() {
 		err = multierr.Append(err, it.Close())
 	}()
-	for it.HasNext() {
-		nextItem := it.Next()
+	for it.Next() {
+		nextItem := it.Val()
 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
 		if innerErr != nil {
 			return nil, innerErr
