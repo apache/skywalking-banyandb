@@ -25,7 +25,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 )
 
 // ExecutionContext allows retrieving data from tsdb.
@@ -65,21 +64,4 @@ type MIterator interface {
 // MeasureExecutable allows querying in the measure schema.
 type MeasureExecutable interface {
 	Execute(MeasureExecutionContext) (MIterator, error)
-}
-
-type TopNExecutable interface {
-	Execute(ctx TopNExecutionContext) (TIterator, error)
-}
-
-type TopNExecutionContext interface {
-	ExecutionContext
-	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
-}
-
-type TIterator interface {
-	Next() bool
-
-	Current() []*streaming.Tuple2
-
-	Close() error
 }
