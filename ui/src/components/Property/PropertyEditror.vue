@@ -143,7 +143,7 @@ const openDialog = (edit, data) => {
     }
     formData.group = data?.group || ''
     formData.name = data?.name || ''
-    formData.containerID = data?.containerID || 0
+    formData.containerID = data?.containerID || ''
     formData.modRevision = data?.modRevision || 0
     formData.createRevision = data?.createRevision || 0
     formData.id = data?.id || ''
