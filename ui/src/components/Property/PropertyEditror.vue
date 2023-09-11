@@ -14,7 +14,7 @@ const formData = reactive({
     strategy: 'STRATEGY_UNSPECIFIED',
     group: '',
     name: '',
-    containerID: 0,
+    containerID: '',
     modRevision: 0,
     createRevision: 0,
     id: '',
