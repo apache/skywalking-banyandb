@@ -85,14 +85,14 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Msg("fail to find topN measure")
 		return
 	}
-	s, err := logical_measure.BuildSchema(ec, topNSchema.GetGroupByTagNames())
+	md := ec.GetSchema()
+	s, err := logical_measure.BuildSchema(md, ec.GetIndexRules(), topNSchema.GetGroupByTagNames())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
 
-	md := sourceMeasure.GetSchema()
 	md.TagFamilies = append(md.TagFamilies, ec.GetSchema().GetTagFamilies()...)
 
 	wrapRequest := logical_measure.WrapTopNRequest(request, topNSchema, sourceMeasure)
@@ -106,7 +106,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(sourceMeasure)
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), sourceMeasure))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
