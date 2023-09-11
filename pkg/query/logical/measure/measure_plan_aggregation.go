@@ -48,7 +48,12 @@ type unresolvedAggregation struct {
 	isTop            bool
 }
 
-func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool, isTop bool) logical.UnresolvedPlan {
+func newUnresolvedAggregation(
+	input logical.UnresolvedPlan,
+	aggrField *logical.Field,
+	aggrFunc modelv1.AggregationFunction,
+	isGroup bool, isTop bool,
+) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
 		aggrFunc:         aggrFunc,

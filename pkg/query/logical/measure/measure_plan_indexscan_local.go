@@ -153,6 +153,9 @@ func (i *localIndexScan) topNExecute(ec executor.MeasureExecutionContext) (mit e
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, errInternal := ec.CompanionShards(i.metadata)
+		if errInternal != nil {
+			return nil, errInternal
+		}
 		for _, shard := range shards {
 			sl, errInternal := shard.Series().List(context.WithValue(
 				context.Background(),
@@ -163,9 +166,6 @@ func (i *localIndexScan) topNExecute(ec executor.MeasureExecutionContext) (mit e
 				return nil, errInternal
 			}
 			seriesList = seriesList.Merge(sl)
-		}
-		if errInternal != nil {
-			return nil, errInternal
 		}
 	}
 	if len(seriesList) == 0 {
@@ -193,16 +193,16 @@ func (i *localIndexScan) topNExecute(ec executor.MeasureExecutionContext) (mit e
 	if len(iters) == 0 {
 		return dummyIter, nil
 	}
-	transformContext := transformContext{
+	tc := transformContext{
 		ec:                   ec,
 		projectionTagsRefs:   i.projectionTagsRefs,
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
 	if i.groupByEntity {
-		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
+		return newSeriesMIterator(iters, tc, i.maxDataPointsSize), nil
 	}
 	it := logical.NewItemIter(iters, i.order.Sort)
-	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
+	return newIndexScanIterator(it, tc, i.maxDataPointsSize), nil
 }
 
 func (i *localIndexScan) queryExecute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
@@ -216,8 +216,11 @@ func (i *localIndexScan) queryExecute(ec executor.MeasureExecutionContext) (mit 
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, errInternal := ec.Shards(e)
+		if errInternal != nil {
+			return nil, errInternal
+		}
 		for _, shard := range shards {
-			sl, errInternal := shard.Series().Search(
+			sl, errList := shard.Series().Search(
 				context.WithValue(
 					context.Background(),
 					logger.ContextKey,
@@ -227,13 +230,10 @@ func (i *localIndexScan) queryExecute(ec executor.MeasureExecutionContext) (mit 
 				i.filter,
 				orderBy,
 			)
-			if errInternal != nil {
-				return nil, errInternal
+			if errList != nil {
+				return nil, errList
 			}
 			seriesList = seriesList.Merge(sl)
-		}
-		if errInternal != nil {
-			return nil, errInternal
 		}
 	}
 	if len(seriesList) == 0 {
@@ -261,17 +261,16 @@ func (i *localIndexScan) queryExecute(ec executor.MeasureExecutionContext) (mit 
 	if len(iters) == 0 {
 		return dummyIter, nil
 	}
-	transformContext := transformContext{
+	tc := transformContext{
 		ec:                   ec,
 		projectionTagsRefs:   i.projectionTagsRefs,
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
 	if i.groupByEntity {
-		// TODO
-		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
+		return newSeriesMIterator(iters, tc, i.maxDataPointsSize), nil
 	}
 	it := logical.NewItemIter(iters, i.order.Sort)
-	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
+	return newIndexScanIterator(it, tc, i.maxDataPointsSize), nil
 }
 
 func (i *localIndexScan) String() string {
