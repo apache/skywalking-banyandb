@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -58,7 +59,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = tsdb.AnyEntry
 	}
 	var err error
-	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity)
+	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity, false)
 	if err != nil {
 		var ge logical.GlobalIndexError
 		if errors.As(err, &ge) {
@@ -161,7 +162,7 @@ func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFi
 	}
 }
 
-func (t *tagFilterPlan) Execute(ec executor.StreamExecutionContext) ([]*streamv1.Element, error) {
+func (t *tagFilterPlan) Execute(ec context.Context) ([]*streamv1.Element, error) {
 	entities, err := t.parent.(executor.StreamExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

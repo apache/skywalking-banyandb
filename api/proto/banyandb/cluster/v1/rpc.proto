@@ -19,22 +19,22 @@ syntax = "proto3";
 
 package banyandb.cluster.v1;
 
-import "banyandb/measure/v1/write.proto";
-import "banyandb/stream/v1/write.proto";
+import "google/protobuf/any.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
 
-message WriteRequest {
+message SendRequest {
   string topic = 1;
   uint64 message_id = 2;
-  oneof request {
-    stream.v1.InternalWriteRequest stream = 3;
-    measure.v1.InternalWriteRequest measure = 4;
-  }
+  google.protobuf.Any body = 3;
 }
 
-message WriteResponse {}
+message SendResponse {
+  uint64 message_id = 1;
+  string error = 2;
+  google.protobuf.Any body = 3;
+}
 
 service Service {
-  rpc Write(stream WriteRequest) returns (stream WriteResponse);
+  rpc Send(stream SendRequest) returns (stream SendResponse);
 }
