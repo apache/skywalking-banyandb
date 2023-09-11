@@ -70,24 +70,22 @@ func (rs *resourceSpec) maxRevision() int64 {
 }
 
 func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
-	if rs.maxRevision() > other.maxRevision() {
-		return true
-	} else if rs.maxRevision() < other.maxRevision() {
+	if other.maxRevision() > rs.maxRevision() {
 		return false
 	}
 	if len(rs.indexRules) != len(other.indexRules) {
-		return true
+		return false
 	}
 	if len(rs.aggregations) != len(other.aggregations) {
-		return true
+		return false
 	}
-	if parseMaxModRevision(rs.indexRules) > parseMaxModRevision(other.indexRules) {
-		return true
+	if parseMaxModRevision(other.indexRules) > parseMaxModRevision(rs.indexRules) {
+		return false
 	}
-	if parseMaxModRevision(rs.aggregations) > parseMaxModRevision(other.aggregations) {
-		return true
+	if parseMaxModRevision(other.aggregations) > parseMaxModRevision(rs.aggregations) {
+		return false
 	}
-	return false
+	return true
 }
 
 const defaultWorkerNum = 10
