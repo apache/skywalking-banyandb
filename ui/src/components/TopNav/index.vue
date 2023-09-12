@@ -33,9 +33,8 @@ const data = reactive({
 function tabClick() {
     router.push(data.tabsList[data.activeTabIndex].route)
     const group = data.tabsList[data.activeTabIndex].route.params.group
-    const name = data.tabsList[data.activeTabIndex].route.params.name
-
-    if (group && name) {
+    const name = data.tabsList[data.activeTabIndex].route.params.name ? data.tabsList[data.activeTabIndex].route.params.name : null
+    if (group) {
         $bus.emit('changeAside', { group, name })
     }
 }
@@ -67,7 +66,7 @@ function initData() {
     const add = { route: routeData }
     if (operator == 'read') {
         routeData.name = type
-        add.label = name
+        add.label = type == 'property' ? group : name
         add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Read-${type}` : 'Read'
     } else if (operator == 'edit') {
         routeData.name = `edit-${type}`
@@ -79,6 +78,7 @@ function initData() {
         add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Create-${type}` : 'Create'
     }
     data.tabsList.push(add)
+    $bus.emit('changeAside', { group, name })
 }
 $bus.on('AddTabs', (tab) => {
     const index = data.tabsList.findIndex(item => {
@@ -133,30 +133,28 @@ initData()
     box-shadow: 0 0 10px 0 var(--color-placeholder-font);
 }
 
-::v-deep {
-    .el-tabs--card>.el-tabs__header .el-tabs__nav {
-        border-top: none !important;
-        padding: 0 !important;
-    }
+:deep(.el-tabs--card>.el-tabs__header .el-tabs__nav) {
+    border-top: none !important;
+    padding: 0 !important;
+}
 
-    .el-tabs__header.is-top {
-        padding: 0 !important;
-        margin: 0 !important;
-    }
+:deep(.el-tabs__header.is-top) {
+    padding: 0 !important;
+    margin: 0 !important;
+}
 
-    .el-tabs__item.is-active {
-        color: var(--color-main) !important;
-        background-color: var(--color-main-background) !important;
-        border: 1px solid var(--color-main) !important;
-        border-bottom: none !important;
-        border-top-left-radius: 4px;
-        border-top-right-radius: 4px;
-    }
+:deep(.el-tabs__item.is-active) {
+    color: var(--color-main) !important;
+    background-color: var(--color-main-background) !important;
+    border: 1px solid var(--color-main) !important;
+    border-bottom: none !important;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
 
-    .el-tabs__content {
-        padding: 0 !important;
-        margin: 0 !important;
-        height: 0 !important;
-    }
+:deep(.el-tabs__content) {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 0 !important;
 }
 </style>
