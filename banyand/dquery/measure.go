@@ -15,102 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package query
+package dquery
 
 import (
 	"context"
 	"time"
 
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
-	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
-
-const (
-	moduleName = "query"
-)
-
-var (
-	_ run.PreRunner       = (*queryService)(nil)
-	_ bus.MessageListener = (*streamQueryProcessor)(nil)
-	_ bus.MessageListener = (*measureQueryProcessor)(nil)
-	_ bus.MessageListener = (*topNQueryProcessor)(nil)
-)
-
-type queryService struct {
-	log *logger.Logger
-	// TODO: remove the metaService once https://github.com/apache/skywalking/issues/10121 is fixed.
-	metaService metadata.Repo
-	pipeline    queue.Server
-	sqp         *streamQueryProcessor
-	mqp         *measureQueryProcessor
-	tqp         *topNQueryProcessor
-}
-
-type streamQueryProcessor struct {
-	streamService stream.Service
-	*queryService
-}
-
-func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	now := time.Now().UnixNano()
-	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
-	if !ok {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
-		return
-	}
-	if p.log.Debug().Enabled() {
-		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
-	}
-
-	meta := queryCriteria.GetMetadata()
-	ec, err := p.streamService.Stream(meta)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
-		return
-	}
-	s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
-		return
-	}
-
-	plan, err := logical_stream.Analyze(context.TODO(), queryCriteria, meta, s)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
-		return
-	}
-
-	if p.log.Debug().Enabled() {
-		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
-	}
-	entities, err := plan.(executor.StreamExecutable).Execute(executor.WithStreamExecutionContext(context.Background(), ec))
-	if err != nil {
-		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
-		return
-	}
-
-	resp = bus.NewMessage(bus.MessageID(now), entities)
-
-	return
-}
 
 type measureQueryProcessor struct {
-	measureService measure.Service
+	measureService measure.Query
+	broadcaster    bus.Broadcaster
 	*queryService
 }
 
@@ -139,7 +61,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	plan, err := logical_measure.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := logical_measure.DistributedAnalyze(queryCriteria, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return
@@ -149,7 +71,10 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), ec))
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(context.Background(), &distributedContext{
+		Broadcaster: p.broadcaster,
+		timeRange:   queryCriteria.TimeRange,
+	}))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
@@ -172,17 +97,4 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	resp = bus.NewMessage(bus.MessageID(now), result)
 	return
-}
-
-func (q *queryService) Name() string {
-	return moduleName
-}
-
-func (q *queryService) PreRun(_ context.Context) error {
-	q.log = logger.GetLogger(moduleName)
-	return multierr.Combine(
-		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
-		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
-		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
-	)
 }

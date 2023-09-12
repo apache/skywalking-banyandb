@@ -31,6 +31,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -76,7 +77,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = tsdb.AnyEntry
 	}
-	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity)
+	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity, true)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +123,7 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit executor.MIterator, err error) {
+func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	var orderBy *tsdb.OrderBy
 	if i.order.Index != nil {
 		orderBy = &tsdb.OrderBy{
@@ -130,6 +131,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 			Sort:  i.order.Sort,
 		}
 	}
+	ec := executor.FromMeasureExecutionContext(ctx)
 	var seriesList tsdb.SeriesList
 	for _, e := range i.entities {
 		shards, errInternal := ec.Shards(e)
@@ -139,7 +141,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		for _, shard := range shards {
 			sl, errInternal := shard.Series().Search(
 				context.WithValue(
-					context.Background(),
+					ctx,
 					logger.ContextKey,
 					i.l,
 				),
@@ -163,7 +165,7 @@ func (i *localIndexScan) Execute(ec executor.MeasureExecutionContext) (mit execu
 		})
 	}
 	// CAVEAT: the order of series list matters when sorting by an index.
-	iters, closers, err := logical.ExecuteForShard(i.l, seriesList, i.timeRange, builders...)
+	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +226,7 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 var _ executor.MIterator = (*indexScanIterator)(nil)
 
 type indexScanIterator struct {
-	inner   logical.ItemIterator
+	inner   sort.Iterator[tsdb.Item]
 	err     error
 	current *measurev1.DataPoint
 	context transformContext
@@ -232,7 +234,7 @@ type indexScanIterator struct {
 	num     int
 }
 
-func newIndexScanIterator(inner logical.ItemIterator, context transformContext, max int) executor.MIterator {
+func newIndexScanIterator(inner sort.Iterator[tsdb.Item], context transformContext, max int) executor.MIterator {
 	return &indexScanIterator{
 		inner:   inner,
 		context: context,
@@ -241,10 +243,10 @@ func newIndexScanIterator(inner logical.ItemIterator, context transformContext, 
 }
 
 func (ism *indexScanIterator) Next() bool {
-	if !ism.inner.HasNext() || ism.err != nil || ism.num > ism.max {
+	if !ism.inner.Next() || ism.err != nil || ism.num > ism.max {
 		return false
 	}
-	nextItem := ism.inner.Next()
+	nextItem := ism.inner.Val()
 	var err error
 	if ism.current, err = transform(nextItem, ism.context); err != nil {
 		ism.err = multierr.Append(ism.err, err)

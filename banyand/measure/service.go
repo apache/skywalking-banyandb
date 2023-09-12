@@ -27,7 +27,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -114,10 +113,7 @@ func (s *service) PreRun(_ context.Context) error {
 	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
 		s.l, s.localPipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
 	// run a serial watcher
-	go s.schemaRepo.Watcher()
-	s.metadata.
-		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
-			&s.schemaRepo)
+
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 	if err != nil {
