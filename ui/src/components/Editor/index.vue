@@ -325,9 +325,7 @@ function initData() {
 </template>
 
 <style lang="scss" scoped>
-::v-deep {
-    .el-card {
-        margin: 15px;
-    }
+:deep(.el-card) {
+    margin: 15px;
 }
 </style>
