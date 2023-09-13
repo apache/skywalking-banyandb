@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
@@ -57,8 +58,8 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
-	reply := func(metadata *commonv1.Metadata, status streamv1.Status, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
-		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status}); errResp != nil {
+	reply := func(lastMetadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
+		if errResp := stream.Send(&streamv1.WriteResponse{LastMetadata: lastMetadata, Status: status, MessageId: messageId}); errResp != nil {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
@@ -77,29 +78,29 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
-			reply(nil, streamv1.Status_STATUS_RECEIVE_ERROR, stream, s.sampled)
+			reply(nil, modelv1.Status_STATUS_RECEIVE_ERROR, 0, stream, s.sampled)
 			continue
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
-			reply(writeEntity.GetMetadata(), streamv1.Status_STATUS_INVALID_TIMESTAMP, stream, s.sampled)
+			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
 		if !existed {
 			s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to get stream cache")
-			reply(writeEntity.GetMetadata(), streamv1.Status_STATUS_INVALID_METADATA, stream, s.sampled)
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_METADATA, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
 			s.sampled.Error().Stringer("written", writeEntity).Msg("the stream mod revision is invalid")
-			reply(writeEntity.GetMetadata(), streamv1.Status_STATUS_EXPIRED_REVISION, stream, s.sampled)
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_REVISION, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
 			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
-			reply(writeEntity.GetMetadata(), streamv1.Status_STATUS_INTERNAL_ERROR, stream, s.sampled)
+			reply(nil, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		if s.ingestionAccessLog != nil {
@@ -120,7 +121,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if errWritePub != nil {
 			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
 		}
-		reply(writeEntity.GetMetadata(), streamv1.Status_STATUS_SUCCEED, stream, s.sampled)
+		reply(nil, modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
 	}
 }
 

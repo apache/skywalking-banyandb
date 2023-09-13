@@ -168,13 +168,14 @@
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
   
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
-  
-    - [Status](#banyandb-measure-v1-Status)
   
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
@@ -207,8 +208,6 @@
     - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-stream-v1-WriteRequest)
     - [WriteResponse](#banyandb-stream-v1-WriteResponse)
-  
-    - [Status](#banyandb-stream-v1-Status)
   
 - [banyandb/stream/v1/rpc.proto](#banyandb_stream_v1_rpc-proto)
     - [StreamService](#banyandb-stream-v1-StreamService)
@@ -2522,6 +2521,39 @@ TopNResponse is the response for a query to the Query module.
 
 
 
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_RECEIVE_ERROR | 2 |  |
+| STATUS_INVALID_TIMESTAMP | 3 |  |
+| STATUS_INVALID_METADATA | 4 |  |
+| STATUS_EXPIRED_REVISION | 5 |  |
+| STATUS_INTERNAL_ERROR | 6 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="banyandb_measure_v1_write-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2574,6 +2606,7 @@ WriteRequest is the request contract for write
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -2588,31 +2621,15 @@ WriteResponse is the response contract for write
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| status | [Status](#banyandb-measure-v1-Status) |  | status indicates the request processing result |
+| last_metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
 
 
 
 
 
  
-
-
-<a name="banyandb-measure-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_RECEIVE_ERROR | 2 |  |
-| STATUS_INVALID_TIMESTAMP | 3 |  |
-| STATUS_INVALID_METADATA | 4 |  |
-| STATUS_EXPIRED_REVISION | 5 |  |
-| STATUS_INTERNAL_ERROR | 6 |  |
-
 
  
 
@@ -2991,6 +3008,7 @@ QueryResponse is the response for a query to the Query module.
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -3005,31 +3023,15 @@ QueryResponse is the response for a query to the Query module.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| status | [Status](#banyandb-stream-v1-Status) |  | status indicates the request processing result |
+| last_metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
 
 
 
 
 
  
-
-
-<a name="banyandb-stream-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_RECEIVE_ERROR | 2 |  |
-| STATUS_INVALID_TIMESTAMP | 3 |  |
-| STATUS_INVALID_METADATA | 4 |  |
-| STATUS_EXPIRED_REVISION | 5 |  |
-| STATUS_INTERNAL_ERROR | 6 |  |
-
 
  
 

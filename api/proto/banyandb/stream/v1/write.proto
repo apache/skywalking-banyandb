@@ -21,6 +21,7 @@ package banyandb.stream.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -43,23 +44,16 @@ message WriteRequest {
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // the element is required.
   ElementValue element = 2 [(validate.rules).message.required = true];
-}
-
-// Status is the response status for write
-enum Status {
-  STATUS_UNSPECIFIED = 0;
-  STATUS_SUCCEED = 1;
-  STATUS_RECEIVE_ERROR = 2;
-  STATUS_INVALID_TIMESTAMP = 3;
-  STATUS_INVALID_METADATA = 4;
-  STATUS_EXPIRED_REVISION = 5;
-  STATUS_INTERNAL_ERROR = 6;
+  // the message_id is required.
+  uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
 }
 
 message WriteResponse {
-  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  common.v1.Metadata last_metadata = 1 [(validate.rules).message.required = true];
   // status indicates the request processing result
-  Status status = 2 [(validate.rules).enum.defined_only = true];
+  model.v1.Status status = 2 [(validate.rules).enum.defined_only = true];
+  // the message_id from request.
+  uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
 }
 
 message InternalWriteRequest {

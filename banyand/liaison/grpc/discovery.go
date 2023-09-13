@@ -50,7 +50,7 @@ type discoveryService struct {
 
 func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
-	er := &entityRepo{entitiesMap: make(map[identity]*partition.EntityLocator)}
+	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
 		shardRepo:    sr,
 		entityRepo:   er,
@@ -223,7 +223,7 @@ var _ schema.EventHandler = (*entityRepo)(nil)
 
 type entityRepo struct {
 	log         *logger.Logger
-	entitiesMap map[identity]*partition.EntityLocator
+	entitiesMap map[identity]partition.EntityLocator
 	sync.RWMutex
 }
 
@@ -271,7 +271,7 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
-	e.entitiesMap[id] = &partition.EntityLocator{TagLocators: en, ModRevision: modRevision}
+	e.entitiesMap[id] = partition.EntityLocator{TagLocators: en, ModRevision: modRevision}
 }
 
 // OnDelete implements schema.EventHandler.
@@ -308,12 +308,12 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	delete(e.entitiesMap, id)
 }
 
-func (e *entityRepo) getLocator(id identity) (*partition.EntityLocator, bool) {
+func (e *entityRepo) getLocator(id identity) (partition.EntityLocator, bool) {
 	e.RWMutex.RLock()
 	defer e.RWMutex.RUnlock()
 	el, ok := e.entitiesMap[id]
 	if !ok {
-		return nil, false
+		return partition.EntityLocator{}, false
 	}
 	return el, true
 }
