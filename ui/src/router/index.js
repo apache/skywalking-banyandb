@@ -137,7 +137,23 @@ const router = createRouter({
         {
           path: '/banyandb/property',
           name: 'Property',
-          component: () => import('@/views/Property/index.vue')
+          redirect: '/banyandb/property/start',
+          component: () => import('@/views/Property/index.vue'),
+          children: [
+            {
+              path: '/banyandb/property/start',
+              name: 'propertyStart',
+              component: () => import('@/components/Start/index.vue'),
+              meta: {
+                type: 'property'
+              }
+            },
+            {
+              path: '/banyandb/property/operator-read/:type/:operator/:group',
+              name: 'property',
+              component: () => import('@/components/Property/PropertyRead.vue')
+            }
+          ]
         }
       ]
     },
