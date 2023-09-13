@@ -127,8 +127,9 @@ func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Meta
 		}
 		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
 		errInner := stream.Send(&streamv1.WriteRequest{
-			Metadata: metadata,
-			Element:  e,
+			Metadata:  metadata,
+			Element:   e,
+			MessageId: uint64(time.Now().UnixNano()),
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}

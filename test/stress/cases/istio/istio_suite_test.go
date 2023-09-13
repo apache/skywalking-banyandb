@@ -150,6 +150,7 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 				return fmt.Errorf("failed to unmarshal JSON message: %w", errUnmarshal)
 			}
 
+			req.MessageId = uint64(time.Now().UnixNano())
 			req.DataPoint.Timestamp = timestamppb.New(adjustTime(req.DataPoint.Timestamp.AsTime()))
 			// Write the request to the measureService
 			if errSend := client.Send(&req); errSend != nil {
