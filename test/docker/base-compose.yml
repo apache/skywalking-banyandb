@@ -55,7 +55,7 @@ services:
       retries: 120
 
   ui:
-    image: "ghcr.io/apache/skywalking/ui:${SW_OAP_COMMIT}"
+    image: "ghcr.io/apache/skywalking-banyandb-java-client/ui:${SW_OAP_COMMIT}"
     expose:
       - 8080
     environment:
