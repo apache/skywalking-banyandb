@@ -53,6 +53,7 @@ message WriteResponse {
   uint64 message_id = 1 [(validate.rules).uint64.gt = 0];
   // status indicates the request processing result
   model.v1.Status status = 2 [(validate.rules).enum.defined_only = true];
+  // the metadata from request when request fails
   common.v1.Metadata metadata = 3 [(validate.rules).message.required = true];
 }
 
