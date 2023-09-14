@@ -19,10 +19,10 @@ package measure
 
 import (
 	"context"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -106,7 +106,7 @@ func Analyze(_ context.Context, criteria *WrapRequest, metadata *commonv1.Metada
 		return nil, err
 	}
 	rules := []logical.OptimizeRule{
-		logical.NewPushDownOrder(criteria.OrderBy),
+		logical.NewPushDownOrder(criteria.GetOrderBy()),
 		logical.NewPushDownMaxSize(pushedLimit),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {

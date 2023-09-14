@@ -20,9 +20,10 @@ package measure
 import (
 	"context"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"io"
 	"time"
+
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -33,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
