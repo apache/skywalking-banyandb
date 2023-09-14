@@ -28,6 +28,9 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -74,10 +77,37 @@ var _ = ginkgo.Describe("Watcher", func() {
 	var (
 		mockedObj *mockedHandler
 		watcher   *watcher
+		server    embeddedetcd.Server
+		registry  *etcdSchemaRegistry
 	)
 
 	ginkgo.BeforeEach(func() {
 		mockedObj = newMockedHandler()
+		gomega.Expect(logger.Init(logger.Logging{
+			Env:   "dev",
+			Level: flags.LogLevel,
+		})).To(gomega.Succeed())
+		ports, err := test.AllocateFreePorts(2)
+		if err != nil {
+			panic("fail to find free ports")
+		}
+		endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+		server, err = embeddedetcd.NewServer(
+			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+			embeddedetcd.RootDir(randomTempDir()))
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		<-server.ReadyNotify()
+		schemaRegistry, err := NewEtcdSchemaRegistry(
+			Namespace("test"),
+			ConfigureServerEndpoints(endpoints),
+		)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		registry = schemaRegistry.(*etcdSchemaRegistry)
+	})
+	ginkgo.AfterEach(func() {
+		registry.Close()
+		server.Close()
+		<-server.StopNotify()
 	})
 
 	ginkgo.It("should handle all existing key-value pairs on initial load", func() {

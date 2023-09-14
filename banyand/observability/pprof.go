@@ -20,6 +20,7 @@ package observability
 import (
 	"net/http"
 	"net/http/pprof"
+	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -43,6 +44,7 @@ type pprofService struct {
 	svr        *http.Server
 	closer     *run.Closer
 	listenAddr string
+	svrMux     sync.Mutex
 }
 
 func (p *pprofService) FlagSet() *run.FlagSet {
@@ -70,6 +72,8 @@ func (p *pprofService) Serve() run.StopNotify {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	p.svrMux.Lock()
+	defer p.svrMux.Unlock()
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
@@ -84,6 +88,10 @@ func (p *pprofService) Serve() run.StopNotify {
 }
 
 func (p *pprofService) GracefulStop() {
-	_ = p.svr.Close()
+	p.svrMux.Lock()
+	defer p.svrMux.Unlock()
+	if p.svr != nil {
+		_ = p.svr.Close()
+	}
 	p.closer.CloseThenWait()
 }

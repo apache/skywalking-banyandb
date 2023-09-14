@@ -38,11 +38,12 @@ import (
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
+	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
 func TestIntegrationQuery(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite", Label("integration"))
+	RunSpecs(t, "Integration Query Suite", Label(integration_standalone.Labels...))
 }
 
 var (

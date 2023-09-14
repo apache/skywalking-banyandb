@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"path"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -62,7 +63,7 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 	if container.Group == "" {
 		return nil, BadRequest("container.group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(container.Group+"/"+container.Name, propertyKeyPrefix), KindProperty)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(path.Join(container.Group, container.Name), propertyKeyPrefix), KindProperty)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +166,7 @@ func (e *etcdSchemaRegistry) DeleteProperty(ctx context.Context, metadata *prope
 func transformKey(metadata *propertyv1.Metadata) *commonv1.Metadata {
 	return &commonv1.Metadata{
 		Group: metadata.Container.GetGroup(),
-		Name:  metadata.Container.Name + "/" + metadata.Id,
+		Name:  path.Join(metadata.Container.Name, metadata.Id),
 	}
 }
 

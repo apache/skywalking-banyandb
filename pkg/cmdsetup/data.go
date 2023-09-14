@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package cmd
+package cmdsetup
 
 import (
 	"context"
@@ -33,21 +33,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var storageGroup = run.NewGroup("storage")
-
-const (
-	storageModeData  = "data"
-	storageModeQuery = "query"
-	storageModeMix   = "mix"
-)
-
-var flagStorageMode string
-
-func newStorageCmd() *cobra.Command {
+func newDataCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	metaSvc, err := metadata.NewClient(ctx)
@@ -71,59 +60,46 @@ func newStorageCmd() *cobra.Command {
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
 
-	units := []run.Unit{
-		new(signal.Handler),
+	var units []run.Unit
+	units = append(units, runners...)
+	units = append(units,
+		metaSvc,
 		pipeline,
 		measureSvc,
 		streamSvc,
 		q,
 		profSvc,
-	}
+	)
 	if metricSvc != nil {
 		units = append(units, metricSvc)
 	}
-	// Meta the run Group units.
-	storageGroup.Register(units...)
+	dataGroup := run.NewGroup("data")
+	dataGroup.Register(units...)
 	logging := logger.Logging{}
-	storageCmd := &cobra.Command{
-		Use:     "storage",
+	dataCmd := &cobra.Command{
+		Use:     "data",
 		Version: version.Build(),
-		Short:   "Run as the storage server",
+		Short:   "Run as the data server",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
 			return logger.Init(logging)
 		},
-		PreRun: func(cmd *cobra.Command, args []string) {
-			if flagStorageMode == storageModeMix {
-				return
-			}
-			switch flagStorageMode {
-			case storageModeData:
-				storageGroup.Deregister(q)
-			case storageModeQuery:
-				storageGroup.Deregister(streamSvc)
-				storageGroup.Deregister(measureSvc)
-			default:
-				l.Fatal().Str("mode", flagStorageMode).Msg("unknown storage mode")
-			}
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			node, err := common.GenerateNode(nil, nil)
+			node, err := common.GenerateNode(pipeline.GetPort(), nil)
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("starting as a storage server")
+			logger.GetLogger().Info().Msg("starting as a data server")
 			// Spawn our go routines and wait for shutdown.
-			if err := storageGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
-				logger.GetLogger().Error().Err(err).Stack().Str("name", storageGroup.Name()).Msg("Exit")
+			if err := dataGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
+				logger.GetLogger().Error().Err(err).Stack().Str("name", dataGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
-	storageCmd.Flags().StringVarP(&flagStorageMode, "mode", "m", storageModeMix, "the storage mode, one of [data, query, mix]")
-	storageCmd.Flags().AddFlagSet(storageGroup.RegisterFlags().FlagSet)
-	return storageCmd
+	dataCmd.Flags().AddFlagSet(dataGroup.RegisterFlags().FlagSet)
+	return dataCmd
 }

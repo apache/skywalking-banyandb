@@ -42,6 +42,11 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+// SchemaService allows querying schema information.
+type SchemaService interface {
+	Query
+	Close()
+}
 type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
@@ -65,7 +70,7 @@ func newSchemaRepo(path string, metadata metadata.Repo,
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) Query {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,

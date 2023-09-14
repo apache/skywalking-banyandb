@@ -15,16 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package integration_other_test
 
 import (
 	"testing"
 
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
-func TestSchema(t *testing.T) {
-	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Schema Suite")
+func TestIntegrationOther(t *testing.T) {
+	gm.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Integration Other Suite", g.Label(integration_standalone.Labels...))
 }
+
+var _ = g.BeforeSuite(func() {
+	gm.Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})).To(gm.Succeed())
+})

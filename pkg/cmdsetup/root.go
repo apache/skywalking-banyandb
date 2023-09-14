@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package cmd is an internal package defining cli commands for BanyanDB.
-package cmd
+// Package cmdsetup implements a real env in which to run tests.
+package cmdsetup
 
 import (
 	"fmt"
@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -39,7 +40,7 @@ const logo = `
 `
 
 // NewRoot returns a root command.
-func NewRoot() *cobra.Command {
+func NewRoot(runners ...run.Unit) *cobra.Command {
 	logging := logger.Logging{}
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,
@@ -63,9 +64,9 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.PersistentFlags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	cmd.PersistentFlags().StringArrayVar(&logging.Modules, "logging-modules", nil, "the specific module")
 	cmd.PersistentFlags().StringArrayVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
-	cmd.AddCommand(newStandaloneCmd())
-	cmd.AddCommand(newStorageCmd())
-	cmd.AddCommand(newLiaisonCmd())
+	cmd.AddCommand(newStandaloneCmd(runners...))
+	cmd.AddCommand(newDataCmd(runners...))
+	cmd.AddCommand(newLiaisonCmd(runners...))
 	return cmd
 }
 

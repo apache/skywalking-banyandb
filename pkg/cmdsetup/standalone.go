@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package cmd
+package cmdsetup
 
 import (
 	"context"
@@ -24,68 +24,81 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/banyand/query"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var liaisonGroup = run.NewGroup("liaison")
-
-func newLiaisonCmd() *cobra.Command {
+func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(ctx)
+	pipeline := queue.Local()
+	metaSvc, err := metadata.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	pipeline := pub.New(metaSvc)
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate stream service")
+	}
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate measure service")
+	}
+	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate query processor")
+	}
 	grpcServer := grpc.NewServer(ctx, pipeline, metaSvc)
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
 	httpServer := http.NewServer()
-	dQuery, err := dquery.NewService(metaSvc, pipeline)
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
-	}
 
-	units := []run.Unit{
-		new(signal.Handler),
+	var units []run.Unit
+	units = append(units, runners...)
+	units = append(units,
 		pipeline,
-		dQuery,
+		metaSvc,
+		measureSvc,
+		streamSvc,
+		q,
 		grpcServer,
 		httpServer,
 		profSvc,
-	}
+	)
 	if metricSvc != nil {
 		units = append(units, metricSvc)
 	}
+	standaloneGroup := run.NewGroup("standalone")
 	// Meta the run Group units.
-	liaisonGroup.Register(units...)
-	liaisonCmd := &cobra.Command{
-		Use:     "liaison",
+	standaloneGroup.Register(units...)
+
+	standaloneCmd := &cobra.Command{
+		Use:     "standalone",
 		Version: version.Build(),
-		Short:   "Run as the liaison server",
+		Short:   "Run as the standalone server",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			node, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
+			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err
 			}
-			logger.GetLogger().Info().Msg("starting as a liaison server")
+			logger.GetLogger().Info().Msg("starting as a standalone server")
 			// Spawn our go routines and wait for shutdown.
-			if err := liaisonGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
-				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
+			if err := standaloneGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, nodeID)); err != nil {
+				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
 			return nil
 		},
 	}
-	liaisonCmd.Flags().AddFlagSet(liaisonGroup.RegisterFlags().FlagSet)
-	return liaisonCmd
+	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
+	return standaloneCmd
 }

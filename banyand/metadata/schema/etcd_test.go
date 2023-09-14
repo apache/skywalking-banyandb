@@ -96,7 +96,7 @@ func preloadSchema(e Registry) error {
 		return err
 	}
 	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
+		data, err := indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
 		if err != nil {
 			return err
 		}
