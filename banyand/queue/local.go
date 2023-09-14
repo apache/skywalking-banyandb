@@ -80,6 +80,10 @@ func (l local) NewBatchPublisher() BatchPublisher {
 	}
 }
 
+func (*local) GetPort() *uint32 {
+	return nil
+}
+
 type localBatchPublisher struct {
 	local *bus.Bus
 }

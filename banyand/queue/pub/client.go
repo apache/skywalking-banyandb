@@ -53,6 +53,17 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Warn().Msg("failed to cast node spec")
 		return
 	}
+	var hasDataRole bool
+	for _, r := range node.Roles {
+		if r == databasev1.Role_ROLE_DATA {
+			hasDataRole = true
+			break
+		}
+	}
+	if !hasDataRole {
+		return
+	}
+
 	address := node.GrpcAddress
 	if address == "" {
 		p.log.Warn().Stringer("node", node).Msg("grpc address is empty")
@@ -70,7 +81,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if _, ok := p.clients[name]; ok {
 		return
 	}
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy), grpc.WithBlock())
+	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return

@@ -74,13 +74,19 @@ func (rl *rootLogger) set(cfg Logging) error {
 	return nil
 }
 
+func (rl *rootLogger) get() *Logger {
+	rl.m.Lock()
+	defer rl.m.Unlock()
+	return rl.l
+}
+
 // GetLogger return logger with a scope.
 func GetLogger(scope ...string) *Logger {
 	root.verify()
 	if len(scope) < 1 {
 		return root.l
 	}
-	l := root.l
+	l := root.get()
 	for _, v := range scope {
 		l = l.Named(v)
 	}
