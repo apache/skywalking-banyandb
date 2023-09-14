@@ -58,8 +58,8 @@ func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
-	reply := func(lastMetadata *commonv1.Metadata, status modelv1.Status, messageId uint64, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
-		if errResp := measure.Send(&measurev1.WriteResponse{LastMetadata: lastMetadata, Status: status, MessageId: messageId}); errResp != nil {
+	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
+		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
@@ -78,29 +78,28 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		if err != nil {
 			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
-			reply(nil, modelv1.Status_STATUS_SUCCEED, 0, measure, ms.sampled)
-			continue
+			return err
 		}
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 			ms.sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
-			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure, ms.sampled)
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
 		measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
 		if !existed {
-			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to get measure cache")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_METADATA, writeRequest.GetMessageId(), measure, ms.sampled)
+			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to measure schema not found")
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
 		if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
-			ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure mod revision is invalid")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_REVISION, writeRequest.GetMessageId(), measure, ms.sampled)
+			ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {
 			ms.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-			reply(nil, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
 		if ms.ingestionAccessLog != nil {

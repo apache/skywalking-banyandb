@@ -58,8 +58,8 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
-	reply := func(lastMetadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
-		if errResp := stream.Send(&streamv1.WriteResponse{LastMetadata: lastMetadata, Status: status, MessageId: messageId}); errResp != nil {
+	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
+		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
@@ -78,8 +78,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
-			reply(nil, modelv1.Status_STATUS_RECEIVE_ERROR, 0, stream, s.sampled)
-			continue
+			return err
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
@@ -88,13 +87,13 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
 		if !existed {
-			s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to get stream cache")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_METADATA, writeEntity.GetMessageId(), stream, s.sampled)
+			s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
-			s.sampled.Error().Stringer("written", writeEntity).Msg("the stream mod revision is invalid")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_REVISION, writeEntity.GetMessageId(), stream, s.sampled)
+			s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())

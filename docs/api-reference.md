@@ -2539,11 +2539,10 @@ Status is the response status for write
 | ---- | ------ | ----------- |
 | STATUS_UNSPECIFIED | 0 |  |
 | STATUS_SUCCEED | 1 |  |
-| STATUS_RECEIVE_ERROR | 2 |  |
-| STATUS_INVALID_TIMESTAMP | 3 |  |
-| STATUS_INVALID_METADATA | 4 |  |
-| STATUS_EXPIRED_REVISION | 5 |  |
-| STATUS_INTERNAL_ERROR | 6 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
 
 
  
@@ -2621,9 +2620,9 @@ WriteResponse is the response contract for write
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| last_metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 
 
 
@@ -3023,9 +3022,9 @@ QueryResponse is the response for a query to the Query module.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| last_metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 
 
 
