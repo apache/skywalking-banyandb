@@ -93,8 +93,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Msg("fail to build schema")
 	}
 
-	md.TagFamilies = append(md.TagFamilies, ec.GetSchema().GetTagFamilies()...)
-
 	wrapRequest := logical_measure.WrapTopNRequest(request, topNSchema, sourceMeasure)
 	plan, err := logical_measure.Analyze(context.TODO(), wrapRequest, topNMetadata, s)
 	if err != nil {
@@ -106,6 +104,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
 
+	schema := sourceMeasure.GetSchema()
+	schema.TagFamilies = append(schema.TagFamilies, ec.GetSchema().GetTagFamilies()...)
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), sourceMeasure))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
