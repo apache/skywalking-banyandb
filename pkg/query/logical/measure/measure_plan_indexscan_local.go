@@ -23,8 +23,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
-
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
