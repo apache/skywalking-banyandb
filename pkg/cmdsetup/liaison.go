@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -43,7 +44,11 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	pipeline := pub.New(metaSvc)
-	grpcServer := grpc.NewServer(ctx, pipeline, metaSvc, grpc.NewClusterNodeRegistry(metaSvc))
+	nodeSel, err := node.NewMaglevSelector()
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate required node selector")
+	}
+	grpcServer := grpc.NewServer(ctx, pipeline, metaSvc, grpc.NewClusterNodeRegistry(metaSvc, nodeSel))
 	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService()
 	httpServer := http.NewServer()

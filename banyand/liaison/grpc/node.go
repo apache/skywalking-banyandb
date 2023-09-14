@@ -46,10 +46,10 @@ type clusterNodeService struct {
 }
 
 // NewClusterNodeRegistry creates a cluster-aware node registry.
-func NewClusterNodeRegistry(metaRepo metadata.Repo) NodeRegistry {
+func NewClusterNodeRegistry(metaRepo metadata.Repo, selector node.Selector) NodeRegistry {
 	return &clusterNodeService{
 		metaRepo: metaRepo,
-		sel:      node.NewPickFirstSelector(),
+		sel:      selector,
 	}
 }
 

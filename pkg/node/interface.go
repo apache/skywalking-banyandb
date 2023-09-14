@@ -19,6 +19,7 @@
 package node
 
 import (
+	"strconv"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -40,8 +41,8 @@ type Selector interface {
 }
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
-func NewPickFirstSelector() Selector {
-	return &pickFirstSelector{}
+func NewPickFirstSelector() (Selector, error) {
+	return &pickFirstSelector{}, nil
 }
 
 // pickFirstSelector always pick the first node in the sorted node ids list.
@@ -86,4 +87,8 @@ func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 		return "", ErrNoAvailableNode
 	}
 	return p.nodeIds[0], nil
+}
+
+func formatNodeKey(group, name string, shardID uint32) string {
+	return group + "/" + name + "#" + strconv.FormatUint(uint64(shardID), 10)
 }
