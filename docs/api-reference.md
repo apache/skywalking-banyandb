@@ -2622,7 +2622,7 @@ WriteResponse is the response contract for write
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 
@@ -3024,7 +3024,7 @@ QueryResponse is the response for a query to the Query module.
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 
