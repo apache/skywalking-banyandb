@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"path"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
@@ -57,5 +58,5 @@ func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.
 }
 
 func formatNodeKey(name string) string {
-	return nodeKeyPrefix + name
+	return path.Join(nodeKeyPrefix, name)
 }

@@ -41,6 +41,7 @@ func NewClient(_ context.Context) (Service, error) {
 }
 
 type clientService struct {
+	namespace      string
 	schemaRegistry schema.Registry
 	alc            *allocator
 	closer         *run.Closer
@@ -53,6 +54,7 @@ func (s *clientService) SchemaRegistry() schema.Registry {
 
 func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
+	fs.StringVar(&s.namespace, "namespace", "banyandb", "The namespace of the metadata stored in etcd")
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
 	return fs
 }
@@ -66,7 +68,10 @@ func (s *clientService) Validate() error {
 
 func (s *clientService) PreRun(ctx context.Context) error {
 	var err error
-	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.ConfigureServerEndpoints(s.endpoints))
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
+		schema.Namespace(s.namespace),
+		schema.ConfigureServerEndpoints(s.endpoints),
+	)
 	if err != nil {
 		return err
 	}

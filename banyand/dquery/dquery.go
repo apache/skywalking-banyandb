@@ -35,12 +35,15 @@ const (
 	moduleName = "distributed-query"
 )
 
+var _ run.Service = (*queryService)(nil)
+
 type queryService struct {
 	log         *logger.Logger
 	metaService metadata.Repo
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
+	closer      *run.Closer
 }
 
 // NewService return a new query service.
@@ -48,6 +51,7 @@ func NewService(metaService metadata.Repo, broadcaster bus.Broadcaster,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
+		closer:      run.NewCloser(1),
 	}
 	svc.sqp = &streamQueryProcessor{
 		queryService: svc,
@@ -73,6 +77,17 @@ func (q *queryService) PreRun(_ context.Context) error {
 	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log)
 	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log)
 	return nil
+}
+
+func (q *queryService) GracefulStop() {
+	q.sqp.streamService.Close()
+	q.mqp.measureService.Close()
+	q.closer.Done()
+	q.closer.CloseThenWait()
+}
+
+func (q *queryService) Serve() run.StopNotify {
+	return q.closer.CloseNotify()
 }
 
 var _ executor.DistributedExecutionContext = (*distributedContext)(nil)

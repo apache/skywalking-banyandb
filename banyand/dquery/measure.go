@@ -31,7 +31,7 @@ import (
 )
 
 type measureQueryProcessor struct {
-	measureService measure.Query
+	measureService measure.SchemaService
 	broadcaster    bus.Broadcaster
 	*queryService
 }
