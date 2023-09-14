@@ -21,6 +21,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/onsi/gomega"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
@@ -140,4 +142,23 @@ func (p *preloadService) PreRun(ctx context.Context) error {
 
 func (p *preloadService) SetMeta(meta metadata.Service) {
 	p.metaSvc = meta
+}
+
+// CMD runs the command with given flags.
+func CMD(flags ...string) func() {
+	closer, closeFn := run.NewTester("closer")
+	rootCmd := cmdsetup.NewRoot(closer)
+	rootCmd.SetArgs(flags)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer func() {
+			wg.Done()
+		}()
+		gomega.Expect(rootCmd.Execute()).ShouldNot(gomega.HaveOccurred())
+	}()
+	return func() {
+		closeFn()
+		wg.Wait()
+	}
 }

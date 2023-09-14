@@ -20,6 +20,7 @@ package observability
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -48,6 +49,7 @@ type metricService struct {
 	closer     *run.Closer
 	scheduler  *timestamp.Scheduler
 	listenAddr string
+	mutex      sync.Mutex
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -70,6 +72,8 @@ func (p *metricService) Name() string {
 func (p *metricService) Serve() run.StopNotify {
 	p.l = logger.GetLogger(p.Name())
 
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(now time.Time, logger *logger.Logger) bool {
@@ -93,6 +97,8 @@ func (p *metricService) Serve() run.StopNotify {
 }
 
 func (p *metricService) GracefulStop() {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	if p.scheduler != nil {
 		p.scheduler.Close()
 	}
