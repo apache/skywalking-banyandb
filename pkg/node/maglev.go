@@ -39,6 +39,7 @@ func (m *maglevSelector) Pick(group, name string, shardID uint32) (string, error
 	return m.maglev.Get(formatNodeKey(group, name, shardID))
 }
 
+// NewMaglevSelector creates a new backend selector based on Maglev hashing algorithm.
 func NewMaglevSelector() (Selector, error) {
 	alg, err := maglev.NewMaglev(nil, 65537)
 	if err != nil {
