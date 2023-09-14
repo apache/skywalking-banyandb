@@ -18,6 +18,8 @@
 package grpc
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -33,22 +35,29 @@ var (
 // NodeRegistry is for locating data node with group/name of the metadata
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
+	initialize() error
 	Locate(group, name string, shardID uint32) (string, error)
 }
 
 type clusterNodeService struct {
 	metaRepo metadata.Repo
 	sel      node.Selector
+	sync.Once
 }
 
 // NewClusterNodeRegistry creates a cluster-aware node registry.
 func NewClusterNodeRegistry(metaRepo metadata.Repo) NodeRegistry {
-	cns := &clusterNodeService{
+	return &clusterNodeService{
 		metaRepo: metaRepo,
 		sel:      node.NewPickFirstSelector(),
 	}
-	cns.metaRepo.RegisterHandler("cluster-node-service", schema.KindNode, cns)
-	return cns
+}
+
+func (n *clusterNodeService) initialize() error {
+	n.Do(func() {
+		n.metaRepo.RegisterHandler("cluster-node-service", schema.KindNode, n)
+	})
+	return nil
 }
 
 func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {
@@ -80,6 +89,10 @@ type localNodeService struct{}
 // NewLocalNodeRegistry creates a local(fake) node registry.
 func NewLocalNodeRegistry() NodeRegistry {
 	return localNodeService{}
+}
+
+func (localNodeService) initialize() error {
+	return nil
 }
 
 // Locate of localNodeService always returns local.

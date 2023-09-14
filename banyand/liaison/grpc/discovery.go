@@ -63,6 +63,9 @@ func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo m
 }
 
 func (ds *discoveryService) initialize(ctx context.Context) error {
+	if err := ds.nodeRegistry.initialize(); err != nil {
+		return err
+	}
 	ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
 	groups, err := ds.metadataRepo.GroupRegistry().ListGroup(ctxLocal)
 	cancel()
