@@ -60,9 +60,10 @@ type Registry interface {
 
 // TypeMeta defines the identity and type of an Event.
 type TypeMeta struct {
-	Name  string
-	Group string
-	Kind  Kind
+	Name        string
+	Group       string
+	ModRevision int64
+	Kind        Kind
 }
 
 // Metadata wrap dedicated serialized resource and its TypeMeta.
@@ -136,8 +137,8 @@ func (m Metadata) equal(other Metadata) bool {
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
-	CreateStream(ctx context.Context, stream *databasev1.Stream) error
-	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
+	CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
+	UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
@@ -163,8 +164,8 @@ type IndexRuleBinding interface {
 type Measure interface {
 	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
-	CreateMeasure(ctx context.Context, measure *databasev1.Measure) error
-	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
+	CreateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
+	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }

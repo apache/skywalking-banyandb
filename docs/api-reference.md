@@ -168,6 +168,9 @@
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
   
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
@@ -1671,6 +1674,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1817,6 +1825,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1840,6 +1853,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceCreateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -1986,6 +2004,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceUpdateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -2498,6 +2521,38 @@ TopNResponse is the response for a query to the Query module.
 
 
 
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="banyandb_measure_v1_write-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2550,6 +2605,7 @@ WriteRequest is the request contract for write
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -2560,6 +2616,13 @@ WriteRequest is the request contract for write
 
 ### WriteResponse
 WriteResponse is the response contract for write
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 
@@ -2942,8 +3005,9 @@ QueryResponse is the response for a query to the Query module.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is only required in the first write. |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -2954,6 +3018,13 @@ QueryResponse is the response for a query to the Query module.
 
 ### WriteResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 

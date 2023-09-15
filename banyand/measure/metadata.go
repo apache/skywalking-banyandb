@@ -219,7 +219,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		if innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
+		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
 			return nil, innerErr
 		}
 		return newTopNMeasure, nil
@@ -233,7 +233,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		return oldTopNSchema, nil
 	}
 	// update
-	if err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
+	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
 		return nil, err
 	}
 	return newTopNMeasure, nil

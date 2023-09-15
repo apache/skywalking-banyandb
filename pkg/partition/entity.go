@@ -33,7 +33,10 @@ import (
 var ErrMalformedElement = errors.New("element is malformed")
 
 // EntityLocator combines several TagLocators that help find the entity value.
-type EntityLocator []TagLocator
+type EntityLocator struct {
+	TagLocators []TagLocator
+	ModRevision int64
+}
 
 // TagLocator contains offsets to retrieve a tag swiftly.
 type TagLocator struct {
@@ -42,22 +45,22 @@ type TagLocator struct {
 }
 
 // NewEntityLocator return a EntityLocator based on tag family spec and entity spec.
-func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.Entity) EntityLocator {
-	locator := make(EntityLocator, 0, len(entity.GetTagNames()))
+func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.Entity, modRevision int64) EntityLocator {
+	locator := make([]TagLocator, 0, len(entity.GetTagNames()))
 	for _, tagInEntity := range entity.GetTagNames() {
 		fIndex, tIndex, tag := pbv1.FindTagByName(families, tagInEntity)
 		if tag != nil {
 			locator = append(locator, TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
 		}
 	}
-	return locator
+	return EntityLocator{TagLocators: locator, ModRevision: modRevision}
 }
 
 // Find the entity from a tag family, prepend a subject to the entity.
 func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (tsdb.Entity, tsdb.EntityValues, error) {
-	entityValues := make(tsdb.EntityValues, len(e)+1)
+	entityValues := make(tsdb.EntityValues, len(e.TagLocators)+1)
 	entityValues[0] = tsdb.StrValue(subject)
-	for i, index := range e {
+	for i, index := range e.TagLocators {
 		tag, err := GetTagByOffset(value, index.FamilyOffset, index.TagOffset)
 		if err != nil {
 			return nil, nil, err

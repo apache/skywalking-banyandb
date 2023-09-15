@@ -136,6 +136,7 @@ func (s *measure) write(shardID common.ShardID, entity []byte, entityValues tsdb
 			Request: &measurev1.WriteRequest{
 				Metadata:  s.GetSchema().Metadata,
 				DataPoint: value,
+				MessageId: uint64(time.Now().UnixNano()),
 			},
 			EntityValues: entityValues[1:],
 		})
