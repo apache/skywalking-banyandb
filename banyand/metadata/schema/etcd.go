@@ -19,12 +19,14 @@ package schema
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"path"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -69,6 +71,41 @@ func ConfigureServerEndpoints(url []string) RegistryOption {
 	}
 }
 
+// ConfigureEtcdUsername sets a username of the etcd.
+func ConfigureEtcdUsername(username string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.username = username
+	}
+}
+
+// ConfigureEtcdPassword sets a password of the etcd.
+func ConfigureEtcdPassword(password string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.password = password
+	}
+}
+
+// ConfigureEtcdTLSCAFile sets a trusted ca file of the etcd tls config.
+func ConfigureEtcdTLSCAFile(file string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.tlsCAFile = file
+	}
+}
+
+// ConfigureEtcdTLSCertFile sets a cert file of the etcd tls config.
+func ConfigureEtcdTLSCertFile(file string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.tlsCertFile = file
+	}
+}
+
+// ConfigureEtcdTLSKeyFile sets a key file of the etcd tls config.
+func ConfigureEtcdTLSKeyFile(file string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.tlsKeyFile = file
+	}
+}
+
 type etcdSchemaRegistry struct {
 	namespace string
 	client    *clientv3.Client
@@ -80,6 +117,11 @@ type etcdSchemaRegistry struct {
 
 type etcdSchemaRegistryConfig struct {
 	namespace       string
+	username        string
+	password        string
+	tlsCAFile       string
+	tlsCertFile     string
+	tlsKeyFile      string
 	serverEndpoints []string
 }
 
@@ -134,6 +176,9 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
 		Logger:               l,
+		Username:             registryConfig.username,
+		Password:             registryConfig.password,
+		TLS:                  extractTLSConfig(registryConfig),
 	}
 	client, err := clientv3.New(config)
 	if err != nil {
@@ -390,4 +435,20 @@ func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 	return path.Join(
 		listPrefixesForEntity(metadata.GetGroup(), entityPrefix),
 		metadata.GetName())
+}
+
+func extractTLSConfig(cfg *etcdSchemaRegistryConfig) *tls.Config {
+	if cfg.tlsCAFile != "" && cfg.tlsCertFile != "" && cfg.tlsKeyFile != "" {
+		tlsInfo := transport.TLSInfo{
+			TrustedCAFile: cfg.tlsCAFile,
+			CertFile:      cfg.tlsCertFile,
+			KeyFile:       cfg.tlsKeyFile,
+		}
+		tlsConfig, err := tlsInfo.ClientConfig()
+		if err != nil {
+			return nil
+		}
+		return tlsConfig
+	}
+	return nil
 }

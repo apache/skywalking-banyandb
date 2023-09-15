@@ -35,17 +35,32 @@ import (
 
 const flagEtcdEndpointsName = "etcd-endpoints"
 
+const flagEtcdUsername = "etcd-username"
+
+const flagEtcdPassword = "etcd-password"
+
+const flagEtcdTLSCAFile = "etcd-tls-ca-file"
+
+const flagEtcdTLSCertFile = "etcd-tls-cert-file"
+
+const flagEtcdTLSKeyFile = "etcd-tls-key-file"
+
 // NewClient returns a new metadata client.
 func NewClient(_ context.Context) (Service, error) {
 	return &clientService{closer: run.NewCloser(1)}, nil
 }
 
 type clientService struct {
-	namespace      string
-	schemaRegistry schema.Registry
-	alc            *allocator
-	closer         *run.Closer
-	endpoints      []string
+	namespace       string
+	etcdUsername    string
+	etcdPassword    string
+	etcdTLSCAFile   string
+	etcdTLSCertFile string
+	etcdTLSKeyFile  string
+	schemaRegistry  schema.Registry
+	alc             *allocator
+	closer          *run.Closer
+	endpoints       []string
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -56,6 +71,11 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.namespace, "namespace", "banyandb", "The namespace of the metadata stored in etcd")
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
+	fs.StringVar(&s.etcdUsername, flagEtcdUsername, "", "A username of etcd")
+	fs.StringVar(&s.etcdPassword, flagEtcdPassword, "", "A password of etcd user")
+	fs.StringVar(&s.etcdTLSCAFile, flagEtcdTLSCAFile, "", "A trusted ca file of etcd tls config")
+	fs.StringVar(&s.etcdTLSCertFile, flagEtcdTLSCertFile, "", "A cert file of etcd tls config")
+	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "A key file of etcd tls config")
 	return fs
 }
 
@@ -71,6 +91,11 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
 		schema.Namespace(s.namespace),
 		schema.ConfigureServerEndpoints(s.endpoints),
+		schema.ConfigureEtcdUsername(s.etcdUsername),
+		schema.ConfigureEtcdPassword(s.etcdPassword),
+		schema.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
+		schema.ConfigureEtcdTLSCertFile(s.etcdTLSCertFile),
+		schema.ConfigureEtcdTLSKeyFile(s.etcdTLSKeyFile),
 	)
 	if err != nil {
 		return err
