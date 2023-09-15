@@ -65,26 +65,27 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 			return nil, errors.WithMessage(err, "parse projection")
 		}
 
-		var tags []*modelv1.Tag
 		parsedTagSize := len(parsedTagFamily.GetTags())
 		tagRefSize := len(refs)
-		if tagRefSize > parsedTagSize {
-			tags = make([]*modelv1.Tag, parsedTagSize)
-			for j, ref := range refs {
-				if parsedTagSize > ref.Spec.TagIdx {
-					tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-				}
-			}
-		} else {
-			tags = make([]*modelv1.Tag, tagRefSize)
-			for j, ref := range refs {
-				if parsedTagSize > ref.Spec.TagIdx {
-					tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-				} else {
-					tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
-				}
+
+		// Determine maximum size for creating the tags slice
+		maxSize := tagRefSize
+		if parsedTagSize < tagRefSize {
+			maxSize = parsedTagSize
+		}
+
+		tags := make([]*modelv1.Tag, maxSize)
+
+		for j, ref := range refs {
+			if parsedTagSize > ref.Spec.TagIdx {
+				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
+			} else if j < parsedTagSize {
+				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+			} else {
+				break
 			}
 		}
+
 		tagFamily[i] = &modelv1.TagFamily{
 			Name: familyName,
 			Tags: tags,
