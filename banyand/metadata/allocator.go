@@ -65,7 +65,6 @@ func (a *allocator) OnAddOrUpdate(metadata schema.Metadata) {
 		for i := 0; i < int(shardNum); i++ {
 			if err := syncShard(uint64(i)); err != nil {
 				// TODO: handle error. retry? or do a full sync?
-				a.l.Error().Err(err).Msg("failed to sync shard")
 			}
 		}
 	case schema.KindNode:
