@@ -61,6 +61,7 @@ type reqBody struct {
 	tags       []string
 	parsedData map[string]interface{}
 	data       []byte
+	leaseID    int64
 }
 
 type request struct {
