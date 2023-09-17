@@ -73,9 +73,9 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
 	fs.StringVar(&s.etcdUsername, flagEtcdUsername, "", "A username of etcd")
 	fs.StringVar(&s.etcdPassword, flagEtcdPassword, "", "A password of etcd user")
-	fs.StringVar(&s.etcdTLSCAFile, flagEtcdTLSCAFile, "", "A trusted ca file of etcd tls config")
-	fs.StringVar(&s.etcdTLSCertFile, flagEtcdTLSCertFile, "", "A cert file of etcd tls config")
-	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "A key file of etcd tls config")
+	fs.StringVar(&s.etcdTLSCAFile, flagEtcdTLSCAFile, "", "Trusted certificate authority")
+	fs.StringVar(&s.etcdTLSCertFile, flagEtcdTLSCertFile, "", "Etcd client certificate")
+	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "Private key for the etcd client certificate.")
 	return fs
 }
 
@@ -91,11 +91,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
 		schema.Namespace(s.namespace),
 		schema.ConfigureServerEndpoints(s.endpoints),
-		schema.ConfigureEtcdUsername(s.etcdUsername),
-		schema.ConfigureEtcdPassword(s.etcdPassword),
+		schema.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
 		schema.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
-		schema.ConfigureEtcdTLSCertFile(s.etcdTLSCertFile),
-		schema.ConfigureEtcdTLSKeyFile(s.etcdTLSKeyFile),
+		schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
 	)
 	if err != nil {
 		return err

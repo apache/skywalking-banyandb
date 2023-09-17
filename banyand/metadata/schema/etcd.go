@@ -71,17 +71,13 @@ func ConfigureServerEndpoints(url []string) RegistryOption {
 	}
 }
 
-// ConfigureEtcdUsername sets a username of the etcd.
-func ConfigureEtcdUsername(username string) RegistryOption {
+// ConfigureEtcdUser sets a username & password of the etcd.
+func ConfigureEtcdUser(username string, password string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.username = username
-	}
-}
-
-// ConfigureEtcdPassword sets a password of the etcd.
-func ConfigureEtcdPassword(password string) RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.password = password
+		if username != "" && password != "" {
+			config.username = username
+			config.password = password
+		}
 	}
 }
 
@@ -92,17 +88,13 @@ func ConfigureEtcdTLSCAFile(file string) RegistryOption {
 	}
 }
 
-// ConfigureEtcdTLSCertFile sets a cert file of the etcd tls config.
-func ConfigureEtcdTLSCertFile(file string) RegistryOption {
+// ConfigureEtcdTLSCertAndKey sets a cert & key of the etcd tls config.
+func ConfigureEtcdTLSCertAndKey(certFile string, keyFile string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
-		config.tlsCertFile = file
-	}
-}
-
-// ConfigureEtcdTLSKeyFile sets a key file of the etcd tls config.
-func ConfigureEtcdTLSKeyFile(file string) RegistryOption {
-	return func(config *etcdSchemaRegistryConfig) {
-		config.tlsKeyFile = file
+		if certFile != "" && keyFile != "" {
+			config.tlsCertFile = certFile
+			config.tlsKeyFile = keyFile
+		}
 	}
 }
 
@@ -438,17 +430,17 @@ func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 }
 
 func extractTLSConfig(cfg *etcdSchemaRegistryConfig) *tls.Config {
-	if cfg.tlsCAFile != "" && cfg.tlsCertFile != "" && cfg.tlsKeyFile != "" {
-		tlsInfo := transport.TLSInfo{
-			TrustedCAFile: cfg.tlsCAFile,
-			CertFile:      cfg.tlsCertFile,
-			KeyFile:       cfg.tlsKeyFile,
-		}
-		tlsConfig, err := tlsInfo.ClientConfig()
-		if err != nil {
-			return nil
-		}
-		return tlsConfig
+	if cfg.tlsCAFile == "" && cfg.tlsCertFile == "" && cfg.tlsKeyFile == "" {
+		return nil
 	}
-	return nil
+	tlsInfo := transport.TLSInfo{
+		TrustedCAFile: cfg.tlsCAFile,
+		CertFile:      cfg.tlsCertFile,
+		KeyFile:       cfg.tlsKeyFile,
+	}
+	tlsConfig, err := tlsInfo.ClientConfig()
+	if err != nil {
+		return nil
+	}
+	return tlsConfig
 }
