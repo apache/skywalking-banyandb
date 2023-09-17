@@ -2700,6 +2700,8 @@ Property stores the user defined data
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+| lease_id | [int64](#int64) |  | readonly. lease_id is the ID of the lease that attached to key. |
+| ttl | [string](#string) |  | ttl indicates the time to live of the property. It&#39;s a string in the format of &#34;1h&#34;, &#34;2m&#34;, &#34;3s&#34;, &#34;1500ms&#34;. It defaults to 0s, which means the property never expires. The minimum allowed ttl is 1s. |
 
 
 

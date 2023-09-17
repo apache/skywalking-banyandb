@@ -61,6 +61,23 @@ tags:
 EOF
 ```
 
+TTL is supported in the operation.
+
+```shell
+$ bydbctl property apply -f - <<EOF
+metadata:
+  container:
+    group: sw
+    name: ui_template
+  id: General-Service
+tags:
+- key: state
+  value:
+    str:
+      value: "failed"
+ttl: "1h"
+```
+
 ## Get operation
 
 Get operation gets a property.

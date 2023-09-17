@@ -27,12 +27,21 @@ import (
 	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/testing/protocmp"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
+
+var equalsOpts = []cmp.Option{
+	protocmp.Transform(),
+	protocmp.IgnoreUnknown(),
+	protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
+	protocmp.IgnoreFields(&commonv1.Metadata{}, "mod_revision"),
+	protocmp.IgnoreFields(&commonv1.Metadata{}, "create_revision"),
+}
 
 var _ = Describe("Property Operation", func() {
 	var addr string
@@ -115,8 +124,7 @@ metadata:
 		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("gets a tag", func() {
@@ -149,8 +157,7 @@ metadata:
 		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("update property", func() {
@@ -182,8 +189,7 @@ tags:
 		helpers.UnmarshalYAML([]byte(out), resp)
 
 		Expect(cmp.Equal(resp.Property, p2Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("delete property", func() {

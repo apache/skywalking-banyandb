@@ -101,6 +101,48 @@ var _ = Describe("Property application", func() {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
 		}))
 	})
+	It("applies a property with TTL", func() {
+		md := &propertyv1.Metadata{
+			Container: &commonv1.Metadata{
+				Name:  "p",
+				Group: "g",
+			},
+			Id: "1",
+		}
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+			},
+			Ttl: "1h",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeTrue())
+		Expect(resp.TagsNum).To(Equal(uint32(2)))
+		got, err := client.Get(context.Background(), &propertyv1.GetRequest{Metadata: md})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Property.Tags).To(Equal([]*modelv1.Tag{
+			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+		}))
+		Expect(got.Property.GetTtl()).To(Equal("1h"))
+		Expect(got.Property.GetLeaseId()).To(BeNumerically(">", 0))
+		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
+			},
+			Ttl: "1s",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeFalse())
+		Expect(resp.TagsNum).To(Equal(uint32(1)))
+		Eventually(func() error {
+			_, err := client.Get(context.Background(), &propertyv1.GetRequest{Metadata: md})
+			return err
+		}, flags.EventuallyTimeout).Should(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
+	})
 })
 
 var _ = Describe("Property application", func() {
