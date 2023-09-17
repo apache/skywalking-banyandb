@@ -183,7 +183,7 @@ Creating property.
 metadata:
   container:
     group: sw
-    name: ui_template
+    name: temp_data
   id: General-Service
 tags:
 - key: name
@@ -204,7 +204,7 @@ The property supports the TTL mechanism. You could set the `ttl` field to specif
 metadata:
   container:
     group: sw
-    name: ui_template
+    name: temp_data
   id: General-Service
 tags:
 - key: name
