@@ -22,6 +22,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/node"
@@ -71,7 +72,7 @@ func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string,
 func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.sel.AddNode(metadata.Name)
+		n.sel.AddNode(metadata.Spec.(*databasev1.Node))
 	default:
 	}
 }
@@ -79,7 +80,7 @@ func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 func (n *clusterNodeService) OnDelete(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.sel.RemoveNode(metadata.Name)
+		n.sel.RemoveNode(metadata.Spec.(*databasev1.Node))
 	default:
 	}
 }

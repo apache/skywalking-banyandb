@@ -24,6 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
+
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 var (
@@ -35,8 +37,8 @@ var (
 
 // Selector keeps all data nodes in the memory and can provide different algorithm to pick an available node.
 type Selector interface {
-	AddNode(nodeID string)
-	RemoveNode(nodeID string)
+	AddNode(node *databasev1.Node)
+	RemoveNode(node *databasev1.Node)
 	Pick(group, name string, shardID uint32) (string, error)
 }
 
@@ -52,7 +54,8 @@ type pickFirstSelector struct {
 	mu        sync.RWMutex
 }
 
-func (p *pickFirstSelector) AddNode(nodeID string) {
+func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
+	nodeID := node.GetMetadata().GetName()
 	p.mu.RLock()
 	if _, ok := p.nodeIDMap[nodeID]; !ok {
 		p.mu.RUnlock()
@@ -66,7 +69,8 @@ func (p *pickFirstSelector) AddNode(nodeID string) {
 	slices.Sort(p.nodeIds)
 }
 
-func (p *pickFirstSelector) RemoveNode(nodeID string) {
+func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
+	nodeID := node.GetMetadata().GetName()
 	p.mu.RLock()
 	if _, ok := p.nodeIDMap[nodeID]; !ok {
 		p.mu.RUnlock()
@@ -89,6 +93,6 @@ func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 	return p.nodeIds[0], nil
 }
 
-func formatNodeKey(group, name string, shardID uint32) string {
+func formatSearchKey(group, name string, shardID uint32) string {
 	return group + "/" + name + "#" + strconv.FormatUint(uint64(shardID), 10)
 }
