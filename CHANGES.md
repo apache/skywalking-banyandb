@@ -16,6 +16,7 @@ Release Notes.
 - Fix parse environment variables error
 - Implement the distributed query engine.
 - Add mod revision check to write requests.
+- Add TTL to the property.
 
 ### Bugs
 

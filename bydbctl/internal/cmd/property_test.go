@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -39,6 +40,7 @@ var equalsOpts = []cmp.Option{
 	protocmp.Transform(),
 	protocmp.IgnoreUnknown(),
 	protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
+	protocmp.IgnoreFields(&propertyv1.Property{}, "lease_id"),
 	protocmp.IgnoreFields(&commonv1.Metadata{}, "mod_revision"),
 	protocmp.IgnoreFields(&commonv1.Metadata{}, "create_revision"),
 }
@@ -79,6 +81,20 @@ tags:
       int:
         value: 3
 `
+	p3Yaml := `
+metadata:
+  container:
+    group: ui-template
+    name: security
+  id: login-token
+tags:
+  - key: content
+    value:
+      str:
+        value: foo 
+ttl: 30m
+`
+
 	p1Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p1YAML), p1Proto)
 	p2Proto := new(propertyv1.Property)
@@ -280,7 +296,36 @@ tags:
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property).To(HaveLen(2))
 	})
-
+	It("keepalive not found", func() {
+		rootCmd.SetArgs([]string{
+			"property", "keepalive", "-i", "111",
+		})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).Should(MatchError("rpc error: code = Unknown desc = etcdserver: requested lease not found"))
+		})
+		GinkgoWriter.Println(out)
+	})
+	It("keepalive", func() {
+		rootCmd.SetArgs([]string{"property", "apply", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(p3Yaml))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out)
+		resp := new(propertyv1.ApplyResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.LeaseId).Should(BeNumerically(">", 0))
+		rootCmd.SetArgs([]string{
+			"property", "keepalive", "-i", strconv.Itoa(int(resp.LeaseId)),
+		})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out)
+	})
 	AfterEach(func() {
 		deferFunc()
 	})

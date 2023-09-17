@@ -128,6 +128,45 @@ List operation lists all properties in a group with a name.
 $ bydbctl property list -g sw -n ui_template
 ```
 
+## TTL field in a property
+
+TTL field in a property is used to set the time to live of the property. The property will be deleted automatically after the TTL.
+
+This functionality is supported by the lease mechanism. The readonly lease_id field is used to identify the lease of the property.
+
+### Examples of setting TTL
+
+```shell
+$ bydbctl property apply -f - <<EOF
+metadata:
+  container:
+    group: sw
+    name: ui_template
+  id: General-Service
+tags:
+- key: state
+  value:
+    str:
+      value: "failed"
+ttl: "1h"
+EOF
+```
+
+The lease_id is returned in the response. 
+You can use get operation to get the property with the lease_id as well.
+
+```shell
+$ bydbctl property get -g sw -n ui_template --id General-Service
+```
+
+The lease_id is used to keep the property alive. You can use keepalive operation to keep the property alive.
+When the keepalive operation is called, the property's TTL will be reset to the original value.
+
+```shell
+$ bydbctl property keepalive --lease_id 1
+```
+
+
 ## API Reference
 
 [MeasureService v1](../../api-reference.md#PropertyService)

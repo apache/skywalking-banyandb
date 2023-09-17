@@ -191,6 +191,8 @@
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
     - [GetRequest](#banyandb-property-v1-GetRequest)
     - [GetResponse](#banyandb-property-v1-GetResponse)
+    - [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest)
+    - [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse)
     - [ListRequest](#banyandb-property-v1-ListRequest)
     - [ListResponse](#banyandb-property-v1-ListResponse)
   
@@ -2750,6 +2752,7 @@ Property stores the user defined data
 | ----- | ---- | ----- | ----------- |
 | created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
 | tags_num | [uint32](#uint32) |  |  |
+| lease_id | [int64](#int64) |  |  |
 
 
 
@@ -2819,6 +2822,31 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-KeepAliveRequest"></a>
+
+### KeepAliveRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lease_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-KeepAliveResponse"></a>
+
+### KeepAliveResponse
+
+
+
+
+
+
+
 <a name="banyandb-property-v1-ListRequest"></a>
 
 ### ListRequest
@@ -2881,6 +2909,7 @@ Property stores the user defined data
 | Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
 | Get | [GetRequest](#banyandb-property-v1-GetRequest) | [GetResponse](#banyandb-property-v1-GetResponse) |  |
 | List | [ListRequest](#banyandb-property-v1-ListRequest) | [ListResponse](#banyandb-property-v1-ListResponse) |  |
+| KeepAlive | [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest) | [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse) |  |
 
  
 

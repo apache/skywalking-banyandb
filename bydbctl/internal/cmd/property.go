@@ -18,6 +18,8 @@
 package cmd
 
 import (
+	"strconv"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -116,6 +118,25 @@ func newPropertyCmd() *cobra.Command {
 	listCmd.Flags().StringArrayVarP(&ids, "ids", "", nil, "id selector")
 	listCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "tag selector")
 
-	propertyCmd.AddCommand(getCmd, applyCmd, deleteCmd, listCmd)
+	var leaseID int64
+	keepAliveCmd := &cobra.Command{
+		Use:     "keepalive -i lease_id",
+		Version: version.Build(),
+		Short:   "Keep alive a property",
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) {
+				if leaseID == 0 {
+					return nil, errMalformedInput
+				}
+				return []reqBody{{leaseID: leaseID}}, nil
+			}, func(request request) (*resty.Response, error) {
+				return request.req.SetPathParam("lease_id", strconv.FormatInt(request.leaseID, 10)).
+					Put(getPath(propertySchemaPath + "/lease/{lease_id}"))
+			}, yamlPrinter)
+		},
+	}
+	keepAliveCmd.Flags().Int64VarP(&leaseID, "lease_id", "i", 0, "the lease id of the property")
+
+	propertyCmd.AddCommand(getCmd, applyCmd, deleteCmd, listCmd, keepAliveCmd)
 	return propertyCmd
 }
