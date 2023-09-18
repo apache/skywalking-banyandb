@@ -190,6 +190,7 @@ func parseFields(criteria *WrapRequest, metadata *commonv1.Metadata, groupByEnti
 		logical.ToTags(criteria.GetTagProjection()), projFields, groupByEntity, criteria.GetCriteria(), criteria.GetFieldValueSort(), criteria.IsTop())
 }
 
+// WrapRequest is used to represent TopNRequest and QueryRequest.
 type WrapRequest struct {
 	*measurev1.QueryRequest
 	*measurev1.TopNRequest
@@ -213,6 +214,7 @@ func WrapQueryRequest(request *measurev1.QueryRequest) *WrapRequest {
 	}
 }
 
+// GetMetadata return commonv1.Metadata.
 func (wr *WrapRequest) GetMetadata() *commonv1.Metadata {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.Metadata
@@ -220,6 +222,7 @@ func (wr *WrapRequest) GetMetadata() *commonv1.Metadata {
 	return wr.TopNRequest.Metadata
 }
 
+// GetTimeRange return modelv1.TimeRange.
 func (wr *WrapRequest) GetTimeRange() *modelv1.TimeRange {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.TimeRange
@@ -227,13 +230,12 @@ func (wr *WrapRequest) GetTimeRange() *modelv1.TimeRange {
 	return wr.TopNRequest.TimeRange
 }
 
+// IsTop determine whether current WrapRequest is wrapping TopNRequest.
 func (wr *WrapRequest) IsTop() bool {
-	if wr.QueryRequest != nil {
-		return false
-	}
-	return true
+	return wr.QueryRequest == nil
 }
 
+// GetFieldProjection return fields which want to query.
 func (wr *WrapRequest) GetFieldProjection() []string {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetFieldProjection().GetNames()
@@ -241,10 +243,12 @@ func (wr *WrapRequest) GetFieldProjection() []string {
 	return []string{wr.projField}
 }
 
+// SetFieldProjection set field which want to query.
 func (wr *WrapRequest) SetFieldProjection(fieldName string) {
 	wr.projField = fieldName
 }
 
+// GetTagProjection return modelv1.TagProject.
 func (wr *WrapRequest) GetTagProjection() *modelv1.TagProjection {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetTagProjection()
@@ -259,10 +263,12 @@ func (wr *WrapRequest) GetTagProjection() *modelv1.TagProjection {
 	}
 }
 
+// SetTagProjection set tags used to filter iterators.
 func (wr *WrapRequest) SetTagProjection(projTag []string) {
 	wr.projTag = projTag
 }
 
+// GetLimit return datapoint number.
 func (wr *WrapRequest) GetLimit() uint32 {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetLimit()
@@ -270,6 +276,7 @@ func (wr *WrapRequest) GetLimit() uint32 {
 	return 0
 }
 
+// GetGroupBy return measurev1.QueryRequest_GroupBy.
 func (wr *WrapRequest) GetGroupBy() *measurev1.QueryRequest_GroupBy {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetGroupBy()
@@ -282,6 +289,7 @@ func (wr *WrapRequest) GetGroupBy() *measurev1.QueryRequest_GroupBy {
 	return nil
 }
 
+// GetAgg return measurev1.QueryRequest_Aggregation.
 func (wr *WrapRequest) GetAgg() *measurev1.QueryRequest_Aggregation {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetAgg()
@@ -294,6 +302,7 @@ func (wr *WrapRequest) GetAgg() *measurev1.QueryRequest_Aggregation {
 	return nil
 }
 
+// GetTop return measurev1.QueryRequest_Top.
 func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetTop()
@@ -305,6 +314,7 @@ func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
 	}
 }
 
+// GetOffset return current offset number.
 func (wr *WrapRequest) GetOffset() uint32 {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetOffset()
@@ -312,6 +322,7 @@ func (wr *WrapRequest) GetOffset() uint32 {
 	return 0
 }
 
+// GetOrderBy return modelv1.QueryOrder.
 func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetOrderBy()
@@ -321,6 +332,7 @@ func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
 	}
 }
 
+// GetCriteria return modelv1.Criteria.
 func (wr *WrapRequest) GetCriteria() *modelv1.Criteria {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetCriteria()
@@ -328,6 +340,7 @@ func (wr *WrapRequest) GetCriteria() *modelv1.Criteria {
 	return buildCriteria(wr.TopNRequest.GetConditions())
 }
 
+// GetFieldValueSort return modelv1.Sort which determine how to sort datapoint according to field value.
 func (wr *WrapRequest) GetFieldValueSort() modelv1.Sort {
 	if wr.QueryRequest != nil {
 		return modelv1.Sort_SORT_UNSPECIFIED
