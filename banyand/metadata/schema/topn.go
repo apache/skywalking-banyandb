@@ -55,7 +55,7 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 	if topNAggregation.UpdatedAt != nil {
 		topNAggregation.UpdatedAt = timestamppb.Now()
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
@@ -63,10 +63,11 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 		},
 		Spec: topNAggregation,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
@@ -74,6 +75,7 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 		},
 		Spec: topNAggregation,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

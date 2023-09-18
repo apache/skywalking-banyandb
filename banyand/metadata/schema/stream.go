@@ -51,25 +51,26 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) error {
+func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
-			Kind:  KindStream,
-			Group: stream.GetMetadata().GetGroup(),
-			Name:  stream.GetMetadata().GetName(),
+			Kind:        KindStream,
+			Group:       stream.GetMetadata().GetGroup(),
+			Name:        stream.GetMetadata().GetName(),
+			ModRevision: stream.GetMetadata().GetModRevision(),
 		},
 		Spec: stream,
 	})
 }
 
-func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) error {
+func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
 	if stream.UpdatedAt != nil {
 		stream.UpdatedAt = timestamppb.Now()
 	}
 	group := stream.Metadata.GetGroup()
 	_, err := e.GetGroup(ctx, group)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{

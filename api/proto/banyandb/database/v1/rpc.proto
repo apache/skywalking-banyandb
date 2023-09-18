@@ -32,13 +32,17 @@ message StreamRegistryServiceCreateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamRegistryServiceCreateResponse {}
+message StreamRegistryServiceCreateResponse {
+  int64 mod_revision = 1;
+}
 
 message StreamRegistryServiceUpdateRequest {
   banyandb.database.v1.Stream stream = 1;
 }
 
-message StreamRegistryServiceUpdateResponse {}
+message StreamRegistryServiceUpdateResponse {
+  int64 mod_revision = 1;
+}
 
 message StreamRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -260,13 +264,17 @@ message MeasureRegistryServiceCreateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureRegistryServiceCreateResponse {}
+message MeasureRegistryServiceCreateResponse {
+  int64 mod_revision = 1;
+}
 
 message MeasureRegistryServiceUpdateRequest {
   banyandb.database.v1.Measure measure = 1;
 }
 
-message MeasureRegistryServiceUpdateResponse {}
+message MeasureRegistryServiceUpdateResponse {
+  int64 mod_revision = 1;
+}
 
 message MeasureRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;

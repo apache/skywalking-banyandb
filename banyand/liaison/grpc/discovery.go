@@ -231,14 +231,17 @@ type entityRepo struct {
 func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	var el partition.EntityLocator
 	var id identity
+	var modRevision int64
 	switch schemaMetadata.Kind {
 	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
-		el = partition.NewEntityLocator(measure.TagFamilies, measure.Entity)
+		modRevision = measure.GetMetadata().GetModRevision()
+		el = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
 		id = getID(measure.GetMetadata())
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
-		el = partition.NewEntityLocator(stream.TagFamilies, stream.Entity)
+		modRevision = stream.GetMetadata().GetModRevision()
+		el = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
 		id = getID(stream.GetMetadata())
 	default:
 		return
@@ -259,8 +262,8 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("kind", kind).
 			Msg("entity added or updated")
 	}
-	en := make(partition.EntityLocator, 0, len(el))
-	for _, l := range el {
+	en := make([]partition.TagLocator, 0, len(el.TagLocators))
+	for _, l := range el.TagLocators {
 		en = append(en, partition.TagLocator{
 			FamilyOffset: l.FamilyOffset,
 			TagOffset:    l.TagOffset,
@@ -268,7 +271,7 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
-	e.entitiesMap[id] = en
+	e.entitiesMap[id] = partition.EntityLocator{TagLocators: en, ModRevision: modRevision}
 }
 
 // OnDelete implements schema.EventHandler.
@@ -310,7 +313,7 @@ func (e *entityRepo) getLocator(id identity) (partition.EntityLocator, bool) {
 	defer e.RWMutex.RUnlock()
 	el, ok := e.entitiesMap[id]
 	if !ok {
-		return nil, false
+		return partition.EntityLocator{}, false
 	}
 	return el, true
 }

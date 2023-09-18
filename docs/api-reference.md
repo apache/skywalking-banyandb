@@ -168,6 +168,9 @@
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
   
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
@@ -188,6 +191,8 @@
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
     - [GetRequest](#banyandb-property-v1-GetRequest)
     - [GetResponse](#banyandb-property-v1-GetResponse)
+    - [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest)
+    - [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse)
     - [ListRequest](#banyandb-property-v1-ListRequest)
     - [ListResponse](#banyandb-property-v1-ListResponse)
   
@@ -1671,6 +1676,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1817,6 +1827,11 @@ Type determine the index structure under the hood
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
 
 
 
@@ -1840,6 +1855,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceCreateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -1986,6 +2006,11 @@ Type determine the index structure under the hood
 
 ### StreamRegistryServiceUpdateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
 
 
 
@@ -2498,6 +2523,38 @@ TopNResponse is the response for a query to the Query module.
 
 
 
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="banyandb_measure_v1_write-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2550,6 +2607,7 @@ WriteRequest is the request contract for write
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -2560,6 +2618,13 @@ WriteRequest is the request contract for write
 
 ### WriteResponse
 WriteResponse is the response contract for write
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 
@@ -2637,6 +2702,8 @@ Property stores the user defined data
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+| lease_id | [int64](#int64) |  | readonly. lease_id is the ID of the lease that attached to key. |
+| ttl | [string](#string) |  | ttl indicates the time to live of the property. It&#39;s a string in the format of &#34;1h&#34;, &#34;2m&#34;, &#34;3s&#34;, &#34;1500ms&#34;. It defaults to 0s, which means the property never expires. The minimum allowed ttl is 1s. |
 
 
 
@@ -2685,6 +2752,7 @@ Property stores the user defined data
 | ----- | ---- | ----- | ----------- |
 | created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
 | tags_num | [uint32](#uint32) |  |  |
+| lease_id | [int64](#int64) |  |  |
 
 
 
@@ -2754,6 +2822,31 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-KeepAliveRequest"></a>
+
+### KeepAliveRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lease_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-KeepAliveResponse"></a>
+
+### KeepAliveResponse
+
+
+
+
+
+
+
 <a name="banyandb-property-v1-ListRequest"></a>
 
 ### ListRequest
@@ -2816,6 +2909,7 @@ Property stores the user defined data
 | Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
 | Get | [GetRequest](#banyandb-property-v1-GetRequest) | [GetResponse](#banyandb-property-v1-GetResponse) |  |
 | List | [ListRequest](#banyandb-property-v1-ListRequest) | [ListResponse](#banyandb-property-v1-ListResponse) |  |
+| KeepAlive | [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest) | [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse) |  |
 
  
 
@@ -2942,8 +3036,9 @@ QueryResponse is the response for a query to the Query module.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is only required in the first write. |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
 | element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
+| message_id | [uint64](#uint64) |  | the message_id is required. |
 
 
 
@@ -2954,6 +3049,13 @@ QueryResponse is the response for a query to the Query module.
 
 ### WriteResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  | the message_id from request. |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
 

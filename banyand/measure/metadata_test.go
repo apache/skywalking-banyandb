@@ -122,7 +122,9 @@ var _ = Describe("Metadata", func() {
 				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
 				entitySize := len(measureSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)).Should(Succeed())
+				modRevision, err := svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)
+				Expect(modRevision).ShouldNot(BeZero())
+				Expect(err).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
 					val, err := svcs.measure.Measure(&commonv1.Metadata{

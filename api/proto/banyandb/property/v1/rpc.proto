@@ -45,6 +45,7 @@ message ApplyResponse {
   // True: the property is absent. False: the property existed.
   bool created = 1;
   uint32 tags_num = 2;
+  int64 lease_id = 3;
 }
 
 message DeleteRequest {
@@ -76,6 +77,12 @@ message ListResponse {
   repeated banyandb.property.v1.Property property = 1;
 }
 
+message KeepAliveRequest {
+  int64 lease_id = 1;
+}
+
+message KeepAliveResponse {}
+
 service PropertyService {
   // Apply creates a property if it's absent, or update a existed one based on a strategy.
   rpc Apply(ApplyRequest) returns (ApplyResponse) {
@@ -98,5 +105,8 @@ service PropertyService {
       get: "/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
       additional_bindings {get: "/v1/property/lists/{container.group}"}
     };
+  }
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse) {
+    option (google.api.http) = {put: "/v1/property/lease/{lease_id}"};
   }
 }

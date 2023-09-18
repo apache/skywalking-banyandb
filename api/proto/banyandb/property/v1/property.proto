@@ -43,4 +43,11 @@ message Property {
   repeated model.v1.Tag tags = 2 [(validate.rules).repeated.min_items = 1];
   // updated_at indicates when the property is updated
   google.protobuf.Timestamp updated_at = 3;
+  // readonly. lease_id is the ID of the lease that attached to key.
+  int64 lease_id = 4;
+  // ttl indicates the time to live of the property.
+  // It's a string in the format of "1h", "2m", "3s", "1500ms".
+  // It defaults to 0s, which means the property never expires.
+  // The minimum allowed ttl is 1s.
+  string ttl = 5;
 }

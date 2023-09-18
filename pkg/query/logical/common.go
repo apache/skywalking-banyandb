@@ -39,7 +39,6 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
-	errInvalidData               = errors.New("data is invalid")
 
 	nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 )
@@ -60,22 +59,30 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		if len(refs) == 0 {
 			continue
 		}
-		tags := make([]*modelv1.Tag, len(refs))
 		familyName := refs[0].Tag.getFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, errors.WithMessage(err, "parse projection")
 		}
-		if len(refs) > len(parsedTagFamily.Tags) {
-			return nil, errors.Wrapf(errInvalidData,
-				"the number of tags %d in %s is less then expected %d",
-				len(parsedTagFamily.Tags), familyName, len(refs))
+
+		parsedTagSize := len(parsedTagFamily.GetTags())
+		tagRefSize := len(refs)
+
+		// Determine maximum size for creating the tags slice
+		maxSize := tagRefSize
+		if parsedTagSize < tagRefSize {
+			maxSize = parsedTagSize
 		}
+
+		tags := make([]*modelv1.Tag, maxSize)
+
 		for j, ref := range refs {
-			if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
+			if parsedTagSize > ref.Spec.TagIdx {
 				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-			} else {
+			} else if j < parsedTagSize {
 				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+			} else {
+				break
 			}
 		}
 
