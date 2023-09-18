@@ -197,6 +197,7 @@ type WrapRequest struct {
 	projTag   []string
 }
 
+// WrapTopNRequest wrap topNRequest to WrapRequest.
 func WrapTopNRequest(request *measurev1.TopNRequest, topNSchema *databasev1.TopNAggregation, sourceMeasure measure.Measure) *WrapRequest {
 	return &WrapRequest{
 		TopNRequest: request,
@@ -205,6 +206,7 @@ func WrapTopNRequest(request *measurev1.TopNRequest, topNSchema *databasev1.TopN
 	}
 }
 
+// WrapQueryRequest wrap queryRequest to WrapRequest.
 func WrapQueryRequest(request *measurev1.QueryRequest) *WrapRequest {
 	return &WrapRequest{
 		QueryRequest: request,
@@ -214,33 +216,29 @@ func WrapQueryRequest(request *measurev1.QueryRequest) *WrapRequest {
 func (wr *WrapRequest) GetMetadata() *commonv1.Metadata {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.Metadata
-	} else {
-		return wr.TopNRequest.Metadata
 	}
+	return wr.TopNRequest.Metadata
 }
 
 func (wr *WrapRequest) GetTimeRange() *modelv1.TimeRange {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.TimeRange
-	} else {
-		return wr.TopNRequest.TimeRange
 	}
+	return wr.TopNRequest.TimeRange
 }
 
 func (wr *WrapRequest) IsTop() bool {
 	if wr.QueryRequest != nil {
 		return false
-	} else {
-		return true
 	}
+	return true
 }
 
 func (wr *WrapRequest) GetFieldProjection() []string {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetFieldProjection().GetNames()
-	} else {
-		return []string{wr.projField}
 	}
+	return []string{wr.projField}
 }
 
 func (wr *WrapRequest) SetFieldProjection(fieldName string) {
@@ -250,15 +248,14 @@ func (wr *WrapRequest) SetFieldProjection(fieldName string) {
 func (wr *WrapRequest) GetTagProjection() *modelv1.TagProjection {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetTagProjection()
-	} else {
-		return &modelv1.TagProjection{
-			TagFamilies: []*modelv1.TagProjection_TagFamily{
-				{
-					Name: measure.TopNTagFamily,
-					Tags: wr.projTag,
-				},
+	}
+	return &modelv1.TagProjection{
+		TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{
+				Name: measure.TopNTagFamily,
+				Tags: wr.projTag,
 			},
-		}
+		},
 	}
 }
 
@@ -269,9 +266,8 @@ func (wr *WrapRequest) SetTagProjection(projTag []string) {
 func (wr *WrapRequest) GetLimit() uint32 {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetLimit()
-	} else {
-		return 0
 	}
+	return 0
 }
 
 func (wr *WrapRequest) GetGroupBy() *measurev1.QueryRequest_GroupBy {
@@ -301,58 +297,53 @@ func (wr *WrapRequest) GetAgg() *measurev1.QueryRequest_Aggregation {
 func (wr *WrapRequest) GetTop() *measurev1.QueryRequest_Top {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetTop()
-	} else {
-		return &measurev1.QueryRequest_Top{
-			Number:         wr.TopNRequest.TopN,
-			FieldName:      wr.projField,
-			FieldValueSort: wr.TopNRequest.GetFieldValueSort(),
-		}
+	}
+	return &measurev1.QueryRequest_Top{
+		Number:         wr.TopNRequest.TopN,
+		FieldName:      wr.projField,
+		FieldValueSort: wr.TopNRequest.GetFieldValueSort(),
 	}
 }
 
 func (wr *WrapRequest) GetOffset() uint32 {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetOffset()
-	} else {
-		return 0
 	}
+	return 0
 }
 
 func (wr *WrapRequest) GetOrderBy() *modelv1.QueryOrder {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetOrderBy()
-	} else {
-		return &modelv1.QueryOrder{
-			Sort: wr.TopNRequest.GetFieldValueSort(),
-		}
+	}
+	return &modelv1.QueryOrder{
+		Sort: wr.TopNRequest.GetFieldValueSort(),
 	}
 }
 
 func (wr *WrapRequest) GetCriteria() *modelv1.Criteria {
 	if wr.QueryRequest != nil {
 		return wr.QueryRequest.GetCriteria()
-	} else {
-		return buildCriteria(wr.TopNRequest.GetConditions())
 	}
+	return buildCriteria(wr.TopNRequest.GetConditions())
 }
 
 func (wr *WrapRequest) GetFieldValueSort() modelv1.Sort {
 	if wr.QueryRequest != nil {
 		return modelv1.Sort_SORT_UNSPECIFIED
-	} else {
-		return wr.TopNRequest.GetFieldValueSort()
 	}
+	return wr.TopNRequest.GetFieldValueSort()
 }
 
 func (wr *WrapRequest) hasAgg() bool {
 	if wr.QueryRequest != nil {
 		return true
-	} else {
-		function := wr.TopNRequest.GetAgg()
-		return function != 0
 	}
+	function := wr.TopNRequest.GetAgg()
+	return function != 0
 }
 
+// buildCriteria transform Condition array to Criteria tree which is used to generate tsdb.Entity later.
 func buildCriteria(conditions []*modelv1.Condition) *modelv1.Criteria {
 	var criteria *modelv1.Criteria
 	for _, cond := range conditions {
