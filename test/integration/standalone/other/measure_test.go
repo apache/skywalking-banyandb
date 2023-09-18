@@ -43,9 +43,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 
 	g.BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Common()
-		gm.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-			flags.EventuallyTimeout).Should(gm.Succeed())
+		addr, _, deferFn = setup.Standalone()
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())

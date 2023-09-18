@@ -60,10 +60,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Level: flags.LogLevel,
 	})).To(Succeed())
 	var addr string
-	addr, _, deferFunc = setup.Common()
-	Eventually(
-		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-		flags.EventuallyTimeout).Should(Succeed())
+	addr, _, deferFunc = setup.Standalone()
 	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	ns := timestamp.NowMilli().UnixNano()

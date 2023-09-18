@@ -27,7 +27,6 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
@@ -37,8 +36,7 @@ var _ = Describe("Group", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.Common()
-		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
+		_, addr, deferFunc = setup.EmptyStandalone()
 		addr = "http://" + addr
 		// extracting the operation of creating group
 		rootCmd = &cobra.Command{Use: "root"}
@@ -141,7 +139,7 @@ resource_opts:
 		})
 		resp := new(databasev1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Group).To(HaveLen(4))
+		Expect(resp.Group).To(HaveLen(2))
 	})
 
 	AfterEach(func() {

@@ -33,7 +33,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const flagEtcdEndpointsName = "etcd-endpoints"
+const (
+	// DefaultNamespace is the default namespace of the metadata stored in etcd.
+	DefaultNamespace      = "banyandb"
+	flagEtcdEndpointsName = "etcd-endpoints"
+)
 
 // NewClient returns a new metadata client.
 func NewClient(_ context.Context) (Service, error) {
@@ -54,7 +58,7 @@ func (s *clientService) SchemaRegistry() schema.Registry {
 
 func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVar(&s.namespace, "namespace", "banyandb", "The namespace of the metadata stored in etcd")
+	fs.StringVar(&s.namespace, "namespace", DefaultNamespace, "The namespace of the metadata stored in etcd")
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
 	return fs
 }
