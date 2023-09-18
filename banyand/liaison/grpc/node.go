@@ -36,7 +36,7 @@ var (
 // NodeRegistry is for locating data node with group/name of the metadata
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
-	initialize() error
+	Initialize() error
 	Locate(group, name string, shardID uint32) (string, error)
 }
 
@@ -54,7 +54,7 @@ func NewClusterNodeRegistry(metaRepo metadata.Repo, selector node.Selector) Node
 	}
 }
 
-func (n *clusterNodeService) initialize() error {
+func (n *clusterNodeService) Initialize() error {
 	n.Do(func() {
 		n.metaRepo.RegisterHandler("cluster-node-service", schema.KindNode, n)
 	})
@@ -72,7 +72,11 @@ func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string,
 func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.sel.AddNode(metadata.Spec.(*databasev1.Node))
+		inputNode := metadata.Spec.(*databasev1.Node)
+		if inputNode.Metadata.GetName() == "" {
+			return
+		}
+		n.sel.AddNode(inputNode)
 	default:
 	}
 }
@@ -80,7 +84,11 @@ func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 func (n *clusterNodeService) OnDelete(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.sel.RemoveNode(metadata.Spec.(*databasev1.Node))
+		dNode := metadata.Spec.(*databasev1.Node)
+		if dNode.Metadata.GetName() == "" {
+			return
+		}
+		n.sel.RemoveNode(dNode)
 	default:
 	}
 }
@@ -92,7 +100,7 @@ func NewLocalNodeRegistry() NodeRegistry {
 	return localNodeService{}
 }
 
-func (localNodeService) initialize() error {
+func (localNodeService) Initialize() error {
 	return nil
 }
 

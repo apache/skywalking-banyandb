@@ -18,6 +18,7 @@
 package integration_setup_test
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -26,7 +27,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	liaisonGrpc "github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -62,6 +67,7 @@ var _ = Describe("Node registration", func() {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(BeNil())
 	})
+
 	It("should register/unregister a data node successfully", func() {
 		namespace := "data-test"
 		nodeHost := "data-1"
@@ -85,5 +91,65 @@ var _ = Describe("Node registration", func() {
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(BeNil())
+	})
+
+	It("should register multiple data nodes in the node selector successfully", func() {
+		namespace := "data-test"
+		nodeDataHosts := []string{"data-node-1", "data-node-2"}
+		nodeDataIDs := make([]string, len(nodeDataHosts))
+		ports, err := test.AllocateFreePorts(2)
+		Expect(err).NotTo(HaveOccurred())
+
+		var closeFns []func()
+		for i, nodeDataHost := range nodeDataHosts {
+			addr := fmt.Sprintf("%s:%d", host, ports[i])
+			closeFns = append(closeFns, setup.CMD("data",
+				"--namespace", namespace,
+				"--grpc-host="+host,
+				fmt.Sprintf("--grpc-port=%d", ports[i]),
+				"--etcd-endpoints", etcdEndpoint,
+				"--node-host-provider", "flag",
+				"--node-host", nodeDataHost))
+			nodeDataIDs[i] = fmt.Sprintf("%s:%d", nodeDataHost, ports[i])
+			Eventually(
+				helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+				flags.EventuallyTimeout).Should(Succeed())
+			Eventually(func() (map[string]*databasev1.Node, error) {
+				return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeDataHost, ports[i]))
+			}, flags.EventuallyTimeout).Should(HaveLen(1))
+		}
+
+		// TODO: refactor the following startup logic
+		metaSvc, err := metadata.NewClient(context.TODO())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(metaSvc.FlagSet().Parse([]string{"--etcd-endpoints", etcdEndpoint, "--namespace", namespace})).
+			NotTo(HaveOccurred())
+		Expect(metaSvc.PreRun(context.WithValue(
+			context.WithValue(
+				context.TODO(),
+				common.ContextNodeKey, common.Node{}),
+			common.ContextNodeRolesKey, []databasev1.Role{}))).NotTo(HaveOccurred())
+		metaSvc.Serve()
+		sel, err := node.NewMaglevSelector()
+		Expect(err).NotTo(HaveOccurred())
+		nodeReg := liaisonGrpc.NewClusterNodeRegistry(metaSvc, sel)
+		Expect(nodeReg).NotTo(BeNil())
+		Expect(nodeReg.Initialize()).NotTo(HaveOccurred())
+
+		Eventually(func() (string, error) {
+			return nodeReg.Locate("metrics", "instance_traffic", 0)
+		}, flags.EventuallyTimeout).Should(BeElementOf(nodeDataIDs))
+
+		metaSvc.GracefulStop()
+
+		for _, closeFn := range closeFns {
+			closeFn()
+		}
+
+		for _, nodeDataHost := range nodeDataHosts {
+			Eventually(func() (map[string]*databasev1.Node, error) {
+				return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeDataHost, ports[0]))
+			}, flags.EventuallyTimeout).Should(BeNil())
+		}
 	})
 })
