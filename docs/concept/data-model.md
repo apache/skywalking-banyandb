@@ -183,7 +183,7 @@ Creating property.
 metadata:
   container:
     group: sw
-    name: ui_template
+    name: temp_data
   id: General-Service
 tags:
 - key: name
@@ -197,6 +197,34 @@ tags:
 ```
 
 `Property` supports a three-level hierarchy, `group`/`name`/`id`, that is more flexible than schemaful data models.
+
+The property supports the TTL mechanism. You could set the `ttl` field to specify the time to live.
+
+```yaml
+metadata:
+  container:
+    group: sw
+    name: temp_data
+  id: General-Service
+tags:
+- key: name
+  value:
+    str:
+      value: "hello"
+- key: state
+  value:
+    str:
+      value: "succeed"
+ttl: "1h"
+```
+
+"General-Service" will be dropped after 1 hour. If you want to extend the TTL, you could use the "keepalive" operation. The "lease_id" is returned in the apply response. You can use get operation to get the property with the lease_id as well.
+
+```yaml
+lease_id: 1
+```
+
+"General-Service" lives another 1 hour.
 
 You could Create, Read, Update and Drop a property, and update or drop several tags instead of the entire property.
 

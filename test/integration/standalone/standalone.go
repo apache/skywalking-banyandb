@@ -15,26 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+// Package standalone is a standalone integration test suite.
+package standalone
 
-import (
-	"testing"
-
-	g "github.com/onsi/ginkgo/v2"
-	gm "github.com/onsi/gomega"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-)
-
-func TestIntegrationOther(t *testing.T) {
-	gm.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Integration Other Suite", g.Label("integration"))
-}
-
-var _ = g.BeforeSuite(func() {
-	gm.Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: flags.LogLevel,
-	})).To(gm.Succeed())
-})
+// Labels is the labels for standalone integration test suite.
+var Labels = []string{"integration", "standalone"}

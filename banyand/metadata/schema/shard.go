@@ -41,14 +41,15 @@ func (e *etcdSchemaRegistry) CreateOrUpdateShard(ctx context.Context, shard *dat
 		},
 		Spec: shard,
 	}
-	err := e.update(ctx, md)
+	_, err := e.update(ctx, md)
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, ErrGRPCResourceNotFound) {
 		shard.CreatedAt = shard.UpdatedAt
 		md.Spec = shard
-		return e.create(ctx, md)
+		_, err = e.create(ctx, md)
+		return err
 	}
 	return err
 }

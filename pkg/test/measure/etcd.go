@@ -51,7 +51,8 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		return e.CreateMeasure(ctx, measure)
+		_, innerErr := e.CreateMeasure(ctx, measure)
+		return innerErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}

@@ -15,6 +15,8 @@ Release Notes.
 - Implement the remote queue to spreading data to data nodes.
 - Fix parse environment variables error
 - Implement the distributed query engine.
+- Add mod revision check to write requests.
+- Add TTL to the property.
 
 ### Bugs
 

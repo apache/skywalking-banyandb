@@ -27,6 +27,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+type watcherConfig struct {
+	handler EventHandler
+	key     string
+	kind    Kind
+}
+
 type watcher struct {
 	handler EventHandler
 	cli     *clientv3.Client
@@ -36,12 +42,12 @@ type watcher struct {
 	kind    Kind
 }
 
-func newWatcher(cli *clientv3.Client, kind Kind, handler EventHandler, l *logger.Logger) *watcher {
+func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
 	w := &watcher{
 		cli:     cli,
-		key:     kind.key(),
-		kind:    kind,
-		handler: handler,
+		key:     wc.key,
+		kind:    wc.kind,
+		handler: wc.handler,
 		closer:  run.NewCloser(1),
 		l:       l,
 	}

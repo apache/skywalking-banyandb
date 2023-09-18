@@ -77,7 +77,7 @@ func preloadSchema(e Registry) error {
 	if err := protojson.Unmarshal([]byte(streamJSON), s); err != nil {
 		return err
 	}
-	err := e.CreateStream(context.Background(), s)
+	_, err := e.CreateStream(context.Background(), s)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func preloadSchema(e Registry) error {
 		return err
 	}
 	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
+		data, err := indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
 		if err != nil {
 			return err
 		}

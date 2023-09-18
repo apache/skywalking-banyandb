@@ -73,7 +73,9 @@ type server struct {
 
 // NewServer returns a new gRPC server.
 func NewServer() queue.Server {
-	return &server{}
+	return &server{
+		listeners: make(map[bus.Topic]bus.MessageListener),
+	}
 }
 
 func (s *server) PreRun(_ context.Context) error {

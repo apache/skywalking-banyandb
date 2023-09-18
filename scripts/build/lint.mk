@@ -29,4 +29,4 @@ lint: $(LINTER) $(REVIVE) ## Run all linters
 
 .PHONY: format
 format: $(LINTER)
-	$(LINTER) run --fix -c $(root_dir)/.golangci-format.yml
+	$(LINTER) run --fix -c $(root_dir)/.golangci-format.yml ./...

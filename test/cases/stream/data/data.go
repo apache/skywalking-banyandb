@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -97,12 +98,13 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 		})
 }
 
-func loadData(stream streamv1.StreamService_WriteClient, dataFile string, baseTime time.Time, interval time.Duration) {
+func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
+
 	for i, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
@@ -125,11 +127,9 @@ func loadData(stream streamv1.StreamService_WriteClient, dataFile string, baseTi
 		}
 		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
 		errInner := stream.Send(&streamv1.WriteRequest{
-			Metadata: &commonv1.Metadata{
-				Name:  "sw",
-				Group: "default",
-			},
-			Element: e,
+			Metadata:  metadata,
+			Element:   e,
+			MessageId: uint64(time.Now().UnixNano()),
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}
@@ -137,11 +137,20 @@ func loadData(stream streamv1.StreamService_WriteClient, dataFile string, baseTi
 
 // Write data into the server.
 func Write(conn *grpclib.ClientConn, dataFile string, baseTime time.Time, interval time.Duration) {
+	metadata := &commonv1.Metadata{
+		Name:  "sw",
+		Group: "default",
+	}
+	schema := databasev1.NewStreamRegistryServiceClient(conn)
+	resp, err := schema.Get(context.Background(), &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	metadata = resp.GetStream().GetMetadata()
+
 	c := streamv1.NewStreamServiceClient(conn)
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(writeClient, dataFile, baseTime, interval)
+	loadData(writeClient, metadata, dataFile, baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()

@@ -21,6 +21,7 @@ package stream
 import (
 	"context"
 	"embed"
+	"path"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -56,7 +57,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if unmarshalErr := protojson.Unmarshal([]byte(streamJSON), s); unmarshalErr != nil {
 		return unmarshalErr
 	}
-	if innerErr := e.CreateStream(ctx, s); innerErr != nil {
+	if _, innerErr := e.CreateStream(ctx, s); innerErr != nil {
 		return innerErr
 	}
 
@@ -73,7 +74,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 		return err
 	}
 	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(indexRuleDir + "/" + entry.Name())
+		data, err := indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
 		if err != nil {
 			return err
 		}

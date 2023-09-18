@@ -30,11 +30,11 @@ type propertyServer struct {
 }
 
 func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (*propertyv1.ApplyResponse, error) {
-	created, tagsNum, err := ps.schemaRegistry.PropertyRegistry().ApplyProperty(ctx, req.Property, req.Strategy)
+	created, tagsNum, leaseID, err := ps.schemaRegistry.PropertyRegistry().ApplyProperty(ctx, req.Property, req.Strategy)
 	if err != nil {
 		return nil, err
 	}
-	return &propertyv1.ApplyResponse{Created: created, TagsNum: tagsNum}, nil
+	return &propertyv1.ApplyResponse{Created: created, TagsNum: tagsNum, LeaseId: leaseID}, nil
 }
 
 func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequest) (*propertyv1.DeleteResponse, error) {
@@ -66,4 +66,12 @@ func (ps *propertyServer) List(ctx context.Context, req *propertyv1.ListRequest)
 	return &propertyv1.ListResponse{
 		Property: entities,
 	}, nil
+}
+
+func (ps *propertyServer) KeepAlive(ctx context.Context, req *propertyv1.KeepAliveRequest) (*propertyv1.KeepAliveResponse, error) {
+	err := ps.schemaRegistry.PropertyRegistry().KeepAlive(ctx, req.GetLeaseId())
+	if err != nil {
+		return nil, err
+	}
+	return &propertyv1.KeepAliveResponse{}, nil
 }

@@ -45,6 +45,7 @@ type Client interface {
 type Server interface {
 	run.Unit
 	bus.Subscriber
+	GetPort() *uint32
 }
 
 // BatchPublisher is the interface for publishing data in batch.

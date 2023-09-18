@@ -42,6 +42,11 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+// SchemaService allows querying schema information.
+type SchemaService interface {
+	Query
+	Close()
+}
 type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
@@ -65,7 +70,7 @@ func newSchemaRepo(path string, metadata metadata.Repo,
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) Query {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,
@@ -214,7 +219,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		if innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
+		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
 			return nil, innerErr
 		}
 		return newTopNMeasure, nil
@@ -228,7 +233,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		return oldTopNSchema, nil
 	}
 	// update
-	if err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
+	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
 		return nil, err
 	}
 	return newTopNMeasure, nil

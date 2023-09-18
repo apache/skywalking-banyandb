@@ -28,6 +28,9 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -74,10 +77,37 @@ var _ = ginkgo.Describe("Watcher", func() {
 	var (
 		mockedObj *mockedHandler
 		watcher   *watcher
+		server    embeddedetcd.Server
+		registry  *etcdSchemaRegistry
 	)
 
 	ginkgo.BeforeEach(func() {
 		mockedObj = newMockedHandler()
+		gomega.Expect(logger.Init(logger.Logging{
+			Env:   "dev",
+			Level: flags.LogLevel,
+		})).To(gomega.Succeed())
+		ports, err := test.AllocateFreePorts(2)
+		if err != nil {
+			panic("fail to find free ports")
+		}
+		endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+		server, err = embeddedetcd.NewServer(
+			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+			embeddedetcd.RootDir(randomTempDir()))
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		<-server.ReadyNotify()
+		schemaRegistry, err := NewEtcdSchemaRegistry(
+			Namespace("test"),
+			ConfigureServerEndpoints(endpoints),
+		)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		registry = schemaRegistry.(*etcdSchemaRegistry)
+	})
+	ginkgo.AfterEach(func() {
+		registry.Close()
+		server.Close()
+		<-server.StopNotify()
 	})
 
 	ginkgo.It("should handle all existing key-value pairs on initial load", func() {
@@ -88,13 +118,15 @@ var _ = ginkgo.Describe("Watcher", func() {
 			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		var modRevision int64
 		for i := 0; i < 2; i++ {
-			err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			modRevision, err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
 				Metadata: &commonv1.Metadata{
 					Name:  fmt.Sprintf("testkey%d", i+1),
 					Group: "testgroup-measure",
 				},
 			})
+			gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
@@ -126,12 +158,14 @@ var _ = ginkgo.Describe("Watcher", func() {
 			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		err = registry.CreateStream(context.Background(), &databasev1.Stream{
+		var modRevision int64
+		modRevision, err = registry.CreateStream(context.Background(), &databasev1.Stream{
 			Metadata: &commonv1.Metadata{
 				Name:  "testkey",
 				Group: "testgroup-stream",
 			},
 		})
+		gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ok, err := registry.DeleteStream(context.Background(), &commonv1.Metadata{
 			Name:  "testkey",

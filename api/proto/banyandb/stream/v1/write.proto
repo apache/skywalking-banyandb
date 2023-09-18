@@ -21,6 +21,7 @@ package banyandb.stream.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -39,13 +40,22 @@ message ElementValue {
 }
 
 message WriteRequest {
-  // the metadata is only required in the first write.
+  // the metadata is required.
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // the element is required.
   ElementValue element = 2 [(validate.rules).message.required = true];
+  // the message_id is required.
+  uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
 }
 
-message WriteResponse {}
+message WriteResponse {
+  // the message_id from request.
+  uint64 message_id = 1 [(validate.rules).uint64.gt = 0];
+  // status indicates the request processing result
+  model.v1.Status status = 2 [(validate.rules).enum.defined_only = true];
+  // the metadata from request when request fails
+  common.v1.Metadata metadata = 3;
+}
 
 message InternalWriteRequest {
   uint32 shard_id = 1;
