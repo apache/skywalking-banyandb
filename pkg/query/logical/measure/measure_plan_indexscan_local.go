@@ -265,16 +265,16 @@ func (i *localIndexScan) queryExecute(ctx context.Context) (mit executor.MIterat
 	if len(iters) == 0 {
 		return dummyIter, nil
 	}
-	transformContext := transformContext{
+	tc := transformContext{
 		ec:                   ec,
 		projectionTagsRefs:   i.projectionTagsRefs,
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
 	if i.groupByEntity {
-		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
+		return newSeriesMIterator(iters, tc, i.maxDataPointsSize), nil
 	}
 	it := logical.NewItemIter(iters, i.order.Sort)
-	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
+	return newIndexScanIterator(it, tc, i.maxDataPointsSize), nil
 }
 
 func (i *localIndexScan) String() string {
