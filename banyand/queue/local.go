@@ -19,6 +19,7 @@
 package queue
 
 import (
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -82,6 +83,9 @@ func (l local) NewBatchPublisher() BatchPublisher {
 
 func (*local) GetPort() *uint32 {
 	return nil
+}
+
+func (*local) Register(schema.EventHandler) {
 }
 
 type localBatchPublisher struct {

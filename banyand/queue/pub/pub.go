@@ -46,13 +46,17 @@ var (
 
 type pub struct {
 	metadata metadata.Repo
+	handler  schema.EventHandler
 	log      *logger.Logger
 	clients  map[string]*client
 	closer   *run.Closer
 	mu       sync.RWMutex
 }
 
-// GracefulStop implements run.Service.
+func (p *pub) Register(handler schema.EventHandler) {
+	p.handler = handler
+}
+
 func (p *pub) GracefulStop() {
 	p.closer.Done()
 	p.closer.CloseThenWait()
@@ -133,12 +137,10 @@ func New(metadata metadata.Repo) queue.Client {
 	}
 }
 
-// Name implements run.PreRunner.
 func (*pub) Name() string {
 	return "queue-client"
 }
 
-// PreRun implements run.PreRunner.
 func (p *pub) PreRun(context.Context) error {
 	p.log = logger.GetLogger("server-queue")
 	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)

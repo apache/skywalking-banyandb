@@ -29,7 +29,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -47,7 +46,6 @@ func NewClient(_ context.Context) (Service, error) {
 type clientService struct {
 	namespace      string
 	schemaRegistry schema.Registry
-	alc            *allocator
 	closer         *run.Closer
 	endpoints      []string
 }
@@ -91,7 +89,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	nodeRoles := val.([]databasev1.Role)
 	ctxRegister, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
-	if err = s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
+	return s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
 		Metadata: &commonv1.Metadata{
 			Name: node.NodeID,
 		},
@@ -99,12 +97,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		HttpAddress: node.HTTPAddress,
 		Roles:       nodeRoles,
 		CreatedAt:   timestamppb.Now(),
-	}); err != nil {
-		return err
-	}
-	s.alc = newAllocator(s.schemaRegistry, logger.GetLogger(s.Name()).Named("allocator"))
-	s.schemaRegistry.RegisterHandler("shard-allocator", schema.KindGroup|schema.KindNode, s.alc)
-	return nil
+	})
 }
 
 func (s *clientService) Serve() run.StopNotify {
@@ -146,10 +139,6 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
-	return s.schemaRegistry
-}
-
-func (s *clientService) ShardRegistry() schema.Shard {
 	return s.schemaRegistry
 }
 

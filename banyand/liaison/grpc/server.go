@@ -91,12 +91,12 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata.Repo) Server {
+func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
+		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry, nodeRegistry),
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry),
+		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry, nodeRegistry),
 	}
 	s := &server{
 		pipeline:   pipeline,
@@ -128,7 +128,7 @@ func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata
 	return s
 }
 
-func (s *server) PreRun(ctx context.Context) error {
+func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
@@ -138,7 +138,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	}
 	for _, c := range components {
 		c.SetLogger(s.log)
-		if err := c.initialize(ctx); err != nil {
+		if err := c.initialize(); err != nil {
 			return err
 		}
 	}

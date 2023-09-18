@@ -42,10 +42,9 @@ const (
 	KindTopNAggregation
 	KindProperty
 	KindNode
-	KindShard
 	KindMask = KindGroup | KindStream | KindMeasure |
 		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode | KindShard
+		KindTopNAggregation | KindProperty | KindNode
 	KindSize = 9
 )
 
@@ -67,8 +66,6 @@ func (k Kind) key() string {
 		return propertyKeyPrefix
 	case KindNode:
 		return nodeKeyPrefix
-	case KindShard:
-		return shardKeyPrefix
 	default:
 		return "unknown"
 	}
@@ -97,8 +94,6 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 		m = &databasev1.TopNAggregation{}
 	case KindNode:
 		m = &databasev1.Node{}
-	case KindShard:
-		m = &databasev1.Shard{}
 	default:
 		return Metadata{}, errUnsupportedEntityType
 	}
@@ -143,8 +138,6 @@ func (k Kind) String() string {
 		return "property"
 	case KindNode:
 		return "node"
-	case KindShard:
-		return "shard"
 	default:
 		return "unknown"
 	}

@@ -18,10 +18,8 @@
 package grpc
 
 import (
-	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/pkg/errors"
 
@@ -42,13 +40,14 @@ var errNotExist = errors.New("the object doesn't exist")
 type discoveryService struct {
 	pipeline     queue.Client
 	metadataRepo metadata.Repo
+	nodeRegistry NodeRegistry
 	shardRepo    *shardRepo
 	entityRepo   *entityRepo
 	log          *logger.Logger
 	kind         schema.Kind
 }
 
-func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo) *discoveryService {
+func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
@@ -57,80 +56,12 @@ func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo m
 		pipeline:     pipeline,
 		kind:         kind,
 		metadataRepo: metadataRepo,
+		nodeRegistry: nodeRegistry,
 	}
 }
 
-func (ds *discoveryService) initialize(ctx context.Context) error {
-	ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
-	groups, err := ds.metadataRepo.GroupRegistry().ListGroup(ctxLocal)
-	cancel()
-	if err != nil {
-		return err
-	}
-	for _, g := range groups {
-		switch ds.kind {
-		case schema.KindMeasure:
-		case schema.KindStream:
-		default:
-			continue
-		}
-		ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
-		shards, innerErr := ds.metadataRepo.ShardRegistry().ListShard(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
-		cancel()
-		if innerErr != nil {
-			return innerErr
-		}
-		for _, s := range shards {
-			ds.shardRepo.OnAddOrUpdate(schema.Metadata{
-				TypeMeta: schema.TypeMeta{
-					Kind:  schema.KindShard,
-					Name:  s.Metadata.Name,
-					Group: s.Metadata.Group,
-				},
-				Spec: s,
-			})
-		}
-
-		switch ds.kind {
-		case schema.KindMeasure:
-			ctxLocal, cancel = context.WithTimeout(ctx, 5*time.Second)
-			mm, innerErr := ds.metadataRepo.MeasureRegistry().ListMeasure(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
-			cancel()
-			if innerErr != nil {
-				return innerErr
-			}
-			for _, m := range mm {
-				ds.entityRepo.OnAddOrUpdate(schema.Metadata{
-					TypeMeta: schema.TypeMeta{
-						Kind:  schema.KindMeasure,
-						Name:  m.Metadata.Name,
-						Group: m.Metadata.Group,
-					},
-					Spec: m,
-				})
-			}
-		case schema.KindStream:
-			ctxLocal, cancel = context.WithTimeout(ctx, 5*time.Second)
-			ss, innerErr := ds.metadataRepo.StreamRegistry().ListStream(ctxLocal, schema.ListOpt{Group: g.Metadata.Name})
-			cancel()
-			if innerErr != nil {
-				return innerErr
-			}
-			for _, s := range ss {
-				ds.entityRepo.OnAddOrUpdate(schema.Metadata{
-					TypeMeta: schema.TypeMeta{
-						Kind:  schema.KindStream,
-						Name:  s.Metadata.Name,
-						Group: s.Metadata.Group,
-					},
-					Spec: s,
-				})
-			}
-		default:
-			return fmt.Errorf("unsupported kind: %d", ds.kind)
-		}
-	}
-	ds.metadataRepo.RegisterHandler("liaison", schema.KindShard, ds.shardRepo)
+func (ds *discoveryService) initialize() error {
+	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.shardRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	return nil
 }
@@ -172,28 +103,32 @@ type shardRepo struct {
 	sync.RWMutex
 }
 
-// OnAddOrUpdate implements schema.EventHandler.
 func (s *shardRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
-	if schemaMetadata.Kind != schema.KindShard {
+	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
-	shard := schemaMetadata.Spec.(*databasev1.Shard)
-	idx := getID(shard.GetMetadata())
+	group := schemaMetadata.Spec.(*commonv1.Group)
+	if group.ResourceOpts == nil || group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return
+	}
+	idx := getID(group.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", idx).Uint32("total", shard.Total).Msg("shard added or updated")
+		le.Stringer("id", idx).Uint32("total", group.ResourceOpts.ShardNum).Msg("shard added or updated")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	s.shardEventsMap[idx] = shard.Total
+	s.shardEventsMap[idx] = group.ResourceOpts.ShardNum
 }
 
-// OnDelete implements schema.EventHandler.
 func (s *shardRepo) OnDelete(schemaMetadata schema.Metadata) {
-	if schemaMetadata.Kind != schema.KindShard {
+	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
-	shard := schemaMetadata.Spec.(*databasev1.Shard)
-	idx := getID(shard.GetMetadata())
+	group := schemaMetadata.Spec.(*commonv1.Group)
+	if group.ResourceOpts == nil || group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return
+	}
+	idx := getID(group.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
 		le.Stringer("id", idx).Msg("shard deleted")
 	}
