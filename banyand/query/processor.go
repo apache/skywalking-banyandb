@@ -104,7 +104,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	resp = bus.NewMessage(bus.MessageID(now), entities)
+	resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: entities})
 
 	return
 }
@@ -172,7 +172,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("ret", logger.Proto(&measurev1.QueryResponse{DataPoints: result})).Msg("got a measure")
 	}
-	resp = bus.NewMessage(bus.MessageID(now), result)
+	resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{DataPoints: result})
 	return
 }
 

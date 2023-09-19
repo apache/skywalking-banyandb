@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,6 +44,8 @@ type measureService struct {
 	*discoveryService
 	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
+	pipeline           queue.Client
+	broadcaster        queue.Client
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -113,11 +116,18 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			SeriesHash:   tsdb.HashEntity(entity),
 			EntityValues: tagValues.Encode(),
 		}
-		// TODO: set node id
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "todo", iwr)
+		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))
+		if errPickNode != nil {
+			ms.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
+			continue
+		}
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to send a message")
+			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
+			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
+			continue
 		}
 		reply(nil, modelv1.Status_STATUS_SUCCEED, writeRequest.GetMessageId(), measure, ms.sampled)
 	}
@@ -130,7 +140,7 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
-	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
+	feat, errQuery := ms.broadcaster.Publish(data.TopicMeasureQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
@@ -143,8 +153,8 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*measurev1.DataPoint:
-		return &measurev1.QueryResponse{DataPoints: d}, nil
+	case *measurev1.QueryResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
@@ -157,7 +167,7 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	}
 
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), topNRequest)
-	feat, errQuery := ms.pipeline.Publish(data.TopicTopNQuery, message)
+	feat, errQuery := ms.broadcaster.Publish(data.TopicTopNQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
@@ -167,8 +177,8 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*measurev1.TopNList:
-		return &measurev1.TopNResponse{Lists: d}, nil
+	case *measurev1.TopNResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}

@@ -64,11 +64,6 @@ func (m Message) Node() string {
 	return m.node
 }
 
-// IsRemote returns true if the Message is sent from a remote node.
-func (m Message) IsRemote() bool {
-	return m.node != "local"
-}
-
 // NewMessage returns a new Message with a MessageID and embed data.
 func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, node: "local", payload: data}

@@ -75,12 +75,12 @@ type Resource interface {
 // ResourceSchemaSupplier allows get a ResourceSchema from the metadata.
 type ResourceSchemaSupplier interface {
 	ResourceSchema(metadata *commonv1.Metadata) (ResourceSchema, error)
+	OpenResource(shardNum uint32, db tsdb.Supplier, spec Resource) (io.Closer, error)
 }
 
 // ResourceSupplier allows open a resource and its embedded tsdb.
 type ResourceSupplier interface {
 	ResourceSchemaSupplier
-	OpenResource(shardNum uint32, db tsdb.Supplier, spec Resource) (io.Closer, error)
 	OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error)
 }
 
