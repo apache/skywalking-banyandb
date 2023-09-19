@@ -88,6 +88,9 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	}
 	c := clusterv1.NewServiceClient(conn)
 	p.clients[name] = &client{conn: conn, client: c}
+	if p.handler != nil {
+		p.handler.OnAddOrUpdate(md)
+	}
 }
 
 func (p *pub) OnDelete(md schema.Metadata) {
@@ -112,5 +115,8 @@ func (p *pub) OnDelete(md schema.Metadata) {
 			client.conn.Close() // Close the client connection
 		}
 		delete(p.clients, name)
+		if p.handler != nil {
+			p.handler.OnDelete(md)
+		}
 	}
 }

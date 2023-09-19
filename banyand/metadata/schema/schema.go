@@ -54,7 +54,6 @@ type Registry interface {
 	TopNAggregation
 	Property
 	Node
-	Shard
 	RegisterHandler(string, Kind, EventHandler)
 }
 
@@ -111,11 +110,6 @@ func (m Metadata) key() (string, error) {
 		}), nil
 	case KindNode:
 		return formatNodeKey(m.Name), nil
-	case KindShard:
-		return formatShardKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
@@ -202,10 +196,4 @@ type Property interface {
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node) error
-}
-
-// Shard allows CRUD shard schemas in a group.
-type Shard interface {
-	CreateOrUpdateShard(ctx context.Context, shard *databasev1.Shard) error
-	ListShard(ctx context.Context, opt ListOpt) ([]*databasev1.Shard, error)
 }

@@ -21,9 +21,13 @@ package dquery
 import (
 	"context"
 
+	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -44,14 +48,16 @@ type queryService struct {
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
+	pipeline    queue.Server
 }
 
 // NewService return a new query service.
-func NewService(metaService metadata.Repo, broadcaster bus.Broadcaster,
+func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
 		closer:      run.NewCloser(1),
+		pipeline:    pipeline,
 	}
 	svc.sqp = &streamQueryProcessor{
 		queryService: svc,
@@ -76,7 +82,11 @@ func (q *queryService) PreRun(_ context.Context) error {
 	q.log = logger.GetLogger(moduleName)
 	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log)
 	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log)
-	return nil
+	return multierr.Combine(
+		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
+		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
+		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
+	)
 }
 
 func (q *queryService) GracefulStop() {

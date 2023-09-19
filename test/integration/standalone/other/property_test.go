@@ -33,7 +33,6 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
@@ -45,9 +44,7 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Common()
-		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-			flags.EventuallyTimeout).Should(Succeed())
+		addr, _, deferFn = setup.Standalone()
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
@@ -179,7 +176,7 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Common()
+		addr, _, deferFn = setup.Standalone()
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())

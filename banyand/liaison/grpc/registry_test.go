@@ -178,7 +178,7 @@ func setupForRegistry() func() {
 	metaSvc, err := metadata.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
 
-	tcp := grpc.NewServer(context.TODO(), pipeline, metaSvc)
+	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()

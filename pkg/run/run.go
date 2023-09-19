@@ -268,6 +268,9 @@ func (g *Group) RegisterFlags() *FlagSet {
 func (g *Group) RunConfig() (interrupted bool, err error) {
 	g.log = logger.GetLogger(g.name)
 	g.configured = true
+	if g.f == nil {
+		return false, nil
+	}
 
 	if g.name == "" {
 		// use the binary name if custom name has not been provided
