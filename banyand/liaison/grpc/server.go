@@ -64,8 +64,7 @@ type Server interface {
 }
 
 type server struct {
-	pipeline queue.Client
-	creds    credentials.TransportCredentials
+	creds credentials.TransportCredentials
 	*streamRegistryServer
 	log *logger.Logger
 	*indexRuleBindingRegistryServer
@@ -91,15 +90,18 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry, nodeRegistry),
+		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry, nodeRegistry),
+		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	s := &server{
-		pipeline:   pipeline,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{

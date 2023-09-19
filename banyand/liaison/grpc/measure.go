@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,6 +44,8 @@ type measureService struct {
 	*discoveryService
 	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
+	pipeline           queue.Client
+	broadcaster        queue.Client
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -137,7 +140,7 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
-	feat, errQuery := ms.pipeline.Publish(data.TopicMeasureQuery, message)
+	feat, errQuery := ms.broadcaster.Publish(data.TopicMeasureQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
@@ -150,8 +153,8 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*measurev1.DataPoint:
-		return &measurev1.QueryResponse{DataPoints: d}, nil
+	case *measurev1.QueryResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}
@@ -164,7 +167,7 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	}
 
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), topNRequest)
-	feat, errQuery := ms.pipeline.Publish(data.TopicTopNQuery, message)
+	feat, errQuery := ms.broadcaster.Publish(data.TopicTopNQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
@@ -174,8 +177,8 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*measurev1.TopNList:
-		return &measurev1.TopNResponse{Lists: d}, nil
+	case *measurev1.TopNResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}

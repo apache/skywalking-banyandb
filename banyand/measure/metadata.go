@@ -405,3 +405,16 @@ func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema
 	defer cancel()
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }
+
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (tsdb.Database, error) {
+	panic("do not support open db")
+}
+
+func (s *portableSupplier) OpenResource(shardNum uint32, _ tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
+	return openMeasure(shardNum, nil, measureSpec{
+		schema:           measureSchema,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
+	}, s.l, nil)
+}

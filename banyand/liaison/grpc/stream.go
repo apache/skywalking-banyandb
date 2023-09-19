@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,6 +44,8 @@ type streamService struct {
 	*discoveryService
 	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
+	pipeline           queue.Client
+	broadcaster        queue.Client
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
@@ -142,7 +145,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
-	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
+	feat, errQuery := s.broadcaster.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
 		if errors.Is(errQuery, io.EOF) {
 			return emptyStreamQueryResponse, nil
@@ -155,8 +158,8 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*streamv1.Element:
-		return &streamv1.QueryResponse{Elements: d}, nil
+	case *streamv1.QueryResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}

@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
@@ -175,4 +176,55 @@ func CMD(flags ...string) func() {
 		closeFn()
 		wg.Wait()
 	}
+}
+
+// DataNode runs a data node.
+func DataNode(etcdEndpoint string) func() {
+	path, deferFn, err := test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	ports, err := test.AllocateFreePorts(1)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	nodeHost := "127.0.0.1"
+	closeFn := CMD("data",
+		"--grpc-host="+host,
+		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		"--stream-root-path="+path,
+		"--measure-root-path="+path,
+		"--etcd-endpoints", etcdEndpoint,
+		"--node-host-provider", "flag",
+		"--node-host", nodeHost)
+	gomega.Eventually(
+		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
+		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
+	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
+	return func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// LiaisonNode runs a liaison node.
+func LiaisonNode(etcdEndpoint string) (string, func()) {
+	ports, err := test.AllocateFreePorts(2)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
+	nodeHost := "127.0.0.1"
+	closeFn := CMD("liaison",
+		"--grpc-host="+host,
+		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		"--http-host="+host,
+		fmt.Sprintf("--http-port=%d", ports[1]),
+		"--http-grpc-addr="+addr,
+		"--etcd-endpoints", etcdEndpoint,
+		"--node-host-provider", "flag",
+		"--node-host", nodeHost)
+	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr), testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
+		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
+	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
+	return addr, closeFn
 }

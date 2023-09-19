@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
-	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -75,17 +74,10 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	}
 	dataGroup := run.NewGroup("data")
 	dataGroup.Register(units...)
-	logging := logger.Logging{}
 	dataCmd := &cobra.Command{
 		Use:     "data",
 		Version: version.Build(),
 		Short:   "Run as the data server",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			if err = config.Load("logging", cmd.Flags()); err != nil {
-				return err
-			}
-			return logger.Init(logging)
-		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			node, err := common.GenerateNode(pipeline.GetPort(), nil)
 			if err != nil {

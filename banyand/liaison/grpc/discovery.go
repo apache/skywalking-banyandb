@@ -29,7 +29,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -38,7 +37,6 @@ import (
 var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
-	pipeline     queue.Client
 	metadataRepo metadata.Repo
 	nodeRegistry NodeRegistry
 	shardRepo    *shardRepo
@@ -47,13 +45,12 @@ type discoveryService struct {
 	kind         schema.Kind
 }
 
-func newDiscoveryService(pipeline queue.Client, kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
+func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
 	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
 		shardRepo:    sr,
 		entityRepo:   er,
-		pipeline:     pipeline,
 		kind:         kind,
 		metadataRepo: metadataRepo,
 		nodeRegistry: nodeRegistry,

@@ -38,9 +38,7 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
 type unresolvedDistributed struct {
-	originalQuery     *measurev1.QueryRequest
-	order             *logical.OrderBy
-	maxDataPointsSize int
+	originalQuery *measurev1.QueryRequest
 }
 
 func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedPlan {
@@ -49,38 +47,60 @@ func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedP
 	}
 }
 
-func (ud *unresolvedDistributed) Limit(max int) {
-	ud.maxDataPointsSize = max
-}
-
-func (ud *unresolvedDistributed) Sort(order *logical.OrderBy) {
-	ud.order = order
-}
-
 func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
 	if ud.originalQuery.TagProjection == nil {
 		return nil, fmt.Errorf("tag projection is required")
 	}
-	if ud.originalQuery.FieldProjection == nil {
-		return nil, fmt.Errorf("filed projection is required")
+	projectionTags := logical.ToTags(ud.originalQuery.GetTagProjection())
+	if len(projectionTags) > 0 {
+		var err error
+		projTagsRefs, err := s.CreateTagRef(projectionTags...)
+		if err != nil {
+			return nil, err
+		}
+		s = s.ProjTags(projTagsRefs...)
+	}
+	projectionFields := make([]*logical.Field, len(ud.originalQuery.GetFieldProjection().GetNames()))
+	for i, fieldNameProj := range ud.originalQuery.GetFieldProjection().GetNames() {
+		projectionFields[i] = logical.NewField(fieldNameProj)
+	}
+	if len(projectionFields) > 0 {
+		var err error
+		projFieldRefs, err := s.CreateFieldRef(projectionFields...)
+		if err != nil {
+			return nil, err
+		}
+		s = s.ProjFields(projFieldRefs...)
+	}
+	limit := ud.originalQuery.GetLimit()
+	if limit == 0 {
+		limit = defaultLimit
 	}
 	temp := &measurev1.QueryRequest{
 		TagProjection:   ud.originalQuery.TagProjection,
 		FieldProjection: ud.originalQuery.FieldProjection,
 		Metadata:        ud.originalQuery.Metadata,
 		Criteria:        ud.originalQuery.Criteria,
-		Limit:           uint32(ud.maxDataPointsSize),
-		OrderBy: &modelv1.QueryOrder{
-			IndexRuleName: ud.order.Index.Metadata.Name,
-			Sort:          ud.order.Sort,
-		},
+		Limit:           limit,
+		OrderBy:         ud.originalQuery.OrderBy,
 	}
-	if ud.order == nil {
+	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
 			queryTemplate: temp,
 			s:             s,
 			sortByTime:    true,
 		}, nil
+	}
+	if ud.originalQuery.OrderBy.IndexRuleName == "" {
+		result := &distributedPlan{
+			queryTemplate: temp,
+			s:             s,
+			sortByTime:    true,
+		}
+		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
+			result.desc = true
+		}
+		return result, nil
 	}
 	ok, indexRule := s.IndexRuleDefined(ud.originalQuery.OrderBy.IndexRuleName)
 	if !ok {
@@ -106,17 +126,21 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 }
 
 type distributedPlan struct {
-	s             logical.Schema
-	queryTemplate *measurev1.QueryRequest
-	sortTagSpec   logical.TagSpec
-	sortByTime    bool
-	desc          bool
+	s                 logical.Schema
+	queryTemplate     *measurev1.QueryRequest
+	sortTagSpec       logical.TagSpec
+	sortByTime        bool
+	desc              bool
+	maxDataPointsSize uint32
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
 	query := proto.Clone(t.queryTemplate).(*measurev1.QueryRequest)
 	query.TimeRange = dctx.TimeRange()
+	if t.maxDataPointsSize > 0 {
+		query.Limit = t.maxDataPointsSize
+	}
 	ff, err := dctx.Broadcast(data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
 	if err != nil {
 		return nil, err
@@ -127,8 +151,12 @@ func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
 		} else {
+			d := m.Data()
+			if d == nil {
+				continue
+			}
 			see = append(see,
-				newSortableElements(m.Data().(*measurev1.QueryResponse).DataPoints,
+				newSortableElements(d.(*measurev1.QueryResponse).DataPoints,
 					t.sortByTime, t.sortTagSpec))
 		}
 	}
@@ -147,6 +175,10 @@ func (t *distributedPlan) Children() []logical.Plan {
 
 func (t *distributedPlan) Schema() logical.Schema {
 	return t.s
+}
+
+func (t *distributedPlan) Limit(max int) {
+	t.maxDataPointsSize = uint32(max)
 }
 
 var _ sort.Comparable = (*comparableDataPoint)(nil)
@@ -220,7 +252,7 @@ func (s *sortableElements) iter(fn func(*measurev1.DataPoint) (*comparableDataPo
 		return s.iter(fn)
 	}
 	s.cur = cur
-	return s.index < len(s.dataPoints)
+	return s.index <= len(s.dataPoints)
 }
 
 var _ executor.MIterator = (*sortedMIterator)(nil)
