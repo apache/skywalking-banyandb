@@ -191,6 +191,7 @@ func parseFields(criteria *WrapRequest, metadata *commonv1.Metadata, groupByEnti
 }
 
 // WrapRequest is used to represent TopNRequest and QueryRequest.
+// projField and projTag are used to wrap TopNRequest
 type WrapRequest struct {
 	*measurev1.QueryRequest
 	*measurev1.TopNRequest
