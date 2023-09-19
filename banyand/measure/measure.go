@@ -114,9 +114,12 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 	if err := m.parseSpec(); err != nil {
 		return nil, err
 	}
-	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
+	if db == nil {
+		return m, nil
+	}
 
 	m.databaseSupplier = db
+	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 	m.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:         db,
 		ShardNum:   shardNum,

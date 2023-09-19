@@ -64,8 +64,7 @@ type Server interface {
 }
 
 type server struct {
-	pipeline queue.Client
-	creds    credentials.TransportCredentials
+	creds credentials.TransportCredentials
 	*streamRegistryServer
 	log *logger.Logger
 	*indexRuleBindingRegistryServer
@@ -91,15 +90,18 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata.Repo) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
+		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry),
+		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	s := &server{
-		pipeline:   pipeline,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -128,7 +130,7 @@ func NewServer(_ context.Context, pipeline queue.Client, schemaRegistry metadata
 	return s
 }
 
-func (s *server) PreRun(ctx context.Context) error {
+func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
@@ -138,7 +140,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	}
 	for _, c := range components {
 		c.SetLogger(s.log)
-		if err := c.initialize(ctx); err != nil {
+		if err := c.initialize(); err != nil {
 			return err
 		}
 	}

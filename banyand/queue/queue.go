@@ -20,6 +20,7 @@ package queue
 import (
 	"io"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -39,6 +40,7 @@ type Client interface {
 	bus.Publisher
 	bus.Broadcaster
 	NewBatchPublisher() BatchPublisher
+	Register(schema.EventHandler)
 }
 
 // Server is the interface for receiving data from the queue.

@@ -16,105 +16,51 @@
 # under the License.
 
 dataPoints:
-- fields:
-  - name: total
-    value:
-      int:
-        value: "300"
-  - name: value
-    value:
-      int:
-        value: "6"
-  tagFamilies:
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc3
-  timestamp: "2023-06-26T12:47:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "50"
-  - name: value
-    value:
-      int:
-        value: "4"
-  tagFamilies:
+  timestamp: "2023-09-19T08:42:00Z"
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc2
-  timestamp: "2023-06-26T12:46:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "5"
-  tagFamilies:
+  timestamp: "2023-09-19T08:41:00Z"
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc2
-  timestamp: "2023-06-26T12:45:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "3"
-  tagFamilies:
+  timestamp: "2023-09-19T08:40:00Z"
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc1
-  timestamp: "2023-06-26T12:44:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "2"
-  tagFamilies:
+  timestamp: "2023-09-19T08:38:00Z"
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc1
-  timestamp: "2023-06-26T12:43:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "1"
-  tagFamilies:
+  timestamp: "2023-09-19T08:39:00Z"
+- tagFamilies:
   - name: default
     tags:
     - key: id
       value:
         str:
           value: svc1
-  timestamp: "2023-06-26T12:42:00Z"
+  timestamp: "2023-09-19T08:37:00Z"

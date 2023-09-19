@@ -88,7 +88,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Msg("fail to list shards")
 		return
 	}
-	aggregator := createTopNPostAggregator(request.GetTopN(),
+	aggregator := CreateTopNPostAggregator(request.GetTopN(),
 		request.GetAgg(), request.GetFieldValueSort())
 	entity, err := locateEntity(topNSchema, request.GetFieldValueSort(), request.GetConditions())
 	if err != nil {
@@ -130,7 +130,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 							Msg("fail to parse topN family")
 						return
 					}
-					_ = aggregator.put(tuple.V1.([]*modelv1.TagValue), tuple.V2.(int64), iter.Val().Time())
+					_ = aggregator.Put(tuple.V1.([]*modelv1.TagValue), tuple.V2.(int64), iter.Val().Time())
 				}
 				_ = iter.Close()
 			}
@@ -138,7 +138,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 
 	now := time.Now().UnixNano()
-	resp = bus.NewMessage(bus.MessageID(now), aggregator.val(sourceMeasure.GetSchema().GetEntity().GetTagNames()))
+	resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: aggregator.Val(sourceMeasure.GetSchema().GetEntity().GetTagNames())})
 
 	return
 }
@@ -254,13 +254,14 @@ func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 	return tags
 }
 
-// postProcessor defines necessary methods for Top-N post processor with or without aggregation.
-type postProcessor interface {
-	put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error
-	val([]string) []*measurev1.TopNList
+// PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
+type PostProcessor interface {
+	Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error
+	Val([]string) []*measurev1.TopNList
 }
 
-func createTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) postProcessor {
+// CreateTopNPostAggregator creates a Top-N post processor with or without aggregation.
+func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
 		return &postNonAggregationProcessor{
@@ -327,7 +328,7 @@ func (aggr *postAggregationProcessor) Pop() any {
 	return item
 }
 
-func (aggr *postAggregationProcessor) put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
+func (aggr *postAggregationProcessor) Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
 	// update latest ts
 	if aggr.latestTimestamp < timestampMillis {
 		aggr.latestTimestamp = timestampMillis
@@ -374,7 +375,7 @@ func (aggr *postAggregationProcessor) tryEnqueue(key string, item *aggregatorIte
 	}
 }
 
-func (aggr *postAggregationProcessor) val(tagNames []string) []*measurev1.TopNList {
+func (aggr *postAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
 	topNItems := make([]*measurev1.TopNList_Item, aggr.Len())
 
 	for aggr.Len() > 0 {
@@ -430,7 +431,7 @@ type postNonAggregationProcessor struct {
 	sort      modelv1.Sort
 }
 
-func (naggr *postNonAggregationProcessor) val(tagNames []string) []*measurev1.TopNList {
+func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.Len())
@@ -462,7 +463,7 @@ func (naggr *postNonAggregationProcessor) val(tagNames []string) []*measurev1.To
 	return topNLists
 }
 
-func (naggr *postNonAggregationProcessor) put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
+func (naggr *postNonAggregationProcessor) Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
 	key := entityValues.String()
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
 		if timeline.Len() < int(naggr.topN) {

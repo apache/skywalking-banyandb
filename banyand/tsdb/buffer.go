@@ -385,7 +385,6 @@ func (bsb *bufferShardBucket) recoveryWal() error {
 
 func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 	var wg sync.WaitGroup
-	wg.Add(len(segment.GetLogEntries()))
 	for _, logEntry := range segment.GetLogEntries() {
 		timestamps := logEntry.GetTimestamps()
 		values := logEntry.GetValues()
@@ -404,6 +403,7 @@ func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 					}
 				},
 			}
+			wg.Add(1)
 			elementIndex++
 		}
 	}

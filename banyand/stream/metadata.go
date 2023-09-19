@@ -271,6 +271,18 @@ type portableSupplier struct {
 	l        *logger.Logger
 }
 
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (tsdb.Database, error) {
+	panic("do not support open db")
+}
+
+func (s *portableSupplier) OpenResource(shardNum uint32, _ tsdb.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+	streamSchema := resource.Schema().(*databasev1.Stream)
+	return openStream(shardNum, nil, streamSpec{
+		schema:     streamSchema,
+		indexRules: resource.IndexRules(),
+	}, s.l), nil
+}
+
 func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
 	return &portableSupplier{
 		metadata: metadata,

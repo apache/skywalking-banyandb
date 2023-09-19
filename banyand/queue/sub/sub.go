@@ -22,9 +22,12 @@ import (
 	"io"
 
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
@@ -52,11 +55,18 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			return nil
 		}
 		if err != nil {
-			reply(writeEntity, err, "failed to receive message")
-			continue
+			if status.Code(err) == codes.Canceled {
+				return nil
+			}
+			s.log.Error().Err(err).Msg("failed to receive message")
+			return err
 		}
 		if writeEntity.Topic != "" && topic == nil {
-			t := bus.UniTopic(writeEntity.Topic)
+			t, ok := data.TopicMap[writeEntity.Topic]
+			if !ok {
+				reply(writeEntity, err, "invalid topic")
+				continue
+			}
 			topic = &t
 		}
 		if topic == nil {
@@ -68,9 +78,25 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			reply(writeEntity, err, "no listener found")
 			continue
 		}
-		m := listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Body))
+		var m bus.Message
+		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
+			req := reqSupplier()
+			if errUnmarshal := writeEntity.Body.UnmarshalTo(req); errUnmarshal != nil {
+				reply(writeEntity, errUnmarshal, "failed to unmarshal message")
+				continue
+			}
+			m = listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), req))
+		} else {
+			reply(writeEntity, err, "unknown topic")
+			continue
+		}
+
 		if m.Data() == nil {
-			reply(writeEntity, err, "no response")
+			if errSend := stream.Send(&clusterv1.SendResponse{
+				MessageId: writeEntity.MessageId,
+			}); errSend != nil {
+				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+			}
 			continue
 		}
 		message, ok := m.Data().(proto.Message)
@@ -87,8 +113,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			MessageId: writeEntity.MessageId,
 			Body:      anyMessage,
 		}); err != nil {
-			reply(writeEntity, err, "failed to send response")
-			continue
+			s.log.Error().Stringer("written", writeEntity).Err(err).Msg("failed to send response")
 		}
 	}
 }
