@@ -133,7 +133,7 @@ func DistributedAnalyze(criteria *WrapRequest, s logical.Schema) (logical.Plan, 
 	}
 
 	// parse fields
-	plan := newUnresolvedDistributed(criteria)
+	plan := newUnresolvedDistributed(criteria.QueryRequest)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
