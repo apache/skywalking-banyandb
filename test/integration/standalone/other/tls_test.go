@@ -49,11 +49,10 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
 		keyFile := filepath.Join(basePath, "testdata/server_key.pem")
 		var addr string
-		addr, _, deferFn = setup.Common("--tls=true", "--cert-file="+certFile, "--key-file="+keyFile)
+		addr, _, deferFn = setup.StandaloneWithTLS(certFile, keyFile)
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), flags.EventuallyTimeout).Should(gm.Succeed())
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(creds))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		ns := timestamp.NowMilli().UnixNano()

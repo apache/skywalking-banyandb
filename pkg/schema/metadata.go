@@ -253,7 +253,7 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 	if sr.resourceSupplier != nil {
 		g = newGroup(sr.metadata, sr.l, sr.resourceSupplier)
 	} else {
-		g = newPortableGroup(sr.metadata, sr.l)
+		g = newPortableGroup(sr.metadata, sr.l, sr.resourceSchemaSupplier)
 	}
 	sr.data[name] = g
 	return
@@ -354,13 +354,14 @@ func (sr *schemaRepo) Close() {
 var _ Group = (*group)(nil)
 
 type group struct {
-	resourceSupplier ResourceSupplier
-	metadata         metadata.Repo
-	db               atomic.Value
-	groupSchema      atomic.Pointer[commonv1.Group]
-	l                *logger.Logger
-	schemaMap        map[string]*resourceSpec
-	mapMutex         sync.RWMutex
+	resourceSupplier       ResourceSupplier
+	resourceSchemaSupplier ResourceSchemaSupplier
+	metadata               metadata.Repo
+	db                     atomic.Value
+	groupSchema            atomic.Pointer[commonv1.Group]
+	l                      *logger.Logger
+	schemaMap              map[string]*resourceSpec
+	mapMutex               sync.RWMutex
 }
 
 func newGroup(
@@ -369,11 +370,12 @@ func newGroup(
 	resourceSupplier ResourceSupplier,
 ) *group {
 	g := &group{
-		groupSchema:      atomic.Pointer[commonv1.Group]{},
-		metadata:         metadata,
-		l:                l,
-		schemaMap:        make(map[string]*resourceSpec),
-		resourceSupplier: resourceSupplier,
+		groupSchema:            atomic.Pointer[commonv1.Group]{},
+		metadata:               metadata,
+		l:                      l,
+		schemaMap:              make(map[string]*resourceSpec),
+		resourceSupplier:       resourceSupplier,
+		resourceSchemaSupplier: resourceSupplier,
 	}
 	return g
 }
@@ -381,12 +383,14 @@ func newGroup(
 func newPortableGroup(
 	metadata metadata.Repo,
 	l *logger.Logger,
+	resourceSchemaSupplier ResourceSchemaSupplier,
 ) *group {
 	g := &group{
-		groupSchema: atomic.Pointer[commonv1.Group]{},
-		metadata:    metadata,
-		l:           l,
-		schemaMap:   make(map[string]*resourceSpec),
+		groupSchema:            atomic.Pointer[commonv1.Group]{},
+		metadata:               metadata,
+		l:                      l,
+		schemaMap:              make(map[string]*resourceSpec),
+		resourceSchemaSupplier: resourceSchemaSupplier,
 	}
 	return g
 }
@@ -454,13 +458,15 @@ func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema
 	if preResource != nil && preResource.isNewThan(resource) {
 		return preResource, nil
 	}
+	var dbSupplier tsdb.Supplier
 	if !g.isPortable() {
-		sm, errTS := g.resourceSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, g, resource)
-		if errTS != nil {
-			return nil, errTS
-		}
-		resource.delegated = sm
+		dbSupplier = g
 	}
+	sm, errTS := g.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
+	if errTS != nil {
+		return nil, errTS
+	}
+	resource.delegated = sm
 	g.schemaMap[key] = resource
 	if preResource != nil {
 		_ = preResource.Close()
@@ -501,7 +507,7 @@ func (g *group) close() (err error) {
 		err = multierr.Append(err, s.Close())
 	}
 	g.mapMutex.RUnlock()
-	if !g.isInit() {
+	if !g.isInit() || g.isPortable() {
 		return nil
 	}
 	return multierr.Append(err, g.SupplyTSDB().Close())

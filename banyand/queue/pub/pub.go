@@ -30,6 +30,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -46,13 +47,17 @@ var (
 
 type pub struct {
 	metadata metadata.Repo
+	handler  schema.EventHandler
 	log      *logger.Logger
 	clients  map[string]*client
 	closer   *run.Closer
 	mu       sync.RWMutex
 }
 
-// GracefulStop implements run.Service.
+func (p *pub) Register(handler schema.EventHandler) {
+	p.handler = handler
+}
+
 func (p *pub) GracefulStop() {
 	p.closer.Done()
 	p.closer.CloseThenWait()
@@ -101,9 +106,7 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 		if !ok {
 			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		stream, errCreateStream := client.client.Send(ctx)
+		stream, errCreateStream := client.client.Send(context.Background())
 		if err != nil {
 			return multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 		}
@@ -112,6 +115,7 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 			return multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
 		}
 		f.clients = append(f.clients, stream)
+		f.topics = append(f.topics, topic)
 		return err
 	}
 	for _, m := range messages {
@@ -129,16 +133,15 @@ func (p *pub) NewBatchPublisher() queue.BatchPublisher {
 func New(metadata metadata.Repo) queue.Client {
 	return &pub{
 		metadata: metadata,
+		clients:  make(map[string]*client),
 		closer:   run.NewCloser(1),
 	}
 }
 
-// Name implements run.PreRunner.
 func (*pub) Name() string {
 	return "queue-client"
 }
 
-// PreRun implements run.PreRunner.
 func (p *pub) PreRun(context.Context) error {
 	p.log = logger.GetLogger("server-queue")
 	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
@@ -172,7 +175,7 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 		}
 		node := m.Node()
 		sendData := func() (success bool) {
-			if stream, ok := bp.streams[node]; !ok {
+			if stream, ok := bp.streams[node]; ok {
 				defer func() {
 					if !success {
 						delete(bp.streams, node)
@@ -223,9 +226,6 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 }
 
 func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, error) {
-	if !m.IsRemote() {
-		return nil, fmt.Errorf("message %d is not remote", m.ID())
-	}
 	r := &clusterv1.SendRequest{
 		Topic:     topic.String(),
 		MessageId: uint64(m.ID()),
@@ -244,6 +244,7 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 
 type future struct {
 	clients []clusterv1.Service_SendClient
+	topics  []bus.Topic
 }
 
 func (l *future) Get() (bus.Message, error) {
@@ -251,17 +252,33 @@ func (l *future) Get() (bus.Message, error) {
 		return bus.Message{}, io.EOF
 	}
 	c := l.clients[0]
+	t := l.topics[0]
 	defer func() {
 		l.clients = l.clients[1:]
+		l.topics = l.topics[1:]
 	}()
 	resp, err := c.Recv()
 	if err != nil {
 		return bus.Message{}, err
 	}
-	return bus.NewMessage(
-		bus.MessageID(resp.MessageId),
-		resp.Body,
-	), nil
+	if resp.Error != "" {
+		return bus.Message{}, errors.New(resp.Error)
+	}
+	if resp.Body == nil {
+		return bus.NewMessage(bus.MessageID(resp.MessageId), nil), nil
+	}
+	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
+		m := messageSupplier()
+		err = resp.Body.UnmarshalTo(m)
+		if err != nil {
+			return bus.Message{}, err
+		}
+		return bus.NewMessage(
+			bus.MessageID(resp.MessageId),
+			m,
+		), nil
+	}
+	return bus.Message{}, fmt.Errorf("invalid topic %s", t)
 }
 
 func (l *future) GetAll() ([]bus.Message, error) {

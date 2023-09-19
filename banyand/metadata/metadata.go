@@ -46,7 +46,6 @@ type Repo interface {
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
 	PropertyRegistry() schema.Property
-	ShardRegistry() schema.Shard
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 }
 

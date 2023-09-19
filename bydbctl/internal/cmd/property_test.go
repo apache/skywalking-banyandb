@@ -100,8 +100,7 @@ ttl: 30m
 	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.Common()
-		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
+		_, addr, deferFunc = setup.EmptyStandalone()
 		addr = "http://" + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}

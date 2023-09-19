@@ -73,6 +73,9 @@ func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Lo
 	sm.parseSpec()
 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 
+	if db == nil {
+		return sm
+	}
 	sm.db = db
 	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:                db,

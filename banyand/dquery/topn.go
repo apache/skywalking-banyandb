@@ -19,12 +19,13 @@ package dquery
 
 import (
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/query"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -48,6 +49,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := t.log.Debug(); e.Enabled() {
 		e.Stringer("req", request).Msg("received a topN query event")
 	}
+	agg := request.Agg
+	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	now := bus.MessageID(request.TimeRange.Begin.Nanos)
 	ff, err := t.broadcaster.Broadcast(data.TopicTopNQuery, bus.NewMessage(now, request))
 	if err != nil {
@@ -55,35 +58,41 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	var allErr error
-	var sii []sort.Iterator[*comparableTopNItem]
-	var latestTimestamp *timestamppb.Timestamp
+	aggregator := query.CreateTopNPostAggregator(request.GetTopN(),
+		agg, request.GetFieldValueSort())
+	var tags []string
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
 		} else {
-			tl := m.Data().(*measurev1.TopNList)
-			un := tl.Timestamp.AsTime().UnixNano()
-			if un > latestTimestamp.AsTime().UnixNano() {
-				latestTimestamp = tl.Timestamp
+			d := m.Data()
+			if d == nil {
+				continue
 			}
-			sii = append(sii, &sortedTopNList{TopNList: tl})
+			topNResp := d.(*measurev1.TopNResponse)
+			for _, l := range topNResp.Lists {
+				for _, tn := range l.Items {
+					if tags == nil {
+						tags = make([]string, 0, len(tn.Entity))
+						for _, e := range tn.Entity {
+							tags = append(tags, e.Key)
+						}
+					}
+					entityValues := make(tsdb.EntityValues, 0, len(tn.Entity))
+					for _, e := range tn.Entity {
+						entityValues = append(entityValues, e.Value)
+					}
+					_ = aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()))
+				}
+			}
 		}
 	}
-	var desc bool
-	if request.GetFieldValueSort() == modelv1.Sort_SORT_DESC {
-		desc = true
+	if tags == nil {
+		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
+		return
 	}
-	iter := sort.NewItemIter[*comparableTopNItem](sii, desc)
-	defer func() {
-		_ = iter.Close()
-	}()
-	var items []*measurev1.TopNList_Item
-	for iter.Next() && len(items) < int(request.TopN) {
-		items = append(items, iter.Val().TopNList_Item)
-	}
-	resp = bus.NewMessage(now, &measurev1.TopNList{
-		Items:     items,
-		Timestamp: latestTimestamp,
+	resp = bus.NewMessage(now, &measurev1.TopNResponse{
+		Lists: aggregator.Val(tags),
 	})
 	return
 }

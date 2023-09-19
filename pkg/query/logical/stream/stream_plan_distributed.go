@@ -51,6 +51,15 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if ud.originalQuery.Projection == nil {
 		return nil, fmt.Errorf("projection is required")
 	}
+	projectionTags := logical.ToTags(ud.originalQuery.GetProjection())
+	if len(projectionTags) > 0 {
+		var err error
+		projTagsRefs, err := s.CreateTagRef(projectionTags...)
+		if err != nil {
+			return nil, err
+		}
+		s = s.ProjTags(projTagsRefs...)
+	}
 	limit := ud.originalQuery.GetLimit()
 	if limit == 0 {
 		limit = defaultLimit
@@ -68,6 +77,17 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			s:             s,
 			sortByTime:    true,
 		}, nil
+	}
+	if ud.originalQuery.OrderBy.IndexRuleName == "" {
+		result := &distributedPlan{
+			queryTemplate: temp,
+			s:             s,
+			sortByTime:    true,
+		}
+		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
+			result.desc = true
+		}
+		return result, nil
 	}
 	ok, indexRule := s.IndexRuleDefined(ud.originalQuery.OrderBy.IndexRuleName)
 	if !ok {
@@ -93,18 +113,22 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 }
 
 type distributedPlan struct {
-	s             logical.Schema
-	queryTemplate *streamv1.QueryRequest
-	sortTagSpec   logical.TagSpec
-	sortByTime    bool
-	desc          bool
+	s              logical.Schema
+	queryTemplate  *streamv1.QueryRequest
+	sortTagSpec    logical.TagSpec
+	sortByTime     bool
+	desc           bool
+	maxElementSize uint32
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
 	query := proto.Clone(t.queryTemplate).(*streamv1.QueryRequest)
 	query.TimeRange = dctx.TimeRange()
-	ff, err := dctx.Broadcast(data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	if t.maxElementSize > 0 {
+		query.Limit = t.maxElementSize
+	}
+	ff, err := dctx.Broadcast(data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +138,17 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
 		} else {
+			d := m.Data()
+			if d == nil {
+				continue
+			}
+			resp := d.(*streamv1.QueryResponse)
+			if err != nil {
+				allErr = multierr.Append(allErr, err)
+				continue
+			}
 			see = append(see,
-				newSortableElements(m.Data().(*streamv1.QueryResponse).Elements,
-					t.sortByTime, t.sortTagSpec))
+				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
 		}
 	}
 	iter := sort.NewItemIter[*comparableElement](see, t.desc)
@@ -137,6 +169,10 @@ func (t *distributedPlan) Children() []logical.Plan {
 
 func (t *distributedPlan) Schema() logical.Schema {
 	return t.s
+}
+
+func (t *distributedPlan) Limit(max int) {
+	t.maxElementSize = uint32(max)
 }
 
 var _ sort.Comparable = (*comparableElement)(nil)
@@ -210,5 +246,5 @@ func (s *sortableElements) iter(fn func(*streamv1.Element) (*comparableElement, 
 		return s.iter(fn)
 	}
 	s.cur = cur
-	return s.index < len(s.elements)
+	return s.index <= len(s.elements)
 }

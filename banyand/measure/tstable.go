@@ -60,7 +60,7 @@ type tsTable struct {
 	path              string
 	bufferSize        int64
 	encoderBufferSize int64
-	lock              sync.Mutex
+	lock              sync.RWMutex
 }
 
 func (t *tsTable) SizeOnDisk() int64 {
@@ -154,9 +154,12 @@ func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
 }
 
 func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
+	t.lock.RLock()
 	if t.encoderBuffer != nil {
+		defer t.lock.RUnlock()
 		return t.writeToBuffer(key, val, ts)
 	}
+	t.lock.RUnlock()
 	if err := t.openBuffer(); err != nil {
 		return err
 	}
