@@ -22,7 +22,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -37,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type topNQueryProcessor struct {
@@ -167,31 +165,6 @@ func toTopNList(groupMap map[int64][]*measurev1.DataPoint) []*measurev1.TopNList
 		return false
 	})
 	return topNList
-}
-
-func (t *topNQueryProcessor) scanSeries(series tsdb.Series, request *measurev1.TopNRequest) ([]tsdb.Iterator, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	seriesSpan, err := series.Span(ctx, timestamp.NewInclusiveTimeRange(
-		request.GetTimeRange().GetBegin().AsTime(),
-		request.GetTimeRange().GetEnd().AsTime()),
-	)
-	if err != nil {
-		if errors.Is(err, tsdb.ErrEmptySeriesSpan) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer func(seriesSpan tsdb.SeriesSpan) {
-		if seriesSpan != nil {
-			_ = seriesSpan.Close()
-		}
-	}(seriesSpan)
-	seeker, err := seriesSpan.SeekerBuilder().OrderByTime(modelv1.Sort_SORT_ASC).Build()
-	if err != nil {
-		return nil, err
-	}
-	return seeker.Seek()
 }
 
 var _ heap.Interface = (*postAggregationProcessor)(nil)
