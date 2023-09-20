@@ -18,7 +18,6 @@
 package grpc
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -26,6 +25,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
 var (
@@ -37,46 +37,47 @@ var (
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
 	Locate(group, name string, shardID uint32) (string, error)
+	Initialize() error
 }
 
 type clusterNodeService struct {
-	metaRepo  queue.Client
-	nodes     []string
-	nodeMutex sync.RWMutex
+	pipeline queue.Client
+	sel      node.Selector
 	sync.Once
 }
 
 // NewClusterNodeRegistry creates a cluster node registry.
-func NewClusterNodeRegistry(metaRepo queue.Client) NodeRegistry {
+func NewClusterNodeRegistry(pipeline queue.Client, selector node.Selector) NodeRegistry {
 	nr := &clusterNodeService{
-		metaRepo: metaRepo,
+		pipeline: pipeline,
+		sel:      selector,
 	}
-	metaRepo.Register(nr)
 	return nr
 }
 
-func (n *clusterNodeService) Locate(_, _ string, shardID uint32) (string, error) {
-	// Use round-robin to select the node.
-	n.nodeMutex.RLock()
-	defer n.nodeMutex.RUnlock()
-	if len(n.nodes) == 0 {
-		return "", errors.New("no node available")
+func (n *clusterNodeService) Initialize() error {
+	n.Do(func() {
+		n.pipeline.Register(n)
+	})
+	return nil
+}
+
+func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {
+	nodeID, err := n.sel.Pick(group, name, shardID)
+	if err != nil {
+		return "", errors.Wrapf(err, "fail to locate %s/%s(%d)", group, name, shardID)
 	}
-	return n.nodes[shardID%uint32(len(n.nodes))], nil
+	return nodeID, nil
 }
 
 func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.nodeMutex.Lock()
-		defer n.nodeMutex.Unlock()
-		for _, node := range n.nodes {
-			if node == metadata.Spec.(*databasev1.Node).Metadata.Name {
-				return
-			}
+		inputNode := metadata.Spec.(*databasev1.Node)
+		if inputNode.Metadata.GetName() == "" {
+			return
 		}
-		n.nodes = append(n.nodes, metadata.Spec.(*databasev1.Node).Metadata.Name)
-		sort.Strings(n.nodes)
+		n.sel.AddNode(inputNode)
 	default:
 	}
 }
@@ -84,14 +85,11 @@ func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
 func (n *clusterNodeService) OnDelete(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindNode:
-		n.nodeMutex.Lock()
-		defer n.nodeMutex.Unlock()
-		for i, node := range n.nodes {
-			if node == metadata.Spec.(*databasev1.Node).Metadata.Name {
-				n.nodes = append(n.nodes[:i], n.nodes[i+1:]...)
-				break
-			}
+		dNode := metadata.Spec.(*databasev1.Node)
+		if dNode.Metadata.GetName() == "" {
+			return
 		}
+		n.sel.RemoveNode(dNode)
 	default:
 	}
 }
@@ -101,6 +99,10 @@ type localNodeService struct{}
 // NewLocalNodeRegistry creates a local(fake) node registry.
 func NewLocalNodeRegistry() NodeRegistry {
 	return localNodeService{}
+}
+
+func (localNodeService) Initialize() error {
+	return nil
 }
 
 // Locate of localNodeService always returns local.
