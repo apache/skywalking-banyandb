@@ -35,6 +35,8 @@ type Queue interface {
 }
 
 // Client is the interface for publishing data to the queue.
+//
+//go:generate mockgen -destination=./pipeline_mock.go -package=queue . Client
 type Client interface {
 	run.Unit
 	bus.Publisher

@@ -51,10 +51,14 @@ func NewClusterNodeRegistry(pipeline queue.Client, selector node.Selector) NodeR
 		pipeline: pipeline,
 		sel:      selector,
 	}
-	nr.Do(func() {
-		nr.pipeline.Register(nr)
-	})
+	nr.init()
 	return nr
+}
+
+func (n *clusterNodeService) init() {
+	n.Do(func() {
+		n.pipeline.Register(n)
+	})
 }
 
 func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {

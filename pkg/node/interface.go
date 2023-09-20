@@ -44,7 +44,9 @@ type Selector interface {
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
 func NewPickFirstSelector() (Selector, error) {
-	return &pickFirstSelector{}, nil
+	return &pickFirstSelector{
+		nodeIDMap: make(map[string]struct{}),
+	}, nil
 }
 
 // pickFirstSelector always pick the first node in the sorted node ids list.
@@ -57,7 +59,7 @@ type pickFirstSelector struct {
 func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
 	nodeID := node.GetMetadata().GetName()
 	p.mu.RLock()
-	if _, ok := p.nodeIDMap[nodeID]; !ok {
+	if _, ok := p.nodeIDMap[nodeID]; ok {
 		p.mu.RUnlock()
 		return
 	}
@@ -79,9 +81,12 @@ func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
 	p.mu.RUnlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.nodeIDMap[nodeID] = struct{}{}
-	p.nodeIds = append(p.nodeIds, nodeID)
-	slices.Sort(p.nodeIds)
+	delete(p.nodeIDMap, nodeID)
+	idx, ok := slices.BinarySearch(p.nodeIds, nodeID)
+	if !ok {
+		return
+	}
+	p.nodeIds = slices.Delete(p.nodeIds, idx, idx+1)
 }
 
 func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
