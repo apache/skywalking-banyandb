@@ -37,7 +37,6 @@ var (
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
 	Locate(group, name string, shardID uint32) (string, error)
-	Initialize() error
 }
 
 type clusterNodeService struct {
@@ -52,14 +51,10 @@ func NewClusterNodeRegistry(pipeline queue.Client, selector node.Selector) NodeR
 		pipeline: pipeline,
 		sel:      selector,
 	}
-	return nr
-}
-
-func (n *clusterNodeService) Initialize() error {
-	n.Do(func() {
-		n.pipeline.Register(n)
+	nr.Do(func() {
+		nr.pipeline.Register(nr)
 	})
-	return nil
+	return nr
 }
 
 func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {
@@ -99,10 +94,6 @@ type localNodeService struct{}
 // NewLocalNodeRegistry creates a local(fake) node registry.
 func NewLocalNodeRegistry() NodeRegistry {
 	return localNodeService{}
-}
-
-func (localNodeService) Initialize() error {
-	return nil
 }
 
 // Locate of localNodeService always returns local.
