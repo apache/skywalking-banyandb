@@ -135,11 +135,11 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}
 
-	resp = bus.NewMessage(bus.MessageID(now), toTopNList(groupMap))
+	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(groupMap))
 	return
 }
 
-func toTopNList(groupMap map[int64][]*measurev1.DataPoint) []*measurev1.TopNList {
+func toTopNResponse(groupMap map[int64][]*measurev1.DataPoint) *measurev1.TopNResponse {
 	topNList := make([]*measurev1.TopNList, 0)
 
 	for key, group := range groupMap {
@@ -164,7 +164,7 @@ func toTopNList(groupMap map[int64][]*measurev1.DataPoint) []*measurev1.TopNList
 		}
 		return false
 	})
-	return topNList
+	return &measurev1.TopNResponse{Lists: topNList}
 }
 
 var _ heap.Interface = (*postAggregationProcessor)(nil)
