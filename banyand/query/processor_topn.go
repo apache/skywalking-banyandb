@@ -125,7 +125,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	for mIterator.Next() {
 		dps := mIterator.Current()
 		for _, dp := range dps {
-			key := dp.GetTimestamp().AsTime().Unix()
+			key := dp.GetTimestamp().AsTime().UnixNano()
 			group, ok := groupMap[key]
 			if !ok {
 				group = make([]*measurev1.DataPoint, 0)
