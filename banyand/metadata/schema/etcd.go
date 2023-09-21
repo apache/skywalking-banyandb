@@ -251,8 +251,6 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 		return 0, err
 	}
 	key = e.prependNamespace(key)
-	e.l.Info().Str("key", key).Msg("creating entity")
-	defer e.l.Info().Str("key", key).Msg("entity created")
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return 0, err
