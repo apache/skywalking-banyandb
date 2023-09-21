@@ -133,6 +133,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
+		AutoSyncInterval:     5 * time.Minute,
 		Logger:               l,
 	}
 	client, err := clientv3.New(config)
@@ -250,6 +251,8 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 		return 0, err
 	}
 	key = e.prependNamespace(key)
+	e.l.Info().Str("key", key).Msg("creating entity")
+	defer e.l.Info().Str("key", key).Msg("entity created")
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return 0, err

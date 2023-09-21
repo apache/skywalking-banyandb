@@ -29,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -87,9 +88,8 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		return errors.New("node roles is empty")
 	}
 	nodeRoles := val.([]databasev1.Role)
-	ctxRegister, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	return s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
+	l := logger.GetLogger(s.Name())
+	nodeInfo := &databasev1.Node{
 		Metadata: &commonv1.Metadata{
 			Name: node.NodeID,
 		},
@@ -97,7 +97,20 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		HttpAddress: node.HTTPAddress,
 		Roles:       nodeRoles,
 		CreatedAt:   timestamppb.Now(),
-	})
+	}
+	for {
+		ctxRegister, cancel := context.WithTimeout(ctx, time.Second*10)
+		err = s.schemaRegistry.RegisterNode(ctxRegister, nodeInfo)
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("register node timeout, retrying...")
+			continue
+		}
+		if err == nil {
+			l.Info().Stringer("info", nodeInfo).Msg("register node successfully")
+		}
+		return err
+	}
 }
 
 func (s *clientService) Serve() run.StopNotify {
