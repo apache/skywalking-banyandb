@@ -391,6 +391,7 @@ func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 		elementIndex := 0
 		for element := values.Front(); element != nil; element = element.Next() {
 			timestamp := timestamps[elementIndex]
+			wg.Add(1)
 			bsb.writeCh <- operation{
 				key:   logEntry.GetSeriesID(),
 				value: element.Value.([]byte),
@@ -403,7 +404,6 @@ func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 					}
 				},
 			}
-			wg.Add(1)
 			elementIndex++
 		}
 	}
