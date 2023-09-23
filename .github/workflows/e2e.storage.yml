@@ -47,6 +47,8 @@ jobs:
             config: test/e2e-v2/cases/profiling/ebpf/oncpu/banyandb/e2e.yaml
           - name: Event BanyanDB
             config: test/e2e-v2/cases/event/banyandb/e2e.yaml
+          - name: BanyanDB Cluster Mode
+            config: test/e2e-v2/cases/cluster/e2e.yaml
     env:
       TAG: ${{ github.sha }}
     steps:

@@ -395,7 +395,7 @@ func (g *Group) Run(ctx context.Context) (err error) {
 		}
 		g.log.Debug().Uint32("ran", uint32(idx+1)).Uint32("total", uint32(len(g.p))).Str("name", g.p[idx].Name()).Msg("pre-run")
 		if err := g.p[idx].PreRun(context.WithValue(ctx, common.ContextNodeRolesKey, rr)); err != nil {
-			return err
+			return errors.WithMessage(err, fmt.Sprintf("pre-run module[%s]", g.p[idx].Name()))
 		}
 	}
 
