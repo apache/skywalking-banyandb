@@ -133,8 +133,6 @@ func newHealthCheckCmd() *cobra.Command {
 			return checkHealth()
 		},
 	}
-	healthCheckCmd.Flags().Bool("silenceError", false, "Silence error messages")
-	healthCheckCmd.Flags().Bool("silenceUsage", false, "Silence usage message")
 
 	return healthCheckCmd
 }
