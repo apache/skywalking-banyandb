@@ -63,7 +63,7 @@ func Conn(disableLogging bool, addr string, connTimeout time.Duration, opts ...g
 
 // Request execute a input closure to send traffics.
 // It provides common features like timeout, error handling, and etc.
-func Request(disableLogging bool, ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx context.Context) error) error {
+func Request(ctx context.Context, disableLogging bool, rpcTimeout time.Duration, fn func(rpcCtx context.Context) error) error {
 	rpcStart := time.Now()
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer rpcCancel()

@@ -40,7 +40,7 @@ func HealthCheck(disableLogging bool, addr string, connTimeout time.Duration, rp
 		}
 		defer conn.Close()
 		var resp *grpc_health_v1.HealthCheckResponse
-		if err := grpchelper.Request(disableLogging, context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
+		if err := grpchelper.Request(context.Background(), disableLogging, rpcTimeout, func(rpcCtx context.Context) (err error) {
 			resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 				&grpc_health_v1.HealthCheckRequest{
 					Service: "",
