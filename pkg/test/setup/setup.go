@@ -127,11 +127,11 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 	if tlsEnabled {
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
+		gomega.Eventually(helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
 			Should(gomega.Succeed())
 	} else {
 		gomega.Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(gomega.Succeed())
 	}
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr), testflags.EventuallyTimeout).Should(gomega.Succeed())
@@ -218,7 +218,7 @@ func DataNode(etcdEndpoint string) func() {
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost)
 	gomega.Eventually(
-		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))

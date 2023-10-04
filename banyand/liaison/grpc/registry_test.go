@@ -54,10 +54,10 @@ var _ = Describe("Registry", func() {
 		gracefulStop = setupForRegistry()
 		addr := "localhost:17912"
 		Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(Succeed())
 		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(false, addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -195,7 +195,7 @@ func setupForRegistry() func() {
 		tcp,
 	)
 	Eventually(
-		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck(false, "localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()

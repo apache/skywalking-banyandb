@@ -76,7 +76,7 @@ var _ = Describe("Node registration", func() {
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)
 		Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
