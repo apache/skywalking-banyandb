@@ -18,12 +18,19 @@
 package node
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+)
+
+const (
+	dataNodeTemplate = "data-node-%d"
+	targetEpsilon    = 0.03
 )
 
 func TestMaglevSelector(t *testing.T) {
@@ -45,4 +52,92 @@ func TestMaglevSelector(t *testing.T) {
 	nodeID2, err := sel.Pick("sw_metrics", "traffic_instance", 0)
 	assert.NoError(t, err)
 	assert.Equal(t, nodeID2, nodeID1)
+}
+
+func TestMaglevSelector_EvenDistribution(t *testing.T) {
+	sel, err := NewMaglevSelector()
+	assert.NoError(t, err)
+	dataNodeNum := 10
+	for i := 0; i < dataNodeNum; i++ {
+		sel.AddNode(&databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: fmt.Sprintf(dataNodeTemplate, i),
+			},
+		})
+	}
+	counterMap := make(map[string]int)
+	trialCount := 100_000
+	for j := 0; j < trialCount; j++ {
+		dataNodeID, _ := sel.Pick("sw_metrics", uuid.NewString(), 0)
+		val, exist := counterMap[dataNodeID]
+		if !exist {
+			counterMap[dataNodeID] = 1
+		} else {
+			counterMap[dataNodeID] = val + 1
+		}
+	}
+	assert.Len(t, counterMap, dataNodeNum)
+	for _, count := range counterMap {
+		assert.InEpsilon(t, trialCount/dataNodeNum, count, targetEpsilon)
+	}
+}
+
+func TestMaglevSelector_DiffNode(t *testing.T) {
+	fullSel, _ := NewMaglevSelector()
+	brokenSel, _ := NewMaglevSelector()
+	dataNodeNum := 10
+	for i := 0; i < dataNodeNum; i++ {
+		fullSel.AddNode(&databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: fmt.Sprintf(dataNodeTemplate, i),
+			},
+		})
+		if i != dataNodeNum-1 {
+			brokenSel.AddNode(&databasev1.Node{
+				Metadata: &commonv1.Metadata{
+					Name: fmt.Sprintf(dataNodeTemplate, i),
+				},
+			})
+		}
+	}
+	diff := 0
+	trialCount := 100_000
+	for j := 0; j < trialCount; j++ {
+		metricName := uuid.NewString()
+		fullDataNodeId, _ := fullSel.Pick("sw_metrics", metricName, 0)
+		brokenDataNodeId, _ := brokenSel.Pick("sw_metrics", metricName, 0)
+		if fullDataNodeId != brokenDataNodeId {
+			diff += 1
+		}
+	}
+	assert.InEpsilon(t, trialCount/dataNodeNum, diff, targetEpsilon*2)
+}
+
+/*
+goos: darwin
+goarch: arm64
+pkg: github.com/apache/skywalking-banyandb/pkg/node
+BenchmarkMaglevSelector_Pick
+BenchmarkMaglevSelector_Pick-8   	13543342	        90.99 ns/op
+PASS
+*/
+func BenchmarkMaglevSelector_Pick(b *testing.B) {
+	sel, _ := NewMaglevSelector()
+	dataNodeNum := 10
+	for i := 0; i < dataNodeNum; i++ {
+		sel.AddNode(&databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: fmt.Sprintf(dataNodeTemplate, i),
+			},
+		})
+	}
+	metricsCount := 10_000
+	metricNames := make([]string, 0, metricsCount)
+	for i := 0; i < metricsCount; i++ {
+		metricNames = append(metricNames, uuid.NewString())
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = sel.Pick("sw_metrics", metricNames[i%metricsCount], 0)
+	}
 }
