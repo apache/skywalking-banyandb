@@ -104,23 +104,15 @@ func TestMaglevSelector_DiffNode(t *testing.T) {
 	trialCount := 100_000
 	for j := 0; j < trialCount; j++ {
 		metricName := uuid.NewString()
-		fullDataNodeId, _ := fullSel.Pick("sw_metrics", metricName, 0)
-		brokenDataNodeId, _ := brokenSel.Pick("sw_metrics", metricName, 0)
-		if fullDataNodeId != brokenDataNodeId {
-			diff += 1
+		fullDataNodeID, _ := fullSel.Pick("sw_metrics", metricName, 0)
+		brokenDataNodeID, _ := brokenSel.Pick("sw_metrics", metricName, 0)
+		if fullDataNodeID != brokenDataNodeID {
+			diff++
 		}
 	}
 	assert.InEpsilon(t, trialCount/dataNodeNum, diff, targetEpsilon*2)
 }
 
-/*
-goos: darwin
-goarch: arm64
-pkg: github.com/apache/skywalking-banyandb/pkg/node
-BenchmarkMaglevSelector_Pick
-BenchmarkMaglevSelector_Pick-8   	13543342	        90.99 ns/op
-PASS
-*/
 func BenchmarkMaglevSelector_Pick(b *testing.B) {
 	sel, _ := NewMaglevSelector()
 	dataNodeNum := 10
