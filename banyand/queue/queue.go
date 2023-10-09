@@ -20,6 +20,7 @@ package queue
 import (
 	"io"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -34,11 +35,14 @@ type Queue interface {
 }
 
 // Client is the interface for publishing data to the queue.
+//
+//go:generate mockgen -destination=./pipeline_mock.go -package=queue . Client
 type Client interface {
 	run.Unit
 	bus.Publisher
 	bus.Broadcaster
 	NewBatchPublisher() BatchPublisher
+	Register(schema.EventHandler)
 }
 
 // Server is the interface for receiving data from the queue.

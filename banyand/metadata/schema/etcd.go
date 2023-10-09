@@ -167,6 +167,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
+		AutoSyncInterval:     5 * time.Minute,
 		Logger:               l,
 		Username:             registryConfig.username,
 		Password:             registryConfig.password,

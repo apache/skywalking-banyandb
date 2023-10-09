@@ -385,13 +385,13 @@ func (bsb *bufferShardBucket) recoveryWal() error {
 
 func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 	var wg sync.WaitGroup
-	wg.Add(len(segment.GetLogEntries()))
 	for _, logEntry := range segment.GetLogEntries() {
 		timestamps := logEntry.GetTimestamps()
 		values := logEntry.GetValues()
 		elementIndex := 0
 		for element := values.Front(); element != nil; element = element.Next() {
 			timestamp := timestamps[elementIndex]
+			wg.Add(1)
 			bsb.writeCh <- operation{
 				key:   logEntry.GetSeriesID(),
 				value: element.Value.([]byte),

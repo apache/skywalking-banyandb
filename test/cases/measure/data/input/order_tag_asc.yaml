@@ -22,8 +22,6 @@ tagProjection:
   tagFamilies:
   - name: "default"
     tags: ["id"]
-fieldProjection:
-  names: ["total", "value"]
 orderBy:
   sort: "SORT_ASC"
   indexRuleName: "id"

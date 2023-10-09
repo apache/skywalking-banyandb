@@ -33,10 +33,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
-	casesmeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
-	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
@@ -60,28 +59,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Level: flags.LogLevel,
 	})).To(Succeed())
 	var addr string
-	addr, _, deferFunc = setup.Common()
-	Eventually(
-		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-		flags.EventuallyTimeout).Should(Succeed())
-	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
+	addr, _, deferFunc = setup.Standalone()
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
-	interval := 500 * time.Millisecond
-	casesstreamdata.Write(conn, "data.json", now, interval)
-	interval = time.Minute
-	casesmeasureData.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
-	casesmeasureData.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
-	casesmeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-	casesmeasureData.Write(conn, "instance_clr_cpu_minute", "sw_metric", "instance_clr_cpu_minute_data.json", now, interval)
-	casesmeasureData.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data.json", now, interval)
-	casesmeasureData.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data1.json", now.Add(10*time.Second), interval)
-	casesmeasureData.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
-	casesmeasureData.Write(conn, "service_instance_endpoint_cpm_minute", "sw_metric", "service_instance_endpoint_cpm_minute_data.json", now, interval)
-	casesmeasureData.Write(conn, "service_instance_endpoint_cpm_minute", "sw_metric", "service_instance_endpoint_cpm_minute_data1.json", now.Add(10*time.Second), interval)
-	casesmeasureData.Write(conn, "service_instance_endpoint_cpm_minute", "sw_metric", "service_instance_endpoint_cpm_minute_data2.json", now.Add(10*time.Minute), interval)
-	Expect(conn.Close()).To(Succeed())
+	test_cases.Initialize(addr, now)
 	return []byte(addr)
 }, func(address []byte) {
 	var err error

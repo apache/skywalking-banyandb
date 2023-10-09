@@ -88,13 +88,6 @@ var checkerMap = map[Kind]equalityChecker{
 			protocmp.IgnoreFields(&databasev1.Node{}, "created_at"),
 			protocmp.Transform())
 	},
-	KindShard: func(a, b proto.Message) bool {
-		return cmp.Equal(a, b,
-			protocmp.IgnoreUnknown(),
-			protocmp.IgnoreFields(&databasev1.Shard{}, "updated_at"),
-			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-			protocmp.Transform())
-	},
 	KindMask: func(a, b proto.Message) bool {
 		return false
 	},

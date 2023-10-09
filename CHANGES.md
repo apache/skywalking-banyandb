@@ -18,6 +18,7 @@ Release Notes.
 - Add mod revision check to write requests.
 - Add TTL to the property.
 - Support etcd client authentication.
+- Implement node selector (e.g. PickFirst Selector, Maglev Selector).
 
 ### Bugs
 
