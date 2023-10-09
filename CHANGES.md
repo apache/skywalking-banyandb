@@ -17,6 +17,7 @@ Release Notes.
 - Implement the distributed query engine.
 - Add mod revision check to write requests.
 - Add TTL to the property.
+- Implement node selector (e.g. PickFirst Selector, Maglev Selector).
 
 ### Bugs
 
