@@ -199,7 +199,6 @@ var _ = Describe("Buffer", func() {
 				true,
 				&path)
 			Expect(err).ToNot(HaveOccurred())
-			defer buffer.Close()
 
 			// Write buffer & wal
 			var wg sync.WaitGroup
@@ -218,9 +217,7 @@ var _ = Describe("Buffer", func() {
 				}(i)
 			}
 			wg.Wait()
-
-			flushMutex.Lock()
-			defer flushMutex.Unlock()
+			buffer.Close()
 
 			// Check wal
 			Expect(len(shardWalFileHistory) == numShards).To(BeTrue())
