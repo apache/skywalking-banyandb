@@ -64,7 +64,7 @@ func newIndexRuleCmd() *cobra.Command {
 					fmt.Printf("indexRule %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, insecure)
 		},
 	}
 
@@ -95,7 +95,7 @@ func newIndexRuleCmd() *cobra.Command {
 					fmt.Printf("indexRule %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, insecure)
 		},
 	}
 
@@ -106,7 +106,7 @@ func newIndexRuleCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(indexRuleSchemaPathWithParams))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 
@@ -121,7 +121,7 @@ func newIndexRuleCmd() *cobra.Command {
 				fmt.Printf("indexRule %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
-			})
+			}, insecure)
 		},
 	}
 	bindNameFlag(getCmd, deleteCmd)
@@ -133,12 +133,13 @@ func newIndexRuleCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/index-rule/schema/lists/{group}"))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 
 	bindFileFlag(createCmd, updateCmd)
 
+	bindInsecureFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	indexRuleCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	return indexRuleCmd
 }

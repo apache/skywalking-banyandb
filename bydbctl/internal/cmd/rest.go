@@ -291,7 +291,7 @@ func yamlPrinter(index int, _ reqBody, body []byte) error {
 	return nil
 }
 
-func rest(pfn paramsFn, fn reqFn, printer printer) (err error) {
+func rest(pfn paramsFn, fn reqFn, printer printer, insecure bool) (err error) {
 	var requests []reqBody
 	if pfn == nil {
 		requests = []reqBody{{}}
@@ -305,7 +305,7 @@ func rest(pfn paramsFn, fn reqFn, printer printer) (err error) {
 	for i, r := range requests {
 		client := resty.New()
 		// #nosec G402
-		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: insecure})
 		req := client.R()
 		resp, err := fn(request{
 			reqBody: r,

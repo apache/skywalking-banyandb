@@ -37,6 +37,7 @@ var (
 	start    string
 	end      string
 	cfgFile  string
+	insecure bool
 	rootCmd  = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -136,5 +137,11 @@ func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
 		c.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
 		_ = c.MarkFlagRequired("name")
 		_ = c.MarkFlagRequired("id")
+	}
+}
+
+func bindInsecureFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
 	}
 }

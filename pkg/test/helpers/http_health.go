@@ -28,11 +28,11 @@ import (
 )
 
 // HTTPHealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready.
-func HTTPHealthCheck(addr string) func() error {
+func HTTPHealthCheck(addr string, insecure bool) func() error {
 	return func() error {
 		client := resty.New()
 		// #nosec G402
-		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: insecure})
 
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").

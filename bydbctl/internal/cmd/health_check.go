@@ -37,7 +37,6 @@ import (
 var (
 	grpcAddr string
 	grpcCert string
-	insecure bool
 )
 
 func newHealthCheckCmd() *cobra.Command {
@@ -77,7 +76,6 @@ func newHealthCheckCmd() *cobra.Command {
 	}
 	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "localhost:17912", "Grpc server's address, the format is Domain:Port")
 	healthCheckCmd.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certification for tls")
-	healthCheckCmd.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
-
+	bindInsecureFlag(healthCheckCmd)
 	return healthCheckCmd
 }

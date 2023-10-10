@@ -69,7 +69,7 @@ func newPropertyCmd() *cobra.Command {
 					}
 					return request.req.SetPathParam("group", request.group).SetPathParam("name", request.name).
 						SetPathParam("id", request.id).SetBody(b).Put(getPath(propertySchemaPathWithoutTagParams))
-				}, yamlPrinter)
+				}, yamlPrinter, insecure)
 		},
 	}
 	bindFileFlag(applyCmd)
@@ -83,7 +83,7 @@ func newPropertyCmd() *cobra.Command {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).
 					Get(getPath(propertySchemaPathWithTagParams))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 
@@ -95,7 +95,7 @@ func newPropertyCmd() *cobra.Command {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Delete(getPath(propertySchemaPathWithTagParams))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 	bindNameAndIDAndTagsFlag(getCmd, deleteCmd)
@@ -111,7 +111,7 @@ func newPropertyCmd() *cobra.Command {
 				}
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("ids", request.ids()).SetPathParam("tags", request.tags()).Get(getPath(propertyListSchemaPathWithTagParams))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 	listCmd.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
@@ -132,11 +132,12 @@ func newPropertyCmd() *cobra.Command {
 			}, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("lease_id", strconv.FormatInt(request.leaseID, 10)).
 					Put(getPath(propertySchemaPath + "/lease/{lease_id}"))
-			}, yamlPrinter)
+			}, yamlPrinter, insecure)
 		},
 	}
 	keepAliveCmd.Flags().Int64VarP(&leaseID, "lease_id", "i", 0, "the lease id of the property")
 
+	bindInsecureFlag(getCmd, applyCmd, deleteCmd, listCmd, keepAliveCmd)
 	propertyCmd.AddCommand(getCmd, applyCmd, deleteCmd, listCmd, keepAliveCmd)
 	return propertyCmd
 }
