@@ -188,7 +188,6 @@ var _ = Describe("Buffer", func() {
 				true,
 				path)
 			Expect(err).ToNot(HaveOccurred())
-			defer buffer.Close()
 			buffer.Register("test", func(shardIndex int, skl *skl.Skiplist) error {
 				flushMutex.Lock()
 				defer flushMutex.Unlock()
@@ -204,7 +203,6 @@ var _ = Describe("Buffer", func() {
 				}
 				return nil
 			})
-
 			// Write buffer & wal
 			var wg sync.WaitGroup
 			wg.Add(writeConcurrency)
@@ -222,9 +220,7 @@ var _ = Describe("Buffer", func() {
 				}(i)
 			}
 			wg.Wait()
-
-			flushMutex.Lock()
-			defer flushMutex.Unlock()
+			buffer.Close()
 
 			// Check wal
 			Expect(len(shardWalFileHistory) == numShards).To(BeTrue())
