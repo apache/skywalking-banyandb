@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,15 +50,14 @@ const (
 var _ tsdb.TSTable = (*tsTable)(nil)
 
 type tsTable struct {
-	encoderSST kv.TimeSeriesStore
-	sst        kv.TimeSeriesStore
-	*tsdb.BlockExpiryTracker
+	encoderSST        kv.TimeSeriesStore
+	sst               kv.TimeSeriesStore
+	bufferSupplier    *tsdb.BufferSupplier
 	l                 *logger.Logger
 	encoderBuffer     *tsdb.Buffer
 	buffer            *tsdb.Buffer
-	closeBufferTimer  *time.Timer
 	position          common.Position
-	path              string
+	id                string
 	bufferSize        int64
 	encoderBufferSize int64
 	lock              sync.RWMutex
@@ -74,40 +74,13 @@ func (t *tsTable) openBuffer() (err error) {
 		return nil
 	}
 	bufferSize := int(t.encoderBufferSize / defaultNumBufferShards)
-	if t.encoderBuffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.encoderFlush, defaultWriteWal, &t.path); err != nil {
+	if t.encoderBuffer, err = t.bufferSupplier.Borrow(encoded, t.id, bufferSize, t.encoderFlush); err != nil {
 		return fmt.Errorf("failed to create encoder buffer: %w", err)
 	}
 	bufferSize = int(t.bufferSize / defaultNumBufferShards)
-	if t.buffer, err = tsdb.NewBufferWithWal(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.flush, defaultWriteWal, &t.path); err != nil {
+	if t.buffer, err = t.bufferSupplier.Borrow(plain, t.id, bufferSize, t.flush); err != nil {
 		return fmt.Errorf("failed to create buffer: %w", err)
 	}
-	end := t.EndTime()
-	now := time.Now()
-	closeAfter := end.Sub(now)
-	if now.After(end) {
-		closeAfter = t.BlockExpiryDuration()
-	}
-	t.closeBufferTimer = time.AfterFunc(closeAfter, func() {
-		if t.l.Debug().Enabled() {
-			t.l.Debug().Msg("closing buffer")
-		}
-		t.lock.Lock()
-		defer t.lock.Unlock()
-		if t.encoderBuffer != nil {
-			if err := t.encoderBuffer.Close(); err != nil {
-				t.l.Error().Err(err).Msg("close encoder buffer error")
-			}
-			t.encoderBuffer = nil
-		}
-		if t.buffer != nil {
-			if err := t.buffer.Close(); err != nil {
-				t.l.Error().Err(err).Msg("close buffer error")
-			}
-			t.buffer = nil
-		}
-	})
 	return nil
 }
 
@@ -118,6 +91,9 @@ func (t *tsTable) Close() (err error) {
 		if b != nil {
 			err = multierr.Append(err, b.Close())
 		}
+	}
+	for _, b := range []string{encoded, plain} {
+		t.bufferSupplier.Return(b, t.id)
 	}
 	return err
 }
@@ -203,7 +179,7 @@ type tsTableFactory struct {
 	compressionMethod databasev1.CompressionMethod
 }
 
-func (ttf *tsTableFactory) NewTSTable(blockExpiryTracker tsdb.BlockExpiryTracker, root string, position common.Position, l *logger.Logger) (tsdb.TSTable, error) {
+func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string, position common.Position, l *logger.Logger) (tsdb.TSTable, error) {
 	encoderSST, err := kv.OpenTimeSeriesStore(
 		path.Join(root, encoded),
 		kv.TSSWithMemTableSize(ttf.bufferSize),
@@ -223,19 +199,14 @@ func (ttf *tsTableFactory) NewTSTable(blockExpiryTracker tsdb.BlockExpiryTracker
 		return nil, fmt.Errorf("failed to create time series table: %w", err)
 	}
 	table := &tsTable{
-		bufferSize:         ttf.bufferSize,
-		encoderBufferSize:  ttf.encoderBufferSize,
-		l:                  l,
-		position:           position,
-		encoderSST:         encoderSST,
-		sst:                sst,
-		BlockExpiryTracker: &blockExpiryTracker,
-		path:               root,
-	}
-	if table.IsActive() {
-		if err := table.openBuffer(); err != nil {
-			return nil, fmt.Errorf("failed to open buffer: %w", err)
-		}
+		bufferSize:        ttf.bufferSize,
+		encoderBufferSize: ttf.encoderBufferSize,
+		l:                 l,
+		position:          position,
+		encoderSST:        encoderSST,
+		sst:               sst,
+		id:                strings.Join([]string{position.Segment, position.Block}, "-"),
+		bufferSupplier:    bufferSupplier,
 	}
 	return table, nil
 }

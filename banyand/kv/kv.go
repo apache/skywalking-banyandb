@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -143,6 +144,15 @@ func TSSWithMemTableSize(sizeInBytes int64) TimeSeriesOptions {
 		}
 		if btss, ok := store.(*badgerTSS); ok {
 			btss.dbOpts.MemTableSize = sizeInBytes
+		}
+	}
+}
+
+// TSSWithTimeRange sets the time range of the time series.
+func TSSWithTimeRange(timeRange timestamp.TimeRange) TimeSeriesOptions {
+	return func(store TimeSeriesStore) {
+		if btss, ok := store.(*badgerTSS); ok {
+			btss.timeRange = timeRange
 		}
 	}
 }

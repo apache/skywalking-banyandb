@@ -121,9 +121,10 @@ type DatabaseOpts struct {
 	BlockInvertedIndex InvertedIndexOpts
 	SeriesMemSize      run.Bytes
 	GlobalIndexMemSize run.Bytes
+	IndexGranularity   IndexGranularity
 	ShardNum           uint32
 	EnableGlobalIndex  bool
-	IndexGranularity   IndexGranularity
+	EnableWAL          bool
 }
 
 // InvertedIndexOpts wraps options to create the block inverted index.
@@ -212,6 +213,7 @@ type database struct {
 	sync.RWMutex
 	shardNum           uint32
 	shardCreationState uint32
+	enableWAL          bool
 }
 
 func (d *database) CreateShardsAndGetByID(id common.ShardID) (Shard, error) {
@@ -292,6 +294,7 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		segmentSize: opts.SegmentInterval,
 		blockSize:   opts.BlockInterval,
 		ttl:         opts.TTL,
+		enableWAL:   opts.EnableWAL,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	var entries []os.DirEntry
@@ -313,7 +316,7 @@ func createDatabase(db *database, startID int) (Database, error) {
 	for i := startID; i < int(db.shardNum); i++ {
 		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
 		so, errNewShard := OpenShard(db.shardCreationCtx, common.ShardID(i),
-			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize, defaultMaxBlockQueueSize)
+			db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize, defaultMaxBlockQueueSize, db.enableWAL)
 		if errNewShard != nil {
 			err = multierr.Append(err, errNewShard)
 			continue
@@ -346,6 +349,7 @@ func loadDatabase(ctx context.Context, db *database) (Database, error) {
 			db.ttl,
 			defaultBlockQueueSize,
 			defaultMaxBlockQueueSize,
+			db.enableWAL,
 		)
 		if errOpenShard != nil {
 			return errOpenShard
