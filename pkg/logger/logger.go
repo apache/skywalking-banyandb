@@ -51,17 +51,6 @@ type Logger struct {
 	development bool
 }
 
-// Disable returns a logger with diabled level.
-func (l Logger) Disable() *Logger {
-	disabledLogger := l.Logger.Level(zerolog.Disabled)
-	return &Logger{
-		Logger:      &disabledLogger,
-		modules:     l.modules,
-		module:      l.module,
-		development: l.development,
-	}
-}
-
 // Module returns logger's module name.
 func (l Logger) Module() string {
 	return l.module
