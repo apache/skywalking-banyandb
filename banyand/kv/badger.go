@@ -31,6 +31,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -45,12 +46,16 @@ var (
 
 type badgerTSS struct {
 	badger.TSet
-	db     *badger.DB
-	dbOpts badger.Options
+	timeRange timestamp.TimeRange
+	db        *badger.DB
+	dbOpts    badger.Options
 }
 
 func (b *badgerTSS) Handover(skl *skl.Skiplist) error {
-	return b.db.HandoverIterator(skl.NewUniIterator(false))
+	return b.db.HandoverIterator(&timeRangeIterator{
+		timeRange:   b.timeRange,
+		UniIterator: skl.NewUniIterator(false),
+	})
 }
 
 func (b *badgerTSS) Close() error {
@@ -117,6 +122,41 @@ func (i mergedIter) Value() y.ValueStruct {
 		Value: i.data,
 		Meta:  bitMergeEntry,
 	}
+}
+
+type timeRangeIterator struct {
+	*skl.UniIterator
+	timeRange timestamp.TimeRange
+}
+
+func (i *timeRangeIterator) Next() {
+	i.UniIterator.Next()
+	for !i.validTime() {
+		i.UniIterator.Next()
+	}
+}
+
+func (i *timeRangeIterator) Rewind() {
+	i.UniIterator.Rewind()
+	if !i.validTime() {
+		i.Next()
+	}
+}
+
+func (i *timeRangeIterator) Seek(key []byte) {
+	i.UniIterator.Seek(key)
+	if !i.validTime() {
+		i.Next()
+	}
+}
+
+func (i *timeRangeIterator) validTime() bool {
+	if !i.Valid() {
+		// If the underlying iterator is invalid, we should return true to stop iterating.
+		return true
+	}
+	ts := y.ParseTs(i.Key())
+	return i.timeRange.Contains(ts)
 }
 
 type badgerDB struct {

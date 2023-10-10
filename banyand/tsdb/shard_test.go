@@ -90,6 +90,7 @@ var _ = Describe("Shard", func() {
 				},
 				2,
 				3,
+				false,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			started("BlockID-19700101-1970010100-1", "SegID-19700101-1")
@@ -433,6 +434,7 @@ var _ = Describe("Shard", func() {
 				},
 				10,
 				15,
+				false,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			started("BlockID-19700101-1970010100-1", "SegID-19700101-1", "retention")
@@ -556,6 +558,7 @@ var _ = Describe("Shard", func() {
 				},
 				2,
 				3,
+				false,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			started("BlockID-19700101-1970010101-1", "SegID-19700101-1", "retention")
