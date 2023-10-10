@@ -18,17 +18,26 @@
 package cmd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
+	ins "google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/version"
+)
+
+var (
+	grpcAddr string
+	grpcCert string
+	insecure bool
 )
 
 func newHealthCheckCmd() *cobra.Command {
@@ -40,17 +49,25 @@ func newHealthCheckCmd() *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			opts := make([]grpc.DialOption, 0, 1)
-			grpcCert := viper.GetString("grpcCert")
 			if grpcCert != "" {
-				creds, errTLS := credentials.NewClientTLSFromFile(grpcCert, "")
-				if err != nil {
-					return errTLS
+				cert, errRead := os.ReadFile(grpcCert)
+				if errRead != nil {
+					return errRead
 				}
+				certPool := x509.NewCertPool()
+				if !certPool.AppendCertsFromPEM(cert) {
+					return errors.New("failed to add server's certificate")
+				}
+				// #nosec G402
+				config := &tls.Config{
+					RootCAs:            certPool,
+					InsecureSkipVerify: insecure,
+				}
+				creds := credentials.NewTLS(config)
 				opts = append(opts, grpc.WithTransportCredentials(creds))
 			} else {
-				opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				opts = append(opts, grpc.WithTransportCredentials(ins.NewCredentials()))
 			}
-			grpcAddr := viper.GetString("grpcAddr")
 			err = helpers.HealthCheck(true, grpcAddr, 10*time.Second, 10*time.Second, opts...)()
 			if err == nil {
 				fmt.Println("connected")
@@ -58,6 +75,9 @@ func newHealthCheckCmd() *cobra.Command {
 			return err
 		},
 	}
+	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "localhost:17912", "Grpc server's address, the format is Domain:Port")
+	healthCheckCmd.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certification for tls")
+	healthCheckCmd.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
 
 	return healthCheckCmd
 }

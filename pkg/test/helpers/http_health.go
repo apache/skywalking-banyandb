@@ -18,6 +18,7 @@
 package helpers
 
 import (
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 func HTTPHealthCheck(addr string) func() error {
 	return func() error {
 		client := resty.New()
+		// #nosec G402
+		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").

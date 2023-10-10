@@ -62,14 +62,9 @@ func RootCmdFlags(command *cobra.Command) {
 	command.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bydbctl.yaml)")
 	command.PersistentFlags().StringP("group", "g", "", "If present, list objects in this group.")
 	command.PersistentFlags().StringP("addr", "a", "", "Server's address, the format is Schema://Domain:Port")
-	command.PersistentFlags().StringP("grpcAddr", "", "", "Grpc server's address, the format is Domain:Port")
-	command.PersistentFlags().StringP("grpcCert", "", "", "Grpc certification for tls")
 	_ = viper.BindPFlag("group", command.PersistentFlags().Lookup("group"))
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
-	_ = viper.BindPFlag("grpcAddr", command.PersistentFlags().Lookup("grpcAddr"))
-	_ = viper.BindPFlag("grpcCert", command.PersistentFlags().Lookup("grpcCert"))
 	viper.SetDefault("addr", "http://localhost:17913")
-	viper.SetDefault("grpcAddr", "localhost:17912")
 
 	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd(), newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newHealthCheckCmd())
 }

@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -302,7 +303,10 @@ func rest(pfn paramsFn, fn reqFn, printer printer) (err error) {
 	}
 
 	for i, r := range requests {
-		req := resty.New().R()
+		client := resty.New()
+		// #nosec G402
+		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+		req := client.R()
 		resp, err := fn(request{
 			reqBody: r,
 			req:     req,
