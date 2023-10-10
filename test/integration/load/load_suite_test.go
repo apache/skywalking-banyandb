@@ -57,9 +57,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	var addr string
 	addr, _, deferFunc = setup.Standalone()
 	Eventually(
-		helpers.HealthCheck(false, addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 		flags.EventuallyTimeout).Should(Succeed())
-	conn, err := grpchelper.Conn(false, addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	days := 7
 	hours := 24
@@ -85,7 +85,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(false, string(address), 10*time.Second,
+	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	cases_stream.SharedContext = helpers.SharedContext{
 		Connection: connection,

@@ -46,7 +46,7 @@ var _ = Describe("Property application", func() {
 		var addr string
 		addr, _, deferFn = setup.Standalone()
 		var err error
-		conn, err = grpchelper.Conn(false, addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		gClient := databasev1.NewGroupRegistryServiceClient(conn)
 		gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{Group: &commonv1.Group{Metadata: &commonv1.Metadata{Name: "g"}}})
@@ -247,7 +247,7 @@ var _ = Describe("Property application", func() {
 		var addr string
 		addr, _, deferFn = setup.Standalone()
 		var err error
-		conn, err = grpchelper.Conn(false, addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		gClient := databasev1.NewGroupRegistryServiceClient(conn)
 		gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{Group: &commonv1.Group{Metadata: &commonv1.Metadata{Name: "g"}}})

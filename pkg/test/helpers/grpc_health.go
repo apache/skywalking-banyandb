@@ -32,15 +32,15 @@ import (
 var errServiceUnhealthy = errors.New("service is unhealthy")
 
 // HealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a gRPC server is ready.
-func HealthCheck(disableLogging bool, addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
+func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
 	return func() error {
-		conn, err := grpchelper.Conn(disableLogging, addr, connTimeout, opts...)
+		conn, err := grpchelper.Conn(addr, connTimeout, opts...)
 		if err != nil {
 			return err
 		}
 		defer conn.Close()
 		var resp *grpc_health_v1.HealthCheckResponse
-		if err := grpchelper.Request(context.Background(), disableLogging, rpcTimeout, func(rpcCtx context.Context) (err error) {
+		if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
 			resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 				&grpc_health_v1.HealthCheckRequest{
 					Service: "",
@@ -50,9 +50,6 @@ func HealthCheck(disableLogging bool, addr string, connTimeout time.Duration, rp
 			return err
 		}
 		l := logger.GetLogger()
-		if disableLogging {
-			l = l.Disable()
-		}
 		if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 			l.Warn().Str("responded_status", resp.GetStatus().String()).Msg("service unhealthy")
 			return errServiceUnhealthy

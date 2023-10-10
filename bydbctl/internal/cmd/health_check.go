@@ -67,7 +67,7 @@ func newHealthCheckCmd() *cobra.Command {
 			} else {
 				opts = append(opts, grpc.WithTransportCredentials(ins.NewCredentials()))
 			}
-			err = helpers.HealthCheck(true, grpcAddr, 10*time.Second, 10*time.Second, opts...)()
+			err = helpers.HealthCheck(grpcAddr, 10*time.Second, 10*time.Second, opts...)()
 			if err == nil {
 				fmt.Println("connected")
 			}

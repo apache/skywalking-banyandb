@@ -66,7 +66,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(false, string(address), 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	connection, err = grpchelper.Conn(string(address), 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,

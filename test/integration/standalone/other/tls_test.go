@@ -53,7 +53,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		conn, err = grpchelper.Conn(false, addr, 10*time.Second, grpclib.WithTransportCredentials(creds))
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(creds))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		ns := timestamp.NowMilli().UnixNano()
 		baseTime = time.Unix(0, ns-ns%int64(time.Minute))

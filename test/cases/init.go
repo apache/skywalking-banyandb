@@ -32,7 +32,7 @@ import (
 
 // Initialize test data.
 func Initialize(addr string, now time.Time) {
-	conn, err := grpchelper.Conn(false, addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer conn.Close()
 	interval := 500 * time.Millisecond
