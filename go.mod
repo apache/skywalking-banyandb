@@ -19,6 +19,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/hashicorp/golang-lru/v2 v2.0.4
+	github.com/kkdai/maglev v0.2.0
 	github.com/oklog/run v1.1.0
 	github.com/onsi/ginkgo/v2 v2.11.0
 	github.com/onsi/gomega v1.27.10
@@ -43,6 +44,8 @@ require (
 	google.golang.org/protobuf v1.31.0
 	sigs.k8s.io/yaml v1.3.0
 )
+
+require github.com/dchest/siphash v1.2.3 // indirect
 
 require (
 	github.com/axiomhq/hyperloglog v0.0.0-20191112132149-a4c4c47bc57f // indirect
