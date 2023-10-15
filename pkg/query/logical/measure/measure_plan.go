@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -36,7 +37,7 @@ type limitPlan struct {
 	limit  uint32
 }
 
-func (l *limitPlan) Execute(ec executor.MeasureExecutionContext) (executor.MIterator, error) {
+func (l *limitPlan) Execute(ec context.Context) (executor.MIterator, error) {
 	dps, err := l.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err

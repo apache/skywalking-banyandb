@@ -22,7 +22,6 @@ package measure
 
 import (
 	"context"
-	"math"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -32,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -43,18 +41,17 @@ const (
 )
 
 type measure struct {
-	databaseSupplier       tsdb.Supplier
-	l                      *logger.Logger
-	schema                 *databasev1.Measure
-	indexWriter            *index.Writer
-	processorManager       *topNProcessorManager
-	name                   string
-	group                  string
-	indexRules             []*databasev1.IndexRule
-	topNAggregations       []*databasev1.TopNAggregation
-	maxObservedModRevision int64
-	interval               time.Duration
-	shardNum               uint32
+	databaseSupplier tsdb.Supplier
+	l                *logger.Logger
+	schema           *databasev1.Measure
+	indexWriter      *index.Writer
+	processorManager *topNProcessorManager
+	name             string
+	group            string
+	indexRules       []*databasev1.IndexRule
+	topNAggregations []*databasev1.TopNAggregation
+	interval         time.Duration
+	shardNum         uint32
 }
 
 func (s *measure) startSteamingManager(pipeline queue.Queue) error {
@@ -80,20 +77,8 @@ func (s *measure) GetSchema() *databasev1.Measure {
 	return s.schema
 }
 
-func (s *measure) GetMetadata() *commonv1.Metadata {
-	return s.schema.Metadata
-}
-
 func (s *measure) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
-}
-
-func (s *measure) GetTopN() []*databasev1.TopNAggregation {
-	return s.topNAggregations
-}
-
-func (s *measure) MaxObservedModRevision() int64 {
-	return s.maxObservedModRevision
 }
 
 func (s *measure) Close() error {
@@ -105,7 +90,6 @@ func (s *measure) Close() error {
 
 func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.maxObservedModRevision = int64(math.Max(float64(resourceSchema.ParseMaxModRevision(s.indexRules)), float64(resourceSchema.ParseMaxModRevision(s.topNAggregations))))
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
@@ -130,9 +114,12 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 	if err := m.parseSpec(); err != nil {
 		return nil, err
 	}
-	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
+	if db == nil {
+		return m, nil
+	}
 
 	m.databaseSupplier = db
+	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
 	m.indexWriter = index.NewWriter(ctx, index.WriterOptions{
 		DB:         db,
 		ShardNum:   shardNum,

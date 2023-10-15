@@ -182,7 +182,8 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 	measureID := group + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
 	iwr := &measurev1.InternalWriteRequest{
 		Request: &measurev1.WriteRequest{
-			Metadata: t.topNSchema.GetMetadata(),
+			MessageId: uint64(time.Now().UnixNano()),
+			Metadata:  t.topNSchema.GetMetadata(),
 			DataPoint: &measurev1.DataPointValue{
 				Timestamp: timestamppb.New(eventTime),
 				TagFamilies: []*modelv1.TagFamilyForWrite{

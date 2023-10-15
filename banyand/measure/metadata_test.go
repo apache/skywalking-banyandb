@@ -37,6 +37,10 @@ var _ = Describe("Metadata", func() {
 	BeforeEach(func() {
 		svcs, deferFn = setUp()
 		goods = gleak.Goroutines()
+		Eventually(func() bool {
+			_, ok := svcs.measure.LoadGroup("sw_metric")
+			return ok
+		}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	})
 
 	AfterEach(func() {
@@ -45,12 +49,6 @@ var _ = Describe("Metadata", func() {
 	})
 
 	Context("Manage group", func() {
-		It("should pass smoke test", func() {
-			Eventually(func() bool {
-				_, ok := svcs.measure.LoadGroup("sw_metric")
-				return ok
-			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
-		})
 		It("should close the group", func() {
 			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
@@ -124,7 +122,9 @@ var _ = Describe("Metadata", func() {
 				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
 				entitySize := len(measureSchema.Entity.TagNames)
 
-				Expect(svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)).Should(Succeed())
+				modRevision, err := svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)
+				Expect(modRevision).ShouldNot(BeZero())
+				Expect(err).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
 					val, err := svcs.measure.Measure(&commonv1.Metadata{

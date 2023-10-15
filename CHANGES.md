@@ -12,6 +12,13 @@ Release Notes.
 - Support multiple roles for banyand server.
 - Support for recovery buffer using wal.
 - Register the node role to the metadata registry.
+- Implement the remote queue to spreading data to data nodes.
+- Fix parse environment variables error
+- Implement the distributed query engine.
+- Add mod revision check to write requests.
+- Add TTL to the property.
+- Implement node selector (e.g. PickFirst Selector, Maglev Selector).
+- Unified the buffers separated in blocks to a single buffer in the shard.
 - Implement Local file system.
 
 ### Bugs
@@ -21,6 +28,7 @@ Release Notes.
 - Fix timer not released
 - BanyanDB ui misses fields when creating a group
 - Fix data duplicate writing
+- Syncing metadata change events from etcd instead of a local channel.
 
 ### Chores
 

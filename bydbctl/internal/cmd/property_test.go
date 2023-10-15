@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -27,12 +28,22 @@ import (
 	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/testing/protocmp"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
+
+var equalsOpts = []cmp.Option{
+	protocmp.Transform(),
+	protocmp.IgnoreUnknown(),
+	protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
+	protocmp.IgnoreFields(&propertyv1.Property{}, "lease_id"),
+	protocmp.IgnoreFields(&commonv1.Metadata{}, "mod_revision"),
+	protocmp.IgnoreFields(&commonv1.Metadata{}, "create_revision"),
+}
 
 var _ = Describe("Property Operation", func() {
 	var addr string
@@ -70,13 +81,26 @@ tags:
       int:
         value: 3
 `
+	p3Yaml := `
+metadata:
+  container:
+    group: ui-template
+    name: security
+  id: login-token
+tags:
+  - key: content
+    value:
+      str:
+        value: foo 
+ttl: 30m
+`
+
 	p1Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p1YAML), p1Proto)
 	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.Common()
-		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
+		_, addr, deferFunc = setup.EmptyStandalone()
 		addr = "http://" + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -115,8 +139,7 @@ metadata:
 		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("gets a tag", func() {
@@ -149,8 +172,7 @@ metadata:
 		resp := new(propertyv1.GetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(cmp.Equal(resp.Property, p1Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("update property", func() {
@@ -182,8 +204,7 @@ tags:
 		helpers.UnmarshalYAML([]byte(out), resp)
 
 		Expect(cmp.Equal(resp.Property, p2Proto,
-			protocmp.IgnoreUnknown(),
-			protocmp.Transform())).To(BeTrue())
+			equalsOpts...)).To(BeTrue())
 	})
 
 	It("delete property", func() {
@@ -274,7 +295,36 @@ tags:
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property).To(HaveLen(2))
 	})
-
+	It("keepalive not found", func() {
+		rootCmd.SetArgs([]string{
+			"property", "keepalive", "-i", "111",
+		})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).Should(MatchError("rpc error: code = Unknown desc = etcdserver: requested lease not found"))
+		})
+		GinkgoWriter.Println(out)
+	})
+	It("keepalive", func() {
+		rootCmd.SetArgs([]string{"property", "apply", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(p3Yaml))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out)
+		resp := new(propertyv1.ApplyResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.LeaseId).Should(BeNumerically(">", 0))
+		rootCmd.SetArgs([]string{
+			"property", "keepalive", "-i", strconv.Itoa(int(resp.LeaseId)),
+		})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out)
+	})
 	AfterEach(func() {
 		deferFunc()
 	})

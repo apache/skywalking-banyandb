@@ -198,6 +198,7 @@ Apache-2.0 licenses
     github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 Apache-2.0
     github.com/inconshreveable/mousetrap v1.1.0 Apache-2.0
     github.com/jonboulle/clockwork v0.4.0 Apache-2.0
+    github.com/kkdai/maglev v0.2.0 Apache-2.0
     github.com/matttproud/golang_protobuf_extensions v1.0.4 Apache-2.0
     github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd Apache-2.0
     github.com/modern-go/reflect2 v1.0.2 Apache-2.0
@@ -295,6 +296,12 @@ BSD-3-Clause and Apache-2.0 and MIT licenses
 ========================================================================
 
     github.com/klauspost/compress v1.15.6 BSD-3-Clause and Apache-2.0 and MIT
+
+========================================================================
+CC0-1.0 licenses
+========================================================================
+
+    github.com/dchest/siphash v1.2.3 CC0-1.0
 
 ========================================================================
 ISC licenses

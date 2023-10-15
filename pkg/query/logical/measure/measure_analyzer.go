@@ -22,21 +22,20 @@ import (
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 const defaultLimit uint32 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
-func BuildSchema(measureSchema measure.Measure) (logical.Schema, error) {
-	md := measureSchema.GetSchema()
+func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	md.GetEntity()
 
 	ms := &schema{
 		common: &logical.CommonSchema{
-			IndexRules: measureSchema.GetIndexRules(),
+			IndexRules: indexRules,
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: md.GetEntity().GetTagNames(),
 		},
@@ -72,6 +71,66 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 
 	// parse fields
 	plan := parseFields(criteria, metadata, groupByEntity)
+
+	// parse limit and offset
+	limitParameter := criteria.GetLimit()
+	if limitParameter == 0 {
+		limitParameter = defaultLimit
+	}
+	pushedLimit := int(limitParameter + criteria.GetOffset())
+
+	if criteria.GetGroupBy() != nil {
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
+		pushedLimit = math.MaxInt
+	}
+
+	if criteria.GetAgg() != nil {
+		plan = newUnresolvedAggregation(plan,
+			logical.NewField(criteria.GetAgg().GetFieldName()),
+			criteria.GetAgg().GetFunction(),
+			criteria.GetGroupBy() != nil,
+		)
+		pushedLimit = math.MaxInt
+	}
+
+	if criteria.GetTop() != nil {
+		plan = top(plan, criteria.GetTop())
+	}
+
+	plan = limit(plan, criteria.GetOffset(), limitParameter)
+	p, err := plan.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	rules := []logical.OptimizeRule{
+		logical.NewPushDownOrder(criteria.OrderBy),
+		logical.NewPushDownMaxSize(pushedLimit),
+	}
+	if err := logical.ApplyRules(p, rules...); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
+func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (logical.Plan, error) {
+	groupByEntity := false
+	var groupByTags [][]*logical.Tag
+	if criteria.GetGroupBy() != nil {
+		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
+		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
+		tags := make([]string, 0)
+		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
+			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
+			tags = append(tags, tagFamily.GetTags()...)
+		}
+		if logical.StringSlicesEqual(s.EntityList(), tags) {
+			groupByEntity = true
+		}
+	}
+
+	// parse fields
+	plan := newUnresolvedDistributed(criteria)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()

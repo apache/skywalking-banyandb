@@ -57,7 +57,7 @@ var _ = Describe("Istio", func() {
 		})).To(Succeed())
 	})
 	It("should pass", func() {
-		addr, _, deferFunc := setup.CommonWithSchemaLoaders([]setup.SchemaLoader{&preloadService{name: "oap"}})
+		addr, _, deferFunc := setup.StandaloneWithSchemaLoaders([]setup.SchemaLoader{&preloadService{name: "oap"}}, "", "")
 		DeferCleanup(deferFunc)
 		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
@@ -150,6 +150,7 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 				return fmt.Errorf("failed to unmarshal JSON message: %w", errUnmarshal)
 			}
 
+			req.MessageId = uint64(time.Now().UnixNano())
 			req.DataPoint.Timestamp = timestamppb.New(adjustTime(req.DataPoint.Timestamp.AsTime()))
 			// Write the request to the measureService
 			if errSend := client.Send(&req); errSend != nil {

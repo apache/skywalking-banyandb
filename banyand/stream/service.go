@@ -20,7 +20,6 @@ package stream
 import (
 	"context"
 	"path"
-	"time"
 
 	"github.com/pkg/errors"
 
@@ -28,7 +27,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -54,7 +52,7 @@ var _ Service = (*service)(nil)
 type service struct {
 	schemaRepo      schemaRepo
 	metadata        metadata.Repo
-	pipeline        queue.Queue
+	pipeline        queue.Server
 	writeListener   *writeCallback
 	l               *logger.Logger
 	root            string
@@ -63,11 +61,7 @@ type service struct {
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
-	sm, ok := s.schemaRepo.loadStream(metadata)
-	if !ok {
-		return nil, errors.WithStack(errStreamNotExist)
-	}
-	return sm, nil
+	return s.schemaRepo.Stream(metadata)
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -98,42 +92,11 @@ func (s *service) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) PreRun(ctx context.Context) error {
+func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
-	groups, err := s.metadata.GroupRegistry().ListGroup(ctxLocal)
-	cancel()
-	if err != nil {
-		return err
-	}
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.schemaRepo = newSchemaRepo(path, s.metadata, int64(s.blockBufferSize), s.dbOpts, s.l)
-	for _, g := range groups {
-		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
-			continue
-		}
-		gp, err := s.schemaRepo.StoreGroup(g.Metadata)
-		if err != nil {
-			return err
-		}
-		ctxLocal, cancel := context.WithTimeout(ctx, 5*time.Second)
-		schemas, err := s.metadata.StreamRegistry().ListStream(ctxLocal, schema.ListOpt{Group: gp.GetSchema().GetMetadata().Name})
-		cancel()
-		if err != nil {
-			return err
-		}
-		for _, sa := range schemas {
-			if _, innerErr := gp.StoreResource(ctx, sa); innerErr != nil {
-				return innerErr
-			}
-		}
-	}
-	// run a serial watcher
-	s.schemaRepo.Watcher()
-	s.metadata.RegisterHandler(schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
-		&s.schemaRepo)
-
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
 
 	errWrite := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
@@ -152,7 +115,7 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Queue) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,

@@ -39,7 +39,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 //go:embed testdata/*
@@ -131,8 +131,8 @@ func extractTarGz(src []byte, dest string) (string, error) {
 }
 
 type preloadService struct {
-	metaSvc metadata.Service
-	name    string
+	registry schema.Registry
+	name     string
 }
 
 func (p *preloadService) Name() string {
@@ -140,14 +140,15 @@ func (p *preloadService) Name() string {
 }
 
 func (p *preloadService) PreRun(_ context.Context) error {
-	e := p.metaSvc.SchemaRegistry()
+	e := p.registry
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
 		return e.CreateGroup(context.TODO(), group)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		return e.CreateMeasure(context.TODO(), measure)
+		_, innerErr := e.CreateMeasure(context.TODO(), measure)
+		return innerErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}
@@ -164,8 +165,8 @@ func (p *preloadService) PreRun(_ context.Context) error {
 	return nil
 }
 
-func (p *preloadService) SetMeta(meta metadata.Service) {
-	p.metaSvc = meta
+func (p *preloadService) SetRegistry(registry schema.Registry) {
+	p.registry = registry
 }
 
 const (

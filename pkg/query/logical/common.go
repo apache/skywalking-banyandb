@@ -18,7 +18,6 @@
 package logical
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"time"
@@ -28,6 +27,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -39,7 +39,6 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
-	errInvalidData               = errors.New("data is invalid")
 
 	nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 )
@@ -48,19 +47,7 @@ type (
 	// SeekerBuilder wraps the execution of tsdb.SeekerBuilder.
 	// TODO:// we could have a chance to remove this wrapper.
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
-
-	comparator func(a, b tsdb.Item) bool
 )
-
-func createComparator(sortDirection modelv1.Sort) comparator {
-	return func(a, b tsdb.Item) bool {
-		comp := bytes.Compare(a.SortedField(), b.SortedField())
-		if sortDirection == modelv1.Sort_SORT_DESC {
-			return comp == 1
-		}
-		return comp == -1
-	}
-}
 
 // ProjectItem parses the item within the StreamExecutionContext.
 // projectionFieldRefs must be prepared before calling this method, projectionFieldRefs should be a list of
@@ -72,22 +59,30 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		if len(refs) == 0 {
 			continue
 		}
-		tags := make([]*modelv1.Tag, len(refs))
 		familyName := refs[0].Tag.getFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, errors.WithMessage(err, "parse projection")
 		}
-		if len(refs) > len(parsedTagFamily.Tags) {
-			return nil, errors.Wrapf(errInvalidData,
-				"the number of tags %d in %s is less then expected %d",
-				len(parsedTagFamily.Tags), familyName, len(refs))
+
+		parsedTagSize := len(parsedTagFamily.GetTags())
+		tagRefSize := len(refs)
+
+		// Determine maximum size for creating the tags slice
+		maxSize := tagRefSize
+		if parsedTagSize < tagRefSize {
+			maxSize = parsedTagSize
 		}
+
+		tags := make([]*modelv1.Tag, maxSize)
+
 		for j, ref := range refs {
-			if len(parsedTagFamily.GetTags()) > ref.Spec.TagIdx {
+			if parsedTagSize > ref.Spec.TagIdx {
 				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-			} else {
+			} else if j < parsedTagSize {
 				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
+			} else {
+				break
 			}
 		}
 
@@ -104,16 +99,16 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 // with the help of Entity. The result is a list of element set, where the order of inner list is kept
 // as what the users specify in the seekerBuilder.
 // This method is used by the underlying tableScan and localIndexScan plans.
-func ExecuteForShard(l *logger.Logger, series tsdb.SeriesList, timeRange timestamp.TimeRange,
+func ExecuteForShard(ctx context.Context, l *logger.Logger, series tsdb.SeriesList, timeRange timestamp.TimeRange,
 	builders ...SeekerBuilder,
 ) ([]tsdb.Iterator, []io.Closer, error) {
 	var itersInShard []tsdb.Iterator
 	var closers []io.Closer
 	for _, seriesFound := range series {
 		itersInSeries, err := func() ([]tsdb.Iterator, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctxSeries, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			sp, errInner := seriesFound.Span(context.WithValue(ctx, logger.ContextKey, l), timeRange)
+			sp, errInner := seriesFound.Span(context.WithValue(ctxSeries, logger.ContextKey, l), timeRange)
 			if errInner != nil {
 				if errors.Is(errInner, tsdb.ErrEmptySeriesSpan) {
 					return nil, nil
@@ -221,4 +216,16 @@ func StringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []tsdb.Iterator, s modelv1.Sort) sort.Iterator[tsdb.Item] {
+	var ii []sort.Iterator[tsdb.Item]
+	for _, iter := range iters {
+		ii = append(ii, iter)
+	}
+	if s == modelv1.Sort_SORT_DESC {
+		return sort.NewItemIter[tsdb.Item](ii, true)
+	}
+	return sort.NewItemIter[tsdb.Item](ii, false)
 }

@@ -19,18 +19,17 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"path"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -56,6 +55,13 @@ type HasMetadata interface {
 // RegistryOption is the option to create Registry.
 type RegistryOption func(*etcdSchemaRegistryConfig)
 
+// Namespace sets the namespace of the registry.
+func Namespace(namespace string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.namespace = namespace
+	}
+}
+
 // ConfigureServerEndpoints sets a list of the server urls.
 func ConfigureServerEndpoints(url []string) RegistryOption {
 	return func(config *etcdSchemaRegistryConfig) {
@@ -63,53 +69,33 @@ func ConfigureServerEndpoints(url []string) RegistryOption {
 	}
 }
 
-type eventHandler struct {
-	handler      EventHandler
-	interestKeys Kind
-}
-
-func (eh *eventHandler) interestOf(kind Kind) bool {
-	return KindMask&kind&eh.interestKeys != 0
-}
-
 type etcdSchemaRegistry struct {
-	client   *clientv3.Client
-	closer   *run.Closer
-	handlers []*eventHandler
-	mux      sync.RWMutex
+	namespace string
+	client    *clientv3.Client
+	closer    *run.Closer
+	l         *logger.Logger
+	watchers  []*watcher
+	mux       sync.RWMutex
 }
 
 type etcdSchemaRegistryConfig struct {
+	namespace       string
 	serverEndpoints []string
 }
 
-func (e *etcdSchemaRegistry) RegisterHandler(kind Kind, handler EventHandler) {
+func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler EventHandler) {
+	// Validate kind
+	if kind&KindMask != kind {
+		panic(fmt.Sprintf("invalid kind %d", kind))
+	}
 	e.mux.Lock()
 	defer e.mux.Unlock()
-	e.handlers = append(e.handlers, &eventHandler{
-		interestKeys: kind,
-		handler:      handler,
-	})
-}
-
-func (e *etcdSchemaRegistry) notifyUpdate(metadata Metadata) {
-	e.mux.RLock()
-	hh := e.handlers
-	e.mux.RUnlock()
-	for _, h := range hh {
-		if h.interestOf(metadata.Kind) {
-			h.handler.OnAddOrUpdate(metadata)
-		}
-	}
-}
-
-func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
-	e.mux.RLock()
-	hh := e.handlers
-	e.mux.RUnlock()
-	for _, h := range hh {
-		if h.interestOf(metadata.Kind) {
-			h.handler.OnDelete(metadata)
+	for i := 0; i < KindSize; i++ {
+		ki := Kind(1 << i)
+		if kind&ki > 0 {
+			e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering watcher")
+			w := e.newWatcher(name, ki, handler)
+			e.watchers = append(e.watchers, w)
 		}
 	}
 }
@@ -117,6 +103,10 @@ func (e *etcdSchemaRegistry) notifyDelete(metadata Metadata) {
 func (e *etcdSchemaRegistry) Close() error {
 	e.closer.Done()
 	e.closer.CloseThenWait()
+	for i, w := range e.watchers {
+		_ = w.Close()
+		e.watchers[i] = nil
+	}
 	return e.client.Close()
 }
 
@@ -129,7 +119,8 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if registryConfig.serverEndpoints == nil {
 		return nil, errors.New("server address is not set")
 	}
-	zapCfg := logger.GetLogger("etcd").ToZapConfig()
+	log := logger.GetLogger("etcd")
+	zapCfg := log.ToZapConfig()
 
 	var l *zap.Logger
 	var err error
@@ -142,7 +133,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		DialTimeout:          5 * time.Second,
 		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
-		DialOptions:          []grpc.DialOption{grpc.WithBlock()},
+		AutoSyncInterval:     5 * time.Minute,
 		Logger:               l,
 	}
 	client, err := clientv3.New(config)
@@ -150,10 +141,19 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		return nil, err
 	}
 	reg := &etcdSchemaRegistry{
-		client: client,
-		closer: run.NewCloser(1),
+		namespace: registryConfig.namespace,
+		client:    client,
+		closer:    run.NewCloser(1),
+		l:         log,
 	}
 	return reg, nil
+}
+
+func (e *etcdSchemaRegistry) prependNamespace(key string) string {
+	if e.namespace == "" {
+		return key
+	}
+	return path.Join("/", e.namespace, key)
 }
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
@@ -161,6 +161,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return ErrClosed
 	}
 	defer e.closer.Done()
+	key = e.prependNamespace(key)
 	resp, err := e.client.Get(ctx, key)
 	if err != nil {
 		return err
@@ -185,118 +186,113 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // update will first ensure the existence of the entity with the metadata,
 // and overwrite the existing value if so.
 // Otherwise, it will return ErrGRPCResourceNotFound.
-func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return 0, ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
-		return err
+		return 0, err
 	}
+	key = e.prependNamespace(key)
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if getResp.Count > 1 {
-		return errUnexpectedNumberOfEntities
+		return 0, errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	replace := getResp.Count > 0
-	if replace {
-		existingVal, innerErr := metadata.Unmarshal(getResp.Kvs[0].Value)
-		if innerErr != nil {
-			return innerErr
-		}
-		// directly return if we have the same entity
-		if metadata.equal(existingVal) {
-			return nil
-		}
-
-		modRevision := getResp.Kvs[0].ModRevision
-		txnResp, txnErr := e.client.Txn(ctx).
-			If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
-			Then(clientv3.OpPut(key, string(val))).
-			Commit()
-		if txnErr != nil {
-			return txnErr
-		}
-		if !txnResp.Succeeded {
-			return errConcurrentModification
-		}
-	} else {
-		return ErrGRPCResourceNotFound
+	if !replace {
+		return 0, ErrGRPCResourceNotFound
 	}
-	e.notifyUpdate(metadata)
-	return nil
+	existingVal, innerErr := metadata.Kind.Unmarshal(getResp.Kvs[0])
+	if innerErr != nil {
+		return 0, innerErr
+	}
+	// directly return if we have the same entity
+	if metadata.equal(existingVal) {
+		return 0, nil
+	}
+
+	modRevision := metadata.ModRevision
+	if modRevision == 0 {
+		modRevision = getResp.Kvs[0].ModRevision
+	}
+	txnResp, txnErr := e.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", modRevision)).
+		Then(clientv3.OpPut(key, string(val))).
+		Commit()
+	if txnErr != nil {
+		return 0, txnErr
+	}
+	if !txnResp.Succeeded {
+		return 0, errConcurrentModification
+	}
+
+	return txnResp.Responses[0].GetResponsePut().Header.Revision, nil
 }
 
 // create will first check existence of the entity with the metadata,
 // and put the value if it does not exist.
 // Otherwise, it will return ErrGRPCAlreadyExists.
-func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return 0, ErrClosed
 	}
 	defer e.closer.Done()
 	key, err := metadata.key()
 	if err != nil {
-		return err
+		return 0, err
 	}
+	key = e.prependNamespace(key)
 	getResp, err := e.client.Get(ctx, key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if getResp.Count > 1 {
-		return errUnexpectedNumberOfEntities
+		return 0, errUnexpectedNumberOfEntities
 	}
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	replace := getResp.Count > 0
 	if replace {
-		return errGRPCAlreadyExists
+		return 0, errGRPCAlreadyExists
 	}
-	_, err = e.client.Put(ctx, key, string(val))
+	putResp, err := e.client.Put(ctx, key, string(val))
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	e.notifyUpdate(metadata)
-	return nil
+	return putResp.Header.Revision, nil
 }
 
-func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, factory func() proto.Message) ([]proto.Message, error) {
+func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, kind Kind) ([]proto.Message, error) {
 	if !e.closer.AddRunning() {
 		return nil, ErrClosed
 	}
 	defer e.closer.Done()
-	resp, err := e.client.Get(ctx, prefix, clientv3.WithFromKey(), clientv3.WithRange(incrementLastByte(prefix)))
+	prefix = e.prependNamespace(prefix)
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
 	entities := make([]proto.Message, resp.Count)
 	for i := int64(0); i < resp.Count; i++ {
-		message := factory()
-		if innerErr := proto.Unmarshal(resp.Kvs[i].Value, message); innerErr != nil {
-			return nil, innerErr
+		md, err := kind.Unmarshal(resp.Kvs[i])
+		if err != nil {
+			return nil, err
 		}
-		entities[i] = message
-		if messageWithMetadata, ok := message.(HasMetadata); ok {
-			// Assign readonly fields
-			messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[i].CreateRevision
-			messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[i].ModRevision
-		}
+		entities[i] = md.Spec.(proto.Message)
 	}
 	return entities, nil
-}
-
-func listPrefixesForEntity(group, entityPrefix string) string {
-	return groupsKeyPrefix + group + entityPrefix
 }
 
 func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
@@ -308,38 +304,12 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	if err != nil {
 		return false, err
 	}
+	key = e.prependNamespace(key)
 	resp, err := e.client.Delete(ctx, key, clientv3.WithPrevKV())
 	if err != nil {
 		return false, err
 	}
 	if resp.Deleted == 1 {
-		var message proto.Message
-		switch metadata.Kind {
-		case KindMeasure:
-			message = &databasev1.Measure{}
-		case KindStream:
-			message = &databasev1.Stream{}
-		case KindIndexRuleBinding:
-			message = &databasev1.IndexRuleBinding{}
-		case KindIndexRule:
-			message = &databasev1.IndexRule{}
-		case KindProperty:
-			message = &propertyv1.Property{}
-		case KindTopNAggregation:
-			message = &databasev1.TopNAggregation{}
-		default:
-			return false, nil
-		}
-		if unmarshalErr := proto.Unmarshal(resp.PrevKvs[0].Value, message); unmarshalErr == nil {
-			e.notifyDelete(Metadata{
-				TypeMeta: TypeMeta{
-					Kind:  metadata.Kind,
-					Name:  metadata.Name,
-					Group: metadata.Group,
-				},
-				Spec: message,
-			})
-		}
 		return true, nil
 	}
 	return false, nil
@@ -354,6 +324,7 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) er
 	if err != nil {
 		return err
 	}
+	key = e.prependNamespace(key)
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
 		return err
@@ -404,12 +375,20 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) er
 	return nil
 }
 
-func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
-	return groupsKeyPrefix + metadata.GetGroup() + entityPrefix + metadata.GetName()
+func (e *etcdSchemaRegistry) newWatcher(name string, kind Kind, handler EventHandler) *watcher {
+	return newWatcher(e.client, watcherConfig{
+		key:     e.prependNamespace(kind.key()),
+		kind:    kind,
+		handler: handler,
+	}, e.l.Named(fmt.Sprintf("watcher-%s[%s]", name, kind.String())))
 }
 
-func incrementLastByte(key string) string {
-	bb := []byte(key)
-	bb[len(bb)-1]++
-	return string(bb)
+func listPrefixesForEntity(group, entityPrefix string) string {
+	return path.Join(entityPrefix, group)
+}
+
+func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
+	return path.Join(
+		listPrefixesForEntity(metadata.GetGroup(), entityPrefix),
+		metadata.GetName())
 }

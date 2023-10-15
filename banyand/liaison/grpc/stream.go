@@ -28,7 +28,10 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -41,6 +44,8 @@ type streamService struct {
 	*discoveryService
 	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
+	pipeline           queue.Client
+	broadcaster        queue.Client
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
@@ -56,11 +61,13 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
-	reply := func(stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
-		if errResp := stream.Send(&streamv1.WriteResponse{}); errResp != nil {
+	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
+		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
+	publisher := s.pipeline.NewBatchPublisher()
+	defer publisher.Close()
 	ctx := stream.Context()
 	for {
 		select {
@@ -74,18 +81,28 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
-			reply(stream, s.sampled)
-			continue
+			return err
 		}
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
-			reply(stream, s.sampled)
+			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
+			continue
+		}
+		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
+		if !existed {
+			s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
+			continue
+		}
+		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
+			s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
 			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
-			reply(stream, s.sampled)
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
 		if s.ingestionAccessLog != nil {
@@ -101,12 +118,19 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if s.log.Debug().Enabled() {
 			iwr.EntityValues = tagValues.Encode()
 		}
-		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
-		_, errWritePub := s.pipeline.Publish(data.TopicStreamWrite, message)
-		if errWritePub != nil {
-			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to send a message")
+		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
+		if errPickNode != nil {
+			s.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to pick an available node")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+			continue
 		}
-		reply(stream, s.sampled)
+		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		_, errWritePub := publisher.Publish(data.TopicStreamWrite, message)
+		if errWritePub != nil {
+			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+		}
+		reply(nil, modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
 	}
 }
 
@@ -121,7 +145,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
-	feat, errQuery := s.pipeline.Publish(data.TopicStreamQuery, message)
+	feat, errQuery := s.broadcaster.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
 		if errors.Is(errQuery, io.EOF) {
 			return emptyStreamQueryResponse, nil
@@ -134,8 +158,8 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*s
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case []*streamv1.Element:
-		return &streamv1.QueryResponse{Elements: d}, nil
+	case *streamv1.QueryResponse:
+		return d, nil
 	case common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Msg())
 	}

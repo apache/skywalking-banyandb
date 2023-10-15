@@ -55,6 +55,14 @@ func (c *Closer) AddRunning() bool {
 	return true
 }
 
+// Ctx returns the context of the Closer.
+func (c *Closer) Ctx() context.Context {
+	if c == nil {
+		return context.Background()
+	}
+	return c.ctx
+}
+
 // CloseNotify receives a signal from Close.
 func (c *Closer) CloseNotify() <-chan struct{} {
 	if c == nil {

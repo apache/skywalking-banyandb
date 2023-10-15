@@ -77,7 +77,7 @@ func (l *Logger) Named(name ...string) *Logger {
 			level = ml
 		}
 	}
-	subLogger := root.l.With().Str("module", moduleBuilder.String()).Logger().Level(level)
+	subLogger := root.get().With().Str("module", moduleBuilder.String()).Logger().Level(level)
 	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger}
 }
 
@@ -96,7 +96,7 @@ func (l *Logger) ToZapConfig() zap.Config {
 	}
 	if !l.development {
 		config := zap.NewProductionConfig()
-		config.Level = level
+		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 		return config
 	}
 	encoderConfig := zapcore.EncoderConfig{

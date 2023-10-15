@@ -23,6 +23,22 @@ services:
     image: "apache/skywalking-banyandb:${TAG}"
     networks:
       - e2e
+
+  liaison:
+    extends:
+      file: ../../../docker/base-compose.yml
+      service: liaison
+    image: "apache/skywalking-banyandb:${TAG}"
+    networks:
+      - e2e
+
+  data:
+    extends:
+      file: ../../../docker/base-compose.yml
+      service: data
+    image: "apache/skywalking-banyandb:${TAG}"
+    networks:
+      - e2e
   
   agent:
     extends:
@@ -51,6 +67,13 @@ services:
     extends:
       file: ../../../docker/base-compose.yml
       service: consumer
+    networks:
+      - e2e
+
+  etcd:
+    extends:
+      file: ../../../docker/base-compose.yml
+      service: etcd
     networks:
       - e2e
 

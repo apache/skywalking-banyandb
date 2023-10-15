@@ -38,6 +38,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
+var emptyFn = func(shardIndex int, skl *skl.Skiplist) error {
+	return nil
+}
+
 var _ = Describe("Buffer", func() {
 	var (
 		buffer *tsdb.Buffer
@@ -54,10 +58,9 @@ var _ = Describe("Buffer", func() {
 	Context("Write and Read", func() {
 		BeforeEach(func() {
 			var err error
-			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024*1024, 16, 4, func(shardIndex int, skl *skl.Skiplist) error {
-				return nil
-			})
+			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024*1024, 16, 4)
 			Expect(err).ToNot(HaveOccurred())
+			buffer.Register("test", emptyFn)
 		})
 
 		AfterEach(func() {
@@ -122,11 +125,12 @@ var _ = Describe("Buffer", func() {
 			}
 
 			var err error
-			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024, 16, numShards, onFlushFn)
+			buffer, err = tsdb.NewBuffer(log, common.Position{}, 1024, 16, numShards)
 			defer func() {
 				_ = buffer.Close()
 			}()
 			Expect(err).ToNot(HaveOccurred())
+			buffer.Register("test", onFlushFn)
 
 			randInt := func() int {
 				n, err := rand.Int(rand.Reader, big.NewInt(1000))
@@ -181,26 +185,24 @@ var _ = Describe("Buffer", func() {
 				flushSize,
 				writeConcurrency,
 				numShards,
-				func(shardIndex int, skl *skl.Skiplist) error {
-					flushMutex.Lock()
-					defer flushMutex.Unlock()
-
-					shardWalDir := filepath.Join(path, "buffer-"+strconv.Itoa(shardIndex))
-					var shardWalList []os.DirEntry
-					shardWalList, err = os.ReadDir(shardWalDir)
-					Expect(err).ToNot(HaveOccurred())
-					for _, shardWalFile := range shardWalList {
-						Expect(shardWalFile.IsDir()).To(BeFalse())
-						Expect(shardWalFile.Name()).To(HaveSuffix(".wal"))
-						shardWalFileHistory[shardIndex] = append(shardWalFileHistory[shardIndex], shardWalFile.Name())
-					}
-					return nil
-				},
 				true,
-				&path)
+				path)
 			Expect(err).ToNot(HaveOccurred())
-			defer buffer.Close()
+			buffer.Register("test", func(shardIndex int, skl *skl.Skiplist) error {
+				flushMutex.Lock()
+				defer flushMutex.Unlock()
 
+				shardWalDir := filepath.Join(path, "buffer-"+strconv.Itoa(shardIndex))
+				var shardWalList []os.DirEntry
+				shardWalList, err = os.ReadDir(shardWalDir)
+				Expect(err).ToNot(HaveOccurred())
+				for _, shardWalFile := range shardWalList {
+					Expect(shardWalFile.IsDir()).To(BeFalse())
+					Expect(shardWalFile.Name()).To(HaveSuffix(".wal"))
+					shardWalFileHistory[shardIndex] = append(shardWalFileHistory[shardIndex], shardWalFile.Name())
+				}
+				return nil
+			})
 			// Write buffer & wal
 			var wg sync.WaitGroup
 			wg.Add(writeConcurrency)
@@ -218,9 +220,7 @@ var _ = Describe("Buffer", func() {
 				}(i)
 			}
 			wg.Wait()
-
-			flushMutex.Lock()
-			defer flushMutex.Unlock()
+			buffer.Close()
 
 			// Check wal
 			Expect(len(shardWalFileHistory) == numShards).To(BeTrue())
@@ -248,18 +248,18 @@ var _ = Describe("Buffer", func() {
 				flushSize,
 				writeConcurrency,
 				numShards,
-				func(shardIndex int, skl *skl.Skiplist) error {
-					flushMutex.Lock()
-					defer flushMutex.Unlock()
-
-					if !bufferFlushed {
-						bufferFlushed = true
-					}
-					return nil
-				},
 				true,
-				&path)
+				path)
 			Expect(err).ToNot(HaveOccurred())
+			buffer.Register("test", func(shardIndex int, skl *skl.Skiplist) error {
+				flushMutex.Lock()
+				defer flushMutex.Unlock()
+
+				if !bufferFlushed {
+					bufferFlushed = true
+				}
+				return nil
+			})
 
 			// Write buffer & wal
 			for i := 0; i < numShards; i++ {
@@ -281,13 +281,11 @@ var _ = Describe("Buffer", func() {
 				flushSize,
 				writeConcurrency,
 				numShards,
-				func(shardIndex int, skl *skl.Skiplist) error {
-					return nil
-				},
 				true,
-				&path)
+				path)
 			Expect(err).ToNot(HaveOccurred())
 			defer buffer.Close()
+			buffer.Register("test", emptyFn)
 
 			// Check buffer was recovered from wal
 			for i := 0; i < numShards; i++ {
@@ -298,6 +296,72 @@ var _ = Describe("Buffer", func() {
 				Expect(exist).To(BeTrue())
 				Expect(bytes.Equal(expectValue, value)).To(BeTrue())
 			}
+		})
+	})
+})
+
+var _ = Describe("bufferSupplier", func() {
+	var (
+		b     *tsdb.BufferSupplier
+		goods []gleak.Goroutine
+	)
+
+	BeforeEach(func() {
+		goods = gleak.Goroutines()
+		b = tsdb.NewBufferSupplier(logger.GetLogger("buffer-supplier-test"), common.Position{}, 16, 4, false, "")
+	})
+	AfterEach(func() {
+		b.Close()
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	})
+
+	Describe("Borrow", func() {
+		Context("when borrowing a buffer with a new name", func() {
+			It("should return a new buffer instance", func() {
+				buf, err := b.Borrow("buffer", "test", 1024*1024, emptyFn)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(buf).ToNot(BeNil())
+				Expect(b.Volume()).To(Equal(1))
+				b.Return("buffer", "test")
+				Expect(b.Volume()).To(Equal(0))
+			})
+		})
+
+		Context("when borrowing a buffer with an existing name", func() {
+			It("should return the same buffer instance", func() {
+				buf1, err := b.Borrow("buffer", "test", 1024*1024, emptyFn)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(buf1).ToNot(BeNil())
+				Expect(b.Volume()).To(Equal(1))
+
+				buf2, err := b.Borrow("buffer", "test", 1024*1024, emptyFn)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(buf2).ToNot(BeNil())
+				Expect(b.Volume()).To(Equal(1))
+
+				Expect(buf2).To(Equal(buf1))
+				b.Return("buffer", "test")
+				Expect(b.Volume()).To(Equal(0))
+			})
+		})
+
+		Context("when borrowing a buffer from different buffer pools", func() {
+			It("should return different buffer instances", func() {
+				buf1, err := b.Borrow("buffer1", "test", 1024*1024, emptyFn)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(buf1).ToNot(BeNil())
+				Expect(b.Volume()).To(Equal(1))
+
+				buf2, err := b.Borrow("buffer2", "test", 1024*1024, emptyFn)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(buf2).ToNot(BeNil())
+				Expect(b.Volume()).To(Equal(2))
+
+				Expect(buf2).ToNot(Equal(buf1))
+				b.Return("buffer1", "test")
+				b.Return("buffer2", "test")
+				Expect(b.Volume()).To(Equal(0))
+			})
 		})
 	})
 })

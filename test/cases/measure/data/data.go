@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -105,7 +106,7 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 		dataPointValue := &measurev1.DataPointValue{}
 		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
 		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(-time.Duration(len(templates)-i-1) * interval))
-		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue})).
+		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue, MessageId: uint64(time.Now().UnixNano())})).
 			Should(gm.Succeed())
 	}
 }
@@ -114,14 +115,21 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration,
 ) {
+	metadata := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schema := databasev1.NewMeasureRegistryServiceClient(conn)
+	resp, err := schema.Get(context.Background(), &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	metadata = resp.GetMeasure().GetMetadata()
+
 	c := measurev1.NewMeasureServiceClient(conn)
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(&commonv1.Metadata{
-		Name:  name,
-		Group: group,
-	}, writeClient, dataFile, baseTime, interval)
+	loadData(metadata, writeClient, dataFile, baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()

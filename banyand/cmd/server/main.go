@@ -22,11 +22,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
+	"github.com/apache/skywalking-banyandb/pkg/signal"
 )
 
 func main() {
-	if err := cmd.NewRoot().Execute(); err != nil {
+	if err := cmdsetup.NewRoot(new(signal.Handler)).Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

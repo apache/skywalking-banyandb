@@ -55,6 +55,7 @@ const data = reactive({
     form: {
         group: route.params.group,
         name: route.params.group,
+        modRevision: route.params.modRevision,
         interval: 1,
         intervalUnit: 'ns'
     }
@@ -98,6 +99,7 @@ const options = [
 watch(() => route, () => {
     data.form.group = route.params.group
     data.form.name = route.params.name
+    data.form.modRevision = route.params.modRevision
     data.type = route.params.type + ''
     data.operator = route.params.operator
     initData()
@@ -149,7 +151,8 @@ const submit = async (formEl: FormInstance | undefined) => {
             const form = {
                 metadata: {
                     group: data.form.group,
-                    name: data.form.name
+                    name: data.form.name,
+                    modRevision: data.form.modRevision
                 },
                 tagFamilies: tagFamilies,
                 entity: {
@@ -262,6 +265,7 @@ function initData() {
                         data.form.intervalUnit = intervalUnit
                         fieldEditorRef.value.setFields(fields)
                     }
+                    data.form.modRevision = res.data[data.type + ''].metadata.modRevision
                 }
             })
             .finally(() => {
@@ -321,9 +325,7 @@ function initData() {
 </template>
 
 <style lang="scss" scoped>
-::v-deep {
-    .el-card {
-        margin: 15px;
-    }
+:deep(.el-card) {
+    margin: 15px;
 }
 </style>

@@ -18,8 +18,9 @@
 package queue
 
 import (
-	"context"
+	"io"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -28,16 +29,31 @@ import (
 //
 //go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
 type Queue interface {
-	run.Unit
-	bus.Subscriber
-	bus.Publisher
+	Client
+	Server
 	run.Service
 }
 
-// NewQueue return a new Queue.
-func NewQueue(_ context.Context) (Queue, error) {
-	return &local{
-		local:  bus.NewBus(),
-		stopCh: make(chan struct{}),
-	}, nil
+// Client is the interface for publishing data to the queue.
+//
+//go:generate mockgen -destination=./pipeline_mock.go -package=queue . Client
+type Client interface {
+	run.Unit
+	bus.Publisher
+	bus.Broadcaster
+	NewBatchPublisher() BatchPublisher
+	Register(schema.EventHandler)
+}
+
+// Server is the interface for receiving data from the queue.
+type Server interface {
+	run.Unit
+	bus.Subscriber
+	GetPort() *uint32
+}
+
+// BatchPublisher is the interface for publishing data in batch.
+type BatchPublisher interface {
+	bus.Publisher
+	io.Closer
 }

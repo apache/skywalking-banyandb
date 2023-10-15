@@ -21,7 +21,6 @@ import (
 	"context"
 	"hash/crc32"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -45,9 +44,7 @@ func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListO
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), func() proto.Message {
-		return &databasev1.IndexRuleBinding{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), KindIndexRuleBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +59,7 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 	if indexRuleBinding.UpdatedAt != nil {
 		indexRuleBinding.UpdatedAt = timestamppb.Now()
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
@@ -70,10 +67,11 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 		},
 		Spec: indexRuleBinding,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
@@ -81,6 +79,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 		},
 		Spec: indexRuleBinding,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
@@ -108,9 +107,7 @@ func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), func() proto.Message {
-		return &databasev1.IndexRule{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), KindIndexRule)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +131,7 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 		buf = append(buf, indexRule.Metadata.Name...)
 		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
@@ -142,6 +139,7 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 		},
 		Spec: indexRule,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
@@ -152,7 +150,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 		}
 		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
 	}
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
@@ -160,6 +158,7 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 		},
 		Spec: indexRule,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

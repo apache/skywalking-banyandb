@@ -32,30 +32,11 @@ import (
 
 var errUnsupportedEntityType = errors.New("unsupported entity type")
 
-// Kind is the type of a resource.
-type Kind int
-
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
 	OnAddOrUpdate(Metadata)
 	OnDelete(Metadata)
 }
-
-// KindMask tends to check whether an event is valid.
-const (
-	KindGroup Kind = 1 << iota
-	KindStream
-	KindMeasure
-	KindIndexRuleBinding
-	KindIndexRule
-	KindTopNAggregation
-	KindProperty
-	KindNode
-	KindShard
-	KindMask = KindGroup | KindStream | KindMeasure |
-		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode | KindShard
-)
 
 // ListOpt contains options to list resources.
 type ListOpt struct {
@@ -73,15 +54,15 @@ type Registry interface {
 	TopNAggregation
 	Property
 	Node
-	Shard
-	RegisterHandler(Kind, EventHandler)
+	RegisterHandler(string, Kind, EventHandler)
 }
 
 // TypeMeta defines the identity and type of an Event.
 type TypeMeta struct {
-	Name  string
-	Group string
-	Kind  Kind
+	Name        string
+	Group       string
+	ModRevision int64
+	Kind        Kind
 }
 
 // Metadata wrap dedicated serialized resource and its TypeMeta.
@@ -92,34 +73,6 @@ type Metadata struct {
 
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
-
-// Unmarshal encode bytes to proto.Message.
-func (tm TypeMeta) Unmarshal(data []byte) (m proto.Message, err error) {
-	switch tm.Kind {
-	case KindGroup:
-		m = &commonv1.Group{}
-	case KindStream:
-		m = &databasev1.Stream{}
-	case KindMeasure:
-		m = &databasev1.Measure{}
-	case KindIndexRuleBinding:
-		m = &databasev1.IndexRuleBinding{}
-	case KindIndexRule:
-		m = &databasev1.IndexRule{}
-	case KindProperty:
-		m = &propertyv1.Property{}
-	case KindTopNAggregation:
-		m = &databasev1.TopNAggregation{}
-	case KindNode:
-		m = &databasev1.Node{}
-	case KindShard:
-		m = &databasev1.Shard{}
-	default:
-		return nil, errUnsupportedEntityType
-	}
-	err = proto.Unmarshal(data, m)
-	return
-}
 
 func (m Metadata) key() (string, error) {
 	switch m.Kind {
@@ -157,23 +110,18 @@ func (m Metadata) key() (string, error) {
 		}), nil
 	case KindNode:
 		return formatNodeKey(m.Name), nil
-	case KindShard:
-		return formatShardKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
 }
 
-func (m Metadata) equal(other proto.Message) bool {
-	if other == nil {
+func (m Metadata) equal(other Metadata) bool {
+	if other.Spec == nil {
 		return false
 	}
 
 	if checker, ok := checkerMap[m.Kind]; ok {
-		return checker(m.Spec.(proto.Message), other)
+		return checker(m.Spec.(proto.Message), other.Spec.(proto.Message))
 	}
 
 	return false
@@ -183,8 +131,8 @@ func (m Metadata) equal(other proto.Message) bool {
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
-	CreateStream(ctx context.Context, stream *databasev1.Stream) error
-	UpdateStream(ctx context.Context, stream *databasev1.Stream) error
+	CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
+	UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
 	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
@@ -210,8 +158,8 @@ type IndexRuleBinding interface {
 type Measure interface {
 	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
-	CreateMeasure(ctx context.Context, measure *databasev1.Measure) error
-	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error
+	CreateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
+	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }
@@ -239,18 +187,13 @@ type TopNAggregation interface {
 type Property interface {
 	GetProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (*propertyv1.Property, error)
 	ListProperty(ctx context.Context, container *commonv1.Metadata, ids []string, tags []string) ([]*propertyv1.Property, error)
-	ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, error)
+	ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, int64, error)
 	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
+	KeepAlive(ctx context.Context, leaseID int64) error
 }
 
 // Node allows CRUD node schemas in a group.
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node) error
-}
-
-// Shard allows CRUD shard schemas in a group.
-type Shard interface {
-	CreateOrUpdateShard(ctx context.Context, shard *databasev1.Shard) error
-	ListShard(ctx context.Context, opt ListOpt) ([]*databasev1.Shard, error)
 }

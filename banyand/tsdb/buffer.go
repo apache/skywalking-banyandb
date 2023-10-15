@@ -89,7 +89,7 @@ type bufferShardBucket struct {
 
 // Buffer is an exported struct that represents a buffer composed of multiple shard buckets.
 type Buffer struct {
-	onFlushFn      onFlush
+	onFlushFn      sync.Map
 	entryCloser    *run.Closer
 	log            *logger.Logger
 	buckets        []bufferShardBucket
@@ -101,18 +101,17 @@ type Buffer struct {
 }
 
 // NewBuffer creates a new Buffer instance with the given parameters.
-func NewBuffer(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int, onFlushFn onFlush) (*Buffer, error) {
-	return NewBufferWithWal(log, position, flushSize, writeConcurrency, numShards, onFlushFn, false, nil)
+func NewBuffer(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int) (*Buffer, error) {
+	return NewBufferWithWal(log, position, flushSize, writeConcurrency, numShards, false, "")
 }
 
 // NewBufferWithWal creates a new Buffer instance with the given parameters.
-func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int, onFlushFn onFlush, enableWal bool, walPath *string,
+func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, writeConcurrency, numShards int, enableWal bool, walPath string,
 ) (*Buffer, error) {
 	buckets := make([]bufferShardBucket, numShards)
 	buffer := &Buffer{
 		buckets:     buckets,
 		numShards:   numShards,
-		onFlushFn:   onFlushFn,
 		entryCloser: run.NewCloser(1),
 		log:         log.Named("buffer"),
 		enableWal:   enableWal,
@@ -133,12 +132,12 @@ func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, w
 			shardLabelValues: position.ShardLabelValues(),
 			enableWal:        enableWal,
 		}
-		buckets[i].start(onFlushFn)
+		buckets[i].start(buffer.flushers)
 		if enableWal {
-			if walPath == nil {
+			if walPath == "" {
 				return nil, errors.New("wal path is required")
 			}
-			shardWalPath := fmt.Sprintf("%s/buffer-%d", *walPath, i)
+			shardWalPath := fmt.Sprintf("%s/buffer-%d", walPath, i)
 			if err := buckets[i].startWal(shardWalPath, defaultWalSyncMode); err != nil {
 				return nil, errors.Wrap(err, "failed to start wal")
 			}
@@ -146,6 +145,29 @@ func NewBufferWithWal(log *logger.Logger, position common.Position, flushSize, w
 		maxBytes.Set(float64(flushSize), buckets[i].labelValues...)
 	}
 	return buffer, nil
+}
+
+// Register registers a callback function that will be called when a shard bucket is flushed.
+func (b *Buffer) Register(id string, onFlushFn onFlush) {
+	b.onFlushFn.LoadOrStore(id, onFlushFn)
+}
+
+// Unregister unregisters a callback function that will be called when a shard bucket is flushed.
+func (b *Buffer) Unregister(id string) {
+	b.onFlushFn.Delete(id)
+}
+
+func (b *Buffer) flushers() []onFlush {
+	var flushers []onFlush
+	b.onFlushFn.Range(func(key, value interface{}) bool {
+		flushers = append(flushers, value.(onFlush))
+		return true
+	})
+	return flushers
+}
+
+func (b *Buffer) isEmpty() bool {
+	return len(b.flushers()) == 0
 }
 
 // Write adds a key-value pair with a timestamp to the appropriate shard bucket in the buffer.
@@ -206,8 +228,11 @@ func (b *Buffer) Close() error {
 		}
 		b.writeWaitGroup.Wait()
 		for i := 0; i < b.numShards; i++ {
-			if err := b.onFlushFn(i, b.buckets[i].mutable); err != nil {
-				b.buckets[i].log.Err(err).Msg("flushing mutable buffer failed")
+			ff := b.flushers()
+			for _, fn := range ff {
+				if err := fn(i, b.buckets[i].mutable); err != nil {
+					b.buckets[i].log.Err(err).Msg("flushing mutable buffer failed")
+				}
 			}
 			b.buckets[i].mutable.DecrRef()
 		}
@@ -246,7 +271,7 @@ func (bsb *bufferShardBucket) getAll() ([]*skl.Skiplist, func()) {
 	}
 }
 
-func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
+func (bsb *bufferShardBucket) start(flushers func() []onFlush) {
 	go func() {
 		defer func() {
 			for _, g := range []meter.Gauge{maxBytes, mutableBytes} {
@@ -259,12 +284,21 @@ func (bsb *bufferShardBucket) start(onFlushFn onFlush) {
 			memSize := oldSkipList.MemSize()
 			onFlushFnDone := false
 			t1 := time.Now()
+			ff := flushers()
 			for {
 				if !onFlushFnDone {
-					if err := onFlushFn(bsb.index, oldSkipList); err != nil {
-						bsb.log.Err(err).Msg("flushing immutable buffer failed. Retrying...")
+					failedFns := make([]onFlush, 0)
+					for i := 0; i < len(ff); i++ {
+						fn := ff[i]
+						if err := fn(bsb.index, oldSkipList); err != nil {
+							bsb.log.Err(err).Msg("flushing immutable buffer failed. Retrying...")
+							failedFns = append(failedFns, fn)
+						}
+					}
+					if len(failedFns) > 0 {
 						flushNum.Inc(1, append(bsb.labelValues[:2], "true")...)
 						time.Sleep(time.Second)
+						ff = failedFns
 						continue
 					}
 					onFlushFnDone = true
@@ -385,13 +419,13 @@ func (bsb *bufferShardBucket) recoveryWal() error {
 
 func (bsb *bufferShardBucket) recoveryWorkSegment(segment wal.Segment) {
 	var wg sync.WaitGroup
-	wg.Add(len(segment.GetLogEntries()))
 	for _, logEntry := range segment.GetLogEntries() {
 		timestamps := logEntry.GetTimestamps()
 		values := logEntry.GetValues()
 		elementIndex := 0
 		for element := values.Front(); element != nil; element = element.Next() {
 			timestamp := timestamps[elementIndex]
+			wg.Add(1)
 			bsb.writeCh <- operation{
 				key:   logEntry.GetSeriesID(),
 				value: element.Value.([]byte),
@@ -444,4 +478,88 @@ func (bsb *bufferShardBucket) writeWal(key, value []byte, timestamp time.Time) e
 	bsb.wal.Write(key, timestamp, value, walCallback)
 	wg.Wait()
 	return walErr
+}
+
+// BufferSupplier lends a Buffer to a caller and returns it when the caller is done with it.
+type BufferSupplier struct {
+	l                *logger.Logger
+	p                common.Position
+	buffers          sync.Map
+	path             string
+	writeConcurrency int
+	numShards        int
+	enableWAL        bool
+}
+
+// NewBufferSupplier creates a new BufferSupplier instance with the given parameters.
+func NewBufferSupplier(l *logger.Logger, p common.Position, writeConcurrency, numShards int, enableWAL bool, path string) *BufferSupplier {
+	return &BufferSupplier{
+		l:                l.Named("buffer-supplier"),
+		p:                p,
+		writeConcurrency: writeConcurrency,
+		numShards:        numShards,
+		enableWAL:        enableWAL,
+		path:             path,
+	}
+}
+
+// Borrow borrows a Buffer from the BufferSupplier.
+func (b *BufferSupplier) Borrow(bufferName, name string, bufferSize int, onFlushFn onFlush) (buffer *Buffer, err error) {
+	if bufferName == "" || name == "" {
+		return nil, errors.New("bufferName and name are required")
+	}
+	if onFlushFn == nil {
+		return nil, errors.New("onFlushFn is required")
+	}
+	defer func() {
+		if buffer != nil {
+			buffer.Register(name, onFlushFn)
+		}
+	}()
+	if v, ok := b.buffers.Load(bufferName); ok {
+		buffer = v.(*Buffer)
+		return v.(*Buffer), nil
+	}
+	if buffer, err = NewBufferWithWal(b.l.Named("buffer-"+bufferName), b.p,
+		bufferSize, b.writeConcurrency, b.numShards, b.enableWAL, b.path); err != nil {
+		return nil, err
+	}
+	if v, ok := b.buffers.LoadOrStore(bufferName, buffer); ok {
+		_ = buffer.Close()
+		buffer = v.(*Buffer)
+		return buffer, nil
+	}
+	return buffer, nil
+}
+
+// Return returns a Buffer to the BufferSupplier.
+func (b *BufferSupplier) Return(bufferName, name string) {
+	if v, ok := b.buffers.Load(bufferName); ok {
+		buffer := v.(*Buffer)
+		buffer.Unregister(name)
+		if buffer.isEmpty() {
+			b.buffers.Delete(bufferName)
+			_ = buffer.Close()
+		}
+	}
+}
+
+// Volume returns the number of Buffers in the BufferSupplier.
+func (b *BufferSupplier) Volume() int {
+	volume := 0
+	b.buffers.Range(func(key, value interface{}) bool {
+		volume++
+		return true
+	})
+	return volume
+}
+
+// Close closes all Buffers in the BufferSupplier.
+func (b *BufferSupplier) Close() error {
+	b.buffers.Range(func(key, value interface{}) bool {
+		buffer := value.(*Buffer)
+		_ = buffer.Close()
+		return true
+	})
+	return nil
 }

@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -46,9 +45,7 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, measureKeyPrefix), func() proto.Message {
-		return &databasev1.Measure{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, measureKeyPrefix), KindMeasure)
 	if err != nil {
 		return nil, err
 	}
@@ -59,13 +56,13 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error) {
 	if measure.UpdatedAt != nil {
 		measure.UpdatedAt = timestamppb.Now()
 	}
 	if measure.GetInterval() != "" {
 		if _, err := timestamp.ParseDuration(measure.GetInterval()); err != nil {
-			return errors.Wrap(err, "interval is malformed")
+			return 0, errors.Wrap(err, "interval is malformed")
 		}
 	}
 	return e.create(ctx, Metadata{
@@ -78,17 +75,18 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 	})
 }
 
-func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) error {
+func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error) {
 	if measure.GetInterval() != "" {
 		if _, err := timestamp.ParseDuration(measure.GetInterval()); err != nil {
-			return errors.Wrap(err, "interval is malformed")
+			return 0, errors.Wrap(err, "interval is malformed")
 		}
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
-			Kind:  KindMeasure,
-			Group: measure.GetMetadata().GetGroup(),
-			Name:  measure.GetMetadata().GetName(),
+			Kind:        KindMeasure,
+			Group:       measure.GetMetadata().GetGroup(),
+			Name:        measure.GetMetadata().GetName(),
+			ModRevision: measure.GetMetadata().GetModRevision(),
 		},
 		Spec: measure,
 	})

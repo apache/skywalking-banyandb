@@ -66,8 +66,7 @@ func setUp() (*services, func()) {
 	ctrl := gomock.NewController(GinkgoT())
 	Expect(ctrl).ShouldNot(BeNil())
 	// Init Pipeline
-	pipeline, err := queue.NewQueue(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
+	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())

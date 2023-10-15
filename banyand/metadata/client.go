@@ -33,7 +33,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const flagEtcdEndpointsName = "etcd-endpoints"
+const (
+	// DefaultNamespace is the default namespace of the metadata stored in etcd.
+	DefaultNamespace      = "banyandb"
+	flagEtcdEndpointsName = "etcd-endpoints"
+)
 
 // NewClient returns a new metadata client.
 func NewClient(_ context.Context) (Service, error) {
@@ -41,8 +45,8 @@ func NewClient(_ context.Context) (Service, error) {
 }
 
 type clientService struct {
+	namespace      string
 	schemaRegistry schema.Registry
-	alc            *allocator
 	closer         *run.Closer
 	endpoints      []string
 }
@@ -53,6 +57,7 @@ func (s *clientService) SchemaRegistry() schema.Registry {
 
 func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
+	fs.StringVar(&s.namespace, "namespace", DefaultNamespace, "The namespace of the metadata stored in etcd")
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
 	return fs
 }
@@ -66,7 +71,10 @@ func (s *clientService) Validate() error {
 
 func (s *clientService) PreRun(ctx context.Context) error {
 	var err error
-	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(schema.ConfigureServerEndpoints(s.endpoints))
+	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
+		schema.Namespace(s.namespace),
+		schema.ConfigureServerEndpoints(s.endpoints),
+	)
 	if err != nil {
 		return err
 	}
@@ -80,20 +88,29 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		return errors.New("node roles is empty")
 	}
 	nodeRoles := val.([]databasev1.Role)
-	ctxRegister, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	if err = s.schemaRegistry.RegisterNode(ctxRegister, &databasev1.Node{
-		Name:        node.NodeID,
+	l := logger.GetLogger(s.Name())
+	nodeInfo := &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: node.NodeID,
+		},
 		GrpcAddress: node.GrpcAddress,
 		HttpAddress: node.HTTPAddress,
 		Roles:       nodeRoles,
 		CreatedAt:   timestamppb.Now(),
-	}); err != nil {
+	}
+	for {
+		ctxRegister, cancel := context.WithTimeout(ctx, time.Second*10)
+		err = s.schemaRegistry.RegisterNode(ctxRegister, nodeInfo)
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("register node timeout, retrying...")
+			continue
+		}
+		if err == nil {
+			l.Info().Stringer("info", nodeInfo).Msg("register node successfully")
+		}
 		return err
 	}
-	s.alc = newAllocator(s.schemaRegistry, logger.GetLogger(s.Name()).Named("allocator"))
-	s.schemaRegistry.RegisterHandler(schema.KindGroup|schema.KindNode, s.alc)
-	return nil
 }
 
 func (s *clientService) Serve() run.StopNotify {
@@ -106,8 +123,8 @@ func (s *clientService) GracefulStop() {
 	_ = s.schemaRegistry.Close()
 }
 
-func (s *clientService) RegisterHandler(kind schema.Kind, handler schema.EventHandler) {
-	s.schemaRegistry.RegisterHandler(kind, handler)
+func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
+	s.schemaRegistry.RegisterHandler(name, kind, handler)
 }
 
 func (s *clientService) StreamRegistry() schema.Stream {
@@ -135,10 +152,6 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
-	return s.schemaRegistry
-}
-
-func (s *clientService) ShardRegistry() schema.Shard {
 	return s.schemaRegistry
 }
 

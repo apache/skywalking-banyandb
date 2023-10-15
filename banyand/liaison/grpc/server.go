@@ -57,23 +57,6 @@ var (
 	errAccessLogRootPath = errors.New("access log root path is required")
 )
 
-// // Licensed to Apache Software Foundation (ASF) under one or more contributor
-// license agreements. See the NOTICE file distributed with
-// this work for additional information regarding copyright
-// ownership. Apache Software Foundation (ASF) licenses this file to you under
-// the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
 // Server defines the gRPC server.
 type Server interface {
 	run.Unit
@@ -81,8 +64,7 @@ type Server interface {
 }
 
 type server struct {
-	pipeline queue.Queue
-	creds    credentials.TransportCredentials
+	creds credentials.TransportCredentials
 	*streamRegistryServer
 	log *logger.Logger
 	*indexRuleBindingRegistryServer
@@ -108,15 +90,18 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.Repo) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindStream, schemaRegistry),
+		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(pipeline, schema.KindMeasure, schemaRegistry),
+		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nodeRegistry),
+		pipeline:         pipeline,
+		broadcaster:      broadcaster,
 	}
 	s := &server{
-		pipeline:   pipeline,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -145,7 +130,7 @@ func NewServer(_ context.Context, pipeline queue.Queue, schemaRegistry metadata.
 	return s
 }
 
-func (s *server) PreRun(ctx context.Context) error {
+func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
@@ -155,7 +140,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	}
 	for _, c := range components {
 		c.SetLogger(s.log)
-		if err := c.initialize(ctx); err != nil {
+		if err := c.initialize(); err != nil {
 			return err
 		}
 	}

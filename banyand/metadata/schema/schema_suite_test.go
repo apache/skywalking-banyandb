@@ -21,20 +21,10 @@ import (
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/onsi/gomega"
 )
 
 func TestSchema(t *testing.T) {
-	RegisterFailHandler(ginkgo.Fail)
+	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Schema Suite")
 }
-
-var _ = ginkgo.BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: flags.LogLevel,
-	})).To(Succeed())
-})

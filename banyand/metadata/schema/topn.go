@@ -20,7 +20,6 @@ package schema
 import (
 	"context"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -41,9 +40,7 @@ func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOp
 	if opt.Group == "" {
 		return nil, BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, topNAggregationKeyPrefix), func() proto.Message {
-		return &databasev1.TopNAggregation{}
-	})
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, topNAggregationKeyPrefix), KindTopNAggregation)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +55,7 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 	if topNAggregation.UpdatedAt != nil {
 		topNAggregation.UpdatedAt = timestamppb.Now()
 	}
-	return e.create(ctx, Metadata{
+	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
@@ -66,10 +63,11 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 		},
 		Spec: topNAggregation,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
-	return e.update(ctx, Metadata{
+	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
@@ -77,6 +75,7 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 		},
 		Spec: topNAggregation,
 	})
+	return err
 }
 
 func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

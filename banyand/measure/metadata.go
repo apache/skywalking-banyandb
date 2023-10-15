@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"time"
 
@@ -41,6 +42,11 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+// SchemaService allows querying schema information.
+type SchemaService interface {
+	Query
+	Close()
+}
 type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
@@ -50,7 +56,7 @@ type schemaRepo struct {
 func newSchemaRepo(path string, metadata metadata.Repo,
 	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
 ) schemaRepo {
-	return schemaRepo{
+	sr := schemaRepo{
 		l:        l,
 		metadata: metadata,
 		Repository: resourceSchema.NewRepository(
@@ -59,6 +65,38 @@ func newSchemaRepo(path string, metadata metadata.Repo,
 			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
 		),
 	}
+	sr.start()
+	return sr
+}
+
+// NewPortableRepository creates a new portable repository.
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
+	r := &schemaRepo{
+		l:        l,
+		metadata: metadata,
+		Repository: resourceSchema.NewPortableRepository(
+			metadata,
+			l,
+			newPortableSupplier(metadata, l),
+		),
+	}
+	r.start()
+	return r
+}
+
+func (sr *schemaRepo) start() {
+	sr.Watcher()
+	sr.metadata.
+		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			sr)
+}
+
+func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
+	sm, ok := sr.loadMeasure(metadata)
+	if !ok {
+		return nil, errors.WithStack(ErrMeasureNotExist)
+	}
+	return sm, nil
 }
 
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
@@ -93,7 +131,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 			cancel()
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -107,7 +144,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		defer cancel()
 		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to get subjects(measure)")
 			return
 		}
 		for _, sub := range subjects {
@@ -121,7 +157,6 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		// createOrUpdate TopN schemas in advance
 		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to create/update topN measure")
 			return
 		}
 		// reload source measure
@@ -184,7 +219,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
 	}
 	if oldTopNSchema == nil {
-		if innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
+		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
 			return nil, innerErr
 		}
 		return newTopNMeasure, nil
@@ -198,7 +233,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		return oldTopNSchema, nil
 	}
 	// update
-	if err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
+	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
 		return nil, err
 	}
 	return newTopNMeasure, nil
@@ -231,7 +266,6 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 				Group: metadata.Group,
 			})
 			if err != nil {
-				sr.l.Error().Err(err).Msg("fail to get subject")
 				return
 			}
 			// we should update instead of delete
@@ -245,7 +279,6 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	case schema.KindTopNAggregation:
 		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
 		if err != nil {
-			sr.l.Error().Err(err).Msg("fail to remove topN measure")
 			return
 		}
 		// we should update instead of delete
@@ -268,7 +301,7 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 	if !ok {
 		return nil, false
 	}
-	s, ok := r.(*measure)
+	s, ok := r.Delegated().(*measure)
 	return s, ok
 }
 
@@ -297,12 +330,12 @@ func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, 
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.ResourceSpec) (resourceSchema.Resource, error) {
-	measureSchema := spec.Schema.(*databasev1.Measure)
+func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(shardNum, db, measureSpec{
 		schema:           measureSchema,
-		indexRules:       spec.IndexRules,
-		topNAggregations: spec.Aggregations,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
 	}, s.l, s.pipeline)
 }
 
@@ -353,4 +386,35 @@ func intervalFn(key []byte) time.Duration {
 		panic(err)
 	}
 	return interval
+}
+
+type portableSupplier struct {
+	metadata metadata.Repo
+	l        *logger.Logger
+}
+
+func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
+	return &portableSupplier{
+		metadata: metadata,
+		l:        l,
+	}
+}
+
+func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
+}
+
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (tsdb.Database, error) {
+	panic("do not support open db")
+}
+
+func (s *portableSupplier) OpenResource(shardNum uint32, _ tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
+	return openMeasure(shardNum, nil, measureSpec{
+		schema:           measureSchema,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
+	}, s.l, nil)
 }

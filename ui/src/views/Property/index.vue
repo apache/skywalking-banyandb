@@ -18,13 +18,49 @@
 -->
 
 <script setup>
+import Aside from '@/components/Aside/index.vue'
+import TopNav from '@/components/TopNav/index.vue'
+import { reactive } from 'vue';
+
+const data = reactive({
+  width: '200px'
+})
+
+function setWidth(width) {
+  data.width = width
+}
 </script>
 
 <template>
-    <div class="about">
-    <h1>This is the property page</h1>
+  <div class="size">
+    <el-container>
+      <el-aside :width="data.width" class="bd-top flex" style="position:relative; background-color: white;">
+        <Aside type="property" @setWidth="setWidth"></Aside>
+      </el-aside>
+      <el-main>
+        <TopNav></TopNav>
+        <RouterView></RouterView>
+      </el-main>
+    </el-container>
   </div>
 </template>
 
 <style lang="scss" scoped>
+.el-container {
+  height: 100%;
+  padding: 0;
+  margin: 0;
+
+  .el-header {
+    background-color: #ffffff;
+    padding: 0;
+    margin: 0;
+  }
+
+  .el-main {
+    background-color: #eaedf1;
+    padding: 0;
+    margin: 0;
+  }
+}
 </style>

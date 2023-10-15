@@ -44,8 +44,7 @@ var _ = Describe("Measure Schema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.Common()
-		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
+		_, addr, deferFunc = setup.EmptyStandalone()
 		addr = "http://" + addr
 		// extracting the operation of creating measure schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -201,8 +200,7 @@ var _ = Describe("Measure Data Query", func() {
 		startStr = now.Add(-20 * time.Minute).Format(time.RFC3339)
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)
-		grpcAddr, addr, deferFunc = setup.Common()
-		Eventually(helpers.HTTPHealthCheck(addr), flags.EventuallyTimeout).Should(Succeed())
+		grpcAddr, addr, deferFunc = setup.Standalone()
 		addr = "http://" + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

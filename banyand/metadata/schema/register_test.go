@@ -25,6 +25,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -41,7 +42,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			Name: "test",
 			Kind: KindNode,
 		},
-		Spec: &databasev1.Node{},
+		Spec: &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: "test",
+			},
+		},
 	}
 	ginkgo.BeforeEach(func() {
 		goods = gleak.Goroutines()
@@ -53,7 +58,10 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			embeddedetcd.RootDir(randomTempDir()))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		schemaRegistry, err := NewEtcdSchemaRegistry(ConfigureServerEndpoints(endpoints))
+		schemaRegistry, err := NewEtcdSchemaRegistry(
+			Namespace("test"),
+			ConfigureServerEndpoints(endpoints),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		r = schemaRegistry.(*etcdSchemaRegistry)
 	})
@@ -69,7 +77,9 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.get(context.Background(), k, &databasev1.Node{})).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
-		schemaRegistry, err := NewEtcdSchemaRegistry(ConfigureServerEndpoints(endpoints))
+		schemaRegistry, err := NewEtcdSchemaRegistry(
+			Namespace("test"),
+			ConfigureServerEndpoints(endpoints))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		r = schemaRegistry.(*etcdSchemaRegistry)
 		gomega.Expect(r.get(context.Background(), k, &databasev1.Node{})).Should(gomega.MatchError(ErrGRPCResourceNotFound))

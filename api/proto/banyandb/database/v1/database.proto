@@ -29,12 +29,11 @@ enum Role {
   ROLE_UNSPECIFIED = 0;
   ROLE_META = 1;
   ROLE_DATA = 2;
-  ROLE_QUERY = 3;
-  ROLE_LIAISON = 4;
+  ROLE_LIAISON = 3;
 }
 
 message Node {
-  string name = 1;
+  common.v1.Metadata metadata = 1;
   repeated Role roles = 2;
   string grpc_address = 3;
   string http_address = 4;
