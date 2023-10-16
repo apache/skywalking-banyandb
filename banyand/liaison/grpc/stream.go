@@ -88,16 +88,18 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
-		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
-		if !existed {
-			s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
-			continue
-		}
-		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
-			s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
-			continue
+		if writeEntity.Metadata.ModRevision > 0 {
+			streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
+			if !existed {
+				s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
+				continue
+			}
+			if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
+				s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
+				continue
+			}
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {

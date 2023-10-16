@@ -24,20 +24,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime/pprof"
 	"testing"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -49,6 +54,41 @@ func TestIstio(t *testing.T) {
 	RunSpecs(t, "Istio Suite", Label("integration", "slow"))
 }
 
+var (
+	cpuProfileFile  *os.File
+	heapProfileFile *os.File
+)
+
+var _ = BeforeSuite(func() {
+	// Create CPU profile file
+	var err error
+	cpuProfileFile, err = os.Create("cpu.prof")
+	Expect(err).NotTo(HaveOccurred())
+
+	// Start CPU profiling
+	err = pprof.StartCPUProfile(cpuProfileFile)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Create heap profile file
+	heapProfileFile, err = os.Create("heap.prof")
+	Expect(err).NotTo(HaveOccurred())
+})
+
+var _ = AfterSuite(func() {
+	// Stop CPU profiling
+	pprof.StopCPUProfile()
+
+	// Write heap profile
+	err := pprof.WriteHeapProfile(heapProfileFile)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Close profile files
+	err = cpuProfileFile.Close()
+	Expect(err).NotTo(HaveOccurred())
+	err = heapProfileFile.Close()
+	Expect(err).NotTo(HaveOccurred())
+})
+
 var _ = Describe("Istio", func() {
 	BeforeEach(func() {
 		Expect(logger.Init(logger.Logging{
@@ -57,20 +97,41 @@ var _ = Describe("Istio", func() {
 		})).To(Succeed())
 	})
 	It("should pass", func() {
-		addr, _, deferFunc := setup.StandaloneWithSchemaLoaders([]setup.SchemaLoader{&preloadService{name: "oap"}}, "", "")
-		DeferCleanup(deferFunc)
+		path, deferFn, err := test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			printDiskUsage(path+"/measure", 5, 0)
+			deferFn()
+		})
+		var ports []int
+		ports, err = test.AllocateFreePorts(4)
+		Expect(err).NotTo(HaveOccurred())
+		addr, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
+			path, ports,
+			[]setup.SchemaLoader{&preloadService{name: "oap"}},
+			"--logging-level", "info")
+		DeferCleanup(closerServerFunc)
 		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
-		conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		bc := &clientCounter{}
+		conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(bc))
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() {
 			conn.Close()
 		})
-		Expect(ReadAndWriteFromFile(extractData(), conn)).To(Succeed())
+		startTime := time.Now()
+		writtenCount, err := ReadAndWriteFromFile(extractData(), conn)
+		Expect(err).To(Succeed())
+		endTime := time.Now()
+
+		fmt.Printf("written %d items in %s\n", writtenCount, endTime.Sub(startTime).String())
+		fmt.Printf("throughput: %f items/s\n", float64(writtenCount)/endTime.Sub(startTime).Seconds())
+		fmt.Printf("throughput(kb/s) %f\n", float64(bc.bytesSent)/endTime.Sub(startTime).Seconds()/1024)
+		fmt.Printf("latency: %s\n", bc.totalLatency/time.Duration(writtenCount))
 	})
 })
 
-func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
+func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) (int, error) {
 	// Open the file for reading
 
 	l := logger.GetLogger("load_test")
@@ -97,16 +158,23 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 	ctx := context.Background()
 	client, err := c.Write(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create write client: %w", err)
+		return 0, fmt.Errorf("failed to create write client: %w", err)
 	}
+	writeCount := 0
 	flush := func(createClient bool) error {
 		if errClose := client.CloseSend(); errClose != nil {
 			return fmt.Errorf("failed to close send: %w", errClose)
 		}
 		bulkSize = 2000
-		_, err = client.Recv()
-		if err != nil && errors.Is(err, io.EOF) {
-			return fmt.Errorf("failed to receive client: %w", err)
+		writeCount += 2000
+		for i := 0; i < 2000; i++ {
+			_, err = client.Recv()
+			if err != nil && !errors.Is(err, io.EOF) {
+				return fmt.Errorf("failed to receive client: %w", err)
+			}
+			if errors.Is(err, io.EOF) {
+				break
+			}
 		}
 		if !createClient {
 			return nil
@@ -140,14 +208,14 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 			}
 			jsonMsg, errRead := reader.ReadString('\n')
 			if errRead != nil && errRead.Error() != "EOF" {
-				return fmt.Errorf("failed to read line from file: %w", errRead)
+				return fmt.Errorf("line %d failed to read line from file: %w", 2000-bulkSize, errRead)
 			}
 			if errRead != nil && errRead.Error() == "EOF" {
 				break
 			}
 			var req measurev1.WriteRequest
 			if errUnmarshal := protojson.Unmarshal([]byte(jsonMsg), &req); errUnmarshal != nil {
-				return fmt.Errorf("failed to unmarshal JSON message: %w", errUnmarshal)
+				return fmt.Errorf("line %d failed to unmarshal JSON message: %w", 2000-bulkSize, errUnmarshal)
 			}
 
 			req.MessageId = uint64(time.Now().UnixNano())
@@ -175,8 +243,68 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) error {
 	}
 	for i := 0; i < 40; i++ {
 		if err = loop(i); err != nil {
-			return err
+			return writeCount, err
 		}
 	}
-	return flush(false)
+	return writeCount, flush(false)
+}
+
+func printDiskUsage(dir string, maxDepth, curDepth int) {
+	// Calculate the total size of all files and directories within the directory
+	var totalSize int64
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+
+	// Print the disk usage of the current directory
+	fmt.Printf("%s: %s\n", dir, humanize.Bytes(uint64(totalSize)))
+
+	// Recursively print the disk usage of subdirectories
+	if curDepth < maxDepth {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+		for _, file := range files {
+			if file.IsDir() {
+				subdir := filepath.Join(dir, file.Name())
+				printDiskUsage(subdir, maxDepth, curDepth+1)
+			}
+		}
+	}
+}
+
+type clientCounter struct {
+	bytesSent    int
+	totalLatency time.Duration
+}
+
+func (*clientCounter) HandleConn(context.Context, stats.ConnStats) {}
+
+func (c *clientCounter) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+func (c *clientCounter) HandleRPC(_ context.Context, s stats.RPCStats) {
+	switch s := s.(type) {
+	case *stats.OutPayload:
+		c.bytesSent += s.WireLength
+	case *stats.End:
+		c.totalLatency += s.EndTime.Sub(s.BeginTime)
+	}
+}
+
+func (c *clientCounter) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
 }
