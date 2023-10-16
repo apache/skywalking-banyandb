@@ -138,13 +138,13 @@ var _ logical.Plan = (*localScan)(nil)
 
 type localScan struct {
 	schema               logical.Schema
-	sort                 modelv1.Sort
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
 	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
 	entity               tsdb.Entity
+	sort                 modelv1.Sort
 }
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
@@ -155,12 +155,11 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 		return nil, err
 	}
 	for _, shard := range shards {
-		sl, errInternal := shard.Series().List(
-			context.WithValue(
-				context.Background(),
-				logger.ContextKey,
-				i.l,
-			), tsdb.NewPath(i.entity))
+		sl, errInternal := shard.Series().List(context.WithValue(
+			ctx,
+			logger.ContextKey,
+			i.l,
+		), tsdb.NewPath(i.entity))
 		if errInternal != nil {
 			return nil, errInternal
 		}
@@ -188,14 +187,14 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 	if len(iters) == 0 {
 		return dummyIter, nil
 	}
-	transformContext := transformContext{
+	tc := transformContext{
 		ec:                   ec,
 		projectionTagsRefs:   i.projectionTagsRefs,
 		projectionFieldsRefs: i.projectionFieldsRefs,
 	}
 	it := logical.NewItemIter(iters, i.sort)
 
-	return newLocalScanIterator(it, transformContext), nil
+	return newLocalScanIterator(it, tc), nil
 }
 
 func (i *localScan) String() string {
