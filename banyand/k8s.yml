@@ -82,7 +82,7 @@ spec:
         args:
         - "standalone"
         - "--measure-idx-batch-wait-sec=30"
-        - "--logging.level=warn"
+        - "--logging-level=info"
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 5

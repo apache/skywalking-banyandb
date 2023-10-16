@@ -89,10 +89,10 @@ func (s *server) GracefulStop() {
 }
 
 // NewService returns a new metadata repository Service.
-func NewService(ctx context.Context) (Service, error) {
+func NewService(_ context.Context) (Service, error) {
 	s := &server{}
 	var err error
-	s.Service, err = NewClient(ctx)
+	s.Service, err = NewClient(true)
 	if err != nil {
 		return nil, err
 	}

@@ -88,16 +88,18 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
-		measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
-		if !existed {
-			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to measure schema not found")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure, ms.sampled)
-			continue
-		}
-		if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
-			ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure, ms.sampled)
-			continue
+		if writeRequest.Metadata.ModRevision > 0 {
+			measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
+			if !existed {
+				ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to measure schema not found")
+				reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure, ms.sampled)
+				continue
+			}
+			if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
+				ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
+				reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure, ms.sampled)
+				continue
+			}
 		}
 		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 		if err != nil {

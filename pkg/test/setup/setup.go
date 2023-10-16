@@ -71,6 +71,32 @@ func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	addr, httpAddr, closeFn := standaloneServer(path, ports, schemaLoaders, certFile, keyFile, flags...)
+	return addr, httpAddr, func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// ClosableStandalone wires standalone modules to build a testing ready runtime.
+func ClosableStandalone(path string, ports []int, flags ...string) (string, string, func()) {
+	return standaloneServer(path, ports, []SchemaLoader{
+		&preloadService{name: "stream"},
+		&preloadService{name: "measure"},
+	}, "", "", flags...)
+}
+
+// ClosableStandaloneWithSchemaLoaders wires standalone modules to build a testing ready runtime.
+func ClosableStandaloneWithSchemaLoaders(path string, ports []int, schemaLoaders []SchemaLoader, flags ...string) (string, string, func()) {
+	return standaloneServer(path, ports, schemaLoaders, "", "", flags...)
+}
+
+// EmptyClosableStandalone wires standalone modules to build a testing ready runtime.
+func EmptyClosableStandalone(path string, ports []int, flags ...string) (string, string, func()) {
+	return standaloneServer(path, ports, nil, "", "", flags...)
+}
+
+func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, func()) {
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
@@ -127,10 +153,7 @@ func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile
 		err = preloadGroup.Run(context.Background())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
-	return addr, httpAddr, func() {
-		closeFn()
-		deferFn()
-	}
+	return addr, httpAddr, closeFn
 }
 
 // SchemaLoader is a service that can preload schema.

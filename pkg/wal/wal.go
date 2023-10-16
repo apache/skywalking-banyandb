@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/golang/snappy"
@@ -332,13 +333,16 @@ func (log *log) Delete(segmentID SegmentID) error {
 	if segmentID == log.workSegment.segmentID {
 		return errors.New("Can not delete the segment which is working")
 	}
-
+	defer delete(log.segmentMap, segmentID)
 	err := os.Remove(log.segmentMap[segmentID].path)
-	if err != nil {
-		return errors.Wrap(err, "Delete WAL segment error")
+	if err == nil {
+		return nil
 	}
-	delete(log.segmentMap, segmentID)
-	return nil
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && errors.Is(pathErr.Err, syscall.ENOENT) {
+		return nil
+	}
+	return errors.Wrap(err, "Delete WAL segment error")
 }
 
 // Close all of segments and stop WAL work.
