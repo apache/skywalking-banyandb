@@ -87,6 +87,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.Var(&s.BlockBufferSize, "measure-buffer-size", "block buffer size")
 	flagS.Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", "series metadata memory size")
 	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "measure-idx-batch-wait-sec", 1, "index batch wait in second")
+	flagS.BoolVar(&s.dbOpts.EnableWAL, "measure-enable-wal", true, "enable write ahead log")
 	return flagS
 }
 

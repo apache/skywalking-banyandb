@@ -84,6 +84,7 @@ header: # `header` section is configurations for source codes license header.
     - '**/ginkgo.report'
     - 'ui'
     - '.github/PULL_REQUEST_TEMPLATE'
+    - "**/*.prof"
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

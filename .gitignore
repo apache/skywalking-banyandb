@@ -56,3 +56,6 @@ target
 
 # okteto
 .stignore
+
+# profile result
+*.prof

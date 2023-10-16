@@ -72,7 +72,7 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	})
 
 	ginkgo.It("should revoke the leaser", func() {
-		gomega.Expect(r.register(context.Background(), md)).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(r.register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
 		k, err := md.key()
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.get(context.Background(), k, &databasev1.Node{})).ShouldNot(gomega.HaveOccurred())
@@ -86,7 +86,7 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	})
 
 	ginkgo.It("should register only once", func() {
-		gomega.Expect(r.register(context.Background(), md)).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.register(context.Background(), md)).Should(gomega.MatchError(errGRPCAlreadyExists))
+		gomega.Expect(r.register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(r.register(context.Background(), md, false)).Should(gomega.MatchError(errGRPCAlreadyExists))
 	})
 })

@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // TSTable is time series table.
@@ -43,5 +44,6 @@ type TSTable interface {
 // TSTableFactory is the factory of TSTable.
 type TSTableFactory interface {
 	// NewTSTable creates a new TSTable.
-	NewTSTable(bufferSupplier *BufferSupplier, root string, position common.Position, l *logger.Logger) (TSTable, error)
+	NewTSTable(bufferSupplier *BufferSupplier, root string, position common.Position,
+		l *logger.Logger, timeRange timestamp.TimeRange) (TSTable, error)
 }

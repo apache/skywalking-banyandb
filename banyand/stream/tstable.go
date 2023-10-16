@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -117,8 +118,10 @@ type tsTableFactory struct {
 	chunkSize         int
 }
 
-func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string, position common.Position, l *logger.Logger) (tsdb.TSTable, error) {
-	sst, err := kv.OpenTimeSeriesStore(path.Join(root, id), kv.TSSWithMemTableSize(ttf.bufferSize), kv.TSSWithLogger(l.Named(id)),
+func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange,
+) (tsdb.TSTable, error) {
+	sst, err := kv.OpenTimeSeriesStore(path.Join(root, id), timeRange, kv.TSSWithMemTableSize(ttf.bufferSize), kv.TSSWithLogger(l.Named(id)),
 		kv.TSSWithZSTDCompression(ttf.chunkSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create time series table: %w", err)

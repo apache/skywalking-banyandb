@@ -154,6 +154,12 @@ func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.T
 	hash := xxhash.New()
 	for _, tagFamilyRef := range groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
+			if tagRef.Spec.TagFamilyIdx >= len(point.GetTagFamilies()) {
+				return 0, errors.New("tag family index out of range")
+			}
+			if tagRef.Spec.TagIdx >= len(point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) {
+				return 0, errors.New("tag index out of range")
+			}
 			tag := point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
 			switch v := tag.GetValue().GetValue().(type) {
 			case *modelv1.TagValue_Str:
