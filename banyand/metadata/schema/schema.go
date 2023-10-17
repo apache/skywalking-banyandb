@@ -195,5 +195,5 @@ type Property interface {
 // Node allows CRUD node schemas in a group.
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
-	RegisterNode(ctx context.Context, node *databasev1.Node) error
+	RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error
 }

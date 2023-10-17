@@ -28,8 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const maxBlockAge = time.Hour
-
 // TSTable is time series table.
 type TSTable interface {
 	// Put a value with a timestamp/version
@@ -46,26 +44,6 @@ type TSTable interface {
 // TSTableFactory is the factory of TSTable.
 type TSTableFactory interface {
 	// NewTSTable creates a new TSTable.
-	NewTSTable(bufferLifecycle BlockExpiryTracker, root string, position common.Position, l *logger.Logger) (TSTable, error)
-}
-
-// BlockExpiryTracker tracks the expiry of the buffer.
-type BlockExpiryTracker struct {
-	clock timestamp.Clock
-	ttl   time.Time
-}
-
-// IsActive checks if the buffer is active.
-func (bl *BlockExpiryTracker) IsActive() bool {
-	return !bl.clock.Now().After(bl.EndTime())
-}
-
-// EndTime returns the end time of the buffer.
-func (bl *BlockExpiryTracker) EndTime() time.Time {
-	return bl.ttl.Add(maxBlockAge)
-}
-
-// BlockExpiryDuration returns the expiry duration of the buffer.
-func (bl *BlockExpiryTracker) BlockExpiryDuration() time.Duration {
-	return maxBlockAge
+	NewTSTable(bufferSupplier *BufferSupplier, root string, position common.Position,
+		l *logger.Logger, timeRange timestamp.TimeRange) (TSTable, error)
 }

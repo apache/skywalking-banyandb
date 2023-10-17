@@ -50,20 +50,24 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
 // NewClient returns a new metadata client.
-func NewClient(_ context.Context) (Service, error) {
-	return &clientService{closer: run.NewCloser(1)}, nil
+func NewClient(forceRegisterNode bool) (Service, error) {
+	return &clientService{
+		closer:            run.NewCloser(1),
+		forceRegisterNode: forceRegisterNode,
+	}, nil
 }
 
 type clientService struct {
-	namespace       string
-	etcdUsername    string
+	schemaRegistry    schema.Registry
+	closer            *run.Closer
+	namespace         string
+  etcdUsername    string
 	etcdPassword    string
 	etcdTLSCAFile   string
 	etcdTLSCertFile string
 	etcdTLSKeyFile  string
-	schemaRegistry  schema.Registry
-	closer          *run.Closer
-	endpoints       []string
+	endpoints         []string
+	forceRegisterNode bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -123,7 +127,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	}
 	for {
 		ctxRegister, cancel := context.WithTimeout(ctx, time.Second*10)
-		err = s.schemaRegistry.RegisterNode(ctxRegister, nodeInfo)
+		err = s.schemaRegistry.RegisterNode(ctxRegister, nodeInfo, s.forceRegisterNode)
 		cancel()
 		if errors.Is(err, context.DeadlineExceeded) {
 			l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("register node timeout, retrying...")

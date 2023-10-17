@@ -47,14 +47,14 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role)
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node) error {
+func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error {
 	return e.register(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindNode,
 			Name: node.Metadata.Name,
 		},
 		Spec: node,
-	})
+	}, forced)
 }
 
 func formatNodeKey(name string) string {

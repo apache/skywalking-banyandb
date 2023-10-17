@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -175,7 +176,7 @@ type IndexStore interface {
 
 // OpenTimeSeriesStore creates a new TimeSeriesStore.
 // nolint: contextcheck
-func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
+func OpenTimeSeriesStore(path string, timeRange timestamp.TimeRange, options ...TimeSeriesOptions) (TimeSeriesStore, error) {
 	btss := new(badgerTSS)
 	btss.dbOpts = badger.DefaultOptions(path)
 	for _, opt := range options {
@@ -188,7 +189,8 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 		WithInTable().
 		WithMaxLevels(2).
 		WithBaseTableSize(10 << 20).
-		WithBaseLevelSize(math.MaxInt64)
+		WithBaseLevelSize(math.MaxInt64).
+		WithBlockCacheSize(10 << 20)
 	if btss.dbOpts.MemTableSize < int64(defaultKVMemorySize) {
 		btss.dbOpts.MemTableSize = int64(defaultKVMemorySize)
 	}
@@ -202,6 +204,7 @@ func OpenTimeSeriesStore(path string, options ...TimeSeriesOptions) (TimeSeriesS
 		return nil, fmt.Errorf("failed to open time series store: %w", err)
 	}
 	btss.TSet = *badger.NewTSet(btss.db)
+	btss.timeRange = timeRange
 	return btss, nil
 }
 
@@ -254,7 +257,8 @@ func OpenStore(path string, opts ...StoreOptions) (Store, error) {
 		WithBaseTableSize(5 << 20).
 		WithBaseLevelSize(25 << 20).
 		WithCompression(options.ZSTD).
-		WithZSTDCompressionLevel(1)
+		WithZSTDCompressionLevel(1).
+		WithBlockCacheSize(10 << 20)
 
 	var err error
 	bdb.db, err = badger.Open(bdb.dbOpts)

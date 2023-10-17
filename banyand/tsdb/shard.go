@@ -41,6 +41,8 @@ const (
 	defaultBlockQueueSize    = 2
 	defaultMaxBlockQueueSize = 64
 	defaultKVMemorySize      = 4 << 20
+	defaultNumBufferShards   = 2
+	defaultWriteConcurrency  = 1000
 )
 
 var (
@@ -57,6 +59,10 @@ var (
 	receivedNumCounter   meter.Counter
 	onDiskBytesGauge     meter.Gauge
 )
+
+type contextBufferSupplierKey struct{}
+
+var bufferSupplierKey = contextBufferSupplierKey{}
 
 func init() {
 	labelNames := common.ShardLabelNames()
@@ -76,6 +82,7 @@ type shard struct {
 	segmentController     *segmentController
 	segmentManageStrategy *bucket.Strategy
 	scheduler             *timestamp.Scheduler
+	bufferSupplier        *BufferSupplier
 	position              common.Position
 	closeOnce             sync.Once
 	id                    common.ShardID
@@ -83,7 +90,7 @@ type shard struct {
 
 // OpenShard returns an existed Shard or create a new one if not existed.
 func OpenShard(ctx context.Context, id common.ShardID,
-	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize, maxOpenedBlockSize int,
+	root string, segmentSize, blockSize, ttl IntervalRule, openedBlockSize, maxOpenedBlockSize int, enableWAL bool,
 ) (Shard, error) {
 	path, err := mkdir(shardTemplate, root, int(id))
 	if err != nil {
@@ -100,16 +107,19 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		return p
 	})
 	clock, _ := timestamp.GetClock(shardCtx)
+
 	scheduler := timestamp.NewScheduler(l, clock)
-	sc, err := newSegmentController(shardCtx, path, segmentSize, blockSize, openedBlockSize, maxOpenedBlockSize, l, scheduler)
+	s := &shard{
+		id:        id,
+		l:         l,
+		scheduler: scheduler,
+		position:  common.GetPosition(shardCtx),
+	}
+	s.bufferSupplier = NewBufferSupplier(l, s.position, defaultWriteConcurrency, defaultNumBufferShards, enableWAL, path)
+	shardCtx = context.WithValue(shardCtx, bufferSupplierKey, s.bufferSupplier)
+	s.segmentController, err = newSegmentController(shardCtx, path, segmentSize, blockSize, openedBlockSize, maxOpenedBlockSize, l, scheduler)
 	if err != nil {
 		return nil, errors.Wrapf(err, "create the segment controller of the shard %d", int(id))
-	}
-	s := &shard{
-		id:                id,
-		segmentController: sc,
-		l:                 l,
-		scheduler:         scheduler,
 	}
 	err = s.segmentController.open()
 	if err != nil {
@@ -131,7 +141,6 @@ func OpenShard(ctx context.Context, id common.ShardID,
 		return nil, err
 	}
 	s.segmentManageStrategy.Run()
-	s.position = common.GetPosition(shardCtx)
 	retentionTask := newRetentionTask(s.segmentController, ttl)
 	if err := scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {
 		return nil, err
@@ -239,7 +248,7 @@ func (s *shard) Close() (err error) {
 		s.segmentManageStrategy.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		err = multierr.Combine(s.segmentController.close(ctx), s.seriesDatabase.Close())
+		err = multierr.Combine(s.bufferSupplier.Close(), s.segmentController.close(ctx), s.seriesDatabase.Close())
 	})
 	return err
 }

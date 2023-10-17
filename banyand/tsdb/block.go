@@ -108,6 +108,7 @@ type block struct {
 
 type openOpts struct {
 	tsTableFactory TSTableFactory
+	bufferSupplier *BufferSupplier
 	inverted       *inverted.StoreOpts
 	lsm            lsm.StoreOpts
 }
@@ -179,6 +180,11 @@ func options(ctx context.Context, root string, l *logger.Logger) (openOpts, erro
 	if opts.tsTableFactory == nil {
 		return opts, errors.New("ts table factory is nil")
 	}
+	bs := ctx.Value(bufferSupplierKey)
+	if bs == nil {
+		return opts, errors.New("buffer supplier not found")
+	}
+	opts.bufferSupplier = bs.(*BufferSupplier)
 	return opts, nil
 }
 
@@ -195,8 +201,8 @@ func (b *block) openSafely() (err error) {
 }
 
 func (b *block) open() (err error) {
-	if b.tsTable, err = b.openOpts.tsTableFactory.NewTSTable(BlockExpiryTracker{ttl: b.End, clock: b.clock},
-		b.path, b.position, b.l); err != nil {
+	if b.tsTable, err = b.openOpts.tsTableFactory.NewTSTable(b.openOpts.bufferSupplier,
+		b.path, b.position, b.l, b.TimeRange); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.tsTable)

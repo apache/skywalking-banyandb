@@ -141,7 +141,7 @@ func NewByPassTSTableFactory() TSTableFactory {
 	return bypassTSTableFactory{}
 }
 
-func (bypassTSTableFactory) NewTSTable(_ BlockExpiryTracker, _ string, _ common.Position, _ *logger.Logger) (TSTable, error) {
+func (bypassTSTableFactory) NewTSTable(_ *BufferSupplier, _ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeRange) (TSTable, error) {
 	return newBypassTSTable()
 }
 

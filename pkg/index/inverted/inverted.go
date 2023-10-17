@@ -25,6 +25,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/blugelabs/bluge"
@@ -90,13 +91,13 @@ type store struct {
 	ch            chan any
 	closer        *run.Closer
 	l             *logger.Logger
+	errClosing    atomic.Pointer[error]
 	batchInterval time.Duration
 }
 
 // NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.Store, error) {
-	indexConfig := blugeIndex.DefaultConfig(opts.Path).WithUnsafeBatches().
-		WithPersisterNapTimeMSec(60 * 1000)
+	indexConfig := blugeIndex.DefaultConfig(opts.Path)
 	indexConfig.MergePlanOptions.MaxSegmentsPerTier = 1
 	indexConfig.MergePlanOptions.MaxSegmentSize = 500000
 	indexConfig.MergePlanOptions.SegmentsPerMergeTask = 20
@@ -124,7 +125,10 @@ func NewStore(opts StoreOpts) (index.Store, error) {
 
 func (s *store) Close() error {
 	s.closer.CloseThenWait()
-	return s.writer.Close()
+	if s.errClosing.Load() != nil {
+		return *s.errClosing.Load()
+	}
+	return nil
 }
 
 func (s *store) Write(fields []index.Field, docID uint64) error {
@@ -291,7 +295,12 @@ func (s *store) SizeOnDisk() int64 {
 
 func (s *store) run() {
 	go func() {
-		defer s.closer.Done()
+		defer func() {
+			if err := s.writer.Close(); err != nil {
+				s.errClosing.Store(&err)
+			}
+			s.closer.Done()
+		}()
 		size := 0
 		batch := bluge.NewBatch()
 		flush := func() {
@@ -304,6 +313,7 @@ func (s *store) run() {
 			batch.Reset()
 			size = 0
 		}
+		defer flush()
 		var docIDBuffer bytes.Buffer
 		for {
 			timer := time.NewTimer(s.batchInterval)

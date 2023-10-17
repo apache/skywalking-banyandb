@@ -19,6 +19,7 @@ Release Notes.
 - Add TTL to the property.
 - Support etcd client authentication.
 - Implement node selector (e.g. PickFirst Selector, Maglev Selector).
+- Unified the buffers separated in blocks to a single buffer in the shard.
 
 ### Bugs
 

@@ -24,5 +24,6 @@
 *.jpeg binary
 *.ico binary
 *.gz binary
+*.bz2 binary
 
 go.sum merge=union

@@ -20,6 +20,7 @@ package stream
 import (
 	"fmt"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/kv"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -43,14 +45,14 @@ const (
 var _ tsdb.TSTable = (*tsTable)(nil)
 
 type tsTable struct {
-	sst kv.TimeSeriesStore
-	*tsdb.BlockExpiryTracker
-	l                *logger.Logger
-	buffer           *tsdb.Buffer
-	closeBufferTimer *time.Timer
-	position         common.Position
-	bufferSize       int64
-	lock             sync.RWMutex
+	sst            kv.TimeSeriesStore
+	l              *logger.Logger
+	buffer         *tsdb.Buffer
+	bufferSupplier *tsdb.BufferSupplier
+	position       common.Position
+	id             string
+	bufferSize     int64
+	lock           sync.RWMutex
 }
 
 func (t *tsTable) SizeOnDisk() int64 {
@@ -64,30 +66,9 @@ func (t *tsTable) openBuffer() (err error) {
 		return nil
 	}
 	bufferSize := int(t.bufferSize / defaultNumBufferShards)
-	if t.buffer, err = tsdb.NewBuffer(t.l, t.position, bufferSize,
-		defaultWriteConcurrency, defaultNumBufferShards, t.flush); err != nil {
+	if t.buffer, err = t.bufferSupplier.Borrow(id, t.id, bufferSize, t.flush); err != nil {
 		return fmt.Errorf("failed to create buffer: %w", err)
 	}
-	end := t.EndTime()
-	now := time.Now()
-	closeAfter := end.Sub(now)
-	if now.After(end) {
-		closeAfter = t.BlockExpiryDuration()
-	}
-	t.closeBufferTimer = time.AfterFunc(closeAfter, func() {
-		if t.l.Debug().Enabled() {
-			t.l.Debug().Msg("closing buffer")
-		}
-		t.lock.Lock()
-		defer t.lock.Unlock()
-		if t.buffer == nil {
-			return
-		}
-		if err := t.buffer.Close(); err != nil {
-			t.l.Error().Err(err).Msg("close buffer error")
-		}
-		t.buffer = nil
-	})
 	return nil
 }
 
@@ -95,7 +76,7 @@ func (t *tsTable) Close() (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	if t.buffer != nil {
-		err = multierr.Append(err, t.buffer.Close())
+		t.bufferSupplier.Return(id, t.id)
 	}
 	return multierr.Combine(err, t.sst.Close())
 }
@@ -137,23 +118,21 @@ type tsTableFactory struct {
 	chunkSize         int
 }
 
-func (ttf *tsTableFactory) NewTSTable(blockExpiryTracker tsdb.BlockExpiryTracker, root string, position common.Position, l *logger.Logger) (tsdb.TSTable, error) {
-	sst, err := kv.OpenTimeSeriesStore(path.Join(root, id), kv.TSSWithMemTableSize(ttf.bufferSize), kv.TSSWithLogger(l.Named(id)),
+func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange,
+) (tsdb.TSTable, error) {
+	sst, err := kv.OpenTimeSeriesStore(path.Join(root, id), timeRange, kv.TSSWithMemTableSize(ttf.bufferSize), kv.TSSWithLogger(l.Named(id)),
 		kv.TSSWithZSTDCompression(ttf.chunkSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create time series table: %w", err)
 	}
 	table := &tsTable{
-		bufferSize:         ttf.bufferSize,
-		l:                  l,
-		position:           position,
-		sst:                sst,
-		BlockExpiryTracker: &blockExpiryTracker,
-	}
-	if table.IsActive() {
-		if err := table.openBuffer(); err != nil {
-			return nil, fmt.Errorf("failed to open buffer: %w", err)
-		}
+		bufferSupplier: bufferSupplier,
+		bufferSize:     ttf.bufferSize,
+		l:              l,
+		position:       position,
+		sst:            sst,
+		id:             strings.Join([]string{position.Segment, position.Block}, "-"),
 	}
 	return table, nil
 }
