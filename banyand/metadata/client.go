@@ -61,11 +61,11 @@ type clientService struct {
 	schemaRegistry    schema.Registry
 	closer            *run.Closer
 	namespace         string
-  etcdUsername    string
-	etcdPassword    string
-	etcdTLSCAFile   string
-	etcdTLSCertFile string
-	etcdTLSKeyFile  string
+	etcdUsername      string
+	etcdPassword      string
+	etcdTLSCAFile     string
+	etcdTLSCertFile   string
+	etcdTLSKeyFile    string
 	endpoints         []string
 	forceRegisterNode bool
 }

@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.6.0
+
+### Features
+
+- Support etcd client authentication.
+
 ## 0.5.0
 
 ### Features
@@ -17,7 +23,6 @@ Release Notes.
 - Implement the distributed query engine.
 - Add mod revision check to write requests.
 - Add TTL to the property.
-- Support etcd client authentication.
 - Implement node selector (e.g. PickFirst Selector, Maglev Selector).
 - Unified the buffers separated in blocks to a single buffer in the shard.
 
