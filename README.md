@@ -36,12 +36,12 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [x] gRPC server
 - [x] HTTP server
 
-### Distributed manager (v1.0.0)
+### Distributed manager
 
-- [ ] Sharding
-- [ ] Load balance
-- [ ] Distributed query optimizer
-- [ ] Data queue
+- [x] Sharding
+- [x] Load balance
+- [x] Distributed query optimizer
+- [x] Data queue
 
 ### Data processor
 
@@ -54,7 +54,7 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [x] Index processor
 - [x] TTL
 - [x] Cold data processor
-- [ ] WAL (v0.5.0)
+- [x] WAL
 
 ### Query processor
 
@@ -65,15 +65,13 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 - [ ] Parallel executor
 - [ ] Cost-based optimizer
 
-### Verification
+### Storage
 
-- [x] E2E with OAP and simulated data
-- [x] E2E with showcases, agents and OAP
-- [x] Space utilization rate
-- [ ] Leading and trailing zero (v0.5.0)
-- [ ] Stability (v0.5.0)
-- [ ] Crash recovery (v0.5.0)
-- [ ] Performance
+BanyanDB is using Badger as the underlying storage engine. This section is about an alternative storage engine.
+
+- [ ] Compaction
+- [ ] Merge data files
+- [ ] Sparse index
 
 ### Tools
 
