@@ -67,8 +67,6 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 
 ### Storage
 
-BanyanDB is using Badger as the underlying storage engine. This section is about an alternative storage engine.
-
 - [ ] Compaction
 - [ ] Merge data files
 - [ ] Sparse index

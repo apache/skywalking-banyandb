@@ -124,7 +124,11 @@ The banyand-server would be listening on the `0.0.0.0:17912` if no errors occurr
 
 ## Setup Multiple Banyand as Cluster
 
-Firstly, you need to setup a etcd cluster which is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster. The etcd cluster can be setup by the [etcd installation guide](https://etcd.io/docs/v3.5/install/)
+Firstly, you need to setup a etcd cluster which is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster. The etcd cluster can be setup by the [etcd installation guide](https://etcd.io/docs/v3.5/install/). The etcd version should be `v3.1` or above.
+
+Then, you can start the metadata module by
+
+```shell
 
 Considering the etcd cluster is spread across three nodes with the addresses `10.0.0.1:2379`, `10.0.0.2:2379`, and `10.0.0.3:2379`, Data nodes and liaison nodes are running as independent processes by
 
