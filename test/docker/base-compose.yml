@@ -54,7 +54,7 @@ services:
       - sw_agent:/skywalking-java-agent
 
   oap:
-    image: "ghcr.io/apache/skywalking-banyandb-java-client/oap:${SW_OAP_COMMIT}"
+    image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
     expose:
       - 11800
       - 12800
@@ -76,7 +76,7 @@ services:
       retries: 120
 
   ui:
-    image: "ghcr.io/apache/skywalking-banyandb-java-client/ui:${SW_OAP_COMMIT}"
+    image: "ghcr.io/apache/skywalking/ui:${SW_OAP_COMMIT}"
     expose:
       - 8080
     environment:
