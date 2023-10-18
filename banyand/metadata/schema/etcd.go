@@ -93,7 +93,7 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 	for i := 0; i < KindSize; i++ {
 		ki := Kind(1 << i)
 		if kind&ki > 0 {
-			e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering watcher")
+			e.l.Info().Str("name", name).Stringer("kind", ki).Msg("registering watcher")
 			w := e.newWatcher(name, ki, handler)
 			e.watchers = append(e.watchers, w)
 		}
@@ -315,7 +315,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	return false, nil
 }
 
-func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) error {
+func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, forced bool) error {
 	if !e.closer.AddRunning() {
 		return ErrClosed
 	}
@@ -334,18 +334,25 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata) er
 	if err != nil {
 		return err
 	}
-	var ops []clientv3.Cmp
-	ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
-	txn := e.client.Txn(ctx).If(ops...)
-	txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
-	txn = txn.Else(clientv3.OpGet(key))
-	response, err := txn.Commit()
-	if err != nil {
-		return err
+	if forced {
+		if _, err = e.client.Put(ctx, key, string(val), clientv3.WithLease(lease.ID)); err != nil {
+			return err
+		}
+	} else {
+		var ops []clientv3.Cmp
+		ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
+		txn := e.client.Txn(ctx).If(ops...)
+		txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
+		txn = txn.Else(clientv3.OpGet(key))
+		response, errCommit := txn.Commit()
+		if errCommit != nil {
+			return errCommit
+		}
+		if !response.Succeeded {
+			return errGRPCAlreadyExists
+		}
 	}
-	if !response.Succeeded {
-		return errGRPCAlreadyExists
-	}
+
 	// Keep the lease alive
 	// nolint:contextcheck
 	keepAliveChan, err := e.client.KeepAlive(context.Background(), lease.ID)

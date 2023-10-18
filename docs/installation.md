@@ -122,53 +122,25 @@ $ ./banyand-server standalone
 
 The banyand-server would be listening on the `0.0.0.0:17912` if no errors occurred.
 
-## Setup Multiple Banyand as Cluster(TBD)
+## Setup Multiple Banyand as Cluster
 
-### Setup Standalone Nodes
+Firstly, you need to setup a etcd cluster which is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster. The etcd cluster can be setup by the [etcd installation guide](https://etcd.io/docs/v3.5/install/). The etcd version should be `v3.1` or above.
 
-The standalone node is running as a standalone process by
-
-```shell
-$ ./banyand-server standalone <flags> --data-node-id n1
-$ ./banyand-server standalone <flags> --data-node-id n2
-$ ./banyand-server standalone <flags> --data-node-id n3
-```
-
-`data-node-id` is the unique identifier of the standalone node.
-
-The standalone node would be listening on the `<ports>` if no errors occurred.
-
-### Setup Role-Based Nodes
-
-The meta nodes should boot up firstly to provide the metadata service for the whole cluster. The meta node is running as a standalone process by
+Then, you can start the metadata module by
 
 ```shell
-$ ./banyand-server meta <flags>
-```
 
-The meta node would be listening on the `<ports>` if no errors occurred.
-
-
-Data nodes, query nodes and liaison nodes are running as independent processes by
+Considering the etcd cluster is spread across three nodes with the addresses `10.0.0.1:2379`, `10.0.0.2:2379`, and `10.0.0.3:2379`, Data nodes and liaison nodes are running as independent processes by
 
 ```shell
-$ ./banyand-server storage --mode data --data-node-id n1 <flags>
-$ ./banyand-server storage --mode data --data-node-id n2 <flags>
-$ ./banyand-server storage --mode data --data-node-id n3 <flags>
-$ ./banyand-server storage --mode query <flags>
-$ ./banyand-server storage --mode query <flags>
-$ ./banyand-server liaison <flags>
+$ ./banyand-server storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+$ ./banyand-server storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+$ ./banyand-server storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+$ ./banyand-server liaison --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
 ```
 
-`data-node-id` is the unique identifier of the data node.
+## Docker & Kubernetes
 
-The data node, query node and liaison node would be listening on the `<ports>` if no errors occurred.
+The docker image of banyandb is available on [Docker Hub](https://hub.docker.com/r/apache/skywalking-banyandb).
 
-If you want to use a `mix` mode instead of separate query and data nodes, you can run the banyand-server as processes by
-
-```shell
-$ ./banyand-server storage --data-node-id n1 <flags>
-$ ./banyand-server storage --data-node-id n2 <flags>
-$ ./banyand-server storage --data-node-id n3 <flags>
-$ ./banyand-server liaison <flags>
-```
+If you want to onboard banyandb to the Kubernetes, you can refer to the [banyandb-helm](https://github.com/apache/skywalking-banyandb-helm).

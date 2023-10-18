@@ -20,7 +20,7 @@ package istio
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
+	"compress/bzip2"
 	"context"
 	"embed"
 	"encoding/json"
@@ -51,13 +51,23 @@ func extractData() string {
 
 	// Create a subdirectory called "tmp" in the temporary directory
 	tmpSubDir := filepath.Join(tmpDir, "testdata")
+	target := filepath.Join(tmpSubDir, "access.log")
+	if _, err := os.Stat(target); err == nil {
+		absPath, err := filepath.Abs(target)
+		if err != nil {
+			fmt.Printf("Error getting absolute path: %v\n", err)
+			os.Exit(1)
+		}
+		return absPath
+	}
 	err := os.MkdirAll(tmpSubDir, 0o755)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating tmp directory: %v\n", err)
 		os.Exit(1)
 	}
 	var data []byte
-	if data, err = store.ReadFile("testdata/access.tar.gz"); err != nil {
+	if data, err = store.ReadFile("testdata/access.tar.bz2"); err != nil {
+		fmt.Printf("Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 	filePath, err := extractTarGz(data, tmpSubDir)
@@ -69,13 +79,8 @@ func extractData() string {
 }
 
 func extractTarGz(src []byte, dest string) (string, error) {
-	gzReader, err := gzip.NewReader(io.Reader(bytes.NewReader(src)))
-	if err != nil {
-		return "", err
-	}
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
+	bzReader := bzip2.NewReader(io.Reader(bytes.NewReader(src)))
+	tarReader := tar.NewReader(bzReader)
 
 	for {
 		header, err := tarReader.Next()

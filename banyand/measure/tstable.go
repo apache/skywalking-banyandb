@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -87,7 +88,7 @@ func (t *tsTable) openBuffer() (err error) {
 func (t *tsTable) Close() (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	for _, b := range []io.Closer{t.encoderBuffer, t.buffer, t.sst, t.encoderSST} {
+	for _, b := range []io.Closer{t.sst, t.encoderSST} {
 		if b != nil {
 			err = multierr.Append(err, b.Close())
 		}
@@ -179,9 +180,12 @@ type tsTableFactory struct {
 	compressionMethod databasev1.CompressionMethod
 }
 
-func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string, position common.Position, l *logger.Logger) (tsdb.TSTable, error) {
+func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root string,
+	position common.Position, l *logger.Logger, timeRange timestamp.TimeRange,
+) (tsdb.TSTable, error) {
 	encoderSST, err := kv.OpenTimeSeriesStore(
 		path.Join(root, encoded),
+		timeRange,
 		kv.TSSWithMemTableSize(ttf.bufferSize),
 		kv.TSSWithLogger(l.Named(encoded)),
 		kv.TSSWithEncoding(ttf.encoderPool, ttf.decoderPool, ttf.encodingChunkSize),
@@ -191,6 +195,7 @@ func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root 
 	}
 	sst, err := kv.OpenTimeSeriesStore(
 		path.Join(root, plain),
+		timeRange,
 		kv.TSSWithMemTableSize(ttf.bufferSize),
 		kv.TSSWithLogger(l.Named(plain)),
 		kv.TSSWithZSTDCompression(int(ttf.plainChunkSize)),

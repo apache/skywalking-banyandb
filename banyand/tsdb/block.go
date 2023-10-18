@@ -202,7 +202,7 @@ func (b *block) openSafely() (err error) {
 
 func (b *block) open() (err error) {
 	if b.tsTable, err = b.openOpts.tsTableFactory.NewTSTable(b.openOpts.bufferSupplier,
-		b.path, b.position, b.l); err != nil {
+		b.path, b.position, b.l, b.TimeRange); err != nil {
 		return err
 	}
 	b.closableLst = append(b.closableLst, b.tsTable)

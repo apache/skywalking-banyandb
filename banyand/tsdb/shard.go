@@ -244,7 +244,6 @@ func (s *shard) TriggerSchedule(task string) bool {
 
 func (s *shard) Close() (err error) {
 	s.closeOnce.Do(func() {
-		_ = s.bufferSupplier.Close()
 		s.scheduler.Close()
 		s.segmentManageStrategy.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
