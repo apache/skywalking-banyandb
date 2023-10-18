@@ -54,8 +54,8 @@ The etcd trusted certificate file can be setup by the [etcd transport security m
 - `etcd-tls-ca-file`: The path of the trusted certificate file.
 
 ```shell
-$ ./banyand-server storage --etcd-endpoints=your-endpoints --etcd-tls-ca-file=youf-file-path <flags>
-$ ./banyand-server liaison --etcd-endpoints=your-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+$ ./banyand-server storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+$ ./banyand-server liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
 ```
 
 ### Client-to-server authentication with HTTPS client certificates
@@ -67,6 +67,6 @@ The etcd client certificates can be setup by the [etcd transport security model]
 - `etcd-tls-key-file`: Key for the certificate. Must be unencrypted.
 
 ```shell
-$ ./banyand-server storage --etcd-endpoints=your-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
-$ ./banyand-server liaison --etcd-endpoints=your-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+$ ./banyand-server storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+$ ./banyand-server liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 ```
