@@ -172,7 +172,7 @@ var _ = Describe("Client Test", func() {
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
 	})
 
-	It("should be using cacert & key pair connect etcd server successfully", func() {
+	It("should be using key pair connect etcd server successfully", func() {
 		serverTLSInfo := transport.TLSInfo{
 			KeyFile:        serverKeyFilePath,
 			CertFile:       serverCertFilePath,
