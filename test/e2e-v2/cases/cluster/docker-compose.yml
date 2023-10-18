@@ -43,7 +43,7 @@ services:
       service: oap
     environment:
       SW_STORAGE: banyandb
-      SW_STORAGE_BANYANDB_HOST: "liaison"
+      SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
     ports:
       - 12800
     depends_on:
