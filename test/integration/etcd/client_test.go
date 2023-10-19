@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -62,16 +63,13 @@ var _ = Describe("Client Test", func() {
 		var err error
 		dir, dirSpaceDef, err = test.NewSpace()
 		Expect(err).ShouldNot(HaveOccurred())
-		caFilePath, err = filepath.Abs("./cafile/ca.crt")
-		Expect(err).ShouldNot(HaveOccurred())
-		serverKeyFilePath, err = filepath.Abs("./cafile/server-serverusage.key.insecure")
-		Expect(err).ShouldNot(HaveOccurred())
-		serverCertFilePath, err = filepath.Abs("./cafile/server-serverusage.crt")
-		Expect(err).ShouldNot(HaveOccurred())
-		clientKeyFilePath, err = filepath.Abs("./cafile/client-clientusage.key.insecure")
-		Expect(err).ShouldNot(HaveOccurred())
-		clientCertFilePath, err = filepath.Abs("./cafile/client-clientusage.crt")
-		Expect(err).ShouldNot(HaveOccurred())
+		_, currentFile, _, _ := runtime.Caller(0)
+		basePath := filepath.Dir(currentFile)
+		caFilePath = filepath.Join(basePath, "testdata/ca.crt")
+		serverKeyFilePath = filepath.Join(basePath, "testdata/server-serverusage.key.insecure")
+		serverCertFilePath = filepath.Join(basePath, "testdata/server-serverusage.crt")
+		clientKeyFilePath = filepath.Join(basePath, "testdata/client-clientusage.key.insecure")
+		clientCertFilePath = filepath.Join(basePath, "testdata/client-clientusage.crt")
 
 		goods = gleak.Goroutines()
 	})

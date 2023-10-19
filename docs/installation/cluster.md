@@ -29,11 +29,11 @@ The host is registered to the etcd cluster by the `banyand-server` automatically
 - `node-host-provider=ip` : The OS's the first non-loopback active IP address(IPv4) is registered as the host part in the address.
 - `node-host-provider=flag` : `node-host` is registered as the host part in the address.
 
-## Etcd Client Authentication
+## Etcd Authentication
 
-etcd supports through tls certificates and RBAC based authentication for both clients to server communication. This section is intended to help users set up authentication in etcd client.
+`etcd` supports through tls certificates and RBAC-based authentication for both clients to server communication. This section tends to help users set up authentication for BanyanDB.
 
-### Client-to-server authentication with username/password
+### Authentication with username/password
 
 The etcd user can be setup by the [etcd authentication guide](https://etcd.io/docs/v3.5/op-guide/authentication/)
 
@@ -42,12 +42,14 @@ The username/password is configured in the following command:
 - `etcd-username`: The username for etcd client authentication.
 - `etcd-password`: The password for etcd client authentication.
 
+***Recommended using environment variables to set username/password for higher security.***
+
 ```shell
 $ ./banyand-server storage --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
 $ ./banyand-server liaison --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
 ```
 
-### Client-to-server transport security with HTTPS
+### Transport security with HTTPS
 
 The etcd trusted certificate file can be setup by the [etcd transport security model](https://etcd.io/docs/v3.5/op-guide/security/#example-1-client-to-server-transport-security-with-https)
 
@@ -58,7 +60,7 @@ $ ./banyand-server storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-f
 $ ./banyand-server liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
 ```
 
-### Client-to-server authentication with HTTPS client certificates
+### Authentication with HTTPS client certificates
 
 The etcd client certificates can be setup by the [etcd transport security model](https://etcd.io/docs/v3.5/op-guide/security/#example-2-client-to-server-authentication-with-https-client-certificates)
 
