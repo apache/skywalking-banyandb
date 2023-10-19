@@ -42,7 +42,7 @@ The username/password is configured in the following command:
 - `etcd-username`: The username for etcd client authentication.
 - `etcd-password`: The password for etcd client authentication.
 
-***Recommended using environment variables to set username/password for higher security.***
+***Note: recommended using environment variables to set username/password for higher security.***
 
 ```shell
 $ ./banyand-server storage --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
