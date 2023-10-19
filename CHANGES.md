@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.6.0
+
+### Features
+
+- Implement Local file system.
+
 ## 0.5.0
 
 ### Features
@@ -19,7 +25,6 @@ Release Notes.
 - Add TTL to the property.
 - Implement node selector (e.g. PickFirst Selector, Maglev Selector).
 - Unified the buffers separated in blocks to a single buffer in the shard.
-- Implement Local file system.
 
 ### Bugs
 
