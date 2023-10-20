@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.6.0
+
+### Features
+
+- Support etcd client authentication.
+
 ## 0.5.0
 
 ### Features
