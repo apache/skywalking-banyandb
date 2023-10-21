@@ -32,11 +32,6 @@ type LocalFileSystem struct {
 	logger *logger.Logger
 }
 
-// LocalDirectory implements the Dir interface.
-type LocalDirectory struct {
-	dir *os.File
-}
-
 // LocalFile implements the File interface.
 type LocalFile struct {
 	file *os.File
@@ -47,36 +42,6 @@ func NewLocalFileSystem() FileSystem {
 	return &LocalFileSystem{
 		logger: logger.GetLogger(moduleName),
 	}
-}
-
-// CreateDirectory is used to create and open the directory by specified name and mode.
-func (fs *LocalFileSystem) CreateDirectory(name string, permission Mode) (Dir, error) {
-	var err error
-	err = os.MkdirAll(name, os.FileMode(permission))
-	if err != nil {
-		if os.IsPermission(err) {
-			return nil, &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, directory name: %s, permission: %d, error message: %s", name, permission, err),
-			}
-		}
-		return nil, &FileSystemError{
-			Code:    otherError,
-			Message: fmt.Sprintf("Create directory return error, directory name: %s, error message: %s", name, err),
-		}
-	}
-
-	dir, err := os.Open(name)
-	if err != nil {
-		return nil, &FileSystemError{
-			Code:    openError,
-			Message: fmt.Sprintf("Open directory return error, directory name: %s, error message: %s", name, err),
-		}
-	}
-
-	return &LocalDirectory{
-		dir: dir,
-	}, nil
 }
 
 // CreateFile is used to create and open the file by specified name and mode.
@@ -138,66 +103,6 @@ func (fs *LocalFileSystem) FlushWriteFile(buffer []byte, name string, permission
 	}
 
 	return size, nil
-}
-
-// DeleteDirectory is used for deleting the directory.
-func (dir *LocalDirectory) DeleteDirectory() error {
-	err := os.RemoveAll(dir.dir.Name())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &FileSystemError{
-				Code:    isNotExistError,
-				Message: fmt.Sprintf("Directory is not exist, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		} else if os.IsPermission(err) {
-			return &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		} else {
-			return &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Delete directory error, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		}
-	}
-	return nil
-}
-
-// ReadDirectory is used to get all lists of files or children's directories in the directory.
-func (dir *LocalDirectory) ReadDirectory() ([]os.DirEntry, error) {
-	dirs, err := os.ReadDir(dir.dir.Name())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &FileSystemError{
-				Code:    isNotExistError,
-				Message: fmt.Sprintf("Directory is not exist, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		} else if os.IsPermission(err) {
-			return nil, &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		} else {
-			return nil, &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Read directory error, directory name: %s, error message: %s", dir.dir.Name(), err),
-			}
-		}
-	}
-	return dirs, nil
-}
-
-// CloseDirectory is used to close directory.
-func (dir *LocalDirectory) CloseDirectory() error {
-	err := dir.dir.Close()
-	if err != nil {
-		return &FileSystemError{
-			Code:    closeError,
-			Message: fmt.Sprintf("Close directory error, directory name: %s, error message: %s", dir.dir.Name(), err),
-		}
-	}
-	return nil
 }
 
 // AppendWriteFile is append mode, which adds new data to the end of a file.

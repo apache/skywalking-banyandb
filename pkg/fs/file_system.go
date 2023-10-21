@@ -20,7 +20,6 @@ package fs
 
 import (
 	"bufio"
-	"os"
 )
 
 const moduleName string = "filesystem"
@@ -33,16 +32,6 @@ type Iter struct {
 	fileName string
 	reader   *bufio.Reader
 	buffer   []byte
-}
-
-// Dir operation interface.
-type Dir interface {
-	// Delete the directory.
-	DeleteDirectory() error
-	// Get all lists of files or children's directories in the directory.
-	ReadDirectory() ([]os.DirEntry, error)
-	// Close directory.
-	CloseDirectory() error
 }
 
 // File operation interface.
@@ -67,8 +56,6 @@ type File interface {
 
 // FileSystem operation interface.
 type FileSystem interface {
-	// Create and open the directory by specified name and mode.
-	CreateDirectory(name string, permission Mode) (Dir, error)
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Flush mode, which flushes all data to one file.

@@ -27,50 +27,6 @@ If the user sets io_uring for use, the read and write requests will first be pla
 The most common IO mode is Synchronous IO, but it has a relatively low throughput. BanyanDB provides a nonblocking mode that is compatible with lower Linux versions.
 
 # Operation
-## Directory
-### Create
-Create the specified directory and return the file descriptor, the error will happen if the directory already exists.
-The following is the pseudocode that calls the API in the go style.、
-
-param:
-
-name: The name of the directory.
-
-permisson: Permission you want to set. BanyanDB provides three modes: Read, Write, ReadAndWrite. you can use it as Mode.Read.
-
-`CreateDirectory(name String, permission Mode) (error)`
-
-### Create
-Create and open the directory and return an error if the file descriptor does not exist.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-name: The name of the directory.
-
-return: The Directory instance, can be used for various directory operations.
-
-`CreateDirectory(name String) (Dir, error)`
-
-### Delete
-Delete the directory and all files and return an error if the directory does not exist or the directory not reading or writing.
-The following is the pseudocode that calls the API in the go style.
-
-`Dir.DeleteDirectory() (error)`
-
-### Read
-Get all lists of files or children's directories in the directory and an error if the directory does not exist.
-The following is the pseudocode that calls the API in the go style.
-
-return: List of file entries belonging to the directory.
-
-`Dir.ReadDirectory() ([]os.DirEntry, error)`
-
-### Close
-Close directory.The following is the pseudocode that calls the API in the go style.
-
-`Dir.CloseDirectory() error`
-
 
 ## File
 ### Create

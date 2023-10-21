@@ -52,7 +52,7 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			var err error
 			var size int
 			var buffer []byte
-			_, err = fs.CreateDirectory(dirName, 0o777)
+			err = os.MkdirAll(dirName, 0o777)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 			// test flush write
@@ -128,45 +128,6 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			err = file.DeleteFile()
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			_, err = os.Stat(fileName)
-			gomega.Expect(err).To(gomega.HaveOccurred())
-		})
-	})
-
-	ginkgo.Context("Directory", func() {
-		ginkgo.BeforeEach(func() {
-			fs = NewLocalFileSystem()
-		})
-
-		ginkgo.AfterEach(func() {
-			err := os.RemoveAll(dirName)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		})
-
-		ginkgo.It("Directory Operation", func() {
-			var err error
-			// test open directory
-			dir, err := fs.CreateDirectory(dirName, 0o777)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = os.Stat(dirName)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-			// test read directory
-			_, err = fs.CreateFile(fileName, 0o777)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			entries, err := dir.ReadDirectory()
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			for _, entry := range entries {
-				gomega.Expect(entry.Name() == "file").To(gomega.BeTrue())
-			}
-
-			// test close
-			err = dir.CloseDirectory()
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-			// test delete
-			err = dir.DeleteDirectory()
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = os.Stat(dirName)
 			gomega.Expect(err).To(gomega.HaveOccurred())
 		})
 	})
