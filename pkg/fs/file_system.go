@@ -37,21 +37,19 @@ type Iter struct {
 // File operation interface.
 type File interface {
 	// Append mode, which adds new data to the end of a file.
-	AppendWriteFile(buffer []byte) (int, error)
+	Write(buffer []byte) (int, error)
 	// Vector Append mode, which supports appending consecutive buffers to the end of the file.
-	AppendWritevFile(iov *[][]byte) (int, error)
-	// Delete the file.
-	DeleteFile() error
+	Writev(iov *[][]byte) (int, error)
 	// Reading a specified location of file.
-	ReadFile(offset int64, buffer []byte) (int, error)
+	Read(offset int64, buffer []byte) (int, error)
 	// Reading contiguous regions of a file and dispersing them into discontinuous buffers.
-	ReadvFile(offset int64, iov *[][]byte) (int, error)
+	Readv(offset int64, iov *[][]byte) (int, error)
 	// Read the entire file using streaming read.
-	StreamReadFile(buffer []byte) (*Iter, error)
+	StreamRead(buffer []byte) (*Iter, error)
 	// Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
-	GetFileSize() (int64, error)
+	Size() (int64, error)
 	// Close File.
-	CloseFile() error
+	Close() error
 }
 
 // FileSystem operation interface.
@@ -59,5 +57,7 @@ type FileSystem interface {
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Flush mode, which flushes all data to one file.
-	FlushWriteFile(buffer []byte, name string, permission Mode) (int, error)
+	Write(buffer []byte, name string, permission Mode) (int, error)
+	// Delete the file.
+	DeleteFile(name string) error
 }

@@ -57,7 +57,7 @@ buffer: The data append to the file.
 
 Actual length of written data.
 
-`File.AppendWriteFile(buffer []byte) (int, error)`
+`File.Write(buffer []byte) (int, error)`
 
 For vector append mode:
 
@@ -67,7 +67,7 @@ iov: The data in consecutive buffers.
 
 return: Actual length of written data.
 
-`File.AppendWritevFile(iov *[][]byte) (int, error)`
+`File.Writev(iov *[][]byte) (int, error)`
 
 For flush mode:
 
@@ -79,14 +79,14 @@ permisson: Permission you want to set. BanyanDB provides three mode: Read, Write
 
 return: Actual length of flushed data.
 
-`FlushWriteFile(buffer []byte, permission Mode) (int, error)`
+`Write(buffer []byte, permission Mode) (int, error)`
 
 ### Delete
 BanyanDB provides the deleting operation, which can delete a file at once. it will return an error if the directory does not exist or the file not reading or writing.
 
 The following is the pseudocode that calls the API in the go style.
 
-`File.DeleteFile() (error)`
+`DeleteFile(name string) (error)`
 
 ### Read
 For reading operation, two read methods are provided:
@@ -105,7 +105,7 @@ buffer: The read length is the same as the buffer length.
 
 return: Actual length of reading data.
 
-`File.ReadFile(offset int64, buffer []byte) (int, error)`
+`File.Read(offset int64, buffer []byte) (int, error)`
 
 For vector reading:
 
@@ -115,7 +115,7 @@ iov: Discontinuous buffers in memory.
 
 return: Actual length of reading data.
 
-`File.ReadvFile(iov *[][]byte) (int, error)`
+`File.Readv(iov *[][]byte) (int, error)`
 
 For stream reading:
 
@@ -125,7 +125,7 @@ buffer: Every read length in the stream is the same as the buffer length.
 
 return: A Iterator, the size of each iteration is the length of the buffer.
 
-`File.StreamReadFile(buffer []byte) (*iter, error)`
+`File.StreamRead(buffer []byte) (*iter, error)`
 
 ### Get size
 Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -133,9 +133,9 @@ The following is the pseudocode that calls the API in the go style.
 
 return: the file written data's size.
 
-`File.GetFileSize() (int, error)`
+`File.Size() (int, error)`
 
 ### Close
 Close File.The following is the pseudocode that calls the API in the go style.
 
-`File.CloseFile() error`
+`File.Close() error`
