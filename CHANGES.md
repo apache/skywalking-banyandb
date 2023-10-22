@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Support etcd client authentication.
 - Implement Local file system.
 
 ## 0.5.0
