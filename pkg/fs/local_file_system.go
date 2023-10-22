@@ -44,48 +44,70 @@ func NewLocalFileSystem() FileSystem {
 	}
 }
 
+func readErrorHandle(err error, name string, size int) (int, error) {
+	switch {
+	case err == io.EOF:
+		return size, err
+	case os.IsNotExist(err):
+		return size, &FileSystemError{
+			Code:    isNotExistError,
+			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return size, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
+		}
+	default:
+		return size, &FileSystemError{
+			Code:    readError,
+			Message: fmt.Sprintf("Read file error, file name: %s, read file size: %d, error message: %s", name, size, err),
+		}
+	}
+}
+
 // CreateFile is used to create and open the file by specified name and mode.
 func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
-	if err != nil {
-		if os.IsExist(err) {
-			return nil, &FileSystemError{
-				Code:    isExistError,
-				Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
-			}
-		} else if os.IsPermission(err) {
-			return nil, &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
-			}
-		} else {
-			return nil, &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
-			}
+	switch {
+	case err == nil:
+		return &LocalFile{
+			file: file,
+		}, nil
+	case os.IsExist(err):
+		return nil, &FileSystemError{
+			Code:    isExistError,
+			Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return nil, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
+		}
+	default:
+		return nil, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
 		}
 	}
-
-	return &LocalFile{
-		file: file,
-	}, nil
 }
 
 // FlushWriteFile is Flush mode, which flushes all data to one file.
 func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	if err != nil {
-		if os.IsExist(err) {
+		switch {
+		case os.IsExist(err):
 			return 0, &FileSystemError{
 				Code:    isExistError,
 				Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
 			}
-		} else if os.IsPermission(err) {
+		case os.IsPermission(err):
 			return 0, &FileSystemError{
 				Code:    permissionError,
 				Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
 			}
-		} else {
+		default:
 			return 0, &FileSystemError{
 				Code:    otherError,
 				Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
@@ -108,42 +130,73 @@ func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (i
 // DeleteFile is used to delete the file.
 func (file *LocalFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &FileSystemError{
-				Code:    isNotExistError,
-				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
-			}
-		} else if os.IsPermission(err) {
-			return &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
-			}
-		} else {
-			return &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Delete file error, file name: %s, error message: %s", name, err),
-			}
+	switch {
+	case err == nil:
+		return nil
+	case os.IsNotExist(err):
+		return &FileSystemError{
+			Code:    isNotExistError,
+			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
+		}
+	default:
+		return &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Delete file error, file name: %s, error message: %s", name, err),
 		}
 	}
-	return nil
 }
 
 // AppendWriteFile is append mode, which adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
-	if err != nil {
-		if os.IsNotExist(err) {
+	switch {
+	case err == nil:
+		return size, nil
+	case os.IsNotExist(err):
+		return size, &FileSystemError{
+			Code:    isNotExistError,
+			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
+		}
+	case os.IsPermission(err):
+		return size, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
+		}
+	default:
+		// include io.ErrShortWrite
+		return size, &FileSystemError{
+			Code:    writeError,
+			Message: fmt.Sprintf("Write file error, file name: %s, error message: %s", file.file.Name(), err),
+		}
+
+	}
+}
+
+// AppendWritevFile is vector Append mode, which supports appending consecutive buffers to the end of the file.
+// TODO: Optimizing under Linux.
+func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
+	var size int
+	for _, buffer := range *iov {
+		wsize, err := file.file.Write(buffer)
+		switch {
+		case err == nil:
+			size += wsize
+		case os.IsNotExist(err):
 			return size, &FileSystemError{
 				Code:    isNotExistError,
 				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
 			}
-		} else if os.IsPermission(err) {
+		case os.IsPermission(err):
 			return size, &FileSystemError{
 				Code:    permissionError,
 				Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
 			}
-		} else {
+		default:
 			// include io.ErrShortWrite
 			return size, &FileSystemError{
 				Code:    writeError,
@@ -154,58 +207,11 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 	return size, nil
 }
 
-// AppendWritevFile is vector Append mode, which supports appending consecutive buffers to the end of the file.
-// TODO: Optimizing under Linux.
-func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
-	var size int
-	for _, buffer := range *iov {
-		wsize, err := file.file.Write(buffer)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return size, &FileSystemError{
-					Code:    isNotExistError,
-					Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			} else if os.IsPermission(err) {
-				return size, &FileSystemError{
-					Code:    permissionError,
-					Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			} else {
-				// include io.ErrShortWrite
-				return size, &FileSystemError{
-					Code:    writeError,
-					Message: fmt.Sprintf("Write file error, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			}
-		}
-		size += wsize
-	}
-	return size, nil
-}
-
 // ReadFile is used to read a specified location of file.
 func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 	rsize, err := file.file.ReadAt(buffer, offset)
 	if err != nil {
-		if err == io.EOF {
-			return rsize, err
-		} else if os.IsNotExist(err) {
-			return rsize, &FileSystemError{
-				Code:    isNotExistError,
-				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
-			}
-		} else if os.IsPermission(err) {
-			return rsize, &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
-			}
-		} else {
-			return rsize, &FileSystemError{
-				Code:    readError,
-				Message: fmt.Sprintf("Read file error, file name: %s, read file size: %d, error message: %s", file.file.Name(), rsize, err),
-			}
-		}
+		return readErrorHandle(err, file.file.Name(), rsize)
 	}
 
 	return rsize, nil
@@ -218,24 +224,7 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	for _, buffer := range *iov {
 		rsize, err := file.file.ReadAt(buffer, offset)
 		if err != nil {
-			if err == io.EOF {
-				return size, err
-			} else if os.IsNotExist(err) {
-				return size, &FileSystemError{
-					Code:    isNotExistError,
-					Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			} else if os.IsPermission(err) {
-				return size, &FileSystemError{
-					Code:    permissionError,
-					Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			} else {
-				return size, &FileSystemError{
-					Code:    readError,
-					Message: fmt.Sprintf("Read file error, file name: %s, error message: %s", file.file.Name(), err),
-				}
-			}
+			return readErrorHandle(err, file.file.Name(), rsize)
 		}
 		size += rsize
 		offset += int64(rsize)
@@ -290,24 +279,7 @@ func (file *LocalFile) Close() error {
 func (iter *Iter) Next() (int, error) {
 	rsize, err := iter.reader.Read(iter.buffer)
 	if err != nil {
-		if err == io.EOF {
-			return rsize, err
-		} else if os.IsNotExist(err) {
-			return rsize, &FileSystemError{
-				Code:    isNotExistError,
-				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", iter.fileName, err),
-			}
-		} else if os.IsPermission(err) {
-			return rsize, &FileSystemError{
-				Code:    permissionError,
-				Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", iter.fileName, err),
-			}
-		} else {
-			return rsize, &FileSystemError{
-				Code:    readError,
-				Message: fmt.Sprintf("Read file error, file name: %s, read file size: %d, error message: %s", iter.fileName, rsize, err),
-			}
-		}
+		return readErrorHandle(err, iter.fileName, rsize)
 	}
 	return rsize, nil
 }
