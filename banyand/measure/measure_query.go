@@ -54,24 +54,9 @@ type Measure interface {
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
 	GetInterval() time.Duration
-	BuildSchema(other Measure) *databasev1.Measure
 }
 
 var _ Measure = (*measure)(nil)
-
-func (s *measure) BuildSchema(other Measure) *databasev1.Measure {
-	os := other.GetSchema()
-	schema := &databasev1.Measure{
-		Metadata:    os.GetMetadata(),
-		TagFamilies: os.GetTagFamilies(),
-		Fields:      os.GetFields(),
-		Entity:      s.GetSchema().GetEntity(),
-		Interval:    s.GetSchema().GetInterval(),
-		UpdatedAt:   s.GetSchema().GetUpdatedAt(),
-	}
-	s.schema = schema
-	return schema
-}
 
 func (s *measure) GetInterval() time.Duration {
 	return s.interval
