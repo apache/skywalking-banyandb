@@ -39,6 +39,16 @@ const (
 	flagEtcdEndpointsName = "etcd-endpoints"
 )
 
+const flagEtcdUsername = "etcd-username"
+
+const flagEtcdPassword = "etcd-password"
+
+const flagEtcdTLSCAFile = "etcd-tls-ca-file"
+
+const flagEtcdTLSCertFile = "etcd-tls-cert-file"
+
+const flagEtcdTLSKeyFile = "etcd-tls-key-file"
+
 // NewClient returns a new metadata client.
 func NewClient(forceRegisterNode bool) (Service, error) {
 	return &clientService{
@@ -51,6 +61,11 @@ type clientService struct {
 	schemaRegistry    schema.Registry
 	closer            *run.Closer
 	namespace         string
+	etcdUsername      string
+	etcdPassword      string
+	etcdTLSCAFile     string
+	etcdTLSCertFile   string
+	etcdTLSKeyFile    string
 	endpoints         []string
 	forceRegisterNode bool
 }
@@ -63,6 +78,11 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.namespace, "namespace", DefaultNamespace, "The namespace of the metadata stored in etcd")
 	fs.StringArrayVar(&s.endpoints, flagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
+	fs.StringVar(&s.etcdUsername, flagEtcdUsername, "", "A username of etcd")
+	fs.StringVar(&s.etcdPassword, flagEtcdPassword, "", "A password of etcd user")
+	fs.StringVar(&s.etcdTLSCAFile, flagEtcdTLSCAFile, "", "Trusted certificate authority")
+	fs.StringVar(&s.etcdTLSCertFile, flagEtcdTLSCertFile, "", "Etcd client certificate")
+	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "Private key for the etcd client certificate.")
 	return fs
 }
 
@@ -78,6 +98,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
 		schema.Namespace(s.namespace),
 		schema.ConfigureServerEndpoints(s.endpoints),
+		schema.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
+		schema.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
+		schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
 	)
 	if err != nil {
 		return err
