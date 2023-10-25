@@ -50,15 +50,13 @@ func BuildTopNSchema(md *databasev1.Measure, entityList []string) (logical.Schem
 }
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
-func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure, s logical.Schema,
+func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure,
+	topNAggregation *databasev1.TopNAggregation, s logical.Schema,
 ) (logical.Plan, error) {
+	groupByProjectionTags := schema.GetEntity().GetTagNames()
 	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
 	for i, tagFamily := range schema.GetTagFamilies() {
-		tagNames := make([]string, len(tagFamily.GetTags())-1)
-		for idx, tagSpec := range tagFamily.GetTags()[1:] {
-			tagNames[idx] = tagSpec.GetName()
-		}
-		groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagNames...)
+		groupByTags[i] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
 	}
 
 	projectionFields := make([]*logical.Field, len(schema.GetFields()))
@@ -71,7 +69,7 @@ func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *dat
 	if criteria.GetAgg() != 0 {
 		plan = newUnresolvedGroupBy(plan, groupByTags, false)
 		plan = newUnresolvedAggregation(plan,
-			logical.NewField(schema.GetFields()[0].GetName()),
+			logical.NewField(topNAggregation.GetFieldName()),
 			criteria.GetAgg(),
 			true)
 	}

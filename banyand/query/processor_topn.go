@@ -90,14 +90,14 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	sourceMeasure.GetSchema().TagFamilies = schema.GetTagFamilies()
+	sourceMeasure.SetSchema(schema)
 	s, err := logical_measure.BuildTopNSchema(schema, topNSchema.GetGroupByTagNames())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
-	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, schema, s)
+	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, schema, topNSchema, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
