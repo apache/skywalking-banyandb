@@ -55,9 +55,8 @@ func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *dat
 ) (logical.Plan, error) {
 	groupByProjectionTags := schema.GetEntity().GetTagNames()
 	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
-	for i, tagFamily := range schema.GetTagFamilies() {
-		groupByTags[i] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
-	}
+	tagFamily := schema.GetTagFamilies()[0]
+	groupByTags[0] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
 
 	projectionFields := make([]*logical.Field, len(schema.GetFields()))
 	for i, fieldSpecProj := range schema.GetFields() {
@@ -76,7 +75,7 @@ func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *dat
 
 	plan = top(plan, &measurev1.QueryRequest_Top{
 		Number:         criteria.GetTopN(),
-		FieldName:      schema.GetFields()[0].GetName(),
+		FieldName:      topNAggregation.GetFieldName(),
 		FieldValueSort: criteria.GetFieldValueSort(),
 	})
 	p, err := plan.Analyze(s)
