@@ -20,6 +20,7 @@ package fs
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,24 +45,24 @@ func NewLocalFileSystem() FileSystem {
 	}
 }
 
-func readErrorHandle(err error, name string, size int) (int, error) {
+func readErrorHandle(operation string, err error, name string, size int) (int, error) {
 	switch {
-	case err == io.EOF:
+	case errors.Is(err, io.EOF):
 		return size, err
 	case os.IsNotExist(err):
 		return size, &FileSystemError{
 			Code:    isNotExistError,
-			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
+			Message: fmt.Sprintf("%s failed, file is not exist, file name: %s, error message: %s", operation, name, err),
 		}
 	case os.IsPermission(err):
 		return size, &FileSystemError{
 			Code:    permissionError,
-			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
+			Message: fmt.Sprintf("%s failed, there is not enough permission, file name: %s, error message: %s", operation, name, err),
 		}
 	default:
 		return size, &FileSystemError{
 			Code:    readError,
-			Message: fmt.Sprintf("Read file error, file name: %s, read file size: %d, error message: %s", name, size, err),
+			Message: fmt.Sprintf("%s failed, read file error, file name: %s, read file size: %d, error message: %s", operation, name, size, err),
 		}
 	}
 }
@@ -92,7 +93,7 @@ func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error
 	}
 }
 
-// FlushWriteFile is Flush mode, which flushes all data to one file.
+// Write flushes all data to one file.
 func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	if err != nil {
@@ -128,7 +129,7 @@ func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (i
 }
 
 // DeleteFile is used to delete the file.
-func (file *LocalFileSystem) DeleteFile(name string) error {
+func (fs *LocalFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)
 	switch {
 	case err == nil:
@@ -151,7 +152,7 @@ func (file *LocalFileSystem) DeleteFile(name string) error {
 	}
 }
 
-// AppendWriteFile is append mode, which adds new data to the end of a file.
+// Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
 	switch {
@@ -173,11 +174,10 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 			Code:    writeError,
 			Message: fmt.Sprintf("Write file error, file name: %s, error message: %s", file.file.Name(), err),
 		}
-
 	}
 }
 
-// AppendWritevFile is vector Append mode, which supports appending consecutive buffers to the end of the file.
+// Writev supports appending consecutive buffers to the end of the file.
 // TODO: Optimizing under Linux.
 func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	var size int
@@ -207,24 +207,24 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	return size, nil
 }
 
-// ReadFile is used to read a specified location of file.
+// Read is used to read a specified location of file.
 func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 	rsize, err := file.file.ReadAt(buffer, offset)
 	if err != nil {
-		return readErrorHandle(err, file.file.Name(), rsize)
+		return readErrorHandle("Read operation", err, file.file.Name(), rsize)
 	}
 
 	return rsize, nil
 }
 
-// ReadvFile is used to read contiguous regions of a file and disperse them into discontinuous buffers.
+// Readv is used to read contiguous regions of a file and disperse them into discontinuous buffers.
 // TODO: Optimizing under Linux.
 func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {
 		rsize, err := file.file.ReadAt(buffer, offset)
 		if err != nil {
-			return readErrorHandle(err, file.file.Name(), rsize)
+			return readErrorHandle("Readv operation", err, file.file.Name(), rsize)
 		}
 		size += rsize
 		offset += int64(rsize)
@@ -233,13 +233,13 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	return size, nil
 }
 
-// StreamReadFile is used to read the entire file using streaming read.
+// StreamRead is used to read the entire file using streaming read.
 func (file *LocalFile) StreamRead(buffer []byte) (*Iter, error) {
 	reader := bufio.NewReader(file.file)
 	return &Iter{reader: reader, buffer: buffer, fileName: file.file.Name()}, nil
 }
 
-// GetFileSize is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
+// Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
 func (file *LocalFile) Size() (int64, error) {
 	fileInfo, err := os.Stat(file.file.Name())
 	if err != nil {
@@ -263,7 +263,7 @@ func (file *LocalFile) Size() (int64, error) {
 	return fileInfo.Size(), nil
 }
 
-// CloseFile is used to close File.
+// Close is used to close File.
 func (file *LocalFile) Close() error {
 	err := file.file.Close()
 	if err != nil {
@@ -279,7 +279,7 @@ func (file *LocalFile) Close() error {
 func (iter *Iter) Next() (int, error) {
 	rsize, err := iter.reader.Read(iter.buffer)
 	if err != nil {
-		return readErrorHandle(err, iter.fileName, rsize)
+		return readErrorHandle("ReadStream operation", err, iter.fileName, rsize)
 	}
 	return rsize, nil
 }

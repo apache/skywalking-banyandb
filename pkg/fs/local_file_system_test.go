@@ -31,16 +31,25 @@ import (
 var _ = ginkgo.Describe("Loacl File System", func() {
 	const (
 		data          string = "BanyanDB"
-		dirName       string = "dir"
-		fileName      string = "dir/file"
-		flushFileName string = "dir/flushFile"
+		dirName       string = "tmpDir"
+		fileName      string = "tmpDir/temFile"
+		flushFileName string = "tmpDir/tempFlushFile"
 	)
 
-	var fs FileSystem
+	var (
+		fs   FileSystem
+		file File
+	)
 
 	ginkgo.Context("Local File", func() {
 		ginkgo.BeforeEach(func() {
 			fs = NewLocalFileSystem()
+			err := os.MkdirAll(dirName, 0o777)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			file, err = fs.CreateFile(fileName, 0o777)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			_, err = os.Stat(fileName)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 
 		ginkgo.AfterEach(func() {
@@ -48,62 +57,62 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("File Operation", func() {
-			var err error
-			var size int
-			var buffer []byte
-			err = os.MkdirAll(dirName, 0o777)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-			// test flush write
-			size, err = fs.FlushWriteFile([]byte(data), flushFileName, 0o777)
+		ginkgo.It("Flush File Operation", func() {
+			size, err := fs.Write([]byte(data), flushFileName, 0o777)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(size == len(data)).To(gomega.BeTrue())
 			err = os.Remove(flushFileName)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
 
-			// test create file
-			file, err := fs.CreateFile(fileName, 0o777)
+		ginkgo.It("Create File Test", func() {
+			_, err := os.Stat(fileName)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = os.Stat(fileName)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
 
-			// test write and read
-			size, err = file.AppendWriteFile([]byte(data))
+		ginkgo.It("Write And Read File Test", func() {
+			size, err := file.Write([]byte(data))
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(size == len(data)).To(gomega.BeTrue())
 
-			buffer = make([]byte, len(data))
-			size, err = file.ReadFile(0, buffer)
+			buffer := make([]byte, len(data))
+			size, err = file.Read(0, buffer)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(size == len(data)).To(gomega.BeTrue())
 			gomega.Expect(bytes.Equal(buffer, []byte(data))).To(gomega.BeTrue())
+		})
 
-			// test writev and readv
+		ginkgo.It("Writev And Readv File Test", func() {
 			var iov [][]byte
 			for i := 0; i < 2; i++ {
 				iov = append(iov, []byte(data))
 			}
-			size, err = file.AppendWritevFile(&iov)
+			size, err := file.Writev(&iov)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(size == 2*len(data)).To(gomega.BeTrue())
 
 			var riov [][]byte
-			for i := 0; i < 3; i++ {
-				riov = append(iov, make([]byte, len(data)))
+			for i := 0; i < 2; i++ {
+				riov = append(riov, make([]byte, len(data)))
 			}
-			size, err = file.ReadvFile(0, &riov)
+			size, err = file.Readv(0, &riov)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			gomega.Expect(size == 3*len(data)).To(gomega.BeTrue())
+			gomega.Expect(size == 2*len(data)).To(gomega.BeTrue())
 			for _, buffer := range riov {
 				gomega.Expect(bytes.Equal(buffer, []byte(data))).To(gomega.BeTrue())
 			}
+		})
 
-			// test stream read
-			iter, err := file.StreamReadFile(buffer)
+		ginkgo.It("Stream Read Test", func() {
+			size, err := file.Write([]byte(data))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(size == len(data)).To(gomega.BeTrue())
+
+			buffer := make([]byte, len(data))
+			iter, err := file.StreamRead(buffer)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			for {
-				size, err = iter.Next()
+				size, err := iter.Next()
 				if err == nil {
 					gomega.Expect(size == len(data)).To(gomega.BeTrue())
 				} else {
@@ -111,21 +120,27 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 					break
 				}
 			}
+		})
 
-			// test get size
-			n, err := file.GetFileSize()
+		ginkgo.It("Size Test", func() {
+			size, err := file.Write([]byte(data))
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			gomega.Expect(n == 3*int64(len(data))).To(gomega.BeTrue())
+			gomega.Expect(size == len(data)).To(gomega.BeTrue())
+			n, err := file.Size()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(n == int64(len(data))).To(gomega.BeTrue())
+		})
 
-			// test close
-			err = file.CloseFile()
+		ginkgo.It("Close Test", func() {
+			err := file.Close()
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			buffer = make([]byte, len(data))
-			_, err = file.ReadFile(0, buffer)
+			buffer := make([]byte, len(data))
+			_, err = file.Read(0, buffer)
 			gomega.Expect(err).To(gomega.HaveOccurred())
+		})
 
-			// test delete
-			err = file.DeleteFile()
+		ginkgo.It("Delete Test", func() {
+			err := fs.DeleteFile(fileName)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			_, err = os.Stat(fileName)
 			gomega.Expect(err).To(gomega.HaveOccurred())
