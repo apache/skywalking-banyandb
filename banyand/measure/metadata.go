@@ -217,6 +217,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 			},
 		},
 		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+		Entity: sourceMeasureSchema.GetEntity(),
 	}
 	if oldTopNSchema == nil {
 		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
