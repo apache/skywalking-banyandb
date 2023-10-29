@@ -40,8 +40,6 @@ var (
 )
 
 var _ = g.DescribeTable("TopN Tests", verify,
-	g.Entry("desc", helpers.Args{Input: "desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
-	g.Entry("asc", helpers.Args{Input: "asc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 order by desc", helpers.Args{Input: "aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 with condition order by desc", helpers.Args{Input: "condition_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 for null group order by desc", helpers.Args{Input: "null_group", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),

@@ -54,9 +54,14 @@ type Measure interface {
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
 	GetInterval() time.Duration
+	SetSchema(schema *databasev1.Measure)
 }
 
 var _ Measure = (*measure)(nil)
+
+func (s *measure) SetSchema(schema *databasev1.Measure) {
+	s.schema = schema
+}
 
 func (s *measure) GetInterval() time.Duration {
 	return s.interval
