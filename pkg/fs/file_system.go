@@ -19,59 +19,45 @@
 package fs
 
 import (
-	"container/list"
+	"bufio"
 )
 
+const moduleName string = "filesystem"
+
 // Mode contains permission of file and directory.
-type Mode struct{}
+type Mode uint64
 
 // Iter is used for streaming read.
-type Iter struct{}
-
-// Dir operation interface.
-type Dir interface {
-	// Delete the directory.
-	DeleteDirectory() error
-	// Rename the directory.
-	RenameDirectory(newName string) error
-	// Get all lists of files or children's directories in the directory.
-	ReadDirectory() (list.List, error)
-	// Set directory permission.
-	SetDirectoryPermission(permission Mode) error
+type Iter struct {
+	fileName string
+	reader   *bufio.Reader
+	buffer   []byte
 }
 
 // File operation interface.
 type File interface {
 	// Append mode, which adds new data to the end of a file.
-	AppendWriteFile(buffer []byte) error
+	Write(buffer []byte) (int, error)
 	// Vector Append mode, which supports appending consecutive buffers to the end of the file.
-	AppendWritevFile(iov *[][]byte) error
-	// Delete the file.
-	DeleteFile() error
+	Writev(iov *[][]byte) (int, error)
 	// Reading a specified location of file.
-	ReadFile(offset int, buffer []byte) error
+	Read(offset int64, buffer []byte) (int, error)
 	// Reading contiguous regions of a file and dispersing them into discontinuous buffers.
-	ReadvFile(iov *[][]byte) error
-	// Read the entire file using streaming read
-	StreamReadFile(offset int, buffer []byte) (*Iter, error)
-	// Rename the file.
-	RenameFile(newName string) error
+	Readv(offset int64, iov *[][]byte) (int, error)
+	// Read the entire file using streaming read.
+	StreamRead(buffer []byte) (*Iter, error)
 	// Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
-	GetFileSize() (int, error)
-	// Set directory permission.
-	SetFilePermission(permission Mode) error
+	Size() (int64, error)
+	// Close File.
+	Close() error
 }
 
 // FileSystem operation interface.
 type FileSystem interface {
-	// Create the directory by specified name and mode.
-	CreateDirectory(name string, permission Mode) error
-	// Open the directory by specified name.
-	OpenDirectory(name string) (*Dir, error)
-	// Create the file by specified name and mode.
-	CreateFile(name string, permission Mode) error
-	// Open the file by specified name.
-	OpenFile(name string) (*File, error)
+	// Create and open the file by specified name and mode.
+	CreateFile(name string, permission Mode) (File, error)
 	// Flush mode, which flushes all data to one file.
-	FlushWriteFile(buffer []byte, permission Mode) (*File, error)
+	Write(buffer []byte, name string, permission Mode) (int, error)
+	// Delete the file.
+	DeleteFile(name string) error
 }

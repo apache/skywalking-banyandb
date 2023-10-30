@@ -27,64 +27,6 @@ If the user sets io_uring for use, the read and write requests will first be pla
 The most common IO mode is Synchronous IO, but it has a relatively low throughput. BanyanDB provides a nonblocking mode that is compatible with lower Linux versions.
 
 # Operation
-## Directory
-### Create
-Create the specified directory and return the file descriptor, the error will happen if the directory already exists.
-The following is the pseudocode that calls the API in the go style.、
-
-param:
-
-name: The name of the directory.
-
-permisson: Permission you want to set. BanyanDB provides three modes: Read, Write, ReadAndWrite. you can use it as Mode.Read.
-
-`CreateDirectory(name String, permission Mode) (error)`
-
-### Open
-Open the directory and return an error if the file descriptor does not exist.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-name: The name of the directory.
-
-return: Directory pointer, you can use it for various operations.
-
-`OpenDirectory(name String) (*Dir, error)`
-
-### Delete
-Delete the directory and all files and return an error if the directory does not exist or the directory not reading or writing.
-The following is the pseudocode that calls the API in the go style.
-
-`Dir.DeleteDirectory() (error)`
-
-### Rename
-Rename the directory and return an error if the directory already exists.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-name: The name of the directory.
-
-`Dir.RenameDirectory(newName String) (error)`
-
-### Read
-Get all lists of files or children's directories in the directory and an error if the directory does not exist.
-The following is the pseudocode that calls the API in the go style.
-
-return: List of files belonging to the directory.
-
-`Dir.ReadDirectory() (FileList, error)`
-
-### Permission
-When creating a file, the default owner is the user who created the directory. The owner can specify read and write permissions of the directory. If not specified, the default is read and write permissions, which include permissions for all files in the directory.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-permisson: Permission you want to set. BanyanDB provides three mode: Read, Write, ReadAndWrite. you can use it as Mode.Read.
-
-`Dir.SetDirectoryPermission(permission Mode) (error)`
 
 ## File
 ### Create
@@ -97,19 +39,9 @@ name: The name of the file.
 
 permisson: Permission you want to set. BanyanDB provides three mode: Read, Write, ReadAndWrite. you can use it as Mode.Read.
 
-`CreateFile(name String, permission Mode) (error)`
+return: The file instance, can be used for various file operations.
 
-### Open
-Open the file and return an error if the file descriptor does not exist.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-name: The name of the file.
-
-return: File pointer, you can use it for various operations.
-
-`OpenFile(name String) (*File, error)`
+`CreateFile(name String, permission Mode) (File, error)`
 
 ### Write
 BanyanDB provides two methods for writing files.
@@ -123,7 +55,9 @@ param:
 
 buffer: The data append to the file.
 
-`File.AppendWriteFile(buffer []byte) (error)`
+Actual length of written data.
+
+`File.Write(buffer []byte) (int, error)`
 
 For vector append mode:
 
@@ -131,7 +65,9 @@ param:
 
 iov: The data in consecutive buffers.
 
-`File.AppendWritevFile(iov *[][]byte) (error)`
+return: Actual length of written data.
+
+`File.Writev(iov *[][]byte) (int, error)`
 
 For flush mode:
 
@@ -141,16 +77,16 @@ buffer: The data append to the file.
 
 permisson: Permission you want to set. BanyanDB provides three mode: Read, Write, ReadAndWrite. you can use it as Mode.Read.
 
-return: File pointer, you can use it for various operations.
+return: Actual length of flushed data.
 
-`FlushWriteFile(buffer []byte, permission Mode) (*File, error)`
+`Write(buffer []byte, permission Mode) (int, error)`
 
 ### Delete
 BanyanDB provides the deleting operation, which can delete a file at once. it will return an error if the directory does not exist or the file not reading or writing.
 
 The following is the pseudocode that calls the API in the go style.
 
-`File.DeleteFile() (error)`
+`DeleteFile(name string) (error)`
 
 ### Read
 For reading operation, two read methods are provided:
@@ -167,7 +103,9 @@ offset: Read begin location of the file.
 
 buffer: The read length is the same as the buffer length.
 
-`File.ReadFile(offset int, buffer []byte) (error)`
+return: Actual length of reading data.
+
+`File.Read(offset int64, buffer []byte) (int, error)`
 
 For vector reading:
 
@@ -175,29 +113,19 @@ param:
 
 iov: Discontinuous buffers in memory.
 
-`File.ReadvFile(iov *[][]byte) (error)`
+return: Actual length of reading data.
+
+`File.Readv(iov *[][]byte) (int, error)`
 
 For stream reading:
 
 param:
 
-offset: Read begin location of the file.
-
 buffer: Every read length in the stream is the same as the buffer length.
 
 return: A Iterator, the size of each iteration is the length of the buffer.
 
-`File.StreamReadFile(offset int, buffer []byte) (*iter, error)`
-
-### Rename
-Rename the file and return an error if the directory exists in this directory.
-The following is the pseudocode that calls the API in the go style.
-
-param:
-
-newName: The new name of the file.
-
-`File.RenameFile(newName String) (error)`
+`File.StreamRead(buffer []byte) (*iter, error)`
 
 ### Get size
 Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -205,14 +133,9 @@ The following is the pseudocode that calls the API in the go style.
 
 return: the file written data's size.
 
-`File.GetFileSize() (int, error)`
+`File.Size() (int, error)`
 
-### Permission
-When creating a file, the default owner is the user who created the file. The owner can specify the read and write permissions of the file. If not specified, the default is read and write permissions.
-The following is the pseudocode that calls the API in the go style.
+### Close
+Close File.The following is the pseudocode that calls the API in the go style.
 
-param:
-
-permisson: Permission you want to set. BanyanDB provides three mode: Read, Write, ReadAndWrite. you can use it as Mode.Read.
-
-`File.SetFilePermission(permission Mode) (error)`
+`File.Close() error`
