@@ -9,6 +9,10 @@ Release Notes.
 - Support etcd client authentication.
 - Implement Local file system.
 
+### Bugs
+
+- Fix the bug that property merge new tags failed.
+
 ## 0.5.0
 
 ### Features
