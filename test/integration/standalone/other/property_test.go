@@ -98,6 +98,75 @@ var _ = Describe("Property application", func() {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
 		}))
 	})
+	It("applies properties with new tags", func() {
+		md := &propertyv1.Metadata{
+			Container: &commonv1.Metadata{
+				Name:  "p",
+				Group: "g",
+			},
+			Id: "1",
+		}
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+			},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeTrue())
+		Expect(resp.TagsNum).To(Equal(uint32(1)))
+		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
+			},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeFalse())
+		Expect(resp.TagsNum).To(Equal(uint32(2)))
+		got, err := client.Get(context.Background(), &propertyv1.GetRequest{Metadata: md})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Property.Tags).To(Equal([]*modelv1.Tag{
+			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
+		}))
+	})
+	It("applies null tag", func() {
+		md := &propertyv1.Metadata{
+			Container: &commonv1.Metadata{
+				Name:  "p",
+				Group: "g",
+			},
+			Id: "1",
+		}
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}},
+			},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeTrue())
+		Expect(resp.TagsNum).To(Equal(uint32(2)))
+		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
+			},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Created).To(BeFalse())
+		Expect(resp.TagsNum).To(Equal(uint32(2)))
+		got, err := client.Get(context.Background(), &propertyv1.GetRequest{Metadata: md})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Property.Tags).To(Equal([]*modelv1.Tag{
+			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
+		}))
+	})
 	It("applies a property with TTL", func() {
 		md := &propertyv1.Metadata{
 			Container: &commonv1.Metadata{

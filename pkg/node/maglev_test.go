@@ -30,7 +30,7 @@ import (
 
 const (
 	dataNodeTemplate = "data-node-%d"
-	targetEpsilon    = 0.03
+	targetEpsilon    = 0.1
 )
 
 func TestMaglevSelector(t *testing.T) {

@@ -177,15 +177,19 @@ func (e *etcdSchemaRegistry) mergeProperty(ctx context.Context, key string, prop
 		return false, 0, 0, err
 	}
 	merge := func(existed *propertyv1.Property) (*propertyv1.Property, error) {
-		tags := make([]*modelv1.Tag, len(property.Tags))
-		copy(tags, property.Tags)
+		tags := make([]*modelv1.Tag, 0)
 		for i := 0; i < int(tagsNum); i++ {
-			t := tags[0]
-			tags = tags[1:]
+			t := property.Tags[i]
+			tagExisted := false
 			for _, et := range existed.Tags {
 				if et.Key == t.Key {
 					et.Value = t.Value
+					tagExisted = true
+					break
 				}
+			}
+			if !tagExisted {
+				tags = append(tags, t)
 			}
 		}
 		existed.Tags = append(existed.Tags, tags...)
