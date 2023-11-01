@@ -18,21 +18,23 @@
 package convert
 
 import (
-	"reflect"
 	"unsafe"
 )
 
 // StringToBytes converts string to bytes.
+// It work well until the referenced memory won’t be changed.
 func StringToBytes(s string) (b []byte) {
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh.Data = sh.Data
-	bh.Cap = sh.Len
-	bh.Len = sh.Len
-	return b
+	if s == "" {
+		return nil
+	}
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 // BytesToString converts bytes to string.
+// It work well until the referenced memory won’t be changed.
 func BytesToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }

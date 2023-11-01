@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.20 AS dev
+FROM golang:1.21 AS dev
 WORKDIR /app
 ENV GOOS="linux"
 ENV CGO_ENABLED=0
@@ -27,7 +27,7 @@ EXPOSE 2345
 
 ENTRYPOINT ["air"]
 
-FROM golang:1.20 AS base
+FROM golang:1.21 AS base
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"

@@ -253,11 +253,10 @@ func (file *LocalFile) Size() (int64, error) {
 				Code:    permissionError,
 				Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", file.file.Name(), err),
 			}
-		} else {
-			return -1, &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Get file size error, file name: %s, error message: %s", file.file.Name(), err),
-			}
+		}
+		return -1, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Get file size error, file name: %s, error message: %s", file.file.Name(), err),
 		}
 	}
 	return fileInfo.Size(), nil

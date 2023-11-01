@@ -30,7 +30,7 @@ import (
 
 const indexRuleSchemaPath = "/api/v1/index-rule/schema"
 
-var indexRuleSchemaPathWithParams = indexRuleSchemaPath + "/{group}/{name}"
+var indexRuleSchemaPathWithParams = indexRuleSchemaPath + pathTemp
 
 func newIndexRuleCmd() *cobra.Command {
 	indexRuleCmd := &cobra.Command{

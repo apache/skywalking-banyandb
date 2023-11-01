@@ -185,13 +185,13 @@ Apache-2.0 licenses
     github.com/coreos/go-systemd/v22 v22.5.0 Apache-2.0
     github.com/dgraph-io/ristretto v0.1.1 Apache-2.0
     github.com/envoyproxy/protoc-gen-validate v0.10.1 Apache-2.0
-    github.com/go-logr/logr v1.2.4 Apache-2.0
+    github.com/go-logr/logr v1.3.0 Apache-2.0
     github.com/go-logr/stdr v1.2.2 Apache-2.0
     github.com/golang/glog v1.1.0 Apache-2.0
     github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da Apache-2.0
     github.com/google/btree v1.1.2 Apache-2.0
     github.com/google/flatbuffers v1.12.1 Apache-2.0
-    github.com/google/pprof v0.0.0-20230728192033-2ba5b33183c6 Apache-2.0
+    github.com/google/pprof v0.0.0-20231023181126-ff6d637d2a7b Apache-2.0
     github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 Apache-2.0
     github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.0.0-rc.0 Apache-2.0
     github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.0.0-rc.5 Apache-2.0
@@ -232,7 +232,7 @@ Apache-2.0 licenses
     go.opentelemetry.io/otel/sdk v1.16.0 Apache-2.0
     go.opentelemetry.io/otel/trace v1.16.0 Apache-2.0
     go.opentelemetry.io/proto/otlp v0.20.0 Apache-2.0
-    go.uber.org/mock v0.2.0 Apache-2.0
+    go.uber.org/mock v0.3.0 Apache-2.0
     google.golang.org/genproto v0.0.0-20230706204954-ccb25ca9f130 Apache-2.0
     google.golang.org/genproto/googleapis/api v0.0.0-20230706204954-ccb25ca9f130 Apache-2.0
     google.golang.org/genproto/googleapis/rpc v0.0.0-20230706204954-ccb25ca9f130 Apache-2.0
@@ -271,7 +271,7 @@ BSD-3-Clause licenses
     github.com/gogo/protobuf v1.3.2 BSD-3-Clause
     github.com/golang/protobuf v1.5.3 BSD-3-Clause
     github.com/golang/snappy v0.0.3 BSD-3-Clause
-    github.com/google/go-cmp v0.5.9 BSD-3-Clause
+    github.com/google/go-cmp v0.6.0 BSD-3-Clause
     github.com/google/uuid v1.3.0 BSD-3-Clause
     github.com/grpc-ecosystem/grpc-gateway v1.16.0 BSD-3-Clause
     github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 BSD-3-Clause
@@ -281,14 +281,14 @@ BSD-3-Clause licenses
     github.com/spf13/pflag v1.0.5 BSD-3-Clause
     github.com/tklauser/go-sysconf v0.3.11 BSD-3-Clause
     github.com/xhit/go-str2duration/v2 v2.1.0 BSD-3-Clause
-    golang.org/x/crypto v0.11.0 BSD-3-Clause
+    golang.org/x/crypto v0.14.0 BSD-3-Clause
     golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f BSD-3-Clause
-    golang.org/x/mod v0.12.0 BSD-3-Clause
-    golang.org/x/net v0.12.0 BSD-3-Clause
-    golang.org/x/sys v0.10.0 BSD-3-Clause
-    golang.org/x/text v0.11.0 BSD-3-Clause
+    golang.org/x/mod v0.13.0 BSD-3-Clause
+    golang.org/x/net v0.17.0 BSD-3-Clause
+    golang.org/x/sys v0.13.0 BSD-3-Clause
+    golang.org/x/text v0.13.0 BSD-3-Clause
     golang.org/x/time v0.3.0 BSD-3-Clause
-    golang.org/x/tools v0.11.1 BSD-3-Clause
+    golang.org/x/tools v0.14.0 BSD-3-Clause
     google.golang.org/protobuf v1.31.0 BSD-3-Clause
 
 ========================================================================
@@ -332,8 +332,8 @@ MIT licenses
     github.com/mattn/go-colorable v0.1.13 MIT
     github.com/mattn/go-isatty v0.0.19 MIT
     github.com/mitchellh/mapstructure v1.5.0 MIT
-    github.com/onsi/ginkgo/v2 v2.11.0 MIT
-    github.com/onsi/gomega v1.27.10 MIT
+    github.com/onsi/ginkgo/v2 v2.13.0 MIT
+    github.com/onsi/gomega v1.29.0 MIT
     github.com/pelletier/go-toml/v2 v2.0.8 MIT
     github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c MIT
     github.com/robfig/cron/v3 v3.0.1 MIT

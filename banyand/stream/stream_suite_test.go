@@ -21,8 +21,8 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -34,15 +34,15 @@ import (
 )
 
 func TestStream(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Stream Suite")
+	gomega.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Stream Suite")
 }
 
-var _ = BeforeSuite(func() {
-	Expect(logger.Init(logger.Logging{
+var _ = g.BeforeSuite(func() {
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
+	})).To(gomega.Succeed())
 })
 
 type preloadStreamService struct {
@@ -63,29 +63,29 @@ type services struct {
 }
 
 func setUp() (*services, func()) {
-	ctrl := gomock.NewController(GinkgoT())
-	Expect(ctrl).ShouldNot(BeNil())
+	ctrl := gomock.NewController(g.GinkgoT())
+	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
 	// Init Pipeline
 	pipeline := queue.Local()
 
 	// Init Metadata Service
 	metadataService, err := metadata.NewService(context.TODO())
-	Expect(err).NotTo(HaveOccurred())
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Stream Service
 	streamService, err := NewService(context.TODO(), metadataService, pipeline)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--stream-root-path="+rootPath)
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
 	moduleDeferFunc := test.SetupModules(
 		flags,

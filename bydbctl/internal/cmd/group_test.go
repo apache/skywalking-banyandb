@@ -31,13 +31,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
+const httpSchema = "http://"
+
 var _ = Describe("Group", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.EmptyStandalone()
-		addr = "http://" + addr
+		addr = httpSchema + addr
 		// extracting the operation of creating group
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

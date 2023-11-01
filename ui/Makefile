@@ -81,6 +81,11 @@ license-check: $(LICENSE_EYE) ## Check license header
 license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
+.PHONY: license-dep
 license-dep:$(LICENSE_EYE)
 	@rm -rf licenses
 	$(LICENSE_EYE) dep resolve -o ui-licenses -s LICENSE.tpl
+
+.PHONY: vendor-update
+vendor-update:
+	npm update

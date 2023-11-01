@@ -2,7 +2,7 @@
   "name": "ui",
   "version": "0.1.0",
   "engines": {
-    "node": "18.16"
+    "node": "20.9"
   },
   "scripts": {
     "dev": "vite",

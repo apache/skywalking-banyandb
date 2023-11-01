@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -50,8 +50,8 @@ import (
 )
 
 func TestIstio(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Istio Suite", Label("integration", "slow"))
+	gomega.RegisterFailHandler(g.Fail)
+	g.RunSpecs(t, "Istio Suite", g.Label("integration", "slow"))
 }
 
 var (
@@ -59,69 +59,69 @@ var (
 	heapProfileFile *os.File
 )
 
-var _ = BeforeSuite(func() {
+var _ = g.BeforeSuite(func() {
 	// Create CPU profile file
 	var err error
 	cpuProfileFile, err = os.Create("cpu.prof")
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Start CPU profiling
 	err = pprof.StartCPUProfile(cpuProfileFile)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Create heap profile file
 	heapProfileFile, err = os.Create("heap.prof")
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
 
-var _ = AfterSuite(func() {
+var _ = g.AfterSuite(func() {
 	// Stop CPU profiling
 	pprof.StopCPUProfile()
 
 	// Write heap profile
 	err := pprof.WriteHeapProfile(heapProfileFile)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Close profile files
 	err = cpuProfileFile.Close()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = heapProfileFile.Close()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
 
-var _ = Describe("Istio", func() {
-	BeforeEach(func() {
-		Expect(logger.Init(logger.Logging{
+var _ = g.Describe("Istio", func() {
+	g.BeforeEach(func() {
+		gomega.Expect(logger.Init(logger.Logging{
 			Env:   "dev",
 			Level: flags.LogLevel,
-		})).To(Succeed())
+		})).To(gomega.Succeed())
 	})
-	It("should pass", func() {
+	g.It("should pass", func() {
 		path, deferFn, err := test.NewSpace()
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		g.DeferCleanup(func() {
 			printDiskUsage(path+"/measure", 5, 0)
 			deferFn()
 		})
 		var ports []int
 		ports, err = test.AllocateFreePorts(4)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		addr, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
 			path, ports,
 			[]setup.SchemaLoader{&preloadService{name: "oap"}},
 			"--logging-level", "info")
-		DeferCleanup(closerServerFunc)
-		Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-			flags.EventuallyTimeout).Should(Succeed())
+		g.DeferCleanup(closerServerFunc)
+		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			flags.EventuallyTimeout).Should(gomega.Succeed())
 		bc := &clientCounter{}
 		conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(bc))
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		g.DeferCleanup(func() {
 			conn.Close()
 		})
 		startTime := time.Now()
 		writtenCount, err := ReadAndWriteFromFile(extractData(), conn)
-		Expect(err).To(Succeed())
+		gomega.Expect(err).To(gomega.Succeed())
 		endTime := time.Now()
 
 		fmt.Printf("written %d items in %s\n", writtenCount, endTime.Sub(startTime).String())

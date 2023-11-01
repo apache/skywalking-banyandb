@@ -31,7 +31,7 @@ import (
 
 const streamSchemaPath = "/api/v1/stream/schema"
 
-var streamSchemaPathWithParams = streamSchemaPath + "/{group}/{name}"
+var streamSchemaPathWithParams = streamSchemaPath + pathTemp
 
 func getPath(path string) string {
 	return viper.GetString("addr") + path

@@ -13,6 +13,13 @@ Release Notes.
 
 - Fix the bug that property merge new tags failed.
 
+
+### Chores
+
+- Bump go to 1.21.
+- Bump node to 20.9.
+- Bump several tools.
+
 ## 0.5.0
 
 ### Features

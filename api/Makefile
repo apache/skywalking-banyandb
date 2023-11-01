@@ -21,6 +21,7 @@ NAME := api
 include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/lint-api.mk
+include ../scripts/build/vendor.mk
 include ../scripts/build/help.mk
 
 proto_dir := $(root_dir)/api/proto
