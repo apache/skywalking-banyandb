@@ -30,7 +30,7 @@ import (
 
 const measureSchemaPath = "/api/v1/measure/schema"
 
-var measureSchemaPathWithParams = measureSchemaPath + "/{group}/{name}"
+var measureSchemaPathWithParams = measureSchemaPath + pathTemp
 
 func newMeasureCmd() *cobra.Command {
 	measureCmd := &cobra.Command{

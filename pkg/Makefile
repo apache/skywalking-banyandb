@@ -22,4 +22,5 @@ include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
+include ../scripts/build/vendor.mk
 include ../scripts/build/help.mk

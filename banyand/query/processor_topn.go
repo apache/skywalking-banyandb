@@ -397,17 +397,15 @@ func (naggr *postNonAggregationProcessor) Put(entityValues tsdb.EntityValues, va
 				return -1
 			} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
 				return 0
-			} else {
-				return 1
 			}
+			return 1
 		}
 		if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
 			return 1
 		} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
 			return 0
-		} else {
-			return -1
 		}
+		return -1
 	}, false)
 	naggr.timelines[timestampMillis] = timeline
 	heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})

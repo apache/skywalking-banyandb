@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -33,22 +33,22 @@ import (
 func loadStream() *databasev1.Stream {
 	s := &databasev1.Stream{}
 	// preload stream
-	Expect(protojson.Unmarshal([]byte(streamJSON), s)).To(Succeed())
+	gomega.Expect(protojson.Unmarshal([]byte(streamJSON), s)).To(gomega.Succeed())
 	return s
 }
 
 func loadIndexRuleBinding() *databasev1.IndexRuleBinding {
 	irb := &databasev1.IndexRuleBinding{}
 	// preload index rule binding
-	Expect(protojson.Unmarshal([]byte(indexRuleBindingJSON), irb)).To(Succeed())
+	gomega.Expect(protojson.Unmarshal([]byte(indexRuleBindingJSON), irb)).To(gomega.Succeed())
 	return irb
 }
 
 func loadIndexRule() *databasev1.IndexRule {
 	ir := &databasev1.IndexRule{}
 	data, err := indexRuleStore.ReadFile(indexRuleDir + "/db.instance.json")
-	Expect(err).NotTo(HaveOccurred())
-	Expect(protojson.Unmarshal(data, ir)).To(Succeed())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(protojson.Unmarshal(data, ir)).To(gomega.Succeed())
 	return ir
 }
 
@@ -65,59 +65,59 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+			gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
-			Expect(checker(s, s)).Should(BeTrue())
+			gomega.Expect(checker(s, s)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should not be equal if metadata.name changed", func() {
 			newS := loadStream()
 			newS.Metadata.Name = "new-name"
-			Expect(checker(s, newS)).Should(BeFalse())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if metadata.group changed", func() {
 			newS := loadStream()
 			newS.GetMetadata().Group = "new-group"
-			Expect(checker(s, newS)).Should(BeFalse())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if entity changed", func() {
 			newS := loadStream()
 			newS.GetEntity().TagNames = []string{"new-entity-tag"}
-			Expect(checker(s, newS)).Should(BeFalse())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if tag name changed", func() {
 			newS := loadStream()
 			newS.GetTagFamilies()[0].Tags[0].Name = "binary-tag"
-			Expect(checker(s, newS)).Should(BeFalse())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if tag type changed", func() {
 			newS := loadStream()
 			newS.GetTagFamilies()[0].Tags[0].Type = databasev1.TagType_TAG_TYPE_STRING
-			Expect(checker(s, newS)).Should(BeFalse())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should be equal if UpdatedAt changed", func() {
 			newS := loadStream()
 			newS.UpdatedAt = timestamppb.Now()
-			Expect(checker(s, newS)).Should(BeTrue())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should be equal if metadata.mod_revision changed", func() {
 			newS := loadStream()
 			newS.Metadata.ModRevision = 10000
-			Expect(checker(s, newS)).Should(BeTrue())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should be equal if metadata.create_revision changed", func() {
 			newS := loadStream()
 			newS.Metadata.CreateRevision = 10000
-			Expect(checker(s, newS)).Should(BeTrue())
+			gomega.Expect(checker(s, newS)).Should(gomega.BeTrue())
 		})
 	})
 
@@ -133,47 +133,47 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+			gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
-			Expect(checker(irb, irb)).Should(BeTrue())
+			gomega.Expect(checker(irb, irb)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should not be equal if metadata.name changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.Metadata.Name = "new-name"
-			Expect(checker(irb, newIrb)).Should(BeFalse())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if metadata.group changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.GetMetadata().Group = "new-group"
-			Expect(checker(irb, newIrb)).Should(BeFalse())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if rules changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.Rules = []string{}
-			Expect(checker(irb, newIrb)).Should(BeFalse())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if beginAt changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.BeginAt = timestamppb.New(time.Now())
-			Expect(checker(irb, newIrb)).Should(BeFalse())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if expireAt changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.ExpireAt = timestamppb.New(time.Now())
-			Expect(checker(irb, newIrb)).Should(BeFalse())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should be equal if UpdatedAtNanoseconds changed", func() {
 			newIrb := loadIndexRuleBinding()
 			newIrb.UpdatedAt = timestamppb.Now()
-			Expect(checker(irb, newIrb)).Should(BeTrue())
+			gomega.Expect(checker(irb, newIrb)).Should(gomega.BeTrue())
 		})
 	})
 
@@ -188,41 +188,41 @@ var _ = ginkgo.Describe("Utils", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+			gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		})
 
 		ginkgo.It("should be equal if nothing changed", func() {
-			Expect(checker(ir, ir)).Should(BeTrue())
+			gomega.Expect(checker(ir, ir)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should not be equal if metadata.name changed", func() {
 			newIr := loadIndexRule()
 			newIr.Metadata.Name = "new-name"
-			Expect(checker(ir, newIr)).Should(BeFalse())
+			gomega.Expect(checker(ir, newIr)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if metadata.id changed", func() {
 			newIr := loadIndexRule()
 			newIr.Metadata.Id = 1000
-			Expect(checker(ir, newIr)).Should(BeTrue())
+			gomega.Expect(checker(ir, newIr)).Should(gomega.BeTrue())
 		})
 
 		ginkgo.It("should not be equal if metadata.group changed", func() {
 			newIr := loadIndexRule()
 			newIr.GetMetadata().Group = "new-group"
-			Expect(checker(ir, newIr)).Should(BeFalse())
+			gomega.Expect(checker(ir, newIr)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should not be equal if rules changed", func() {
 			newIr := loadIndexRule()
 			newIr.Tags = []string{"new-tag"}
-			Expect(checker(ir, newIr)).Should(BeFalse())
+			gomega.Expect(checker(ir, newIr)).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should be equal if UpdatedAtNanoseconds changed", func() {
 			newIr := loadIndexRule()
 			newIr.UpdatedAt = timestamppb.Now()
-			Expect(checker(ir, newIr)).Should(BeTrue())
+			gomega.Expect(checker(ir, newIr)).Should(gomega.BeTrue())
 		})
 	})
 })

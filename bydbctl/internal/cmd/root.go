@@ -29,6 +29,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
+const pathTemp = "/{group}/{name}"
+
 var (
 	filePath string
 	name     string

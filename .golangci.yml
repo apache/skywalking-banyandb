@@ -83,7 +83,7 @@ linters-settings:
   misspell:
     locale: US
   unused:
-    go: "1.20"
+    go: "1.21"
     check-exported: false
   unparam:
     check-exported: false
@@ -144,10 +144,10 @@ linters-settings:
     #   all          - for all comments.
     scope: toplevel
   staticcheck:
-    go: "1.20"
+    go: "1.21"
     checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
   stylecheck:
-    go: "1.20"
+    go: "1.21"
   exhaustive:
     check:
       - switch

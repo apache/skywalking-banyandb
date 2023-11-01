@@ -101,7 +101,7 @@ ttl: 30m
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
 		_, addr, deferFunc = setup.EmptyStandalone()
-		addr = "http://" + addr
+		addr = httpSchema + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

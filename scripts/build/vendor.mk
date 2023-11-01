@@ -16,11 +16,10 @@
 # under the License.
 #
 
-NAME := test
 
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/vendor.mk
-include ../scripts/build/help.mk
+##@ Vendor update
+
+.PHONY: vendor-update
+vendor-update: ## Update vendors
+	go get -u -d ./...
+	go mod tidy -compat=1.21

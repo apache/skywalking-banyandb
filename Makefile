@@ -81,6 +81,12 @@ lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 lint: default ## Run the linters on all projects
 
+##@ Vendor update
+
+vendor-update: TARGET=vendor-update
+vendor-update: PROJECTS:=$(PROJECTS) pkg test
+vendor-update: default ## Run the linters on all projects
+
 ##@ Code style targets
 tidy:
 	go mod tidy
@@ -186,3 +192,4 @@ release-assembly: release-binary release-sign ## Generate release package
 .PHONY: test test-race test-coverage test-ci
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
+.PHONY: vendor-update

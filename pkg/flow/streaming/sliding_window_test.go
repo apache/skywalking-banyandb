@@ -21,8 +21,8 @@ import (
 	"context"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	g "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -53,7 +53,7 @@ func (i *intSumAggregator) Dirty() bool {
 	return i.dirty
 }
 
-var _ = Describe("Sliding Window", func() {
+var _ = g.Describe("Sliding Window", func() {
 	var (
 		baseTS         time.Time
 		snk            *slice
@@ -65,46 +65,46 @@ var _ = Describe("Sliding Window", func() {
 		}
 	)
 
-	BeforeEach(func() {
+	g.BeforeEach(func() {
 		baseTS = time.Now()
 	})
 
-	JustBeforeEach(func() {
+	g.JustBeforeEach(func() {
 		snk = newSlice()
 
 		slidingWindows = NewTumblingTimeWindows(time.Second * 15).(*tumblingTimeWindows)
 		slidingWindows.aggregationFactory = aggrFactory
 		slidingWindows.windowCount = 2
 
-		Expect(slidingWindows.Setup(context.TODO())).Should(Succeed())
-		Expect(snk.Setup(context.TODO())).Should(Succeed())
+		gomega.Expect(slidingWindows.Setup(context.TODO())).Should(gomega.Succeed())
+		gomega.Expect(snk.Setup(context.TODO())).Should(gomega.Succeed())
 		slidingWindows.Exec(snk)
 		for _, r := range input {
 			slidingWindows.In() <- r
 		}
 	})
 
-	AfterEach(func() {
+	g.AfterEach(func() {
 		close(slidingWindows.in)
-		Expect(slidingWindows.Teardown(context.TODO())).Should(Succeed())
+		gomega.Expect(slidingWindows.Teardown(context.TODO())).Should(gomega.Succeed())
 	})
 
-	When("input a single element", func() {
-		BeforeEach(func() {
+	g.When("input a single element", func() {
+		g.BeforeEach(func() {
 			input = []flow.StreamRecord{
 				flow.NewStreamRecord(1, baseTS.UnixMilli()),
 			}
 		})
 
-		It("Should not trigger", func() {
-			Eventually(func(g Gomega) {
-				g.Expect(snk.Value()).Should(BeEmpty())
-			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
+		g.It("Should not trigger", func() {
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(snk.Value()).Should(gomega.BeEmpty())
+			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
 		})
 	})
 
-	When("input two elements within the same bucket", func() {
-		BeforeEach(func() {
+	g.When("input two elements within the same bucket", func() {
+		g.BeforeEach(func() {
 			baseTS = time.Unix(baseTS.Unix()-baseTS.Unix()%15, 0)
 			input = []flow.StreamRecord{
 				flow.NewStreamRecord(1, baseTS.UnixMilli()),
@@ -112,15 +112,15 @@ var _ = Describe("Sliding Window", func() {
 			}
 		})
 
-		It("Should not trigger", func() {
-			Eventually(func(g Gomega) {
-				g.Expect(snk.Value()).Should(BeEmpty())
-			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
+		g.It("Should not trigger", func() {
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(snk.Value()).Should(gomega.BeEmpty())
+			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
 		})
 	})
 
-	When("input two elements within adjacent buckets", func() {
-		BeforeEach(func() {
+	g.When("input two elements within adjacent buckets", func() {
+		g.BeforeEach(func() {
 			baseTS = time.Unix(baseTS.Unix()-baseTS.Unix()%15+14, 0)
 			input = []flow.StreamRecord{
 				flow.NewStreamRecord(1, baseTS.UnixMilli()),
@@ -128,10 +128,10 @@ var _ = Describe("Sliding Window", func() {
 			}
 		})
 
-		It("Should trigger once due to the expiry", func() {
-			Eventually(func(g Gomega) {
-				g.Expect(snk.Value()).Should(HaveLen(1))
-			}).WithTimeout(flags.EventuallyTimeout).Should(Succeed())
+		g.It("Should trigger once due to the expiry", func() {
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(snk.Value()).Should(gomega.HaveLen(1))
+			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
 		})
 	})
 })
