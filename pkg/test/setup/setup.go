@@ -134,7 +134,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(gomega.Succeed())
 	}
-	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, false), testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr), testflags.EventuallyTimeout).Should(gomega.Succeed())
 
 	if schemaLoaders != nil {
 		schemaRegistry, err := schema.NewEtcdSchemaRegistry(
@@ -245,7 +245,7 @@ func LiaisonNode(etcdEndpoint string) (string, func()) {
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost)
-	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, false), testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))

@@ -53,7 +53,7 @@ var _ = Describe("Node registration", func() {
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)
-		Eventually(helpers.HTTPHealthCheck(httpAddr, false), flags.EventuallyTimeout).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(httpAddr), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))

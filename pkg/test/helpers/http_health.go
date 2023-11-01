@@ -18,7 +18,6 @@
 package helpers
 
 import (
-	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -28,15 +27,9 @@ import (
 )
 
 // HTTPHealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready.
-func HTTPHealthCheck(addr string, insecure bool) func() error {
+func HTTPHealthCheck(addr string) func() error {
 	return func() error {
 		client := resty.New()
-		// #nosec G402
-		client.SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: insecure,
-			// Certificates:       []tls.Certificate{cert},
-		})
-
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").
 			Get(fmt.Sprintf("http://%s/api/healthz", addr))
