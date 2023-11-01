@@ -18,6 +18,9 @@
 package cmd_test
 
 import (
+	"path/filepath"
+	"runtime"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
@@ -29,17 +32,22 @@ import (
 
 var _ = Describe("health check after launching banyandb server", func() {
 	var deferFunc func()
-	var grpcAddr string
+	var grpcAddr, certFile string
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		grpcAddr, _, deferFunc = setup.StandaloneWithTLS("../../../test/integration/standalone/other/testdata/server_cert.pem",
-			"../../../test/integration/standalone/other/testdata/server_key.pem")
+		_, basePath, _, _ := runtime.Caller(0)
+		for i := 0; i < 4; i++ {
+			basePath = filepath.Dir(basePath)
+		}
+		certFile = filepath.Join(basePath, "test/integration/standalone/other/testdata/server_cert.pem")
+		keyFile := filepath.Join(basePath, "test/integration/standalone/other/testdata/server_key.pem")
+		grpcAddr, _, deferFunc = setup.StandaloneWithTLS(certFile, keyFile)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})
 
-	It("health", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--grpc-cert", "../../../test/integration/standalone/other/testdata/server_cert.pem"})
+	It("should pass", func() {
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--grpc-cert", certFile, "--enable-tls", "true"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -47,8 +55,17 @@ var _ = Describe("health check after launching banyandb server", func() {
 		Expect(out).To(ContainSubstring("connected"))
 	})
 
-	It("health", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr})
+	It("should pass with insecure flag set", func() {
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--insecure", "true", "--enable-tls", "true"})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("connected"))
+	})
+
+	It("should fail without the proper cert", func() {
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--enable-tls", "true"})
 		err := rootCmd.Execute()
 		Expect(err).To(HaveOccurred())
 	})
@@ -65,7 +82,7 @@ var _ = Describe("health check without launching banyandb server", func() {
 		cmd.RootCmdFlags(rootCmd)
 	})
 
-	It("health", func() {
+	It("should fail", func() {
 		rootCmd.SetArgs([]string{"health"})
 		err := rootCmd.Execute()
 		Expect(err).To(HaveOccurred())

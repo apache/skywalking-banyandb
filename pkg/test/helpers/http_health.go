@@ -32,7 +32,10 @@ func HTTPHealthCheck(addr string, insecure bool) func() error {
 	return func() error {
 		client := resty.New()
 		// #nosec G402
-		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: insecure})
+		client.SetTLSClientConfig(&tls.Config{
+			InsecureSkipVerify: insecure,
+			// Certificates:       []tls.Certificate{cert},
+		})
 
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").

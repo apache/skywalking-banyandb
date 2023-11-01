@@ -19,9 +19,11 @@ package cmd
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -291,7 +293,7 @@ func yamlPrinter(index int, _ reqBody, body []byte) error {
 	return nil
 }
 
-func rest(pfn paramsFn, fn reqFn, printer printer, insecure bool) (err error) {
+func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool, grpcCert string) (err error) {
 	var requests []reqBody
 	if pfn == nil {
 		requests = []reqBody{{}}
@@ -304,8 +306,24 @@ func rest(pfn paramsFn, fn reqFn, printer printer, insecure bool) (err error) {
 
 	for i, r := range requests {
 		client := resty.New()
-		// #nosec G402
-		client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: insecure})
+		if enableTLS {
+			// #nosec G402
+			config := tls.Config{
+				InsecureSkipVerify: insecure,
+			}
+			if grpcCert != "" {
+				cert, err := os.ReadFile(grpcCert)
+				if err != nil {
+					return err
+				}
+				certPool := x509.NewCertPool()
+				if !certPool.AppendCertsFromPEM(cert) {
+					return errors.New("failed to add server's certificate")
+				}
+				config.RootCAs = certPool
+			}
+			client.SetTLSClientConfig(&config)
+		}
 		req := client.R()
 		resp, err := fn(request{
 			reqBody: r,

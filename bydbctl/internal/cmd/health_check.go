@@ -34,10 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-var (
-	grpcAddr string
-	grpcCert string
-)
+var grpcAddr string
 
 func newHealthCheckCmd() *cobra.Command {
 	healthCheckCmd := &cobra.Command{
@@ -48,19 +45,21 @@ func newHealthCheckCmd() *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			opts := make([]grpc.DialOption, 0, 1)
-			if grpcCert != "" {
-				cert, errRead := os.ReadFile(grpcCert)
-				if errRead != nil {
-					return errRead
-				}
-				certPool := x509.NewCertPool()
-				if !certPool.AppendCertsFromPEM(cert) {
-					return errors.New("failed to add server's certificate")
-				}
+			if enableTLS {
 				// #nosec G402
 				config := &tls.Config{
-					RootCAs:            certPool,
 					InsecureSkipVerify: insecure,
+				}
+				if grpcCert != "" {
+					cert, errRead := os.ReadFile(grpcCert)
+					if errRead != nil {
+						return errRead
+					}
+					certPool := x509.NewCertPool()
+					if !certPool.AppendCertsFromPEM(cert) {
+						return errors.New("failed to add server's certificate")
+					}
+					config.RootCAs = certPool
 				}
 				creds := credentials.NewTLS(config)
 				opts = append(opts, grpc.WithTransportCredentials(creds))
@@ -75,7 +74,6 @@ func newHealthCheckCmd() *cobra.Command {
 		},
 	}
 	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "localhost:17912", "Grpc server's address, the format is Domain:Port")
-	healthCheckCmd.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certification for tls")
-	bindInsecureFlag(healthCheckCmd)
+	bindTLSRelatedFlag(healthCheckCmd)
 	return healthCheckCmd
 }

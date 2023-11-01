@@ -32,13 +32,15 @@ import (
 const pathTemp = "/{group}/{name}"
 
 var (
-	filePath string
-	name     string
-	start    string
-	end      string
-	cfgFile  string
-	insecure bool
-	rootCmd  = &cobra.Command{
+	filePath  string
+	name      string
+	start     string
+	end       string
+	cfgFile   string
+	enableTLS bool
+	insecure  bool
+	grpcCert  string
+	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
@@ -140,8 +142,10 @@ func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
 	}
 }
 
-func bindInsecureFlag(commands ...*cobra.Command) {
+func bindTLSRelatedFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
+		c.Flags().BoolVarP(&enableTLS, "enable-tls", "", false, "Used to enable tls")
 		c.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
+		c.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certificate for tls")
 	}
 }
