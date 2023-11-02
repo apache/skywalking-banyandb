@@ -20,6 +20,7 @@ Release Notes.
 - Bump go to 1.21.
 - Bump node to 20.9.
 - Bump several tools.
+- Bump all dependencies of Go and Node.
 
 ## 0.5.0
 

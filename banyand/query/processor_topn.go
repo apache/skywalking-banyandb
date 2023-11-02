@@ -20,9 +20,9 @@ package query
 import (
 	"container/heap"
 	"context"
+	"slices"
 	"time"
 
-	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -362,13 +362,12 @@ func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.To
 		})
 	}
 
-	slices.SortStableFunc(topNLists, func(a, b *measurev1.TopNList) bool {
-		if a.GetTimestamp().GetSeconds() < b.GetTimestamp().GetSeconds() {
-			return true
-		} else if a.GetTimestamp().GetSeconds() == b.GetTimestamp().GetSeconds() {
-			return a.GetTimestamp().GetNanos() < b.GetTimestamp().GetNanos()
+	slices.SortStableFunc(topNLists, func(a, b *measurev1.TopNList) int {
+		r := int(a.GetTimestamp().GetSeconds() - b.GetTimestamp().GetSeconds())
+		if r != 0 {
+			return r
 		}
-		return false
+		return int(a.GetTimestamp().GetNanos() - b.GetTimestamp().GetNanos())
 	})
 
 	return topNLists
