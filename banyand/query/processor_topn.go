@@ -363,7 +363,11 @@ func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.To
 	}
 
 	slices.SortStableFunc(topNLists, func(a, b *measurev1.TopNList) int {
-		return int(a.GetTimestamp().GetSeconds() - b.GetTimestamp().GetSeconds())
+		r := int(a.GetTimestamp().GetSeconds() - b.GetTimestamp().GetSeconds())
+		if r != 0 {
+			return r
+		}
+		return int(a.GetTimestamp().GetNanos() - b.GetTimestamp().GetNanos())
 	})
 
 	return topNLists
