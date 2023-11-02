@@ -8,6 +8,7 @@ Release Notes.
 
 - Support etcd client authentication.
 - Implement Local file system.
+- Add health check command for bydbctl
 
 ### Bugs
 
@@ -31,7 +32,6 @@ Release Notes.
 - Support for recovery buffer using wal.
 - Register the node role to the metadata registry.
 - Implement the remote queue to spreading data to data nodes.
-- Fix parse environment variables error
 - Implement the distributed query engine.
 - Add mod revision check to write requests.
 - Add TTL to the property.
@@ -46,6 +46,7 @@ Release Notes.
 - BanyanDB ui misses fields when creating a group
 - Fix data duplicate writing
 - Syncing metadata change events from etcd instead of a local channel.
+- Fix parse environment variables error
 
 ### Chores
 

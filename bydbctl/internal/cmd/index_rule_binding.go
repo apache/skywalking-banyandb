@@ -64,7 +64,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 					fmt.Printf("indexRuleBinding %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -95,7 +95,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 					fmt.Printf("indexRuleBinding %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -106,7 +106,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(indexRuleBindingSchemaPathWithParams))
-			}, yamlPrinter)
+			}, yamlPrinter, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -121,7 +121,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 				fmt.Printf("indexRuleBinding %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
-			})
+			}, enableTLS, insecure, grpcCert)
 		},
 	}
 	bindNameFlag(getCmd, deleteCmd)
@@ -133,12 +133,13 @@ func newIndexRuleBindingCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/index-rule-binding/schema/lists/{group}"))
-			}, yamlPrinter)
+			}, yamlPrinter, enableTLS, insecure, grpcCert)
 		},
 	}
 
 	bindFileFlag(createCmd, updateCmd)
 
+	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	indexRuleBindingCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	return indexRuleBindingCmd
 }

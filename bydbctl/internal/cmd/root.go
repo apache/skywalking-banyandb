@@ -32,12 +32,15 @@ import (
 const pathTemp = "/{group}/{name}"
 
 var (
-	filePath string
-	name     string
-	start    string
-	end      string
-	cfgFile  string
-	rootCmd  = &cobra.Command{
+	filePath  string
+	name      string
+	start     string
+	end       string
+	cfgFile   string
+	enableTLS bool
+	insecure  bool
+	grpcCert  string
+	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
@@ -66,7 +69,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
-	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd(), newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd())
+	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd(), newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newHealthCheckCmd())
 }
 
 func init() {
@@ -136,5 +139,13 @@ func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
 		c.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
 		_ = c.MarkFlagRequired("name")
 		_ = c.MarkFlagRequired("id")
+	}
+}
+
+func bindTLSRelatedFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().BoolVarP(&enableTLS, "enable-tls", "", false, "Used to enable tls")
+		c.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
+		c.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certificate for tls")
 	}
 }

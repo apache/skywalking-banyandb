@@ -64,7 +64,7 @@ func newMeasureCmd() *cobra.Command {
 					fmt.Printf("measure %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -95,7 +95,7 @@ func newMeasureCmd() *cobra.Command {
 					fmt.Printf("measure %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				})
+				}, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -106,7 +106,7 @@ func newMeasureCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(measureSchemaPathWithParams))
-			}, yamlPrinter)
+			}, yamlPrinter, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -121,7 +121,7 @@ func newMeasureCmd() *cobra.Command {
 				fmt.Printf("measure %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
-			})
+			}, enableTLS, insecure, grpcCert)
 		},
 	}
 	bindNameFlag(getCmd, deleteCmd)
@@ -133,7 +133,7 @@ func newMeasureCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/measure/schema/lists/{group}"))
-			}, yamlPrinter)
+			}, yamlPrinter, enableTLS, insecure, grpcCert)
 		},
 	}
 
@@ -146,12 +146,13 @@ func newMeasureCmd() *cobra.Command {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/data"))
-				}, yamlPrinter)
+				}, yamlPrinter, enableTLS, insecure, grpcCert)
 		},
 	}
 	bindFileFlag(createCmd, updateCmd, queryCmd)
 	bindTimeRangeFlag(queryCmd)
 
+	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	measureCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return measureCmd
 }

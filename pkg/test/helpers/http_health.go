@@ -30,7 +30,6 @@ import (
 func HTTPHealthCheck(addr string) func() error {
 	return func() error {
 		client := resty.New()
-
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").
 			Get(fmt.Sprintf("http://%s/api/healthz", addr))
