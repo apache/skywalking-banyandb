@@ -5,7 +5,7 @@ CRUD operations create, read, update and delete index rules.
 IndexRule defines how to generate indices based on tags and the index type.
 IndexRule should bind to a subject(stream or measure) through an IndexRuleBinding to generate proper indices.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[`bydbctl`](../clients.md#command-line) is the command line tool in examples.
 
 ## Create operation
 
@@ -110,4 +110,4 @@ $ bydbctl indexRule list -g sw_stream
 
 ## API Reference
 
-[indexRuleService v1](../../api-reference.md#IndexRuleRegistryService)
+[indexRuleService v1](../api-reference.md#IndexRuleRegistryService)

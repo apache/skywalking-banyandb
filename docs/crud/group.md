@@ -4,7 +4,7 @@ CRUD operations create, read, update and delete groups.
 
 The group represents a collection of a class of resources. Each resource has a name unique to a group.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[`bydbctl`](../clients.md#command-line) is the command line tool in examples.
 
 ## Create operation
 
@@ -93,4 +93,4 @@ $ bydbctl group list
 ```
 
 ## API Reference
-[GroupService v1](../../api-reference.md#groupservice)
+[GroupService v1](../api-reference.md#groupservice)
