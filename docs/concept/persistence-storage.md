@@ -20,7 +20,7 @@ Persistence storage offers a range of IO modes to cater to various throughput re
 
 ## Io_uring
 Io_uring is a new feature in Linux 5.1, which is fully asynchronous and offers high throughput. In the scene of massive storage, io_uring can bring significant benefits. The following is the diagram about how io_uring works.
-![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/io_uring.png)
+![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/io_uring.jpg)
 If the user sets io_uring for use, the read and write requests will first be placed in the submission queue buffer when calling the operation API. When the threshold is reached, batch submissions will be made to SQ. After the kernel threads complete execution, the requests will be placed in the CQ, and the user can obtain the request results.
 
 ## Synchronous IO

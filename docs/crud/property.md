@@ -4,7 +4,7 @@ CRUD operations create/update, read and delete property.
 
 Property stores the user defined data.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[`bydbctl`](../clients.md#command-line) is the command line tool in examples.
 
 ## Apply (Create/Update) operation
 
@@ -169,4 +169,4 @@ $ bydbctl property keepalive --lease_id 1
 
 ## API Reference
 
-[MeasureService v1](../../api-reference.md#PropertyService)
+[MeasureService v1](../api-reference.md#PropertyService)
