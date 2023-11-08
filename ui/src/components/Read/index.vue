@@ -32,6 +32,16 @@ const route = useRoute()
 
 const yamlRef = ref()
 
+const isDatePicker = ref(false)
+
+const last15Minutes = ref(900 * 1000)
+
+const lastWeek = ref(3600 * 1000 * 24 * 7)
+
+const lastMonth = ref(3600 * 1000 * 24 * 30)
+
+const last3Months = ref(3600 * 1000 * 24 * 90)
+
 // Loading
 const { proxy } = getCurrentInstance()
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
@@ -58,7 +68,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - 900 * 1000)
+            start.setTime(start.getTime() - last15Minutes.value)
             return [start, end]
         }
     },
@@ -67,7 +77,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - 3600 * 1000 * 24 * 7)
+            start.setTime(start.getTime() - lastWeek.value)
             return [start, end]
         },
     },
@@ -76,7 +86,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - 3600 * 1000 * 24 * 30)
+            start.setTime(start.getTime() - lastMonth.value)
             return [start, end]
         },
     },
@@ -85,7 +95,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - 3600 * 1000 * 24 * 90)
+            start.setTime(start.getTime() - last3Months.value)
             return [start, end]
         },
     },
@@ -336,8 +346,32 @@ function handleCodeData() {
     json.orderBy ? param.orderBy = json.orderBy : delete param.orderBy
     getTableData()
 }
+function autoRefreshTimeRange() {
+    if (isDatePicker.value) {
+        let json = yamlToJson(data.code)
+        const begin = new Date()
+        const end = new Date()
+        const oldBeginDate = new Date(json.data.timeRange.begin)
+        const oldEndDate = new Date(json.data.timeRange.end)
+        const interval = oldEndDate.getTime() - oldBeginDate.getTime()
+        
+        if (interval === last15Minutes.value) {
+            begin.setTime(begin.getTime() - last15Minutes.value)
+        } else if (interval === lastWeek.value) {
+            begin.setTime(begin.getTime() - lastWeek.value)
+        } else if (interval === lastMonth.value) {
+            begin.setTime(begin.getTime() - lastMonth.value)
+        } else if (interval === last3Months.value) {
+            begin.setTime(begin.getTime() - last3Months.value)
+        }
+        json.data.timeRange.begin = begin.toISOString()
+        json.data.timeRange.end = end.toISOString()
+        data.code = jsonToYaml(json.data).data
+    }
+}
 function searchTableData() {
     yamlRef.value.checkYaml(data.code).then(() => {
+        autoRefreshTimeRange()
         handleCodeData()
     })
         .catch((err) => {
@@ -351,6 +385,7 @@ function searchTableData() {
         })
 }
 function changeDatePicker() {
+    isDatePicker.value = true
     let json = yamlToJson(data.code)
     if (!json.data.hasOwnProperty('timeRange')) {
         json.data.timeRange = {
@@ -371,6 +406,9 @@ function changeFields() {
         return item
     })
     getTableData()
+}
+function changeStatus() {
+    isDatePicker.value = false
 }
 </script>
 
@@ -415,7 +453,7 @@ function changeFields() {
                     </div>
                 </el-col>
             </el-row>
-            <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
+            <CodeMirror ref="yamlRef" v-model="data.code" @click="changeStatus" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
             </CodeMirror>
         </el-card>
         <el-card shadow="always">
