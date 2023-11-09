@@ -248,13 +248,20 @@ function searchGroup() {
     let groupLists = []
     data.groupListsCopy.forEach(item => {
         let itemCache = JSON.parse(JSON.stringify(item))
+        let matched = false
         if (Array.isArray(itemCache.children)) {
             itemCache.children = itemCache.children.filter(child => {
                 return child.metadata.name.indexOf(data.search) > -1
             })
             if (itemCache.children.length > 0) {
                 groupLists.push(itemCache)
+                matched = true
             }
+        }
+
+        // check the group name if no child items matched
+        if (!matched && itemCache.metadata.name.indexOf(data.search) > -1) {
+            groupLists.push(itemCache)
         }
     })
     data.groupLists = JSON.parse(JSON.stringify(groupLists))
