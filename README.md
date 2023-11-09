@@ -23,7 +23,7 @@ The database research community usually uses [RUM conjecture](http://daslab.seas
 * Mail list: **dev@skywalking.apache.org**. Mail to dev-subscribe@skywalking.apache.org, follow the reply to subscribe the mail list.
 * Send `Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
 * For Chinese speaker, send `[CN] Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
-* Twitter, [ASFSkyWalking](https://twitter.com/ASFSkyWalking)
+* X (Twitter): [@BanyanDB](https://twitter.com/BanyanDB) and [@ASFSkyWalking](https://twitter.com/ASFSkyWalking)
 
 ## Documents
 
