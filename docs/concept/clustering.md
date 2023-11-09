@@ -31,7 +31,7 @@ Liaison Nodes are also responsible for handling computational tasks associated w
 
 BanyanDB integrates multiple roles into a single process in the standalone mode, making it simpler and faster to deploy. This mode is especially useful for scenarios with a limited number of data points or for testing and development purposes.
 
-In this mode, the single process performs the roles of the Liaison Node, Data Node, and Meta Node. It receives requests, maintains metadata, processes queries, and handles data, all within a unified setup.
+In this mode, the single process performs the roles of the Liaison Node, Data Node, and Meta Node. It receives requests, maintains metadata, processes queries, and handles data, all within a unified setup.
 
 ## 2. Communication within a Cluster
 
