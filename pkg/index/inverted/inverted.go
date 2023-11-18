@@ -50,6 +50,7 @@ const (
 	docIDField    = "_id"
 	batchSize     = 1024
 	seriesIDField = "series_id"
+	entityField   = "entity"
 	idField       = "id"
 )
 
@@ -77,11 +78,6 @@ type StoreOpts struct {
 	BatchWaitSec int64
 }
 
-type doc struct {
-	fields []index.Field
-	docID  uint64
-}
-
 type flushEvent struct {
 	onComplete chan struct{}
 }
@@ -95,8 +91,20 @@ type store struct {
 	batchInterval time.Duration
 }
 
+func (s *store) Batch(docs index.Documents) error {
+	if !s.closer.AddRunning() {
+		return nil
+	}
+	defer s.closer.Done()
+	select {
+	case <-s.closer.CloseNotify():
+	case s.ch <- docs:
+	}
+	return nil
+}
+
 // NewStore create a new inverted index repository.
-func NewStore(opts StoreOpts) (index.Store, error) {
+func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
 	indexConfig.MergePlanOptions.MaxSegmentsPerTier = 1
 	indexConfig.MergePlanOptions.MaxSegmentSize = 500000
@@ -141,9 +149,9 @@ func (s *store) Write(fields []index.Field, docID uint64) error {
 	defer s.closer.Done()
 	select {
 	case <-s.closer.CloseNotify():
-	case s.ch <- doc{
-		fields: fields,
-		docID:  docID,
+	case s.ch <- index.Document{
+		Fields: fields,
+		DocID:  docID,
 	}:
 	}
 	return nil
@@ -315,6 +323,7 @@ func (s *store) run() {
 		}
 		defer flush()
 		var docIDBuffer bytes.Buffer
+		seriesIDBuffer := make([]byte, 8)
 		for {
 			timer := time.NewTimer(s.batchInterval)
 			select {
@@ -330,31 +339,53 @@ func (s *store) run() {
 				case flushEvent:
 					flush()
 					close(d.onComplete)
-				case doc:
-					// TODO: generate a segment directly.
-					fk := d.fields[0].Key
-					docIDBuffer.Reset()
-					if fk.HasSeriesID() {
-						docIDBuffer.Write(fk.SeriesID.Marshal())
-					}
-					docIDBuffer.Write(convert.Uint64ToBytes(d.docID))
-					doc := bluge.NewDocument(docIDBuffer.String())
-					toAddSeriesIDField := false
-					for _, f := range d.fields {
-						if f.Key.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-							doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Marshal()).StoreValue().Sortable())
-						} else {
-							toAddSeriesIDField = true
-							doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).StoreValue().Sortable().
-								WithAnalyzer(analyzers[f.Key.Analyzer]))
-						}
-					}
-					if toAddSeriesIDField && fk.HasSeriesID() {
-						doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
-					}
+				case index.Series:
+					seriesIDBuffer = seriesIDBuffer[:0]
+					seriesIDBuffer = convert.AppendUint64ToBytes(seriesIDBuffer, uint64(d.ID))
+					doc := bluge.NewDocument(string(seriesIDBuffer))
+					doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
 					size++
 					batch.Update(doc.ID(), doc)
 					if size >= batchSize {
+						flush()
+					}
+				case index.Document, index.Documents:
+					var docs []index.Document
+					var isBatch bool
+					switch v := d.(type) {
+					case index.Document:
+						docs = []index.Document{v}
+					case index.Documents:
+						docs = v
+						isBatch = true
+					}
+
+					for _, d := range docs {
+						// TODO: generate a segment directly.
+						fk := d.Fields[0].Key
+						docIDBuffer.Reset()
+						if fk.HasSeriesID() {
+							docIDBuffer.Write(fk.SeriesID.Marshal())
+						}
+						docIDBuffer.Write(convert.Uint64ToBytes(d.DocID))
+						doc := bluge.NewDocument(docIDBuffer.String())
+						toAddSeriesIDField := false
+						for _, f := range d.Fields {
+							if f.Key.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+								doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Marshal()).StoreValue().Sortable())
+							} else {
+								toAddSeriesIDField = true
+								doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).StoreValue().Sortable().
+									WithAnalyzer(analyzers[f.Key.Analyzer]))
+							}
+						}
+						if toAddSeriesIDField && fk.HasSeriesID() {
+							doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
+						}
+						size++
+						batch.Update(doc.ID(), doc)
+					}
+					if isBatch || size >= batchSize {
 						flush()
 					}
 				}

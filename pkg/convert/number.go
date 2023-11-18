@@ -29,6 +29,19 @@ func Uint64ToBytes(u uint64) []byte {
 	return bs
 }
 
+func AppendUint64ToBytes(dest []byte, u uint64) []byte {
+	// Use BigEndian to marshal uint64.
+	return append(dest,
+		byte(u>>56),
+		byte(u>>48),
+		byte(u>>40),
+		byte(u>>32),
+		byte(u>>24),
+		byte(u>>16),
+		byte(u>>8),
+		byte(u))
+}
+
 // Int64ToBytes converts int64 to bytes.
 func Int64ToBytes(i int64) []byte {
 	abs := i
@@ -42,6 +55,20 @@ func Int64ToBytes(i int64) []byte {
 		u = 1<<63 - u
 	}
 	return Uint64ToBytes(u)
+}
+
+func AppendInt64ToBytes(dest []byte, i int64) []byte {
+	abs := i
+	if i < 0 {
+		abs = -abs
+	}
+	u := uint64(abs)
+	if i >= 0 {
+		u |= 1 << 63
+	} else {
+		u = 1<<63 - u
+	}
+	return AppendUint64ToBytes(dest, u)
 }
 
 // Uint32ToBytes converts uint32 to bytes.

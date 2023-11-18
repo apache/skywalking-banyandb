@@ -39,6 +39,11 @@ type store struct {
 	closeOnce sync.Once
 }
 
+// Batch implements index.Store.
+func (*store) Batch(docs index.Documents) error {
+	panic("unimplemented")
+}
+
 func (s *store) Close() (err error) {
 	s.closeOnce.Do(func() {
 		s.closer.Done()

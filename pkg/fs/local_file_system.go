@@ -24,12 +24,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// LocalFileSystem implements the File System interface.
-type LocalFileSystem struct {
+// localFileSystem implements the File System interface.
+type localFileSystem struct {
 	logger *logger.Logger
 }
 
@@ -40,8 +41,14 @@ type LocalFile struct {
 
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
-	return &LocalFileSystem{
+	return &localFileSystem{
 		logger: logger.GetLogger(moduleName),
+	}
+}
+
+func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
+	return &localFileSystem{
+		logger: parent.Named(moduleName),
 	}
 }
 
@@ -67,8 +74,44 @@ func readErrorHandle(operation string, err error, name string, size int) (int, e
 	}
 }
 
+// Mkdir implements FileSystem.
+func (fs *localFileSystem) Mkdir(path string, permission Mode) {
+	if fs.pathExist(path) {
+		return
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to create directory")
+	}
+	parentDirPath := filepath.Dir(path)
+	fs.syncPath(parentDirPath)
+}
+
+func (fs *localFileSystem) pathExist(path string) bool {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to stat path")
+	}
+	return true
+}
+
+func (fs *localFileSystem) syncPath(path string) {
+	d, err := os.Open(path)
+	if err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to open directory")
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to sync directory")
+	}
+	if err := d.Close(); err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("ailed to sync directory")
+	}
+}
+
 // CreateFile is used to create and open the file by specified name and mode.
-func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error) {
+func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
@@ -94,7 +137,7 @@ func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error
 }
 
 // Write flushes all data to one file.
-func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
+func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	if err != nil {
 		switch {
@@ -129,7 +172,7 @@ func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (i
 }
 
 // DeleteFile is used to delete the file.
-func (fs *LocalFileSystem) DeleteFile(name string) error {
+func (fs *localFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)
 	switch {
 	case err == nil:

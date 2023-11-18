@@ -54,6 +54,8 @@ type File interface {
 
 // FileSystem operation interface.
 type FileSystem interface {
+	// Mkdir creates a new directory with the specified name and permission.
+	Mkdir(path string, permission Mode)
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Flush mode, which flushes all data to one file.

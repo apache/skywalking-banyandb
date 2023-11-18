@@ -191,9 +191,17 @@ type PostingValue struct {
 	Term  []byte
 }
 
+type Document struct {
+	Fields []Field
+	DocID  uint64
+}
+
+type Documents []Document
+
 // Writer allows writing fields and docID in a document to a index.
 type Writer interface {
 	Write(fields []Field, docID uint64) error
+	Batch(docs Documents) error
 }
 
 // FieldIterable allows building a FieldIterator.
@@ -216,6 +224,19 @@ type Store interface {
 	Writer
 	Searcher
 	SizeOnDisk() int64
+}
+
+type Series struct {
+	ID           common.SeriesID
+	EntityValues []byte
+}
+
+type SeriesStore interface {
+	Store
+	Create(Series) error
+	Search([]byte) (common.SeriesID, error)
+	SearchPrefix([]byte) ([]Series, error)
+	SearchWildcard([]byte) ([]Series, error)
 }
 
 // GetSearcher returns a searcher associated with input index rule type.
