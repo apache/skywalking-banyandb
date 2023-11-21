@@ -54,12 +54,27 @@ type File interface {
 
 // FileSystem operation interface.
 type FileSystem interface {
-	// Mkdir creates a new directory with the specified name and permission.
-	Mkdir(path string, permission Mode)
+	// MkdirIfNotExist creates a new directory with the specified name and permission if it does not exist.
+	// If the directory exists, it will do nothing.
+	MkdirIfNotExist(path string, permission Mode)
+	// MkdirPanicIfExist creates a new directory with the specified name and permission if it does not exist.
+	// If the directory exists, it will panic.
+	MkdirPanicIfExist(path string, permission Mode)
+	// ReadDir reads the directory named by dirname and returns a list of directory entries sorted by filename.
+	ReadDir(dirname string) []DirEntry
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Flush mode, which flushes all data to one file.
 	Write(buffer []byte, name string, permission Mode) (int, error)
 	// Delete the file.
 	DeleteFile(name string) error
+}
+
+// DirEntry is the interface that wraps the basic information about a file or directory.
+type DirEntry interface {
+	// Name returns the name of the file or directory.
+	Name() string
+
+	// IsDir reports whether the entry describes a directory.
+	IsDir() bool
 }

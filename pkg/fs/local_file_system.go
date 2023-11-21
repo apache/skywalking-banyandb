@@ -74,12 +74,22 @@ func readErrorHandle(operation string, err error, name string, size int) (int, e
 	}
 }
 
-// Mkdir implements FileSystem.
-func (fs *localFileSystem) Mkdir(path string, permission Mode) {
+func (fs *localFileSystem) MkdirIfNotExist(path string, permission Mode) {
 	if fs.pathExist(path) {
 		return
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	fs.mkdir(path, permission)
+}
+
+func (fs *localFileSystem) MkdirPanicIfExist(path string, permission Mode) {
+	if fs.pathExist(path) {
+		fs.logger.Panic().Str("path", path).Msg("directory is exist")
+	}
+	fs.mkdir(path, permission)
+}
+
+func (fs *localFileSystem) mkdir(path string, permission Mode) {
+	if err := os.MkdirAll(path, os.FileMode(permission)); err != nil {
 		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to create directory")
 	}
 	parentDirPath := filepath.Dir(path)
@@ -108,6 +118,18 @@ func (fs *localFileSystem) syncPath(path string) {
 	if err := d.Close(); err != nil {
 		fs.logger.Panic().Str("path", path).Err(err).Msg("ailed to sync directory")
 	}
+}
+
+func (fs *localFileSystem) ReadDir(dirname string) []DirEntry {
+	des, err := os.ReadDir(dirname)
+	if err != nil {
+		fs.logger.Panic().Str("dirname", dirname).Err(err).Msg("failed to read directory")
+	}
+	result := make([]DirEntry, len(des))
+	for i, de := range des {
+		result[i] = DirEntry(de)
+	}
+	return result
 }
 
 // CreateFile is used to create and open the file by specified name and mode.

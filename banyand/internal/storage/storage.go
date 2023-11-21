@@ -30,6 +30,9 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -37,6 +40,7 @@ const (
 	shardTemplate   = shardPathPrefix + "-%d"
 	metadataPath    = "metadata"
 	segTemplate     = "seg-%s"
+	segPathPrefix   = "seg"
 
 	hourFormat = "2006010215"
 	dayFormat  = "20060102"
@@ -48,27 +52,26 @@ var (
 	// ErrUnknownShard indicates that the shard is not found.
 	ErrUnknownShard = errors.New("unknown shard")
 	errOpenDatabase = errors.New("fails to open the database")
+
+	lfs = fs.NewLocalFileSystemWithLogger(logger.GetLogger("storage"))
 )
 
 // Supplier allows getting a tsdb's runtime.
-type Supplier interface {
-	SupplyTSDB() Database
+type SupplyTSDB[T TSTable[T]] func() TSDB[T]
+
+// TSDB allows listing and getting shard details.
+type TSDB[T TSTable[T]] interface {
+	io.Closer
 }
 
-// Database allows listing and getting shard details.
-type Database interface {
+// TSTable is time series table.
+type TSTable[T any] interface {
 	io.Closer
-	CreateShardsAndGetByID(id common.ShardID) (Shard, error)
-	Shards() []Shard
-	Shard(id common.ShardID) (Shard, error)
 }
 
-// Shard allows accessing data of tsdb.
-type Shard interface {
-	io.Closer
-	ID() common.ShardID
-	// Series() SeriesDatabase
-}
+// TSTableCreator creates a TSTable.
+type TSTableCreator[T TSTable[T]] func(root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange) (T, error)
 
 // IntervalUnit denotes the unit of a time point.
 type IntervalUnit int

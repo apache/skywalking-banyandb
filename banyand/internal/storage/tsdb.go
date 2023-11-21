@@ -26,16 +26,17 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // IndexGranularity denotes the granularity of the local index.
@@ -47,15 +48,13 @@ const (
 	IndexGranularitySeries
 )
 
-var _ Database = (*database)(nil)
-
-// DatabaseOpts wraps options to create a tsdb.
-type DatabaseOpts struct {
-	Location         string
-	SegmentInterval  IntervalRule
-	TTL              IntervalRule
-	IndexGranularity IndexGranularity
-	ShardNum         uint32
+// TSDBOpts wraps options to create a tsdb.
+type TSDBOpts[T TSTable[T]] struct {
+	TSTableCreator  TSTableCreator[T]
+	Location        string
+	SegmentInterval IntervalRule
+	TTL             IntervalRule
+	ShardNum        uint32
 }
 
 type (
@@ -67,87 +66,28 @@ func GenerateSegID(unit IntervalUnit, suffix int) SegID {
 	return SegID(unit)<<31 | ((SegID(suffix) << 1) >> 1)
 }
 
-func parseSuffix(id SegID) int {
-	return int((id << 1) >> 1)
-}
-
-func segIDToBytes(id SegID) []byte {
-	return convert.Uint32ToBytes(uint32(id))
-}
-
-func readSegID(data []byte, offset int) (SegID, int) {
-	end := offset + 4
-	return SegID(convert.BytesToUint32(data[offset:end])), end
-}
-
-type database struct {
-	fileSystem  fs.FileSystem
-	logger      *logger.Logger
-	index       *seriesIndex
-	location    string
-	sLst        []Shard
-	segmentSize IntervalRule
-	ttl         IntervalRule
+type database[T TSTable[T]] struct {
+	logger   *logger.Logger
+	index    *seriesIndex
+	location string
+	sLst     []*shard[T]
+	opts     TSDBOpts[T]
 	sync.RWMutex
-	shardNum           uint32
-	shardCreationState uint32
+	sLen uint32
 }
 
-func (d *database) CreateShardsAndGetByID(id common.ShardID) (Shard, error) {
-	if atomic.LoadUint32(&d.shardCreationState) != 0 {
-		return d.shard(id)
-	}
+func (d *database[T]) Close() error {
 	d.Lock()
 	defer d.Unlock()
-	if atomic.LoadUint32(&d.shardCreationState) != 0 {
-		return d.shard(id)
-	}
-	loadedShardsNum := len(d.sLst)
-	if loadedShardsNum < int(d.shardNum) {
-		_, err := createDatabase(d, loadedShardsNum)
-		if err != nil {
-			return nil, errors.WithMessage(err, "create the database failed")
-		}
-	}
-	atomic.StoreUint32(&d.shardCreationState, 1)
-	return d.shard(id)
-}
-
-func (d *database) Shards() []Shard {
-	d.RLock()
-	defer d.RUnlock()
-	return d.sLst
-}
-
-func (d *database) Shard(id common.ShardID) (Shard, error) {
-	d.RLock()
-	defer d.RUnlock()
-	return d.shard(id)
-}
-
-func (d *database) shard(id common.ShardID) (Shard, error) {
-	if uint(id) >= uint(len(d.sLst)) {
-		return nil, ErrUnknownShard
-	}
-	return d.sLst[id], nil
-}
-
-func (d *database) Close() error {
-	d.Lock()
-	defer d.Unlock()
-	var err error
 	for _, s := range d.sLst {
-		innerErr := s.Close()
-		if innerErr != nil {
-			err = multierr.Append(err, innerErr)
-		}
+		s.closer()
 	}
-	return err
+	return nil
 }
 
-// OpenDatabase returns a new tsdb runtime. This constructor will create a new database if it's absent,
+// OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
+func OpenTSDB[T TSTable[T]](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -155,38 +95,101 @@ func OpenDatabase(ctx context.Context, opts DatabaseOpts) (Database, error) {
 		return nil, errors.Wrap(errOpenDatabase, "ttl is absent")
 	}
 	p := common.GetPosition(ctx)
-	l := logger.Fetch(ctx, p.Database)
-	fileSystem := fs.NewLocalFileSystemWithLogger(l)
-	path := filepath.Clean(opts.Location)
-	fileSystem.Mkdir(path, dirPerm)
-	si, err := newSeriesIndex(ctx, path)
+	location := filepath.Clean(opts.Location)
+	lfs.MkdirIfNotExist(location, dirPerm)
+	si, err := newSeriesIndex(ctx, location)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index failed").Error())
 	}
-	db := &database{
-		location:    path,
-		shardNum:    opts.ShardNum,
-		logger:      logger.Fetch(ctx, p.Database),
-		segmentSize: opts.SegmentInterval,
-		ttl:         opts.TTL,
-		fileSystem:  fileSystem,
-		index:       si,
+	db := &database[T]{
+		location: location,
+		logger:   logger.Fetch(ctx, p.Database),
+		index:    si,
+		opts:     opts,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
+	if err = db.loadDatabase(); err != nil {
+		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load database failed").Error())
+	}
 	return db, nil
 }
 
-func createDatabase(db *database, startID int) (Database, error) {
+func (d *database[T]) Register(shardID common.ShardID, series *Series) (*Series, error) {
 	var err error
-	for i := startID; i < int(db.shardNum); i++ {
-		db.logger.Info().Int("shard_id", i).Msg("creating a shard")
-		// so, errNewShard := OpenShard(common.ShardID(i),
-		// 	db.location, db.segmentSize, db.blockSize, db.ttl, defaultBlockQueueSize, defaultMaxBlockQueueSize, db.enableWAL)
-		// if errNewShard != nil {
-		// 	err = multierr.Append(err, errNewShard)
-		// 	continue
-		// }
-		// db.sLst = append(db.sLst, so)
+	if series, err = d.index.createPrimary(series); err != nil {
+		return nil, err
 	}
-	return db, err
+	id := int(shardID)
+	if id < int(atomic.LoadUint32(&d.sLen)) {
+		return series, nil
+	}
+	d.Lock()
+	defer d.Unlock()
+	if id < len(d.sLst) {
+		return series, nil
+	}
+	d.logger.Info().Int("shard_id", id).Msg("creating a shard")
+	if err = d.registerShard(id); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTable[T], error) {
+	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
+	ss := d.sLst[shardID].segmentController.selectTSTables(timeRange)
+	if len(ss) > 0 {
+		return ss[0], nil
+	}
+	return d.sLst[shardID].segmentController.createTSTable(timeRange.Start)
+}
+
+func (d *database[T]) SelectTSTables(shardID common.ShardID, timeRange timestamp.TimeRange) ([]TSTable[T], error) {
+	if int(shardID) >= int(atomic.LoadUint32(&d.sLen)) {
+		return nil, ErrUnknownShard
+	}
+	return d.sLst[shardID].segmentController.selectTSTables(timeRange), nil
+}
+
+func (d *database[T]) registerShard(id int) error {
+	ctx := context.WithValue(context.Background(), logger.ContextKey, d.logger)
+	so, err := d.openShard(ctx, common.ShardID(id))
+	if err != nil {
+		return err
+	}
+	d.sLst = append(d.sLst, so)
+	d.sLen++
+	return nil
+}
+
+func (d *database[T]) loadDatabase() error {
+	d.Lock()
+	defer d.Unlock()
+	return walkDir(d.location, shardPathPrefix, func(suffix string) error {
+		shardID, err := strconv.Atoi(suffix)
+		if err != nil {
+			return err
+		}
+		if shardID >= int(d.opts.ShardNum) {
+			return nil
+		}
+		d.logger.Info().Int("shard_id", shardID).Msg("opening a existed shard")
+		return d.registerShard(shardID)
+	})
+}
+
+type walkFn func(suffix string) error
+
+func walkDir(root, prefix string, wf walkFn) error {
+	for _, f := range lfs.ReadDir(root) {
+		if !f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
+			continue
+		}
+		segs := strings.Split(f.Name(), "-")
+		errWalk := wf(segs[len(segs)-1])
+		if errWalk != nil {
+			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
+		}
+	}
+	return nil
 }
