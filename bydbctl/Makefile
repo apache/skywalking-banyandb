@@ -17,8 +17,6 @@
 #
 
 NAME := bydbctl
-IMG_NAME := skywalking-bydbctl
-
 BUILD_DIR ?= build/bin
 
 include ../scripts/build/version.mk
@@ -50,7 +48,6 @@ $(BUILDS):
 .PHONY: release 
 release: $(BUILDS)
 
-include ../scripts/build/docker.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/vendor.mk
