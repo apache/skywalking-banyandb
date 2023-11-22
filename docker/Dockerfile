@@ -33,7 +33,6 @@ ENV GOPATH "/go"
 ENV GO111MODULE "on"
 WORKDIR /src
 COPY go.* ./
-RUN go env -w GOPROXY=https://goproxy.io,direct
 RUN go mod download
 
 FROM base AS builder
