@@ -21,7 +21,7 @@ services:
       - 6060
     command: standalone
     healthcheck:
-      test: wget --spider http://localhost:17913 || wget --spider --no-check-certificate https://localhost:17913 || exit 1
+      test: ["CMD", "./bydbctl", "health", "-addr=http://banyandb:17913"]
       interval: 5s
       timeout: 10s
       retries: 120
@@ -34,7 +34,7 @@ services:
       - 6060
     command: liaison --etcd-endpoints=http://etcd:2379 
     healthcheck:
-      test: wget --spider http://localhost:17913 || wget --spider --no-check-certificate https://localhost:17913 || exit 1
+      test: ["CMD", "./bydbctl", "health", "-addr=http://banyandb:17913"]
       interval: 5s
       timeout: 10s
       retries: 120
@@ -46,6 +46,11 @@ services:
       - 2121
       - 6060
     command: data --etcd-endpoints=http://etcd:2379 
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--grpc-addr=liaison:17912"]
+      interval: 5s
+      timeout: 10s
+      retries: 120
   
   agent:
     image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8"
