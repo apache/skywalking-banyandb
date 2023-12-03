@@ -90,7 +90,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
       - name: Build docker image
         run: |
-          make docker || make docker
+          make docker.build || make docker.build
           docker image ls
       - name: ${{ matrix.test.name }}
         uses: apache/skywalking-infra-e2e@c7494f913e0b10d01884c840ec3fb1b0a844bcbe
