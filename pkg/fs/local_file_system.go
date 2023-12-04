@@ -217,6 +217,12 @@ func (fs *localFileSystem) DeleteFile(name string) error {
 	}
 }
 
+func (fs *localFileSystem) MustRMAll(path string) {
+	if err := os.RemoveAll(path); err != nil {
+		logger.Panicf("failed to remove all files under %s", path)
+	}
+}
+
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
@@ -327,10 +333,21 @@ func (file *LocalFile) Size() (int64, error) {
 	return fileInfo.Size(), nil
 }
 
+// Path returns the absolute path of the file.
+func (fs *LocalFile) Path() string {
+	return fs.file.Name()
+}
+
 // Close is used to close File.
 func (file *LocalFile) Close() error {
-	err := file.file.Close()
-	if err != nil {
+	if err := file.file.Sync(); err != nil {
+		return &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),
+		}
+	}
+
+	if err := file.file.Close(); err != nil {
 		return &FileSystemError{
 			Code:    closeError,
 			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),

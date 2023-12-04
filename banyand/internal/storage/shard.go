@@ -30,7 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type shard[T TSTable[T]] struct {
+type shard[T TSTable] struct {
 	l                     *logger.Logger
 	segmentController     *segmentController[T]
 	segmentManageStrategy *bucket.Strategy

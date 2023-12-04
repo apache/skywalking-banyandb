@@ -33,6 +33,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+func (d *database[T]) IndexDB() IndexDB {
+	return d.index
+}
+
+func (d *database[T]) Lookup(ctx context.Context, series *Series) (SeriesList, error) {
+	return d.index.searchPrimary(ctx, series)
+}
+
 // OrderBy specifies the order of the result.
 type OrderBy struct {
 	Index *databasev1.IndexRule
@@ -83,13 +91,13 @@ func (s *seriesIndex) createPrimary(series *Series) (*Series, error) {
 	return series, nil
 }
 
-func (s *seriesIndex) createSecondary(docs index.Documents) error {
+func (s *seriesIndex) Write(docs index.Documents) error {
 	return s.store.Batch(docs)
 }
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) SearchPrimary(ctx context.Context, series *Series) (SeriesList, error) {
+func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (SeriesList, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
 
@@ -162,8 +170,8 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (SeriesList, err
 	return seriesList, nil
 }
 
-func (s *seriesIndex) SearchSecondary(ctx context.Context, series *Series, filter index.Filter, order *OrderBy) (SeriesList, error) {
-	seriesList, err := s.SearchPrimary(ctx, series)
+func (s *seriesIndex) Search(ctx context.Context, series *Series, filter index.Filter, order *OrderBy) (SeriesList, error) {
+	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
 	}

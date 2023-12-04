@@ -23,7 +23,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 // EventType defines actions of events.
@@ -49,6 +48,7 @@ const (
 type Group interface {
 	GetSchema() *commonv1.Group
 	LoadResource(name string) (Resource, bool)
+	SupplyTSDB() io.Closer
 }
 
 // MetadataEvent is the syncing message between metadata repo and this framework.
@@ -72,16 +72,20 @@ type Resource interface {
 	Delegated() io.Closer
 }
 
+type Supplier interface {
+	SupplyTSDB() io.Closer
+}
+
 // ResourceSchemaSupplier allows get a ResourceSchema from the metadata.
 type ResourceSchemaSupplier interface {
 	ResourceSchema(metadata *commonv1.Metadata) (ResourceSchema, error)
-	OpenResource(shardNum uint32, db tsdb.Supplier, spec Resource) (io.Closer, error)
+	OpenResource(shardNum uint32, supplier Supplier, spec Resource) (io.Closer, error)
 }
 
 // ResourceSupplier allows open a resource and its embedded tsdb.
 type ResourceSupplier interface {
 	ResourceSchemaSupplier
-	OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error)
+	OpenDB(groupSchema *commonv1.Group) (io.Closer, error)
 }
 
 // Repository is the collection of several hierarchies groups by a "Group".

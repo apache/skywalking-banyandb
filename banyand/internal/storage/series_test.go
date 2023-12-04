@@ -72,64 +72,6 @@ func TestMarshalAndUnmarshalEntityValue(t *testing.T) {
 	}
 }
 
-func TestMarshalAndUnmarshalTagValue(t *testing.T) {
-	tests := []struct {
-		src  *modelv1.TagValue
-		name string
-	}{
-		{
-			name: "string value",
-			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "stringValue"}}},
-		},
-		{
-			name: "int value",
-			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 123}}},
-		},
-		{
-			name: "binary data",
-			src:  &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte("binaryData")}},
-		},
-		{
-			name: "unsupported type",
-			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Null{}},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dest := []byte{}
-			// Test marshalTagValue
-			dest, err := marshalTagValue(dest, tt.src)
-			if tt.name == "unsupported type" {
-				assert.Error(t, err)
-				dest = dest[:0]
-				_, _, _, err = unmarshalTagValue(dest, []byte("unsupported type"))
-				assert.Error(t, err)
-				return
-			}
-			marshaled := make([]byte, len(dest))
-			copy(marshaled, dest)
-
-			// Add assertions
-			assert.NoError(t, err)
-			assert.True(t, len(marshaled) > 0)
-
-			// Test unmarshalTagValue
-			dest = dest[:0]
-			dest, marshaled, unmarshaled, err := unmarshalTagValue(dest, marshaled)
-
-			// Add assertions
-			assert.NoError(t, err)
-			assert.True(t, len(dest) > 0)
-			assert.True(t, len(marshaled) == 0)
-			assert.NotNil(t, unmarshaled)
-
-			// Check that unmarshaling the marshaled value gives the original value
-			assert.Equal(t, tt.src, unmarshaled)
-		})
-	}
-}
-
 func TestMarshalAndUnmarshalSeries(t *testing.T) {
 	tests := []struct {
 		src  *Series

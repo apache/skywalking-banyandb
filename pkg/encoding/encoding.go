@@ -78,3 +78,14 @@ type BufferWriter interface {
 	WriteByte(b byte) error
 	Bytes() []byte
 }
+
+type EncodeType byte
+
+const (
+	EncodeTypeUnknown EncodeType = iota
+	EncodeTypeConst
+	EncodeTypeDeltaConst
+	EncodeTypeDelta
+	EncodeTypeDeltaOfDelta
+	EncodeTypeXOR
+)

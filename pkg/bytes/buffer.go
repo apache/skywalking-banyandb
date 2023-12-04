@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,27 +15,54 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package bytes
 
-package banyandb.cluster.v1;
+import (
+	"fmt"
+	"sync"
 
-import "google/protobuf/any.proto";
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+)
 
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
+var _ fs.Writer = (*Buffer)(nil)
 
-message SendRequest {
-  string topic = 1;
-  uint64 message_id = 2;
-  google.protobuf.Any body = 3;
-  bool batch_mod= 4;
+type Buffer struct {
+	Buf []byte
 }
 
-message SendResponse {
-  uint64 message_id = 1;
-  string error = 2;
-  google.protobuf.Any body = 3;
+// Close implements fs.Writer.
+func (*Buffer) Close() error {
+	return nil
 }
 
-service Service {
-  rpc Send(stream SendRequest) returns (stream SendResponse);
+// Path implements fs.Writer.
+func (b *Buffer) Path() string {
+	return fmt.Sprintf("mem/%p", b)
+}
+
+// Write implements fs.Writer.
+func (b *Buffer) Write(bb []byte) (int, error) {
+	b.Buf = append(b.Buf, bb...)
+	return len(bb), nil
+}
+
+func (b *Buffer) Reset() {
+	b.Buf = b.Buf[:0]
+}
+
+type BufferPool struct {
+	p sync.Pool
+}
+
+func (bp *BufferPool) Get() *Buffer {
+	bbv := bp.p.Get()
+	if bbv == nil {
+		return &Buffer{}
+	}
+	return bbv.(*Buffer)
+}
+
+func (bp *BufferPool) Put(b *Buffer) {
+	b.Reset()
+	bp.p.Put(b)
 }

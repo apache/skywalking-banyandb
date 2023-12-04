@@ -39,6 +39,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -341,7 +342,7 @@ func (s *store) run() {
 					close(d.onComplete)
 				case index.Series:
 					seriesIDBuffer = seriesIDBuffer[:0]
-					seriesIDBuffer = convert.AppendUint64ToBytes(seriesIDBuffer, uint64(d.ID))
+					seriesIDBuffer = encoding.Uint64ToBytes(seriesIDBuffer, uint64(d.ID))
 					doc := bluge.NewDocument(string(seriesIDBuffer))
 					doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
 					size++

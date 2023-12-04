@@ -20,6 +20,8 @@ package fs
 
 import (
 	"bufio"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const moduleName string = "filesystem"
@@ -34,10 +36,25 @@ type Iter struct {
 	buffer   []byte
 }
 
-// File operation interface.
-type File interface {
+type Writer interface {
 	// Append mode, which adds new data to the end of a file.
 	Write(buffer []byte) (int, error)
+	// Returns the absolute path of the file.
+	Path() string
+	// Close File.
+	Close() error
+}
+
+type Closer interface {
+	// Returns the absolute path of the file.
+	Path() string
+	// Close File.
+	Close() error
+}
+
+// File operation interface.
+type File interface {
+	Writer
 	// Vector Append mode, which supports appending consecutive buffers to the end of the file.
 	Writev(iov *[][]byte) (int, error)
 	// Reading a specified location of file.
@@ -48,6 +65,8 @@ type File interface {
 	StreamRead(buffer []byte) (*Iter, error)
 	// Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
 	Size() (int64, error)
+	// Returns the absolute path of the file.
+	Path() string
 	// Close File.
 	Close() error
 }
@@ -68,6 +87,8 @@ type FileSystem interface {
 	Write(buffer []byte, name string, permission Mode) (int, error)
 	// Delete the file.
 	DeleteFile(name string) error
+	// Delete the directory.
+	MustRMAll(path string)
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
@@ -77,4 +98,25 @@ type DirEntry interface {
 
 	// IsDir reports whether the entry describes a directory.
 	IsDir() bool
+}
+
+// MustWriteData writes data to w and panics if it cannot write all data.
+func MustWriteData(w Writer, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	n, err := w.Write(data)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Int("expected", len(data)).Str("path", w.Path()).Msg("cannot write data")
+	}
+	if n != len(data) {
+		logger.GetLogger().Panic().Int("written", n).Int("expected", len(data)).Str("path", w.Path()).Msg("BUG: writer wrote wrong number of bytes")
+	}
+}
+
+func MustClose(c Closer) {
+	err := c.Close()
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", c.Path()).Msg("cannot close file")
+	}
 }

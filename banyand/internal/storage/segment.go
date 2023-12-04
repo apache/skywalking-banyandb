@@ -25,27 +25,23 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var errEndOfSegment = errors.New("reached the end of the segment")
 
-type segment[T TSTable[T]] struct {
+type segment[T TSTable] struct {
 	bucket.Reporter
-	invertedIndex index.Store
-	lsmIndex      index.Store
-	tsTable       TSTable[T]
+	tsTable       T
+	refCount      int32
+	mustBeDeleted uint32
 	l             *logger.Logger
-	closer        *run.Closer
 	position      common.Position
 	timestamp.TimeRange
 	path      string
@@ -54,8 +50,8 @@ type segment[T TSTable[T]] struct {
 	id        SegID
 }
 
-func openSegment[T TSTable[T]](ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable TSTable[T],
+func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
+	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T,
 ) (s *segment[T], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -70,7 +66,7 @@ func openSegment[T TSTable[T]](ctx context.Context, startTime, endTime time.Time
 		TimeRange: timeRange,
 		position:  common.GetPosition(ctx),
 		tsTable:   tsTable,
-		closer:    run.NewCloser(1),
+		refCount:  1,
 	}
 	l := logger.Fetch(ctx, s.String())
 	s.l = l
@@ -79,24 +75,48 @@ func openSegment[T TSTable[T]](ctx context.Context, startTime, endTime time.Time
 	return s, nil
 }
 
-func (s *segment[T]) close() {
-	s.closeOnce.Do(func() {
-		s.closer.Done()
-		s.closer.CloseThenWait()
-		_ = s.tsTable.Close()
-	})
+func (s *segment[T]) incRef() {
+	atomic.AddInt32(&s.refCount, 1)
 }
 
-func (s *segment[T]) delete() error {
-	s.close()
-	return lfs.DeleteFile(s.path)
+func (s *segment[T]) DecRef() {
+	n := atomic.AddInt32(&s.refCount, -1)
+	if n > 0 {
+		return
+	}
+
+	deletePath := ""
+	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+		deletePath = s.path
+	}
+
+	if err := s.tsTable.Close(); err != nil {
+		s.l.Panic().Err(err).Msg("failed to close tsTable")
+	}
+
+	if deletePath != "" {
+		lfs.MustRMAll(deletePath)
+	}
+}
+
+func (s *segment[T]) Table() T {
+	return s.tsTable
+}
+
+func (s *segment[T]) GetTimeRange() timestamp.TimeRange {
+	return s.TimeRange
+}
+
+func (s *segment[T]) delete() {
+	atomic.StoreUint32(&s.mustBeDeleted, 1)
+	s.DecRef()
 }
 
 func (s *segment[T]) String() string {
 	return "SegID-" + s.suffix
 }
 
-type segmentController[T TSTable[T]] struct {
+type segmentController[T TSTable] struct {
 	clock          timestamp.Clock
 	scheduler      *timestamp.Scheduler
 	l              *logger.Logger
@@ -108,7 +128,7 @@ type segmentController[T TSTable[T]] struct {
 	sync.RWMutex
 }
 
-func newSegmentController[T TSTable[T]](ctx context.Context, location string,
+func newSegmentController[T TSTable](ctx context.Context, location string,
 	segmentSize IntervalRule, l *logger.Logger, scheduler *timestamp.Scheduler,
 	tsTableCreator TSTableCreator[T],
 ) *segmentController[T] {
@@ -124,45 +144,37 @@ func newSegmentController[T TSTable[T]](ctx context.Context, location string,
 	}
 }
 
-func (sc *segmentController[T]) selectTSTables(timeRange timestamp.TimeRange) (tt []TSTable[T]) {
-	lst := sc.segments()
-	last := len(lst) - 1
-	for i := range lst {
-		s := lst[last-i]
-		if s.Overlapping(timeRange) && s.closer.AddRunning() {
-			tt = append(tt, s.tsTable)
+func (sc *segmentController[T]) selectTSTables(timeRange timestamp.TimeRange) (tt []TSTableWrapper[T]) {
+	sc.RLock()
+	defer sc.RUnlock()
+	last := len(sc.lst) - 1
+	for i := range sc.lst {
+		s := sc.lst[last-i]
+		if s.Overlapping(timeRange) {
+			s.incRef()
+			tt = append(tt, s)
 		}
 	}
 	return tt
 }
 
-func (sc *segmentController[T]) createTSTable(ts time.Time) (TSTable[T], error) {
+func (sc *segmentController[T]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
 	}
-	if s.closer.AddRunning() {
-		return s.tsTable, nil
-	}
-	return nil, errors.New("segmentController is closed")
-}
-
-func (sc *segmentController[T]) put(tsTables ...TSTable[T]) {
-	lst := sc.segments()
-	for _, t := range tsTables {
-		for _, s := range lst {
-			if s.tsTable == t {
-				s.closer.Done()
-			}
-		}
-	}
+	s.incRef()
+	return s, nil
 }
 
 func (sc *segmentController[T]) segments() (ss []*segment[T]) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T], len(sc.lst))
-	copy(r, sc.lst)
+	for i := range sc.lst {
+		sc.lst[i].incRef()
+		r[i] = sc.lst[i]
+	}
 	return r
 }
 
@@ -281,7 +293,7 @@ func (sc *segmentController[T]) sortLst() {
 }
 
 func (sc *segmentController[T]) load(start, end time.Time, root string) (seg *segment[T], err error) {
-	var tsTable TSTable[T]
+	var tsTable T
 	if tsTable, err = sc.tsTableCreator(sc.location, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
 		return nil, err
 	}
@@ -307,15 +319,13 @@ func (sc *segmentController[T]) remove(deadline time.Time) (err error) {
 				e.Stringer("segment", s).Msg("start to remove data in a segment")
 			}
 			if s.End.Before(deadline) {
+				s.delete()
 				sc.Lock()
-				if errDel := s.delete(); errDel != nil {
-					err = multierr.Append(err, errDel)
-				} else {
-					sc.removeSeg(s.id)
-				}
+				sc.removeSeg(s.id)
 				sc.Unlock()
 			}
 		}
+		s.DecRef()
 	}
 	return err
 }
@@ -333,7 +343,7 @@ func (sc *segmentController[T]) close() {
 	sc.Lock()
 	defer sc.Unlock()
 	for _, s := range sc.lst {
-		s.close()
+		s.DecRef()
 	}
 	sc.lst = sc.lst[:0]
 }

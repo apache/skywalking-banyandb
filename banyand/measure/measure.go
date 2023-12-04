@@ -21,16 +21,16 @@
 package measure
 
 import (
-	"context"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -38,20 +38,27 @@ const (
 	plainChunkSize = 1 << 20
 	intChunkNum    = 120
 	intChunkSize   = 4 * 1024
+
+	maxValuesBlockSize              = 8 * 1024 * 1024
+	maxTimestampsBlockSize          = 8 * 1024 * 1024
+	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
+	maxUncompressedBlockSize        = 2 * 1024 * 1024
+	maxUncompressedPrimaryBlockSize = 128 * 1024
 )
 
 type measure struct {
-	databaseSupplier tsdb.Supplier
-	l                *logger.Logger
-	schema           *databasev1.Measure
-	indexWriter      *index.Writer
-	processorManager *topNProcessorManager
-	name             string
-	group            string
-	indexRules       []*databasev1.IndexRule
-	topNAggregations []*databasev1.TopNAggregation
-	interval         time.Duration
-	shardNum         uint32
+	databaseSupplier  schema.Supplier
+	l                 *logger.Logger
+	schema            *databasev1.Measure
+	indexWriter       *index.Writer
+	processorManager  *topNProcessorManager
+	name              string
+	group             string
+	indexRules        []*databasev1.IndexRule
+	indexRuleLocators []*partition.IndexRuleLocator
+	topNAggregations  []*databasev1.TopNAggregation
+	interval          time.Duration
+	shardNum          uint32
 }
 
 func (s *measure) startSteamingManager(pipeline queue.Queue) error {
@@ -93,6 +100,8 @@ func (s *measure) parseSpec() (err error) {
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
+	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
+
 	return err
 }
 
@@ -102,7 +111,7 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
 ) (*measure, error) {
 	m := &measure{
 		shardNum:         shardNum,
@@ -119,18 +128,9 @@ func openMeasure(shardNum uint32, db tsdb.Supplier, spec measureSpec, l *logger.
 	}
 
 	m.databaseSupplier = db
-	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
-	m.indexWriter = index.NewWriter(ctx, index.WriterOptions{
-		DB:         db,
-		ShardNum:   shardNum,
-		Families:   spec.schema.TagFamilies,
-		IndexRules: spec.indexRules,
-	})
-
 	if startErr := m.startSteamingManager(pipeline); startErr != nil {
 		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
 			Msg("fail to start streaming manager")
 	}
-
 	return m, nil
 }

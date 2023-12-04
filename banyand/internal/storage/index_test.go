@@ -113,7 +113,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 			defer testSeriesPool.Put(seriesQuery)
 			seriesQuery.Subject = tt.subject
 			seriesQuery.EntityValues = tt.entityValues
-			sl, err := si.SearchPrimary(ctx, seriesQuery)
+			sl, err := si.searchPrimary(ctx, seriesQuery)
 			tester.NoError(err)
 			tester.Equal(1, len(sl))
 			tester.Equal(tt.subject, sl[0].Subject)

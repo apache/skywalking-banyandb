@@ -49,7 +49,7 @@ const (
 )
 
 // TSDBOpts wraps options to create a tsdb.
-type TSDBOpts[T TSTable[T]] struct {
+type TSDBOpts[T TSTable] struct {
 	TSTableCreator  TSTableCreator[T]
 	Location        string
 	SegmentInterval IntervalRule
@@ -66,7 +66,7 @@ func GenerateSegID(unit IntervalUnit, suffix int) SegID {
 	return SegID(unit)<<31 | ((SegID(suffix) << 1) >> 1)
 }
 
-type database[T TSTable[T]] struct {
+type database[T TSTable] struct {
 	logger   *logger.Logger
 	index    *seriesIndex
 	location string
@@ -87,7 +87,7 @@ func (d *database[T]) Close() error {
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenTSDB[T TSTable[T]](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error) {
+func OpenTSDB[T TSTable](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -135,7 +135,7 @@ func (d *database[T]) Register(shardID common.ShardID, series *Series) (*Series,
 	return series, nil
 }
 
-func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTable[T], error) {
+func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
 	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
 	ss := d.sLst[shardID].segmentController.selectTSTables(timeRange)
 	if len(ss) > 0 {
@@ -144,7 +144,7 @@ func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Ti
 	return d.sLst[shardID].segmentController.createTSTable(timeRange.Start)
 }
 
-func (d *database[T]) SelectTSTables(shardID common.ShardID, timeRange timestamp.TimeRange) ([]TSTable[T], error) {
+func (d *database[T]) SelectTSTables(shardID common.ShardID, timeRange timestamp.TimeRange) ([]TSTableWrapper[T], error) {
 	if int(shardID) >= int(atomic.LoadUint32(&d.sLen)) {
 		return nil, ErrUnknownShard
 	}

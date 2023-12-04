@@ -48,9 +48,9 @@ const (
 	encoded                 = "encoded"
 )
 
-var _ tsdb.TSTable = (*tsTable)(nil)
+var _ tsdb.TSTable = (*tsTableDeprecated)(nil)
 
-type tsTable struct {
+type tsTableDeprecated struct {
 	encoderSST        kv.TimeSeriesStore
 	sst               kv.TimeSeriesStore
 	bufferSupplier    *tsdb.BufferSupplier
@@ -64,11 +64,11 @@ type tsTable struct {
 	lock              sync.RWMutex
 }
 
-func (t *tsTable) SizeOnDisk() int64 {
+func (t *tsTableDeprecated) SizeOnDisk() int64 {
 	return t.encoderSST.SizeOnDisk()
 }
 
-func (t *tsTable) openBuffer() (err error) {
+func (t *tsTableDeprecated) openBuffer() (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	if t.encoderBuffer != nil {
@@ -85,7 +85,7 @@ func (t *tsTable) openBuffer() (err error) {
 	return nil
 }
 
-func (t *tsTable) Close() (err error) {
+func (t *tsTableDeprecated) Close() (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	for _, b := range []io.Closer{t.sst, t.encoderSST} {
@@ -99,7 +99,7 @@ func (t *tsTable) Close() (err error) {
 	return err
 }
 
-func (t *tsTable) CollectStats() *badger.Statistics {
+func (t *tsTableDeprecated) CollectStats() *badger.Statistics {
 	mergedMap := &sync.Map{}
 	for _, s := range []*badger.Statistics{t.encoderSST.CollectStats(), t.sst.CollectStats()} {
 		if s != nil && s.TableBuilderSize != nil {
@@ -117,7 +117,7 @@ func (t *tsTable) CollectStats() *badger.Statistics {
 	}
 }
 
-func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
+func (t *tsTableDeprecated) Get(key []byte, ts time.Time) ([]byte, error) {
 	if t.toEncode(key) {
 		if v, ok := t.encoderBuffer.Read(key, ts); ok {
 			return v, nil
@@ -130,7 +130,7 @@ func (t *tsTable) Get(key []byte, ts time.Time) ([]byte, error) {
 	return t.sst.Get(key, uint64(ts.UnixNano()))
 }
 
-func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
+func (t *tsTableDeprecated) Put(key []byte, val []byte, ts time.Time) error {
 	t.lock.RLock()
 	if t.encoderBuffer != nil {
 		defer t.lock.RUnlock()
@@ -143,24 +143,24 @@ func (t *tsTable) Put(key []byte, val []byte, ts time.Time) error {
 	return t.writeToBuffer(key, val, ts)
 }
 
-func (t *tsTable) writeToBuffer(key []byte, val []byte, ts time.Time) error {
+func (t *tsTableDeprecated) writeToBuffer(key []byte, val []byte, ts time.Time) error {
 	if t.toEncode(key) {
 		return t.encoderBuffer.Write(key, val, ts)
 	}
 	return t.buffer.Write(key, val, ts)
 }
 
-func (t *tsTable) encoderFlush(shardIndex int, skl *skl.Skiplist) error {
+func (t *tsTableDeprecated) encoderFlush(shardIndex int, skl *skl.Skiplist) error {
 	t.l.Info().Int("shard", shardIndex).Msg("flushing encoder buffer")
 	return t.encoderSST.Handover(skl)
 }
 
-func (t *tsTable) flush(shardIndex int, skl *skl.Skiplist) error {
+func (t *tsTableDeprecated) flush(shardIndex int, skl *skl.Skiplist) error {
 	t.l.Info().Int("shard", shardIndex).Msg("flushing buffer")
 	return t.sst.Handover(skl)
 }
 
-func (t *tsTable) toEncode(key []byte) bool {
+func (t *tsTableDeprecated) toEncode(key []byte) bool {
 	fieldSpec, _, err := pbv1.DecodeFieldFlag(key)
 	if err != nil {
 		t.l.Err(err).Msg("failed to decode field flag")
@@ -203,7 +203,7 @@ func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create time series table: %w", err)
 	}
-	table := &tsTable{
+	table := &tsTableDeprecated{
 		bufferSize:        ttf.bufferSize,
 		encoderBufferSize: ttf.encoderBufferSize,
 		l:                 l,
@@ -214,4 +214,32 @@ func (ttf *tsTableFactory) NewTSTable(bufferSupplier *tsdb.BufferSupplier, root 
 		bufferSupplier:    bufferSupplier,
 	}
 	return table, nil
+}
+
+func newTSTable(root string, position common.Position, l *logger.Logger, timeRange timestamp.TimeRange) (*tsTable, error) {
+	return nil, nil
+}
+
+type tsTable struct {
+	memParts []*partWrapper
+	sync.RWMutex
+}
+
+func (tst *tsTable) Close() error {
+	panic("implement me")
+}
+
+func (tst *tsTable) mustAddRows(dps *dataPoints) {
+	if len(dps.seriesIDs) == 0 {
+		return
+	}
+
+	mp := getMemPart()
+	mp.mustInitFromDataPoints(dps)
+
+	pw := newMemPartWrapper(mp)
+
+	tst.Lock()
+	defer tst.Unlock()
+	tst.memParts = append(tst.memParts, pw)
 }

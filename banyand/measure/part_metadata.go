@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,27 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package measure
 
-package banyandb.cluster.v1;
-
-import "google/protobuf/any.proto";
-
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
-
-message SendRequest {
-  string topic = 1;
-  uint64 message_id = 2;
-  google.protobuf.Any body = 3;
-  bool batch_mod= 4;
+type partMetadata struct {
+	CompressedSizeBytes   uint64
+	UncompressedSizeBytes uint64
+	TotalCount            uint64
+	BlocksCount           uint64
+	MinTimestamp          int64
+	MaxTimestamp          int64
 }
 
-message SendResponse {
-  uint64 message_id = 1;
-  string error = 2;
-  google.protobuf.Any body = 3;
-}
-
-service Service {
-  rpc Send(stream SendRequest) returns (stream SendResponse);
+func (ph *partMetadata) reset() {
+	ph.CompressedSizeBytes = 0
+	ph.UncompressedSizeBytes = 0
+	ph.TotalCount = 0
+	ph.BlocksCount = 0
+	ph.MinTimestamp = 0
+	ph.MaxTimestamp = 0
 }

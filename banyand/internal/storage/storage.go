@@ -24,13 +24,16 @@
 package storage
 
 import (
+	"context"
 	"io"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -57,20 +60,36 @@ var (
 )
 
 // Supplier allows getting a tsdb's runtime.
-type SupplyTSDB[T TSTable[T]] func() TSDB[T]
+type SupplyTSDB[T TSTable] func() T
+
+type IndexDB interface {
+	Write(docs index.Documents) error
+	Search(ctx context.Context, series *Series, filter index.Filter, order *OrderBy) (SeriesList, error)
+}
 
 // TSDB allows listing and getting shard details.
-type TSDB[T TSTable[T]] interface {
+type TSDB[T TSTable] interface {
 	io.Closer
+	Register(shardID common.ShardID, series *Series) (*Series, error)
+	Lookup(ctx context.Context, series *Series) (SeriesList, error)
+	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
+	SelectTSTables(shardID common.ShardID, timeRange timestamp.TimeRange) ([]TSTableWrapper[T], error)
+	IndexDB() IndexDB
 }
 
 // TSTable is time series table.
-type TSTable[T any] interface {
+type TSTable interface {
 	io.Closer
 }
 
+type TSTableWrapper[T TSTable] interface {
+	DecRef()
+	Table() T
+	GetTimeRange() timestamp.TimeRange
+}
+
 // TSTableCreator creates a TSTable.
-type TSTableCreator[T TSTable[T]] func(root string, position common.Position,
+type TSTableCreator[T TSTable] func(root string, position common.Position,
 	l *logger.Logger, timeRange timestamp.TimeRange) (T, error)
 
 // IntervalUnit denotes the unit of a time point.
@@ -116,4 +135,17 @@ func (ir IntervalRule) estimatedDuration() time.Duration {
 		return 24 * time.Hour * time.Duration(ir.Num)
 	}
 	panic("invalid interval unit")
+}
+
+func MustToIntervalRule(ir *commonv1.IntervalRule) (result IntervalRule) {
+	switch ir.Unit {
+	case commonv1.IntervalRule_UNIT_DAY:
+		result.Unit = DAY
+	case commonv1.IntervalRule_UNIT_HOUR:
+		result.Unit = HOUR
+	default:
+		logger.Panicf("unknown interval rule:%v", ir)
+	}
+	result.Num = int(ir.Num)
+	return result
 }

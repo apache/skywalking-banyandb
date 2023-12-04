@@ -44,9 +44,10 @@ type (
 
 // Message is send on the bus to all subscribed listeners.
 type Message struct {
-	payload payload
-	node    string
-	id      MessageID
+	payload   payload
+	node      string
+	id        MessageID
+	batchMode bool
 }
 
 // ID outputs the MessageID of the Message.
@@ -64,6 +65,11 @@ func (m Message) Node() string {
 	return m.node
 }
 
+// BatchModeEnabled returns whether the Message is sent in batch mode.
+func (m Message) BatchModeEnabled() bool {
+	return m.batchMode
+}
+
 // NewMessage returns a new Message with a MessageID and embed data.
 func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, node: "local", payload: data}
@@ -71,7 +77,7 @@ func NewMessage(id MessageID, data interface{}) Message {
 
 // NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
 func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
-	return Message{id: id, node: node, payload: data}
+	return Message{id: id, node: node, payload: data, batchMode: true}
 }
 
 // MessageListener is the signature of functions that can handle an EventMessage.

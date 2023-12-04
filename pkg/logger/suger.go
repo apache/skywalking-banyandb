@@ -15,27 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-syntax = "proto3";
+package logger
 
-package banyandb.cluster.v1;
-
-import "google/protobuf/any.proto";
-
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
-
-message SendRequest {
-  string topic = 1;
-  uint64 message_id = 2;
-  google.protobuf.Any body = 3;
-  bool batch_mod= 4;
+func Panicf(f string, v ...interface{}) {
+	GetLogger().Panic().Msgf(f, v...)
 }
 
-message SendResponse {
-  uint64 message_id = 1;
-  string error = 2;
-  google.protobuf.Any body = 3;
+func Errorf(f string, v ...interface{}) {
+	GetLogger().Error().Msgf(f, v...)
 }
 
-service Service {
-  rpc Send(stream SendRequest) returns (stream SendResponse);
+func Warningf(f string, v ...interface{}) {
+	GetLogger().Warn().Msgf(f, v...)
+}
+
+func Infof(f string, v ...interface{}) {
+	GetLogger().Info().Msgf(f, v...)
+}
+
+func Debugf(f string, v ...interface{}) {
+	GetLogger().Debug().Msgf(f, v...)
 }

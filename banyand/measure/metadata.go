@@ -31,14 +31,12 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -53,16 +51,14 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo,
-	dbOpts tsdb.DatabaseOpts, l *logger.Logger, pipeline queue.Queue, encoderBufferSize, bufferSize int64,
-) schemaRepo {
+func newSchemaRepo(path string, svc *service) schemaRepo {
 	sr := schemaRepo{
-		l:        l,
-		metadata: metadata,
+		l:        svc.l,
+		metadata: svc.metadata,
 		Repository: resourceSchema.NewRepository(
-			metadata,
-			l,
-			newSupplier(path, metadata, dbOpts, l, pipeline, encoderBufferSize, bufferSize),
+			svc.metadata,
+			svc.l,
+			newSupplier(path, svc),
 		),
 	}
 	sr.start()
@@ -306,34 +302,35 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 	return s, ok
 }
 
+func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable], error) {
+	g, ok := sr.LoadGroup(groupName)
+	if !ok {
+		return nil, fmt.Errorf("group %s not found", groupName)
+	}
+	return g.SupplyTSDB().(storage.TSDB[*tsTable]), nil
+}
+
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata                      metadata.Repo
-	pipeline                      queue.Queue
-	l                             *logger.Logger
-	path                          string
-	dbOpts                        tsdb.DatabaseOpts
-	encoderBufferSize, bufferSize int64
+	metadata metadata.Repo
+	pipeline queue.Queue
+	l        *logger.Logger
+	path     string
 }
 
-func newSupplier(path string, metadata metadata.Repo, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
-	pipeline queue.Queue, encoderBufferSize, bufferSize int64,
-) *supplier {
+func newSupplier(path string, svc *service) *supplier {
 	return &supplier{
-		path:              path,
-		dbOpts:            dbOpts,
-		metadata:          metadata,
-		l:                 l,
-		pipeline:          pipeline,
-		encoderBufferSize: encoderBufferSize,
-		bufferSize:        bufferSize,
+		path:     path,
+		metadata: svc.metadata,
+		l:        svc.l,
+		pipeline: svc.localPipeline,
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(shardNum, db, measureSpec{
+	return openMeasure(shardNum, supplier, measureSpec{
 		schema:           measureSchema,
 		indexRules:       spec.IndexRules(),
 		topNAggregations: spec.TopN(),
@@ -346,33 +343,16 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }
 
-func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
-	opts := s.dbOpts
-	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
-	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
+func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+	opts := storage.TSDBOpts[*tsTable]{
+		ShardNum:        groupSchema.ResourceOpts.ShardNum,
+		Location:        path.Join(s.path, groupSchema.Metadata.Name),
+		TSTableCreator:  newTSTable,
+		SegmentInterval: storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
+		TTL:             storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+	}
 	name := groupSchema.Metadata.Name
-	opts.TSTableFactory = &tsTableFactory{
-		bufferSize:        s.bufferSize,
-		encoderBufferSize: s.encoderBufferSize,
-		encoderPool:       encoding.NewEncoderPool(name, intChunkNum, intervalFn),
-		decoderPool:       encoding.NewDecoderPool(name, intChunkNum, intervalFn),
-		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-		encodingChunkSize: intChunkSize,
-		plainChunkSize:    plainChunkSize,
-	}
-
-	var err error
-	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {
-		return nil, err
-	}
-	if opts.SegmentInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.SegmentInterval); err != nil {
-		return nil, err
-	}
-	if opts.TTL, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.Ttl); err != nil {
-		return nil, err
-	}
-
-	return tsdb.OpenDatabase(
+	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
 			p.Module = "measure"
 			p.Database = name
@@ -407,11 +387,11 @@ func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }
 
-func (*portableSupplier) OpenDB(_ *commonv1.Group) (tsdb.Database, error) {
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 	panic("do not support open db")
 }
 
-func (s *portableSupplier) OpenResource(shardNum uint32, _ tsdb.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(shardNum, nil, measureSpec{
 		schema:           measureSchema,

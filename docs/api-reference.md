@@ -236,6 +236,7 @@
 | topic | [string](#string) |  |  |
 | message_id | [uint64](#uint64) |  |  |
 | body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| batch_mod | [bool](#bool) |  |  |
 
 
 

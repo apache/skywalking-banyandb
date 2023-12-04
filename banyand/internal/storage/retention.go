@@ -25,14 +25,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type retentionTask[T TSTable[T]] struct {
+type retentionTask[T TSTable] struct {
 	segment  *segmentController[T]
 	expr     string
 	option   cron.ParseOption
 	duration time.Duration
 }
 
-func newRetentionTask[T TSTable[T]](segment *segmentController[T], ttl IntervalRule) *retentionTask[T] {
+func newRetentionTask[T TSTable](segment *segmentController[T], ttl IntervalRule) *retentionTask[T] {
 	var expr string
 	switch ttl.Unit {
 	case HOUR:
