@@ -45,7 +45,6 @@ func (cm *columnMetadata) copyFrom(src *columnMetadata) {
 }
 
 func (cm *columnMetadata) marshal(dst []byte) []byte {
-	// Encode common fields - cm.name and cm.valueType
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(cm.name))
 	dst = append(dst, byte(cm.valueType))
 	dst = cm.dataBlock.marshal(dst)
@@ -90,17 +89,6 @@ func (cfm *columnFamilyMetadata) copyFrom(src *columnFamilyMetadata) {
 	}
 }
 
-func (cfm *columnFamilyMetadata) getColumnMetadata(name string) *columnMetadata {
-	cms := cfm.columnMetadata
-	for i := range cms {
-		cm := &cms[i]
-		if cm.name == name {
-			return cm
-		}
-	}
-	return nil
-}
-
 func (cfm *columnFamilyMetadata) resizeColumnMetadata(columnMetadataLen int) []columnMetadata {
 	cms := cfm.columnMetadata
 	if n := columnMetadataLen - cap(cms); n > 0 {
@@ -121,7 +109,7 @@ func (cfm *columnFamilyMetadata) marshal(dst []byte) []byte {
 }
 
 func (cfm *columnFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, columnMetadataLen, err := encoding.BytesToVarInt64(src)
+	src, columnMetadataLen, err := encoding.BytesToVarUint64(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadataLen: %w", err)
 	}
@@ -135,7 +123,7 @@ func (cfm *columnFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
 	return src, nil
 }
 
-func getColumnFamilyMetadata() *columnFamilyMetadata {
+func generateColumnFamilyMetadata() *columnFamilyMetadata {
 	v := columnFamilyMetadataPool.Get()
 	if v == nil {
 		return &columnFamilyMetadata{}
@@ -143,7 +131,7 @@ func getColumnFamilyMetadata() *columnFamilyMetadata {
 	return v.(*columnFamilyMetadata)
 }
 
-func putColumnFamilyMetadata(cfm *columnFamilyMetadata) {
+func releaseColumnFamilyMetadata(cfm *columnFamilyMetadata) {
 	cfm.reset()
 	columnFamilyMetadataPool.Put(cfm)
 }

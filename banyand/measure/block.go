@@ -165,15 +165,15 @@ func (b *block) mustWriteTo(sid common.SeriesID, bh *blockMetadata, sw *writers)
 func (b *block) marshalTagFamily(tf ColumnFamily, bh *blockMetadata, sw *writers) {
 	hw, w := sw.getColumnMetadataWriterAndColumnWriter(tf.Name)
 	cc := tf.Columns
-	cfh := getColumnFamilyMetadata()
+	cfh := generateColumnFamilyMetadata()
 	chh := cfh.resizeColumnMetadata(len(cc))
 	for i := range cc {
 		cc[i].mustWriteTo(&chh[i], w)
 	}
-	bb := longTermBufPool.Get()
-	defer longTermBufPool.Put(bb)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
 	bb.Buf = cfh.marshal(bb.Buf)
-	putColumnFamilyMetadata(cfh)
+	releaseColumnFamilyMetadata(cfh)
 	tfh := bh.getTagFamilyMetadata(tf.Name)
 	tfh.offset = w.bytesWritten
 	tfh.size = uint64(len(bb.Buf))
@@ -184,16 +184,16 @@ func (b *block) marshalTagFamily(tf ColumnFamily, bh *blockMetadata, sw *writers
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string, columnFamilyMetadataBlock *dataBlock, metaReader, valueReader fs.Reader) {
-	bb := longTermBufPool.Get()
+	bb := bigValuePool.Generate()
 	bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(columnFamilyMetadataBlock.offset), bb.Buf)
-	cfm := getColumnFamilyMetadata()
-	defer putColumnFamilyMetadata(cfm)
+	cfm := generateColumnFamilyMetadata()
+	defer releaseColumnFamilyMetadata(cfm)
 	_, err := cfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
 	}
-	longTermBufPool.Put(bb)
+	bigValuePool.Release(bb)
 	tf := b.tagFamilies[tfIndex]
 	cc := tf.resizeColumns(len(cfm.columnMetadata))
 	for i, c := range cc {
@@ -255,8 +255,8 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *b
 func mustWriteTimestampsTo(th *timestampsMetadata, timestamps []int64, sw *writers) {
 	th.reset()
 
-	bb := longTermBufPool.Get()
-	defer longTermBufPool.Put(bb)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
 	bb.Buf, th.marshalType, th.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
 	if len(bb.Buf) > maxTimestampsBlockSize {
 		logger.Panicf("too big block with timestamps: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxTimestampsBlockSize)
@@ -269,8 +269,8 @@ func mustWriteTimestampsTo(th *timestampsMetadata, timestamps []int64, sw *write
 }
 
 func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader fs.Reader) []int64 {
-	bb := longTermBufPool.Get()
-	defer longTermBufPool.Put(bb)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 	var err error
 	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.marshalType, tm.min, count)
@@ -280,7 +280,7 @@ func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, read
 	return dst
 }
 
-func getBlock() *block {
+func generateBlock() *block {
 	v := blockPool.Get()
 	if v == nil {
 		return &block{}
@@ -288,7 +288,7 @@ func getBlock() *block {
 	return v.(*block)
 }
 
-func putBlock(b *block) {
+func releaseBlock(b *block) {
 	b.reset()
 	blockPool.Put(b)
 }

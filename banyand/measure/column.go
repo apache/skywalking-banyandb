@@ -64,8 +64,8 @@ func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 
 	// TODO: encoding values based on value type
 
-	bb := longTermBufPool.Get()
-	defer longTermBufPool.Put(bb)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
 
 	// marshal values
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.Values)
@@ -81,8 +81,8 @@ func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	c.Name = cm.name
 	c.ValueType = cm.valueType
 
-	bb := longTermBufPool.Get()
-	defer longTermBufPool.Put(bb)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
 	valuesSize := cm.size
 	if valuesSize > maxValuesBlockSize {
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
@@ -96,7 +96,7 @@ func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	}
 }
 
-var longTermBufPool bytes.BufferPool
+var bigValuePool bytes.BufferPool
 
 type ColumnFamily struct {
 	Name    string

@@ -62,7 +62,7 @@ type BufferPool struct {
 	p sync.Pool
 }
 
-func (bp *BufferPool) Get() *Buffer {
+func (bp *BufferPool) Generate() *Buffer {
 	bbv := bp.p.Get()
 	if bbv == nil {
 		return &Buffer{}
@@ -70,7 +70,7 @@ func (bp *BufferPool) Get() *Buffer {
 	return bbv.(*Buffer)
 }
 
-func (bp *BufferPool) Put(b *Buffer) {
+func (bp *BufferPool) Release(b *Buffer) {
 	b.Reset()
 	bp.p.Put(b)
 }

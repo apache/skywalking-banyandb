@@ -96,8 +96,8 @@ func (qr *QueryResult) Pull() *pbv1.Result {
 		return nil
 	}
 	// TODO:// Parallel load
-	tmpBlock := getBlock()
-	defer putBlock(tmpBlock)
+	tmpBlock := generateBlock()
+	defer releaseBlock(tmpBlock)
 	for i := 0; i < len(qr.data); i++ {
 		if !qr.data[i].loadData(tmpBlock) {
 			qr.data = append(qr.data[:i], qr.data[i+1:]...)
@@ -396,7 +396,7 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 				}}}
 	case pbv1.ValueTypeStrArr:
 		var values []string
-		bb := longTermBufPool.Get()
+		bb := bigValuePool.Generate()
 		var err error
 		for len(value) > 0 {
 			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)

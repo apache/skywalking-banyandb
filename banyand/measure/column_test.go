@@ -1,0 +1,120 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package measure
+
+import (
+	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestColumn_reset(t *testing.T) {
+	c := &Column{
+		Name:      "test",
+		ValueType: pbv1.ValueTypeStr,
+		Values:    [][]byte{[]byte("value1"), []byte("value2")},
+	}
+
+	c.reset()
+
+	assert.Equal(t, "", c.Name)
+	assert.Equal(t, 0, len(c.Values))
+}
+
+func TestColumn_resizeValues(t *testing.T) {
+	c := &Column{
+		Values: make([][]byte, 2, 5),
+	}
+
+	values := c.resizeValues(3)
+	assert.Equal(t, 3, len(values))
+	assert.Equal(t, 5, cap(values))
+
+	values = c.resizeValues(6)
+	assert.Equal(t, 6, len(values))
+	assert.True(t, cap(values) >= 6) // The capacity is at least 6, but could be more
+}
+
+func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
+	original := &Column{
+		Name:      "test",
+		ValueType: pbv1.ValueTypeStr,
+		Values:    [][]byte{[]byte("value1"), []byte("value2")},
+	}
+
+	cm := &columnMetadata{}
+
+	buf := &bytes.Buffer{}
+	w := &writer{w: buf}
+	original.mustWriteTo(cm, w)
+	assert.Equal(t, w.bytesWritten, cm.size)
+	assert.Equal(t, uint64(len(buf.Buf)), cm.size)
+	assert.Equal(t, uint64(0), cm.offset)
+	assert.Equal(t, original.Name, cm.name)
+	assert.Equal(t, original.ValueType, cm.valueType)
+
+	decoder := &encoding.BytesBlockDecoder{}
+
+	unmarshaled := &Column{}
+	unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.Values)))
+
+	// Check that the original and new instances are equal
+	assert.Equal(t, original.Name, unmarshaled.Name)
+	assert.Equal(t, original.ValueType, unmarshaled.ValueType)
+	assert.Equal(t, original.Values, unmarshaled.Values)
+}
+
+func TestColumnFamily_reset(t *testing.T) {
+	cf := &ColumnFamily{
+		Name: "test",
+		Columns: []Column{
+			{
+				Name:      "test1",
+				ValueType: pbv1.ValueTypeStr,
+				Values:    [][]byte{[]byte("value1"), []byte("value2")},
+			},
+			{
+				Name:      "test2",
+				ValueType: pbv1.ValueTypeInt64,
+				Values:    [][]byte{[]byte("value3"), []byte("value4")},
+			},
+		},
+	}
+
+	cf.reset()
+
+	assert.Equal(t, "", cf.Name)
+	assert.Equal(t, 0, len(cf.Columns))
+}
+
+func TestColumnFamily_resizeColumns(t *testing.T) {
+	cf := &ColumnFamily{
+		Columns: make([]Column, 2, 5),
+	}
+
+	columns := cf.resizeColumns(3)
+	assert.Equal(t, 3, len(columns))
+	assert.Equal(t, 5, cap(columns))
+
+	columns = cf.resizeColumns(6)
+	assert.Equal(t, 6, len(columns))
+	assert.True(t, cap(columns) >= 6) // The capacity is at least 6, but could be more
+}

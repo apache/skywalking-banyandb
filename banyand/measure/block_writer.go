@@ -191,8 +191,8 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 		return
 	}
 
-	b := getBlock()
-	defer putBlock(b)
+	b := generateBlock()
+	defer releaseBlock(b)
 	b.MustInitFromDataPoints(timestamps, tagFamilies, fields)
 	if b.Len() == 0 {
 		return
@@ -260,10 +260,10 @@ func (bsw *blockWriter) Flush(ph *partMetadata) {
 
 	bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
 
-	bb := longTermBufPool.Get()
+	bb := bigValuePool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], bsw.metaData, 1)
 	bsw.streamWriters.metaWriter.MustWrite(bb.Buf)
-	longTermBufPool.Put(bb)
+	bigValuePool.Release(bb)
 
 	ph.CompressedSizeBytes = bsw.streamWriters.totalBytesWritten()
 

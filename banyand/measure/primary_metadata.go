@@ -48,12 +48,12 @@ func (ph *primaryBlockMetadata) mustWriteBlock(data []byte, sidFirst common.Seri
 	ph.minTimestamp = minTimestamp
 	ph.maxTimestamp = maxTimestamp
 
-	bb := longTermBufPool.Get()
+	bb := bigValuePool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], data, 1)
 	ph.offset = sw.primaryWriter.bytesWritten
 	ph.size = uint64(len(bb.Buf))
 	sw.primaryWriter.MustWrite(bb.Buf)
-	longTermBufPool.Put(bb)
+	bigValuePool.Release(bb)
 }
 
 func (ph *primaryBlockMetadata) marshal(dst []byte) []byte {
@@ -87,13 +87,13 @@ func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r *reader) []prima
 		logger.Panicf("cannot read primaryBlockMetadata entries from %s: %s", r.Path(), err)
 	}
 
-	bb := longTermBufPool.Get()
+	bb := bigValuePool.Generate()
 	bb.Buf, err = zstd.Decompress(bb.Buf[:0], data)
 	if err != nil {
 		logger.Panicf("cannot decompress indexBlockHeader entries from %s: %s", r.Path(), err)
 	}
 	dst, err = unmarshalPrimaryBlockMetadata(dst, bb.Buf)
-	longTermBufPool.Put(bb)
+	bigValuePool.Release(bb)
 	if err != nil {
 		logger.Panicf("cannot parse indexBlockHeader entries from %s: %s", r.Path(), err)
 	}
@@ -125,7 +125,7 @@ func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]pr
 func validatePrimaryBlockMetadata(ihs []primaryBlockMetadata) error {
 	for i := 1; i < len(ihs); i++ {
 		if ihs[i].seriesID < ihs[i-1].seriesID {
-			return fmt.Errorf("unexpected primaryBlockMetadata with smaller seriesID=%s after bigger seriesID=%s", &ihs[i].seriesID, &ihs[i-1].seriesID)
+			return fmt.Errorf("unexpected primaryBlockMetadata with smaller seriesID=%d after bigger seriesID=%d", &ihs[i].seriesID, &ihs[i-1].seriesID)
 		}
 	}
 	return nil

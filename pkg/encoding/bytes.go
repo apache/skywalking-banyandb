@@ -52,14 +52,14 @@ func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 	dst = encodeUint64Block(dst, u64s.L)
 	ReleaseUint64List(u64s)
 
-	bb := bbPool.Get()
+	bb := bbPool.Generate()
 	b := bb.Buf
 	for _, s := range a {
 		b = append(b, s...)
 	}
 	bb.Buf = b
 	dst = compressBlock(dst, bb.Buf)
-	bbPool.Put(bb)
+	bbPool.Release(bb)
 
 	return dst
 }
@@ -107,16 +107,16 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 }
 
 func encodeUint64Block(dst []byte, a []uint64) []byte {
-	bb := bbPool.Get()
+	bb := bbPool.Generate()
 	bb.Buf = encodeUint64List(bb.Buf[:0], a)
 	dst = compressBlock(dst, bb.Buf)
-	bbPool.Put(bb)
+	bbPool.Release(bb)
 	return dst
 }
 
 func decodeUint64Block(dst []uint64, src []byte, itemsCount uint64) ([]uint64, []byte, error) {
-	bb := bbPool.Get()
-	defer bbPool.Put(bb)
+	bb := bbPool.Generate()
+	defer bbPool.Release(bb)
 
 	var err error
 	bb.Buf, src, err = decompressBlock(bb.Buf[:0], src)
@@ -231,11 +231,11 @@ func compressBlock(dst, src []byte) []byte {
 	}
 
 	dst = append(dst, compressTypeZSTD)
-	bb := bbPool.Get()
+	bb := bbPool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], src, 1)
 	dst = VarUint64ToBytes(dst, uint64(len(bb.Buf)))
 	dst = append(dst, bb.Buf...)
-	bbPool.Put(bb)
+	bbPool.Release(bb)
 	return dst
 }
 
@@ -272,7 +272,7 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 		src = src[blockLen:]
 
 		// Decompress the block
-		bb := bbPool.Get()
+		bb := bbPool.Generate()
 		bb.Buf, err = zstd.Decompress(bb.Buf[:0], compressedBlock)
 		if err != nil {
 			return dst, src, fmt.Errorf("cannot decompress block: %w", err)
@@ -280,7 +280,7 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 
 		// Copy the decompressed block to dst.
 		dst = append(dst, bb.Buf...)
-		bbPool.Put(bb)
+		bbPool.Release(bb)
 		return dst, src, nil
 	default:
 		return dst, src, fmt.Errorf("unexpected block type: %d; supported types: 0, 1", blockType)
