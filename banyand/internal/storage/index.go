@@ -26,25 +26,19 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func (d *database[T]) IndexDB() IndexDB {
 	return d.index
 }
 
-func (d *database[T]) Lookup(ctx context.Context, series *Series) (SeriesList, error) {
+func (d *database[T]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
 	return d.index.searchPrimary(ctx, series)
-}
-
-// OrderBy specifies the order of the result.
-type OrderBy struct {
-	Index *databasev1.IndexRule
-	Sort  modelv1.Sort
 }
 
 type seriesIndex struct {
@@ -69,8 +63,8 @@ func newSeriesIndex(ctx context.Context, root string) (*seriesIndex, error) {
 
 var entityKey = index.FieldKey{}
 
-func (s *seriesIndex) createPrimary(series *Series) (*Series, error) {
-	if err := series.marshal(); err != nil {
+func (s *seriesIndex) createPrimary(series *pbv1.Series) (*pbv1.Series, error) {
+	if err := series.Marshal(); err != nil {
 		return nil, err
 	}
 	id, err := s.store.Search(series.Buffer)
@@ -97,7 +91,7 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (SeriesList, error) {
+func (s *seriesIndex) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
 
@@ -105,7 +99,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (Series
 		if tv == nil {
 			return nil, errors.New("nil tag value")
 		}
-		if tv.Value == AnyEntry {
+		if tv == pbv1.AnyTagValue {
 			if !hasAny {
 				hasAny = true
 				prefixIndex = i
@@ -123,7 +117,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (Series
 	if hasAny {
 		var ss []index.Series
 		if hasWildcard {
-			if err = series.marshal(); err != nil {
+			if err = series.Marshal(); err != nil {
 				return nil, err
 			}
 			ss, err = s.store.SearchWildcard(series.Buffer)
@@ -133,7 +127,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (Series
 			return convertIndexSeriesToSeriesList(ss)
 		}
 		series.EntityValues = series.EntityValues[:prefixIndex]
-		if err = series.marshal(); err != nil {
+		if err = series.Marshal(); err != nil {
 			return nil, err
 		}
 		ss, err = s.store.SearchPrefix(series.Buffer)
@@ -142,7 +136,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (Series
 		}
 		return convertIndexSeriesToSeriesList(ss)
 	}
-	if err = series.marshal(); err != nil {
+	if err = series.Marshal(); err != nil {
 		return nil, err
 	}
 	var seriesID common.SeriesID
@@ -152,17 +146,17 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series *Series) (Series
 	}
 	if seriesID > 0 {
 		series.ID = seriesID
-		return SeriesList{series}, nil
+		return pbv1.SeriesList{series}, nil
 	}
 	return nil, nil
 }
 
-func convertIndexSeriesToSeriesList(indexSeries []index.Series) (SeriesList, error) {
-	seriesList := make(SeriesList, 0, len(indexSeries))
+func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList, error) {
+	seriesList := make(pbv1.SeriesList, 0, len(indexSeries))
 	for _, s := range indexSeries {
-		var series Series
+		var series pbv1.Series
 		series.ID = s.ID
-		if err := series.unmarshal(s.EntityValues); err != nil {
+		if err := series.Unmarshal(s.EntityValues); err != nil {
 			return nil, err
 		}
 		seriesList = append(seriesList, &series)
@@ -170,13 +164,13 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (SeriesList, err
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series *Series, filter index.Filter, order *OrderBy) (SeriesList, error) {
+func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error) {
 	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
 	}
 
-	pl := seriesList.toList()
+	pl := seriesList.ToList()
 	if filter != nil {
 		var plFilter posting.List
 		plFilter, err = filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
@@ -190,7 +184,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *Series, filter index.F
 		}
 	}
 
-	if order == nil {
+	if order == nil && order.Index == nil {
 		return filterSeriesList(seriesList, pl), nil
 	}
 
@@ -205,7 +199,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *Series, filter index.F
 		err = multierr.Append(err, iter.Close())
 	}()
 
-	var sortedSeriesList SeriesList
+	var sortedSeriesList pbv1.SeriesList
 	for iter.Next() {
 		pv := iter.Val().Value
 		if err = pv.Intersect(pl); err != nil {
@@ -222,7 +216,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *Series, filter index.F
 	return sortedSeriesList, err
 }
 
-func filterSeriesList(seriesList SeriesList, filter posting.List) SeriesList {
+func filterSeriesList(seriesList pbv1.SeriesList, filter posting.List) pbv1.SeriesList {
 	for i := 0; i < len(seriesList); i++ {
 		if !filter.Contains(uint64(seriesList[i].ID)) {
 			seriesList = append(seriesList[:i], seriesList[i+1:]...)
@@ -232,7 +226,7 @@ func filterSeriesList(seriesList SeriesList, filter posting.List) SeriesList {
 	return seriesList
 }
 
-func appendSeriesList(dest, src SeriesList, filter posting.List) SeriesList {
+func appendSeriesList(dest, src pbv1.SeriesList, filter posting.List) pbv1.SeriesList {
 	for i := 0; i < len(src); i++ {
 		if !filter.Contains(uint64(src[i].ID)) {
 			continue

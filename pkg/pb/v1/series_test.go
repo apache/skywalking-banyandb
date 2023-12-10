@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package storage
+package v1
 
 import (
 	"testing"
@@ -97,7 +97,7 @@ func TestMarshalAndUnmarshalSeries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test Series.Marshal
-			err := tt.src.marshal()
+			err := tt.src.Marshal()
 
 			// Add assertions
 			assert.NoError(t, err)
@@ -107,7 +107,7 @@ func TestMarshalAndUnmarshalSeries(t *testing.T) {
 
 			// Test Series.Unmarshal
 			tt.src.reset()
-			err = tt.src.unmarshal(marshaled)
+			err = tt.src.Unmarshal(marshaled)
 
 			// Add assertions
 			assert.NoError(t, err)

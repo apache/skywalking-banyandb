@@ -18,9 +18,12 @@
 package measure
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 )
 
@@ -40,9 +43,24 @@ func (h *dataBlock) copyFrom(src *dataBlock) {
 }
 
 func (h *dataBlock) marshal(dst []byte) []byte {
-	dst = encoding.Uint64ToBytes(dst, h.offset)
-	dst = encoding.Uint64ToBytes(dst, h.size)
+	dst = encoding.VarUint64ToBytes(dst, h.offset)
+	dst = encoding.VarUint64ToBytes(dst, h.size)
 	return dst
+}
+
+func (h *dataBlock) unmarshal(src []byte) ([]byte, error) {
+	src, n, err := encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal offset: %w", err)
+	}
+	h.offset = n
+
+	src, n, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal size: %w", err)
+	}
+	h.size = n
+	return src, nil
 }
 
 type blockMetadata struct {
@@ -99,13 +117,69 @@ func (bh *blockMetadata) marshal(dst []byte) []byte {
 	dst = encoding.VarUint64ToBytes(dst, bh.count)
 	dst = bh.timestamps.marshal(dst)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bh.tagFamilies)))
-	for _, cf := range bh.tagFamilies {
+	for name, cf := range bh.tagFamilies {
+		dst = encoding.EncodeBytes(dst, convert.StringToBytes(name))
 		dst = cf.marshal(dst)
 	}
 	if len(bh.field.columnMetadata) > 0 {
 		dst = bh.field.marshal(dst)
 	}
 	return dst
+}
+
+func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 8 {
+		return nil, errors.New("cannot unmarshal blockMetadata from less than 8 bytes")
+	}
+	bh.seriesID = common.SeriesID(encoding.BytesToUint64(src))
+	src = src[8:]
+	src, n, err := encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal uncompressedSizeBytes: %w", err)
+	}
+	bh.uncompressedSizeBytes = n
+
+	src, n, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal count: %w", err)
+	}
+	bh.count = n
+	src, err = bh.timestamps.unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal timestampsMetadata: %w", err)
+	}
+	src, n, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagFamilies count: %w", err)
+	}
+	var nameBytes []byte
+	for i := uint64(0); i < n; i++ {
+		src, nameBytes, err = encoding.DecodeBytes(src)
+		if err != nil {
+			return nil, fmt.Errorf("cannot unmarshal tagFamily name: %w", err)
+		}
+		// TODO: cache dataBlock
+		tf := &dataBlock{}
+		src, err = tf.unmarshal(src)
+		if err != nil {
+			return nil, fmt.Errorf("cannot unmarshal tagFamily dataBlock: %w", err)
+		}
+		bh.tagFamilies[convert.BytesToString(nameBytes)] = tf
+	}
+	if len(src) > 0 {
+		src, err = bh.field.unmarshal(src)
+		if err != nil {
+			return nil, fmt.Errorf("cannot unmarshal columnFamilyMetadata: %w", err)
+		}
+	}
+	return src, nil
+}
+
+func (bh *blockMetadata) less(other *blockMetadata) bool {
+	if bh.seriesID == other.seriesID {
+		return bh.timestamps.min < other.timestamps.min
+	}
+	return bh.seriesID < other.seriesID
 }
 
 func getBlockMetadata() *blockMetadata {
@@ -150,4 +224,58 @@ func (th *timestampsMetadata) marshal(dst []byte) []byte {
 	dst = encoding.Uint64ToBytes(dst, uint64(th.max))
 	dst = append(dst, byte(th.marshalType))
 	return dst
+}
+
+func (th *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 25 {
+		return nil, errors.New("cannot unmarshal timestampsMetadata from less than 25 bytes")
+	}
+	th.offset = encoding.BytesToUint64(src)
+	th.size = encoding.BytesToUint64(src[8:])
+	th.min = int64(encoding.BytesToUint64(src))
+	src = src[8:]
+	th.max = int64(encoding.BytesToUint64(src))
+	src = src[8:]
+	th.marshalType = encoding.EncodeType(src[0])
+	return src[1:], nil
+}
+
+func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, error) {
+	dstOrig := dst
+	for len(src) > 0 {
+		if len(dst) < cap(dst) {
+			dst = dst[:len(dst)+1]
+		} else {
+			dst = append(dst, blockMetadata{})
+		}
+		bm := &dst[len(dst)-1]
+		tail, err := bm.unmarshal(src)
+		if err != nil {
+			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
+		}
+		src = tail
+	}
+	if err := validateBlockHeaders(dst[len(dstOrig):]); err != nil {
+		return dstOrig, err
+	}
+	return dst, nil
+}
+
+func validateBlockHeaders(bhs []blockMetadata) error {
+	for i := 1; i < len(bhs); i++ {
+		bhCurr := &bhs[i]
+		bhPrev := &bhs[i-1]
+		if bhCurr.seriesID < bhPrev.seriesID {
+			return fmt.Errorf("unexpected blockMetadata with smaller seriesID=%d after bigger seriesID=%d at position %d", &bhCurr.seriesID, &bhPrev.seriesID, i)
+		}
+		if bhCurr.seriesID != bhPrev.seriesID {
+			continue
+		}
+		thCurr := bhCurr.timestamps
+		thPrev := bhPrev.timestamps
+		if thCurr.min < thPrev.min {
+			return fmt.Errorf("unexpected blockMetadata with smaller timestamp=%d after bigger timestamp=%d at position %d", thCurr.min, thPrev.min, i)
+		}
+	}
+	return nil
 }

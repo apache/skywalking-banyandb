@@ -15,10 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package storage
+package v1
 
 import (
-	"bytes"
 	"sort"
 	"sync"
 
@@ -38,7 +37,7 @@ type Series struct {
 	ID           common.SeriesID
 }
 
-func (s *Series) marshal() error {
+func (s *Series) Marshal() error {
 	s.Buffer = marshalEntityValue(s.Buffer, convert.StringToBytes(s.Subject))
 	var err error
 	for _, tv := range s.EntityValues {
@@ -50,7 +49,7 @@ func (s *Series) marshal() error {
 	return nil
 }
 
-func (s *Series) unmarshal(src []byte) error {
+func (s *Series) Unmarshal(src []byte) error {
 	var err error
 	s.Buffer = s.Buffer[:0]
 	if s.Buffer, src, err = unmarshalEntityValue(s.Buffer, src); err != nil {
@@ -90,60 +89,6 @@ func (sp *SeriesPool) Get() *Series {
 func (sp *SeriesPool) Put(s *Series) {
 	s.reset()
 	sp.pool.Put(s)
-}
-
-// AnyEntry is the `*` for a regular expression. It could match "any" Entry in an Entity.
-var AnyEntry = &modelv1.TagValue_Null{}
-
-const (
-	entityDelimiter = '|'
-	escape          = '\\'
-)
-
-var anyWildcard = []byte{'*'}
-
-func marshalEntityValue(dest, src []byte) []byte {
-	if src == nil {
-		dest = append(dest, entityDelimiter)
-		return dest
-	}
-	if bytes.IndexByte(src, entityDelimiter) < 0 && bytes.IndexByte(src, escape) < 0 {
-		dest = append(dest, src...)
-		dest = append(dest, entityDelimiter)
-		return dest
-	}
-	for _, b := range src {
-		if b == entityDelimiter || b == escape {
-			dest = append(dest, escape)
-		}
-		dest = append(dest, b)
-	}
-	dest = append(dest, entityDelimiter)
-	return dest
-}
-
-func unmarshalEntityValue(dest, src []byte) ([]byte, []byte, error) {
-	if len(src) == 0 {
-		return nil, nil, errors.New("empty entity value")
-	}
-	if src[0] == entityDelimiter {
-		return dest, src[1:], nil
-	}
-	for len(src) > 0 {
-		if src[0] == escape {
-			if len(src) < 2 {
-				return nil, nil, errors.New("invalid escape character")
-			}
-			src = src[1:]
-			dest = append(dest, src[0])
-		} else if src[0] == entityDelimiter {
-			return dest, src[1:], nil
-		} else {
-			dest = append(dest, src[0])
-		}
-		src = src[1:]
-	}
-	return nil, nil, errors.New("invalid entity value")
 }
 
 // SeriesList is a collection of Series.
@@ -195,7 +140,7 @@ func (a SeriesList) Merge(other SeriesList) SeriesList {
 	return final
 }
 
-func (a SeriesList) toList() posting.List {
+func (a SeriesList) ToList() posting.List {
 	pl := roaring.NewPostingList()
 	for _, v := range a {
 		pl.Insert(uint64(v.ID))

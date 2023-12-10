@@ -27,11 +27,12 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var testSeriesPool SeriesPool
+var testSeriesPool pbv1.SeriesPool
 
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
@@ -86,7 +87,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 			subject: "service_instance_latency",
 			entityValues: []*modelv1.TagValue{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: AnyEntry},
+				pbv1.AnyTagValue,
 			},
 			expected: []*modelv1.TagValue{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
@@ -97,7 +98,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 			name:    "Wildcard",
 			subject: "service_instance_latency",
 			entityValues: []*modelv1.TagValue{
-				{Value: AnyEntry},
+				pbv1.AnyTagValue,
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
 			},
 			expected: []*modelv1.TagValue{

@@ -18,9 +18,13 @@
 package measure
 
 import (
+	"fmt"
+	"io"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type primaryBlockMetadata struct {
@@ -52,7 +56,6 @@ func (ph *primaryBlockMetadata) mustWriteBlock(data []byte, sidFirst common.Seri
 	longTermBufPool.Put(bb)
 }
 
-// marshal appends marshaled ih to dst and returns the result.
 func (ph *primaryBlockMetadata) marshal(dst []byte) []byte {
 	dst = ph.seriesID.AppendToBytes(dst)
 	dst = encoding.Uint64ToBytes(dst, uint64(ph.minTimestamp))
@@ -60,4 +63,70 @@ func (ph *primaryBlockMetadata) marshal(dst []byte) []byte {
 	dst = encoding.Uint64ToBytes(dst, ph.offset)
 	dst = encoding.Uint64ToBytes(dst, ph.size)
 	return dst
+}
+
+func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 40 {
+		return nil, fmt.Errorf("cannot unmarshal primaryBlockMetadata from %d bytes; expect at least 40 bytes", len(src))
+	}
+	ph.seriesID = common.SeriesID(encoding.BytesToUint64(src))
+	src = src[8:]
+	ph.minTimestamp = int64(encoding.BytesToUint64(src))
+	src = src[8:]
+	ph.maxTimestamp = int64(encoding.BytesToUint64(src))
+	src = src[8:]
+	ph.offset = encoding.BytesToUint64(src)
+	src = src[8:]
+	ph.size = encoding.BytesToUint64(src)
+	return src[8:], nil
+}
+
+func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r *reader) []primaryBlockMetadata {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		logger.Panicf("cannot read primaryBlockMetadata entries from %s: %s", r.Path(), err)
+	}
+
+	bb := longTermBufPool.Get()
+	bb.Buf, err = zstd.Decompress(bb.Buf[:0], data)
+	if err != nil {
+		logger.Panicf("cannot decompress indexBlockHeader entries from %s: %s", r.Path(), err)
+	}
+	dst, err = unmarshalPrimaryBlockMetadata(dst, bb.Buf)
+	longTermBufPool.Put(bb)
+	if err != nil {
+		logger.Panicf("cannot parse indexBlockHeader entries from %s: %s", r.Path(), err)
+	}
+	return dst
+}
+
+// unmarshalPrimaryBlockMetadata appends unmarshaled from src indexBlockHeader entries to dst and returns the result.
+func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]primaryBlockMetadata, error) {
+	dstOrig := dst
+	for len(src) > 0 {
+		if len(dst) < cap(dst) {
+			dst = dst[:len(dst)+1]
+		} else {
+			dst = append(dst, primaryBlockMetadata{})
+		}
+		ih := &dst[len(dst)-1]
+		tail, err := ih.unmarshal(src)
+		if err != nil {
+			return dstOrig, fmt.Errorf("cannot unmarshal indexBlockHeader %d: %w", len(dst)-len(dstOrig), err)
+		}
+		src = tail
+	}
+	if err := validatePrimaryBlockMetadata(dst[len(dstOrig):]); err != nil {
+		return dstOrig, err
+	}
+	return dst, nil
+}
+
+func validatePrimaryBlockMetadata(ihs []primaryBlockMetadata) error {
+	for i := 1; i < len(ihs); i++ {
+		if ihs[i].seriesID < ihs[i-1].seriesID {
+			return fmt.Errorf("unexpected primaryBlockMetadata with smaller seriesID=%s after bigger seriesID=%s", &ihs[i].seriesID, &ihs[i-1].seriesID)
+		}
+	}
+	return nil
 }

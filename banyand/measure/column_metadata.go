@@ -18,17 +18,18 @@
 package measure
 
 import (
+	"fmt"
 	"sync"
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type columnMetadata struct {
 	dataBlock
 	name      string
-	valueType storage.ValueType
+	valueType pbv1.ValueType
 }
 
 func (cm *columnMetadata) reset() {
@@ -49,6 +50,24 @@ func (cm *columnMetadata) marshal(dst []byte) []byte {
 	dst = append(dst, byte(cm.valueType))
 	dst = cm.dataBlock.marshal(dst)
 	return dst
+}
+
+func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, nameBytes, err := encoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal columnMetadata.name: %w", err)
+	}
+	cm.name = convert.BytesToString(nameBytes)
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal columnMetadata.valueType: src is too short")
+	}
+	cm.valueType = pbv1.ValueType(src[0])
+	src = src[1:]
+	src, err = cm.dataBlock.unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal columnMetadata.dataBlock: %w", err)
+	}
+	return src, nil
 }
 
 type columnFamilyMetadata struct {
@@ -94,11 +113,26 @@ func (cfm *columnFamilyMetadata) resizeColumnMetadata(columnMetadataLen int) []c
 
 func (cfm *columnFamilyMetadata) marshal(dst []byte) []byte {
 	cms := cfm.columnMetadata
-	dst = encoding.Uint64ToBytes(dst, uint64(len(cms)))
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(cms)))
 	for i := range cms {
 		dst = cms[i].marshal(dst)
 	}
 	return dst
+}
+
+func (cfm *columnFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, columnMetadataLen, err := encoding.BytesToVarInt64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal columnMetadataLen: %w", err)
+	}
+	cms := cfm.resizeColumnMetadata(int(columnMetadataLen))
+	for i := range cms {
+		src, err = cms[i].unmarshal(src)
+		if err != nil {
+			return nil, fmt.Errorf("cannot unmarshal columnMetadata %d: %w", i, err)
+		}
+	}
+	return src, nil
 }
 
 func getColumnFamilyMetadata() *columnFamilyMetadata {

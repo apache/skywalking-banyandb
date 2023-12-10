@@ -21,6 +21,8 @@ package v1
 import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // FindTagByName finds TagSpec in several tag families by its name.
@@ -69,4 +71,54 @@ func FieldValueTypeConv(fieldValue *modelv1.FieldValue) (tagType databasev1.Fiel
 		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, true
 	}
 	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, false
+}
+
+type OrderBy struct {
+	Index *databasev1.IndexRule
+	Sort  modelv1.Sort
+}
+
+// AnyEntry is the `*` for a regular expression. It could match "any" Entry in an Entity.
+var anyEntry = &modelv1.TagValue_Null{}
+var AnyTagValue = &modelv1.TagValue{Value: anyEntry}
+
+type Tag struct {
+	Name   string
+	Values []*modelv1.TagValue
+}
+
+type TagFamily struct {
+	Name string
+	Tags []Tag
+}
+
+type Field struct {
+	Name   string
+	Values []*modelv1.FieldValue
+}
+
+type Result struct {
+	Timestamps  []int64
+	TagFamilies []TagFamily
+	Fields      []Field
+}
+
+type TagProjection struct {
+	Family string
+	Name   string
+}
+
+type MeasureQueryOptions struct {
+	Name            string
+	TimeRange       *timestamp.TimeRange
+	Entity          []*modelv1.TagValue
+	Filter          index.Filter
+	Order           *OrderBy
+	TagProjection   []TagProjection
+	FieldProjection []string
+}
+
+type MeasureQueryResult interface {
+	Pull() *Result
+	Release()
 }

@@ -20,19 +20,16 @@ package measure
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
-	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -51,8 +48,17 @@ type unresolvedIndexScan struct {
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
+	var projTags []pbv1.TagProjection
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
+		for i := range uis.projectionTags {
+			for _, tag := range uis.projectionTags[i] {
+				projTags = append(projTags, pbv1.TagProjection{
+					Family: tag.GetFamilyName(),
+					Name:   tag.GetTagName(),
+				})
+			}
+		}
 		var err error
 		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
 		if err != nil {
@@ -60,8 +66,12 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		}
 	}
 
+	var projField []string
 	var projFieldRefs []*logical.FieldRef
 	if len(uis.projectionFields) > 0 {
+		for i := range uis.projectionFields {
+			projField = append(projField, uis.projectionFields[i].Name)
+		}
 		var err error
 		projFieldRefs, err = s.CreateFieldRef(uis.projectionFields...)
 		if err != nil {
@@ -71,11 +81,11 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 
 	entityList := s.EntityList()
 	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, len(entityList))
+	entity := make([]*modelv1.TagValue, len(entityList))
 	for idx, e := range entityList {
 		entityMap[e] = idx
 		// fill AnyEntry by default
-		entity[idx] = tsdb.AnyEntry
+		entity[idx] = pbv1.AnyTagValue
 	}
 	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity, true)
 	if err != nil {
@@ -85,6 +95,8 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	return &localIndexScan{
 		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:               s,
+		projectionTags:       projTags,
+		projectionFields:     projField,
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
@@ -108,9 +120,11 @@ type localIndexScan struct {
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
 	timeRange            timestamp.TimeRange
+	projectionTags       []pbv1.TagProjection
+	projectionFields     []string
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
-	entities             []tsdb.Entity
+	entities             [][]*modelv1.TagValue
 	groupByEntity        bool
 	maxDataPointsSize    int
 }
@@ -124,72 +138,41 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-	var orderBy *tsdb.OrderBy
+	var orderBy *pbv1.OrderBy
 	if i.order.Index != nil {
-		orderBy = &tsdb.OrderBy{
+		orderBy = &pbv1.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
+	} else if i.groupByEntity {
+		orderBy = &pbv1.OrderBy{
+			Sort: i.order.Sort,
+		}
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
-	var seriesList tsdb.SeriesList
+	var results []pbv1.MeasureQueryResult
 	for _, e := range i.entities {
-		shards, errInternal := ec.Shards(e)
-		if errInternal != nil {
-			return nil, errInternal
-		}
-		for _, shard := range shards {
-			sl, errInternal := shard.Series().Search(
-				context.WithValue(
-					ctx,
-					logger.ContextKey,
-					i.l,
-				),
-				tsdb.NewPath(e),
-				i.filter,
-				orderBy,
-			)
-			if errInternal != nil {
-				return nil, errInternal
-			}
-			seriesList = seriesList.Merge(sl)
-		}
-	}
-	if len(seriesList) == 0 {
-		return dummyIter, nil
-	}
-	var builders []logical.SeekerBuilder
-	if i.order.Index == nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByTime(i.order.Sort)
+		result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+			Name:            i.metadata.GetName(),
+			TimeRange:       &i.timeRange,
+			Entity:          e,
+			Filter:          i.filter,
+			Order:           orderBy,
+			TagProjection:   i.projectionTags,
+			FieldProjection: i.projectionFields,
 		})
-	}
-	// CAVEAT: the order of series list matters when sorting by an index.
-	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
-	if err != nil {
-		return nil, err
-	}
-	if len(closers) > 0 {
-		defer func(closers []io.Closer) {
-			for _, c := range closers {
-				err = multierr.Append(err, c.Close())
-			}
-		}(closers)
-	}
+		if err != nil {
+			return nil, fmt.Errorf("failed to query measure: %w", err)
+		}
 
-	if len(iters) == 0 {
+		results = append(results, result)
+	}
+	if len(results) == 0 {
 		return dummyIter, nil
 	}
-	transformContext := transformContext{
-		ec:                   ec,
-		projectionTagsRefs:   i.projectionTagsRefs,
-		projectionFieldsRefs: i.projectionFieldsRefs,
-	}
-	if i.groupByEntity {
-		return newSeriesMIterator(iters, transformContext, i.maxDataPointsSize), nil
-	}
-	it := logical.NewItemIter(iters, i.order.Sort)
-	return newIndexScanIterator(it, transformContext, i.maxDataPointsSize), nil
+	return &resultMIterator{
+		results: results,
+	}, nil
 }
 
 func (i *localIndexScan) String() string {
@@ -223,129 +206,59 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 	}
 }
 
-var _ executor.MIterator = (*indexScanIterator)(nil)
-
-type indexScanIterator struct {
-	inner   sort.Iterator[tsdb.Item]
-	err     error
-	current *measurev1.DataPoint
-	context transformContext
-	max     int
-	num     int
-}
-
-func newIndexScanIterator(inner sort.Iterator[tsdb.Item], context transformContext, max int) executor.MIterator {
-	return &indexScanIterator{
-		inner:   inner,
-		context: context,
-		max:     max,
-	}
-}
-
-func (ism *indexScanIterator) Next() bool {
-	if !ism.inner.Next() || ism.err != nil || ism.num > ism.max {
-		return false
-	}
-	nextItem := ism.inner.Val()
-	var err error
-	if ism.current, err = transform(nextItem, ism.context); err != nil {
-		ism.err = multierr.Append(ism.err, err)
-	}
-	ism.num++
-	return true
-}
-
-func (ism *indexScanIterator) Current() []*measurev1.DataPoint {
-	if ism.current == nil {
-		return nil
-	}
-	return []*measurev1.DataPoint{ism.current}
-}
-
-func (ism *indexScanIterator) Close() error {
-	return multierr.Combine(ism.err, ism.inner.Close())
-}
-
-var _ executor.MIterator = (*seriesIterator)(nil)
-
-type seriesIterator struct {
-	err     error
-	context transformContext
-	inner   []tsdb.Iterator
+type resultMIterator struct {
+	results []pbv1.MeasureQueryResult
 	current []*measurev1.DataPoint
 	index   int
-	num     int
-	max     int
 }
 
-func newSeriesMIterator(inner []tsdb.Iterator, context transformContext, max int) executor.MIterator {
-	return &seriesIterator{
-		inner:   inner,
-		context: context,
-		index:   -1,
-		max:     max,
+func (ei *resultMIterator) Next() bool {
+	if ei.index >= len(ei.results) {
+		return false
 	}
-}
 
-func (ism *seriesIterator) Next() bool {
-	if ism.err != nil || ism.num > ism.max {
-		return false
+	r := ei.results[ei.index].Pull()
+	if r == nil {
+		ei.index++
+		return ei.Next()
 	}
-	ism.index++
-	if ism.index >= len(ism.inner) {
-		return false
-	}
-	iter := ism.inner[ism.index]
-	if ism.current != nil {
-		ism.current = ism.current[:0]
-	}
-	for iter.Next() {
-		dp, err := transform(iter.Val(), ism.context)
-		if err != nil {
-			ism.err = err
-			return false
+	for i := range r.Timestamps {
+		dp := &measurev1.DataPoint{
+			Timestamp: timestamppb.New(time.Unix(0, int64(r.Timestamps[i]))),
 		}
-		ism.current = append(ism.current, dp)
+
+		for _, tf := range r.TagFamilies {
+			tagFamily := &modelv1.TagFamily{
+				Name: tf.Name,
+			}
+			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+			for _, t := range tf.Tags {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   t.Name,
+					Value: t.Values[i],
+				})
+			}
+		}
+		for _, f := range r.Fields {
+			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+				Name:  f.Name,
+				Value: f.Values[i],
+			})
+		}
 	}
-	ism.num++
+
 	return true
 }
 
-func (ism *seriesIterator) Current() []*measurev1.DataPoint {
-	return ism.current
+func (ei *resultMIterator) Current() []*measurev1.DataPoint {
+	return ei.current
 }
 
-func (ism *seriesIterator) Close() error {
-	for _, i := range ism.inner {
-		ism.err = multierr.Append(ism.err, i.Close())
+func (ei *resultMIterator) Close() error {
+	for _, result := range ei.results {
+		result.Release()
 	}
-	return ism.err
-}
-
-type transformContext struct {
-	ec                   executor.MeasureExecutionContext
-	projectionTagsRefs   [][]*logical.TagRef
-	projectionFieldsRefs []*logical.FieldRef
-}
-
-func transform(item tsdb.Item, ism transformContext) (*measurev1.DataPoint, error) {
-	tagFamilies, err := logical.ProjectItem(ism.ec, item, ism.projectionTagsRefs)
-	if err != nil {
-		return nil, err
-	}
-	dpFields := make([]*measurev1.DataPoint_Field, 0)
-	for _, f := range ism.projectionFieldsRefs {
-		fieldVal, parserFieldErr := ism.ec.ParseField(f.Field.Name, item)
-		if parserFieldErr != nil {
-			return nil, parserFieldErr
-		}
-		dpFields = append(dpFields, fieldVal)
-	}
-	return &measurev1.DataPoint{
-		Fields:      dpFields,
-		TagFamilies: tagFamilies,
-		Timestamp:   timestamppb.New(time.Unix(0, int64(item.Time()))),
-	}, nil
+	return nil
 }
 
 var dummyIter = dummyMIterator{}

@@ -37,7 +37,7 @@ type TagRef struct {
 // Equal reports whether f and expr have the same name and data type.
 func (f *TagRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*TagRef); ok {
-		return other.Tag.getTagName() == f.Tag.getTagName() && other.Spec.Spec.GetType() == f.Spec.Spec.GetType()
+		return other.Tag.GetTagName() == f.Tag.GetTagName() && other.Spec.Spec.GetType() == f.Spec.Spec.GetType()
 	}
 	return false
 }

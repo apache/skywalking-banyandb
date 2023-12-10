@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -64,16 +65,16 @@ type SupplyTSDB[T TSTable] func() T
 
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series *Series, filter index.Filter, order *OrderBy) (SeriesList, error)
+	Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error)
 }
 
 // TSDB allows listing and getting shard details.
 type TSDB[T TSTable] interface {
 	io.Closer
-	Register(shardID common.ShardID, series *Series) (*Series, error)
-	Lookup(ctx context.Context, series *Series) (SeriesList, error)
+	Register(shardID common.ShardID, series *pbv1.Series) (*pbv1.Series, error)
+	Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error)
 	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
-	SelectTSTables(shardID common.ShardID, timeRange timestamp.TimeRange) ([]TSTableWrapper[T], error)
+	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]
 	IndexDB() IndexDB
 }
 

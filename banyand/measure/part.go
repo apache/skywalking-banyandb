@@ -28,6 +28,41 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
+type part struct {
+	partMetadata partMetadata
+
+	primaryBlockMetadata []primaryBlockMetadata
+
+	meta              fs.Reader
+	primary           fs.Reader
+	tagFamilyMetadata map[string]fs.Reader
+	tagFamilies       map[string]fs.Reader
+	timestamps        fs.Reader
+	fieldValues       fs.Reader
+}
+
+func openMemPart(mp *memPart) *part {
+	var p part
+	p.partMetadata = mp.partMetadata
+
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(&mp.meta))
+
+	// Open data files
+	p.meta = &mp.meta
+	p.primary = &mp.primary
+	p.timestamps = &mp.timestamps
+	p.fieldValues = &mp.fieldValues
+	if mp.tagFamilies != nil {
+		p.tagFamilies = make(map[string]fs.Reader)
+		p.tagFamilyMetadata = make(map[string]fs.Reader)
+		for name, tf := range mp.tagFamilies {
+			p.tagFamilies[name] = tf
+			p.tagFamilyMetadata[name] = mp.tagFamilyMetadata[name]
+		}
+	}
+	return &p
+}
+
 type memPart struct {
 	partMetadata partMetadata
 
@@ -83,7 +118,7 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 
 	sort.Sort(dps)
 
-	bsw := getBlockWriter()
+	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
 	var sidPrev common.SeriesID
 	uncompressedBlockSizeBytes := uint64(0)
@@ -104,7 +139,7 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 	}
 	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
-	putBlockStreamWriter(bsw)
+	releaseBlockWriter(bsw)
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
@@ -141,10 +176,11 @@ type partWrapper struct {
 	ref int32
 
 	mp *memPart
+	p  *part
 }
 
-func newMemPartWrapper(mp *memPart) *partWrapper {
-	return &partWrapper{mp: mp, ref: 1}
+func newMemPartWrapper(mp *memPart, p *part) *partWrapper {
+	return &partWrapper{mp: mp, p: p, ref: 1}
 }
 
 func (pw *partWrapper) incRef() {

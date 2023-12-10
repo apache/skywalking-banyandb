@@ -18,47 +18,48 @@
 package measure
 
 import (
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type column struct {
-	name      string
-	valueType storage.ValueType
-	values    [][]byte
+type Column struct {
+	Name      string
+	ValueType pbv1.ValueType
+	Values    [][]byte
 }
 
-func (c *column) reset() {
-	c.name = ""
+func (c *Column) reset() {
+	c.Name = ""
 
-	values := c.values
+	values := c.Values
 	for i := range values {
 		values[i] = nil
 	}
-	c.values = values[:0]
+	c.Values = values[:0]
 }
 
-func (c *column) resizeValues(valuesLen int) [][]byte {
-	values := c.values
+func (c *Column) resizeValues(valuesLen int) [][]byte {
+	values := c.Values
 	if n := valuesLen - cap(values); n > 0 {
 		values = append(values[:cap(values)], make([][]byte, n)...)
 	}
 	values = values[:valuesLen]
-	c.values = values
+	c.Values = values
 	return values
 }
 
-func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
+func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	ch.reset()
 
-	ch.name = c.name
-	ch.valueType = c.valueType
+	ch.name = c.Name
+	ch.valueType = c.ValueType
 
 	// remove value type from values
-	for i := range c.values {
-		c.values[i] = c.values[i][1:]
+	for i := range c.Values {
+		c.Values[i] = c.Values[i][1:]
 	}
 
 	// TODO: encoding values based on value type
@@ -67,7 +68,7 @@ func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	defer longTermBufPool.Put(bb)
 
 	// marshal values
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.Values)
 	ch.size = uint64(len(bb.Buf))
 	if ch.size > maxValuesBlockSize {
 		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", ch.size, maxValuesBlockSize)
@@ -76,29 +77,48 @@ func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	columnWriter.MustWrite(bb.Buf)
 }
 
-var longTermBufPool bytes.BufferPool
+func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
+	c.Name = cm.name
+	c.ValueType = cm.valueType
 
-type columnFamily struct {
-	name    string
-	columns []column
+	bb := longTermBufPool.Get()
+	defer longTermBufPool.Put(bb)
+	valuesSize := cm.size
+	if valuesSize > maxValuesBlockSize {
+		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
+	}
+	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
+	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
+	var err error
+	c.Values, err = decoder.Decode(c.Values[:0], bb.Buf, count)
+	if err != nil {
+		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+	}
 }
 
-func (cf *columnFamily) reset() {
-	cf.name = ""
+var longTermBufPool bytes.BufferPool
 
-	columns := cf.columns
+type ColumnFamily struct {
+	Name    string
+	Columns []Column
+}
+
+func (cf *ColumnFamily) reset() {
+	cf.Name = ""
+
+	columns := cf.Columns
 	for i := range columns {
 		columns[i].reset()
 	}
-	cf.columns = columns[:0]
+	cf.Columns = columns[:0]
 }
 
-func (cf *columnFamily) resizeColumns(columnsLen int) []column {
-	columns := cf.columns
+func (cf *ColumnFamily) resizeColumns(columnsLen int) []Column {
+	columns := cf.Columns
 	if n := columnsLen - cap(columns); n > 0 {
-		columns = append(columns[:cap(columns)], make([]column, n)...)
+		columns = append(columns[:cap(columns)], make([]Column, n)...)
 	}
 	columns = columns[:columnsLen]
-	cf.columns = columns
+	cf.Columns = columns
 	return columns
 }

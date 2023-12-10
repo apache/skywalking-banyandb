@@ -24,7 +24,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
-var _ fs.Writer = (*Buffer)(nil)
+var (
+	_ fs.Writer = (*Buffer)(nil)
+	_ fs.Reader = (*Buffer)(nil)
+)
 
 type Buffer struct {
 	Buf []byte
@@ -44,6 +47,11 @@ func (b *Buffer) Path() string {
 func (b *Buffer) Write(bb []byte) (int, error) {
 	b.Buf = append(b.Buf, bb...)
 	return len(bb), nil
+}
+
+// Read implements fs.Reader.
+func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
+	return copy(buffer, b.Buf[offset:]), nil
 }
 
 func (b *Buffer) Reset() {

@@ -235,12 +235,12 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 	bsw.primaryBlockData = bh.marshal(bsw.primaryBlockData)
 	putBlockMetadata(bh)
 	if len(bsw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
-		bsw.mustFlushIndexBlock(bsw.primaryBlockData)
+		bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
 		bsw.primaryBlockData = bsw.primaryBlockData[:0]
 	}
 }
 
-func (bsw *blockWriter) mustFlushIndexBlock(data []byte) {
+func (bsw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
 		bsw.primaryBlockMetadata.mustWriteBlock(data, bsw.sidFirst, bsw.minTimestamp, bsw.maxTimestamp, &bsw.streamWriters)
 		bsw.metaData = bsw.primaryBlockMetadata.marshal(bsw.metaData)
@@ -258,7 +258,7 @@ func (bsw *blockWriter) Flush(ph *partMetadata) {
 	ph.MinTimestamp = bsw.totalMinTimestamp
 	ph.MaxTimestamp = bsw.totalMaxTimestamp
 
-	bsw.mustFlushIndexBlock(bsw.primaryBlockData)
+	bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
 
 	bb := longTermBufPool.Get()
 	bb.Buf = zstd.Compress(bb.Buf[:0], bsw.metaData, 1)
@@ -271,17 +271,17 @@ func (bsw *blockWriter) Flush(ph *partMetadata) {
 	bsw.reset()
 }
 
-func getBlockWriter() *blockWriter {
-	v := blockStreamWriterPool.Get()
+func generateBlockWriter() *blockWriter {
+	v := blockWriterPool.Get()
 	if v == nil {
 		return &blockWriter{}
 	}
 	return v.(*blockWriter)
 }
 
-func putBlockStreamWriter(bsw *blockWriter) {
+func releaseBlockWriter(bsw *blockWriter) {
 	bsw.reset()
-	blockStreamWriterPool.Put(bsw)
+	blockWriterPool.Put(bsw)
 }
 
-var blockStreamWriterPool sync.Pool
+var blockWriterPool sync.Pool

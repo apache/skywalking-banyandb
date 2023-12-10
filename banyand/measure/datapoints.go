@@ -23,13 +23,14 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/pkg/errors"
 )
 
 type nameValue struct {
 	name      string
-	valueType storage.ValueType
+	valueType pbv1.ValueType
 	value     []byte
 	valueArr  [][]byte
 }
@@ -51,7 +52,7 @@ func (n *nameValue) marshal() []byte {
 	if n.valueArr != nil {
 		var dst []byte
 		for i := range n.valueArr {
-			if n.valueType == storage.ValueTypeInt64Arr {
+			if n.valueType == pbv1.ValueTypeInt64Arr {
 				dst = append(dst, n.valueArr[i]...)
 				continue
 			}

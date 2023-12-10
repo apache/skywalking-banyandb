@@ -59,7 +59,7 @@ func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRe
 		if len(refs) == 0 {
 			continue
 		}
-		familyName := refs[0].Tag.getFamilyName()
+		familyName := refs[0].Tag.GetFamilyName()
 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
 		if err != nil {
 			return nil, errors.WithMessage(err, "parse projection")
@@ -173,11 +173,11 @@ func (t *Tag) GetCompoundName() string {
 	return t.familyName + ":" + t.name
 }
 
-func (t *Tag) getTagName() string {
+func (t *Tag) GetTagName() string {
 	return t.name
 }
 
-func (t *Tag) getFamilyName() string {
+func (t *Tag) GetFamilyName() string {
 	return t.familyName
 }
 

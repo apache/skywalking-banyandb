@@ -21,20 +21,14 @@ package measure
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -54,7 +48,16 @@ type unresolvedLocalScan struct {
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	var projTagsRefs [][]*logical.TagRef
+	var projTags []pbv1.TagProjection
 	if len(uls.projectionTags) > 0 {
+		for i := range uls.projectionTags {
+			for _, tag := range uls.projectionTags[i] {
+				projTags = append(projTags, pbv1.TagProjection{
+					Family: tag.GetFamilyName(),
+					Name:   tag.GetTagName(),
+				})
+			}
+		}
 		var err error
 		projTagsRefs, err = s.CreateTagRef(uls.projectionTags...)
 		if err != nil {
@@ -63,7 +66,11 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	}
 
 	var projFieldRefs []*logical.FieldRef
+	var projField []string
 	if len(uls.projectionFields) > 0 {
+		for i := range uls.projectionFields {
+			projField = append(projField, uls.projectionFields[i].Name)
+		}
 		var err error
 		projFieldRefs, err = s.CreateFieldRef(uls.projectionFields...)
 		if err != nil {
@@ -81,34 +88,41 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		schema:               s,
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
+		projectionTags:       projTags,
+		projectionFields:     projField,
 		metadata:             uls.metadata,
 		entity:               entity,
 		l:                    logger.GetLogger("topn", "measure", uls.metadata.Group, uls.metadata.Name, "local-index"),
 	}, nil
 }
 
-func (uls *unresolvedLocalScan) locateEntity(entityList []string) (tsdb.Entity, error) {
+func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.TagValue, error) {
 	entityMap := make(map[string]int)
-	entity := make([]tsdb.Entry, 1+1+len(entityList))
+	entity := make([]*modelv1.TagValue, 1+1+len(entityList))
 	// sortDirection
-	entity[0] = convert.Int64ToBytes(int64(uls.sort.Number()))
+	entity[0] = &modelv1.TagValue{
+		Value: &modelv1.TagValue_Int{
+			Int: &modelv1.Int{
+				Value: int64(uls.sort),
+			},
+		},
+	}
 	// rankNumber
-	entity[1] = tsdb.AnyEntry
+	entity[1] = pbv1.AnyTagValue
 	for idx, tagName := range entityList {
 		entityMap[tagName] = idx + 2
 		// allow to make fuzzy search with partial conditions
-		entity[idx+2] = tsdb.AnyEntry
+		entity[idx+2] = pbv1.AnyTagValue
 	}
 	for _, pairQuery := range uls.conditions {
 		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
 			return nil, errors.Errorf("tag belongs to the entity only supports EQ operation in condition(%v)", pairQuery)
 		}
 		if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-			switch v := pairQuery.GetValue().GetValue().(type) {
-			case *modelv1.TagValue_Str:
-				entity[entityIdx] = []byte(v.Str.GetValue())
-			case *modelv1.TagValue_Int:
-				entity[entityIdx] = convert.Int64ToBytes(v.Int.GetValue())
+			entity[entityIdx] = pairQuery.Value
+			switch pairQuery.GetValue().GetValue().(type) {
+			case *modelv1.TagValue_Str, *modelv1.TagValue_Int:
+				entity[entityIdx] = pairQuery.Value
 			default:
 				return nil, errors.New("unsupported condition tag type for entity")
 			}
@@ -143,58 +157,30 @@ type localScan struct {
 	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
-	entity               tsdb.Entity
+	projectionTags       []pbv1.TagProjection
+	projectionFields     []string
+	entity               []*modelv1.TagValue
 	sort                 modelv1.Sort
 }
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-	var seriesList tsdb.SeriesList
+
 	ec := executor.FromMeasureExecutionContext(ctx)
-	shards, err := ec.(measure.Measure).CompanionShards(i.metadata)
-	if err != nil {
-		return nil, err
-	}
-	for _, shard := range shards {
-		sl, errInternal := shard.Series().List(context.WithValue(
-			ctx,
-			logger.ContextKey,
-			i.l,
-		), tsdb.NewPath(i.entity))
-		if errInternal != nil {
-			return nil, errInternal
-		}
-		seriesList = seriesList.Merge(sl)
-	}
-	if len(seriesList) == 0 {
-		return dummyIter, nil
-	}
-	var builders []logical.SeekerBuilder
-	builders = append(builders, func(builder tsdb.SeekerBuilder) {
-		builder.OrderByTime(i.sort)
+	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+		Name:            i.metadata.GetName(),
+		TimeRange:       &i.timeRange,
+		Entity:          i.entity,
+		Order:           &pbv1.OrderBy{Sort: i.sort},
+		TagProjection:   i.projectionTags,
+		FieldProjection: i.projectionFields,
 	})
-	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
-	if len(closers) > 0 {
-		defer func(closers []io.Closer) {
-			for _, c := range closers {
-				err = multierr.Append(err, c.Close())
-			}
-		}(closers)
-	}
+	return &resultMIterator{
+		results: []pbv1.MeasureQueryResult{result},
+	}, nil
 
-	if len(iters) == 0 {
-		return dummyIter, nil
-	}
-	tc := transformContext{
-		ec:                   ec,
-		projectionTagsRefs:   i.projectionTagsRefs,
-		projectionFieldsRefs: i.projectionFieldsRefs,
-	}
-	it := logical.NewItemIter(iters, i.sort)
-
-	return newLocalScanIterator(it, tc), nil
 }
 
 func (i *localScan) String() string {
@@ -212,43 +198,4 @@ func (i *localScan) Schema() logical.Schema {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
-}
-
-type localScanIterator struct {
-	inner   sort.Iterator[tsdb.Item]
-	err     error
-	current *measurev1.DataPoint
-	context transformContext
-	num     int
-}
-
-func (lst *localScanIterator) Next() bool {
-	if !lst.inner.Next() || lst.err != nil {
-		return false
-	}
-	nextItem := lst.inner.Val()
-	var err error
-	if lst.current, err = transform(nextItem, lst.context); err != nil {
-		lst.err = multierr.Append(lst.err, err)
-	}
-	lst.num++
-	return true
-}
-
-func (lst *localScanIterator) Current() []*measurev1.DataPoint {
-	if lst.current == nil {
-		return nil
-	}
-	return []*measurev1.DataPoint{lst.current}
-}
-
-func (lst *localScanIterator) Close() error {
-	return multierr.Combine(lst.err, lst.inner.Close())
-}
-
-func newLocalScanIterator(inner sort.Iterator[tsdb.Item], context transformContext) executor.MIterator {
-	return &localScanIterator{
-		inner:   inner,
-		context: context,
-	}
 }

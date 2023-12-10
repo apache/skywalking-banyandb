@@ -15,12 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package storage
+package v1
 
 import (
+	"bytes"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/pkg/errors"
 )
 
@@ -54,7 +57,7 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 }
 
 func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
-	if tv.Value == AnyEntry {
+	if tv == AnyTagValue {
 		dest = marshalEntityValue(dest, anyWildcard)
 		return dest, nil
 	}
@@ -115,4 +118,89 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 		}, nil
 	}
 	return nil, nil, nil, errors.New("unsupported tag value type")
+}
+
+const (
+	entityDelimiter = '|'
+	escape          = '\\'
+)
+
+var anyWildcard = []byte{'*'}
+
+func marshalEntityValue(dest, src []byte) []byte {
+	if src == nil {
+		dest = append(dest, entityDelimiter)
+		return dest
+	}
+	if bytes.IndexByte(src, entityDelimiter) < 0 && bytes.IndexByte(src, escape) < 0 {
+		dest = append(dest, src...)
+		dest = append(dest, entityDelimiter)
+		return dest
+	}
+	for _, b := range src {
+		if b == entityDelimiter || b == escape {
+			dest = append(dest, escape)
+		}
+		dest = append(dest, b)
+	}
+	dest = append(dest, entityDelimiter)
+	return dest
+}
+
+func unmarshalEntityValue(dest, src []byte) ([]byte, []byte, error) {
+	if len(src) == 0 {
+		return nil, nil, errors.New("empty entity value")
+	}
+	if src[0] == entityDelimiter {
+		return dest, src[1:], nil
+	}
+	for len(src) > 0 {
+		if src[0] == escape {
+			if len(src) < 2 {
+				return nil, nil, errors.New("invalid escape character")
+			}
+			src = src[1:]
+			dest = append(dest, src[0])
+		} else if src[0] == entityDelimiter {
+			return dest, src[1:], nil
+		} else {
+			dest = append(dest, src[0])
+		}
+		src = src[1:]
+	}
+	return nil, nil, errors.New("invalid entity value")
+}
+
+func MustCompareTagValue(tv1, tv2 *modelv1.TagValue) int {
+	if tv1 == nil && tv2 == nil {
+		return 0
+	}
+	if tv1 == nil {
+		return -1
+	}
+	if tv2 == nil {
+		return 1
+	}
+	if tv1 == AnyTagValue {
+		return 1
+	}
+	if tv2 == AnyTagValue {
+		return -1
+	}
+	vt1 := MustTagValueToValueType(tv1)
+	vt2 := MustTagValueToValueType(tv2)
+	if vt1 != vt2 {
+		logger.Panicf("inconsistent tag value type: %v vs %v", vt1, vt2)
+	}
+	switch vt1 {
+	case ValueTypeStr:
+		return bytes.Compare(convert.StringToBytes(tv1.GetStr().Value), convert.StringToBytes(tv2.GetStr().Value))
+	case ValueTypeInt64:
+		return int(tv1.GetInt().Value - tv2.GetInt().Value)
+	case ValueTypeBinaryData:
+		return bytes.Compare(tv1.GetBinaryData(), tv2.GetBinaryData())
+	default:
+		logger.Panicf("unsupported tag value type: %v", vt1)
+		return 0
+	}
 }

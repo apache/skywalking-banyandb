@@ -39,7 +39,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
@@ -72,7 +71,7 @@ var (
 
 type dataPointWithEntityValues struct {
 	*measurev1.DataPointValue
-	entityValues tsdb.EntityValues
+	entityValues []*modelv1.TagValue
 }
 
 type topNStreamingProcessor struct {
@@ -144,6 +143,8 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
 	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
+	publisher := t.pipeline.NewBatchPublisher()
+	defer publisher.Close()
 	for group, tuples := range tuplesGroups {
 		if e := t.l.Debug(); e.Enabled() {
 			e.Str("TopN", t.topNSchema.GetMetadata().GetName()).
@@ -154,13 +155,13 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 		for rankNum, tuple := range tuples {
 			fieldValue := tuple.V1.(int64)
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			err = multierr.Append(err, t.writeData(eventTime, timeBucket, fieldValue, group, data, rankNum))
+			err = multierr.Append(err, t.writeData(publisher, eventTime, timeBucket, fieldValue, group, data, rankNum))
 		}
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket string, fieldValue int64,
+func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, eventTime time.Time, timeBucket string, fieldValue int64,
 	group string, data flow.Data, rankNum int,
 ) error {
 	var tagValues []*modelv1.TagValue
@@ -170,7 +171,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 			return errors.New("fail to extract tag values from topN result")
 		}
 	}
-	entity, entityValues, shardID, err := t.locate(tagValues, rankNum)
+	series, shardID, err := t.locate(tagValues, rankNum)
 	if err != nil {
 		return err
 	}
@@ -197,7 +198,7 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 									},
 								},
 							},
-						}, data[0].(tsdb.EntityValues)...),
+						}, data[0].([]*modelv1.TagValue)...),
 					},
 				},
 				Fields: []*modelv1.FieldValue{
@@ -211,14 +212,13 @@ func (t *topNStreamingProcessor) writeData(eventTime time.Time, timeBucket strin
 				},
 			},
 		},
-		ShardId:    uint32(shardID),
-		SeriesHash: tsdb.HashEntity(entity),
+		ShardId: uint32(shardID),
 	}
 	if t.l.Debug().Enabled() {
-		iwr.EntityValues = entityValues.Encode()
+		iwr.EntityValues = series.EntityValues
 	}
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
-	_, errWritePub := t.pipeline.Publish(apiData.TopicMeasureWrite, message)
+	message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
+	_, errWritePub := publisher.Publish(apiData.TopicMeasureWrite, message)
 	return errWritePub
 }
 
@@ -226,34 +226,49 @@ func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) tim
 	return time.UnixMilli(eventTimeMillis - eventTimeMillis%t.interval.Milliseconds())
 }
 
-func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
+func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (*pbv1.Series, common.ShardID, error) {
 	if len(tagValues) != 0 && len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
-		return nil, nil, 0, errors.New("no enough tag values for the entity")
+		return nil, 0, errors.New("no enough tag values for the entity")
 	}
+	// Subject: topN aggregation Name
+	//
 	// entity prefix
-	// 1) source measure Name + topN aggregation Name
-	// 2) sort direction
-	// 3) rank number
-	// >4) group tag values if needed
-	entity := make(tsdb.EntityValues, 1+1+1+len(tagValues))
+	//
+	// 1) sort direction
+	// 2) rank number
+	// >3) group tag values if needed
+	series := &pbv1.Series{
+		Subject:      t.topNSchema.GetMetadata().GetName(),
+		EntityValues: make([]*modelv1.TagValue, 1+1+len(tagValues)),
+	}
+
 	// entity prefix
-	entity[0] = tsdb.StrValue(formatMeasureCompanionPrefix(t.topNSchema.GetSourceMeasure().GetName(),
-		t.topNSchema.GetMetadata().GetName()))
-	entity[1] = tsdb.Int64Value(int64(t.sortDirection.Number()))
-	entity[2] = tsdb.Int64Value(int64(rankNum))
+	series.EntityValues[0] = &modelv1.TagValue{
+		Value: &modelv1.TagValue_Int{
+			Int: &modelv1.Int{
+				Value: int64(t.sortDirection),
+			},
+		},
+	}
+	series.EntityValues[1] = &modelv1.TagValue{
+		Value: &modelv1.TagValue_Int{
+			Int: &modelv1.Int{
+				Value: int64(rankNum),
+			},
+		},
+	}
 	// measureID as sharding key
 	for idx, tagVal := range tagValues {
-		entity[idx+3] = tagVal
+		series.EntityValues[idx+3] = tagVal
 	}
-	e, err := entity.ToEntity()
+	if err := series.Marshal(); err != nil {
+		return nil, 0, fmt.Errorf("fail to marshal series: %w", err)
+	}
+	id, err := partition.ShardID(series.Buffer, t.m.shardNum)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
-	id, err := partition.ShardID(e.Marshal(), t.m.shardNum)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	return e, entity, common.ShardID(id), nil
+	return series, common.ShardID(id), nil
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {

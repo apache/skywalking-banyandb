@@ -25,13 +25,13 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -49,10 +49,11 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 
 func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
-	t := req.DataPoint.Timestamp.AsTime().Local()
-	if err := timestamp.Check(t); err != nil {
+	tp := req.DataPoint.Timestamp.AsTime().Local()
+	if err := timestamp.Check(tp); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %s", err)
 	}
+	t := timestamp.MToN(tp)
 	ts := uint64(t.UnixNano())
 
 	gn := req.Metadata.Group
@@ -101,9 +102,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if fLen > len(stm.schema.GetTagFamilies()) {
 		return nil, fmt.Errorf("%s has more tag families than expected", req.Metadata)
 	}
-	series, err := tsdb.Register(shardID, &storage.Series{
+	series, err := tsdb.Register(shardID, &pbv1.Series{
 		Subject:      req.Metadata.Name,
-		EntityValues: writeEvent.EntityValues,
+		EntityValues: writeEvent.EntityValues[1:],
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot register series: %w", err)
@@ -199,7 +200,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			dps.tsTable.Table().mustAddRows(dps.dataPoints)
+			dps.tsTable.Table().mustAddDataPoints(dps.dataPoints)
 			dps.tsTable.DecRef()
 		}
 		g.tsdb.IndexDB().Write(g.docs)
@@ -215,16 +216,16 @@ func encodeFieldValue(name string, fieldValue *modelv1.FieldValue) *nameValue {
 	nv := &nameValue{name: name}
 	switch fieldValue.GetValue().(type) {
 	case *modelv1.FieldValue_Int:
-		nv.valueType = storage.ValueTypeInt64
+		nv.valueType = pbv1.ValueTypeInt64
 		nv.value = convert.Int64ToBytes(fieldValue.GetInt().GetValue())
 	case *modelv1.FieldValue_Float:
-		nv.valueType = storage.ValueTypeFloat64
+		nv.valueType = pbv1.ValueTypeFloat64
 		nv.value = convert.Float64ToBytes(fieldValue.GetFloat().GetValue())
 	case *modelv1.FieldValue_Str:
-		nv.valueType = storage.ValueTypeStr
+		nv.valueType = pbv1.ValueTypeStr
 		nv.value = []byte(fieldValue.GetStr().GetValue())
 	case *modelv1.FieldValue_BinaryData:
-		nv.valueType = storage.ValueTypeBinaryData
+		nv.valueType = pbv1.ValueTypeBinaryData
 		nv.value = bytes.Clone(fieldValue.GetBinaryData())
 	}
 	return nv
@@ -234,13 +235,13 @@ func encodeTagValue(name string, tagValue *modelv1.TagValue) *nameValue {
 	nv := &nameValue{name: name}
 	switch tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Int:
-		nv.valueType = storage.ValueTypeInt64
+		nv.valueType = pbv1.ValueTypeInt64
 		nv.value = convert.Int64ToBytes(tagValue.GetInt().GetValue())
 	case *modelv1.TagValue_Str:
-		nv.valueType = storage.ValueTypeStr
+		nv.valueType = pbv1.ValueTypeStr
 		nv.value = []byte(tagValue.GetStr().GetValue())
 	case *modelv1.TagValue_BinaryData:
-		nv.valueType = storage.ValueTypeBinaryData
+		nv.valueType = pbv1.ValueTypeBinaryData
 		nv.value = bytes.Clone(tagValue.GetBinaryData())
 	case *modelv1.TagValue_IntArray:
 		nv.valueArr = make([][]byte, len(tagValue.GetIntArray().Value))

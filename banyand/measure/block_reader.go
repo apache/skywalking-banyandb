@@ -17,24 +17,28 @@
 
 package measure
 
-import (
-	"testing"
-	"time"
+import "github.com/apache/skywalking-banyandb/pkg/fs"
 
-	"github.com/stretchr/testify/assert"
+type reader struct {
+	r         fs.Reader
+	bytesRead uint64
+}
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-)
+func newReader(r fs.Reader) *reader {
+	return &reader{r: r}
+}
 
-func TestEncodeFieldFlag(t *testing.T) {
-	flag := pbv1.EncoderFieldFlag(&databasev1.FieldSpec{
-		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
-		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-	}, time.Minute)
-	fieldSpec, interval, err := pbv1.DecodeFieldFlag(flag)
-	assert.NoError(t, err)
-	assert.Equal(t, databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, fieldSpec.EncodingMethod)
-	assert.Equal(t, databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD, fieldSpec.CompressionMethod)
-	assert.Equal(t, time.Minute, interval)
+func (r *reader) reset() {
+	r.r = nil
+	r.bytesRead = 0
+}
+
+func (r *reader) Path() string {
+	return r.r.Path()
+}
+
+func (r *reader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(0, p)
+	r.bytesRead += uint64(n)
+	return n, err
 }

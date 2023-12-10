@@ -45,6 +45,15 @@ type Writer interface {
 	Close() error
 }
 
+type Reader interface {
+	// Read the entire file using streaming read.
+	Read(offset int64, buffer []byte) (int, error)
+	// Returns the absolute path of the file.
+	Path() string
+	// Close File.
+	Close() error
+}
+
 type Closer interface {
 	// Returns the absolute path of the file.
 	Path() string
@@ -55,10 +64,9 @@ type Closer interface {
 // File operation interface.
 type File interface {
 	Writer
+	Reader
 	// Vector Append mode, which supports appending consecutive buffers to the end of the file.
 	Writev(iov *[][]byte) (int, error)
-	// Reading a specified location of file.
-	Read(offset int64, buffer []byte) (int, error)
 	// Reading contiguous regions of a file and dispersing them into discontinuous buffers.
 	Readv(offset int64, iov *[][]byte) (int, error)
 	// Read the entire file using streaming read.
@@ -111,6 +119,17 @@ func MustWriteData(w Writer, data []byte) {
 	}
 	if n != len(data) {
 		logger.GetLogger().Panic().Int("written", n).Int("expected", len(data)).Str("path", w.Path()).Msg("BUG: writer wrote wrong number of bytes")
+	}
+}
+
+// MustReadData reads data from r and panics if it cannot read all data.
+func MustReadData(r Reader, offset int64, buff []byte) {
+	n, err := r.Read(offset, buff)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", r.Path()).Msg("cannot read data")
+	}
+	if n != len(buff) {
+		logger.GetLogger().Panic().Int("read", n).Int("expected", len(buff)).Str("path", r.Path()).Msg("BUG: reader read wrong number of bytes")
 	}
 }
 
