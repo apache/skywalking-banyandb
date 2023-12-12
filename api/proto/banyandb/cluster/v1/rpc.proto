@@ -27,7 +27,7 @@ message SendRequest {
   string topic = 1;
   uint64 message_id = 2;
   google.protobuf.Any body = 3;
-  bool batch_mod= 4;
+  bool batch_mod = 4;
 }
 
 message SendResponse {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
@@ -111,22 +112,41 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dps.seriesIDs = append(dps.seriesIDs, series.ID)
 	field := nameValues{}
-	for i2 := range req.DataPoint.Fields {
+	for i := range stm.GetSchema().GetFields() {
+		var v *modelv1.FieldValue
+		if len(req.DataPoint.Fields) <= i {
+			v = pbv1.NullFieldValue
+		} else {
+			v = req.DataPoint.Fields[i]
+		}
 		field.values = append(field.values, encodeFieldValue(
-			stm.GetSchema().GetFields()[i2].GetName(),
-			req.DataPoint.Fields[i2],
+			stm.GetSchema().GetFields()[i].GetName(),
+			stm.GetSchema().GetFields()[i].FieldType,
+			v,
 		))
 	}
 	dps.fields = append(dps.fields, field)
 	tagFamilies := make([]nameValues, len(req.DataPoint.TagFamilies))
-	for i := range req.DataPoint.TagFamilies {
-		tagFamily := req.DataPoint.TagFamilies[i]
+	for i := range stm.GetSchema().GetTagFamilies() {
+		var tagFamily *modelv1.TagFamilyForWrite
+		if len(req.DataPoint.TagFamilies) <= i {
+			tagFamily = pbv1.NullTagFamily
+		} else {
+			tagFamily = req.DataPoint.TagFamilies[i]
+		}
 		tf := nameValues{}
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		for j := range tagFamily.Tags {
+		for j := range tagFamilySpec.Tags {
+			var tagValue *modelv1.TagValue
+			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
+				tagValue = pbv1.NullTagValue
+			} else {
+				tagValue = tagFamily.Tags[j]
+			}
 			tf.values = append(tf.values, encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
-				tagFamily.Tags[j],
+				tagFamilySpec.Tags[j].Type,
+				tagValue,
 			))
 		}
 	}
@@ -212,47 +232,73 @@ func familyIdentity(name string, flag []byte) []byte {
 	return bytes.Join([][]byte{tsdb.Hash([]byte(name)), flag}, nil)
 }
 
-func encodeFieldValue(name string, fieldValue *modelv1.FieldValue) *nameValue {
+func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *modelv1.FieldValue) *nameValue {
 	nv := &nameValue{name: name}
-	switch fieldValue.GetValue().(type) {
-	case *modelv1.FieldValue_Int:
+	switch fieldType {
+	case databasev1.FieldType_FIELD_TYPE_INT:
 		nv.valueType = pbv1.ValueTypeInt64
-		nv.value = convert.Int64ToBytes(fieldValue.GetInt().GetValue())
-	case *modelv1.FieldValue_Float:
+		if fieldValue.GetInt() != nil {
+			nv.value = convert.Int64ToBytes(fieldValue.GetInt().GetValue())
+		}
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
 		nv.valueType = pbv1.ValueTypeFloat64
-		nv.value = convert.Float64ToBytes(fieldValue.GetFloat().GetValue())
-	case *modelv1.FieldValue_Str:
+		if fieldValue.GetFloat() != nil {
+			nv.value = convert.Float64ToBytes(fieldValue.GetFloat().GetValue())
+		}
+	case databasev1.FieldType_FIELD_TYPE_STRING:
 		nv.valueType = pbv1.ValueTypeStr
-		nv.value = []byte(fieldValue.GetStr().GetValue())
-	case *modelv1.FieldValue_BinaryData:
+		if fieldValue.GetStr() != nil {
+			nv.value = []byte(fieldValue.GetStr().GetValue())
+		}
+	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
 		nv.valueType = pbv1.ValueTypeBinaryData
-		nv.value = bytes.Clone(fieldValue.GetBinaryData())
+		if fieldValue.GetBinaryData() != nil {
+			nv.value = bytes.Clone(fieldValue.GetBinaryData())
+		}
+	default:
+		logger.Panicf("unsupported field value type: %T", fieldValue.GetValue())
 	}
 	return nv
 }
 
-func encodeTagValue(name string, tagValue *modelv1.TagValue) *nameValue {
+func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {
 	nv := &nameValue{name: name}
-	switch tagValue.GetValue().(type) {
-	case *modelv1.TagValue_Int:
+	switch tagType {
+	case databasev1.TagType_TAG_TYPE_INT:
 		nv.valueType = pbv1.ValueTypeInt64
-		nv.value = convert.Int64ToBytes(tagValue.GetInt().GetValue())
-	case *modelv1.TagValue_Str:
+		if tagValue.GetInt() != nil {
+			nv.value = convert.Int64ToBytes(tagValue.GetInt().GetValue())
+		}
+	case databasev1.TagType_TAG_TYPE_STRING:
 		nv.valueType = pbv1.ValueTypeStr
-		nv.value = []byte(tagValue.GetStr().GetValue())
-	case *modelv1.TagValue_BinaryData:
+		if tagValue.GetStr() != nil {
+			nv.value = []byte(tagValue.GetStr().GetValue())
+		}
+	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
 		nv.valueType = pbv1.ValueTypeBinaryData
-		nv.value = bytes.Clone(tagValue.GetBinaryData())
-	case *modelv1.TagValue_IntArray:
+		if tagValue.GetBinaryData() != nil {
+			nv.value = bytes.Clone(tagValue.GetBinaryData())
+		}
+	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
+		nv.valueType = pbv1.ValueTypeInt64Arr
+		if tagValue.GetIntArray() == nil {
+			return nv
+		}
 		nv.valueArr = make([][]byte, len(tagValue.GetIntArray().Value))
 		for i := range tagValue.GetIntArray().Value {
 			nv.valueArr[i] = convert.Int64ToBytes(tagValue.GetIntArray().Value[i])
 		}
-	case *modelv1.TagValue_StrArray:
+	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
+		nv.valueType = pbv1.ValueTypeStrArr
+		if tagValue.GetStrArray() == nil {
+			return nv
+		}
 		nv.valueArr = make([][]byte, len(tagValue.GetStrArray().Value))
 		for i := range tagValue.GetStrArray().Value {
 			nv.valueArr[i] = []byte(tagValue.GetStrArray().Value[i])
 		}
+	default:
+		logger.Panicf("unsupported tag value type: %T", tagValue.GetValue())
 	}
 	return nv
 }

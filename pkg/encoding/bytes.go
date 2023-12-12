@@ -99,6 +99,10 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 		if uint64(len(data)) < sLen {
 			return dst, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
 		}
+		if sLen == 0 {
+			dst = append(dst, nil)
+			continue
+		}
 		dst = append(dst, data[:sLen])
 		data = data[sLen:]
 	}

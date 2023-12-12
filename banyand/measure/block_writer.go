@@ -193,7 +193,7 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.MustInitFromDataPoints(timestamps, tagFamilies, fields)
+	b.mustInitFromDataPoints(timestamps, tagFamilies, fields)
 	if b.Len() == 0 {
 		return
 	}
@@ -208,7 +208,7 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 	isSeenSid := sid == bsw.sidLast
 	bsw.sidLast = sid
 
-	bh := getBlockMetadata()
+	bh := generateBlockMetadata()
 	b.mustWriteTo(sid, bh, &bsw.streamWriters)
 	th := &bh.timestamps
 	if bsw.totalCount == 0 || th.min < bsw.totalMinTimestamp {
@@ -233,7 +233,7 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 	bsw.totalBlocksCount++
 
 	bsw.primaryBlockData = bh.marshal(bsw.primaryBlockData)
-	putBlockMetadata(bh)
+	releaseBlockMetadata(bh)
 	if len(bsw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
 		bsw.primaryBlockData = bsw.primaryBlockData[:0]

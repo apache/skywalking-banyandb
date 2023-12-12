@@ -20,8 +20,9 @@ package encoding_test
 import (
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 )
 
 func TestUint16ToBytes(t *testing.T) {

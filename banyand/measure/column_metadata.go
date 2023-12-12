@@ -113,6 +113,9 @@ func (cfm *columnFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadataLen: %w", err)
 	}
+	if columnMetadataLen < 1 {
+		return src, nil
+	}
 	cms := cfm.resizeColumnMetadata(int(columnMetadataLen))
 	for i := range cms {
 		src, err = cms[i].unmarshal(src)

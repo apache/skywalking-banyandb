@@ -20,11 +20,12 @@ package v1
 import (
 	"bytes"
 
+	"github.com/pkg/errors"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/pkg/errors"
 )
 
 type ValueType byte

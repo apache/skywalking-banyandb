@@ -57,11 +57,6 @@ func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	ch.name = c.Name
 	ch.valueType = c.ValueType
 
-	// remove value type from values
-	for i := range c.Values {
-		c.Values[i] = c.Values[i][1:]
-	}
-
 	// TODO: encoding values based on value type
 
 	bb := bigValuePool.Generate()

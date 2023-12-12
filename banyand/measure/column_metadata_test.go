@@ -20,8 +20,9 @@ package measure
 import (
 	"testing"
 
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/stretchr/testify/assert"
+
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func Test_columnMetadata_reset(t *testing.T) {
@@ -129,27 +130,43 @@ func Test_columnFamilyMetadata_resizeColumnMetadata(t *testing.T) {
 }
 
 func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
-	original := &columnFamilyMetadata{
-		columnMetadata: []columnMetadata{
-			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				dataBlock: dataBlock{offset: 1, size: 10},
+	tests := []struct {
+		name     string
+		original *columnFamilyMetadata
+	}{
+		{
+			name: "Non-empty columnMetadata",
+			original: &columnFamilyMetadata{
+				columnMetadata: []columnMetadata{
+					{
+						name:      "test1",
+						valueType: pbv1.ValueTypeStr,
+						dataBlock: dataBlock{offset: 1, size: 10},
+					},
+					{
+						name:      "test2",
+						valueType: pbv1.ValueTypeInt64,
+						dataBlock: dataBlock{offset: 2, size: 20},
+					},
+				},
 			},
-			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				dataBlock: dataBlock{offset: 2, size: 20},
-			},
+		},
+		{
+			name:     "Empty columnMetadata",
+			original: &columnFamilyMetadata{},
 		},
 	}
 
-	marshaled := original.marshal(nil)
-	assert.NotNil(t, marshaled)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			marshaled := tt.original.marshal(nil)
+			assert.NotNil(t, marshaled)
 
-	unmarshaled := &columnFamilyMetadata{}
-	_, err := unmarshaled.unmarshal(marshaled)
-	assert.Nil(t, err)
+			unmarshaled := &columnFamilyMetadata{}
+			_, err := unmarshaled.unmarshal(marshaled)
+			assert.Nil(t, err)
 
-	assert.Equal(t, original, unmarshaled)
+			assert.Equal(t, tt.original, unmarshaled)
+		})
+	}
 }

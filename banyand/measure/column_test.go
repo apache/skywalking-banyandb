@@ -20,10 +20,11 @@ package measure
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestColumn_reset(t *testing.T) {
@@ -57,7 +58,7 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 	original := &Column{
 		Name:      "test",
 		ValueType: pbv1.ValueTypeStr,
-		Values:    [][]byte{[]byte("value1"), []byte("value2")},
+		Values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
 	}
 
 	cm := &columnMetadata{}

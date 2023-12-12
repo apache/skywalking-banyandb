@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 )
 
 func randString(n int) []byte {
-	var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	letters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 	rand.Seed(time.Now().UnixNano())
 

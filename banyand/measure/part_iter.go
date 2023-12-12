@@ -88,17 +88,16 @@ func (ps *partIter) NextBlock() bool {
 			return false
 		}
 		if len(ps.bms) == 0 {
-			if !ps.nextBHS() {
+			if !ps.nextBlockMetadata() {
 				return false
 			}
 		}
-		if ps.searchBHS() {
+		if ps.searchBlockMetadata() {
 			return true
 		}
 	}
 }
 
-// Error returns the last error.
 func (ps *partIter) Error() error {
 	if ps.err == io.EOF {
 		return nil
@@ -131,7 +130,7 @@ func (ps *partIter) skipSeriesIDsSmallerThan(sid common.SeriesID) bool {
 	return true
 }
 
-func (ps *partIter) nextBHS() bool {
+func (ps *partIter) nextBlockMetadata() bool {
 	for len(ps.primaryBlockMetadata) > 0 {
 		if !ps.skipSeriesIDsSmallerThan(ps.primaryBlockMetadata[0].seriesID) {
 			return false
@@ -158,7 +157,6 @@ func (ps *partIter) nextBHS() bool {
 		return true
 	}
 
-	// No more metaindex rows to search.
 	ps.err = io.EOF
 	return false
 }
@@ -191,7 +189,6 @@ func (ps *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata,
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	//TODO: cache bm
 	bm := make([]blockMetadata, 0)
 	bm, err = unmarshalBlockMetadata(bm, ps.indexBuf)
 	if err != nil {
@@ -200,55 +197,40 @@ func (ps *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata,
 	return bm, nil
 }
 
-func (ps *partIter) searchBHS() bool {
+func (ps *partIter) searchBlockMetadata() bool {
 	bhs := ps.bms
 	for len(bhs) > 0 {
-		// Skip block headers with tsids smaller than the given sid.
 		sid := ps.bm.seriesID
 		if bhs[0].seriesID < sid {
 			n := sort.Search(len(bhs), func(i int) bool {
 				return sid > bhs[i].seriesID
 			})
 			if n == len(bhs) {
-				// Nothing found.
 				break
 			}
 			bhs = bhs[n:]
 		}
-		bh := &bhs[0]
+		bm := &bhs[0]
 
-		// Invariant: tsid <= bh.TSID
-
-		if bh.seriesID != sid {
-			// tsid < bh.TSID: no more blocks with the given tsid.
-			// Proceed to the next (bigger) tsid.
-			if !ps.skipSeriesIDsSmallerThan(bh.seriesID) {
+		if bm.seriesID != sid {
+			if !ps.skipSeriesIDsSmallerThan(bm.seriesID) {
 				return false
 			}
 			continue
 		}
 
-		// Found the block with the given tsid. Verify timestamp range.
-		// While blocks for the same TSID are sorted by MinTimestamp,
-		// the may contain overlapped time ranges.
-		// So use linear search instead of binary search.
-		if bh.timestamps.max < ps.minTimestamp {
-			// Skip the block with too small timestamps.
+		if bm.timestamps.max < ps.minTimestamp {
 			bhs = bhs[1:]
 			continue
 		}
-		if bh.timestamps.min > ps.maxTimestamp {
-			// Proceed to the next tsid, since the remaining blocks
-			// for the current tsid contain too big timestamps.
+		if bm.timestamps.min > ps.maxTimestamp {
 			if !ps.nextSeriesID() {
 				return false
 			}
 			continue
 		}
 
-		// Found the tsid block with the matching timestamp range.
-		// Read it.
-		ps.bm = bh
+		ps.bm = bm
 
 		ps.bms = bhs[1:]
 		return true

@@ -46,7 +46,108 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) assertValid() {
+func (b *block) mustInitFromDataPoints(timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
+	b.reset()
+	size := len(timestamps)
+	if size == 0 {
+		return
+	}
+	if size != len(tagFamilies) {
+		logger.Panicf("the number of timestamps %d must match the number of tagFamilies %d", size, len(tagFamilies))
+	}
+	if size != len(fields) {
+		logger.Panicf("the number of timestamps %d must match the number of fields %d", size, len(fields))
+	}
+
+	assertTimestampsSorted(timestamps)
+	b.timestamps = append(b.timestamps, timestamps...)
+	b.mustInitFromTagsAndFields(tagFamilies, fields)
+}
+
+func assertTimestampsSorted(timestamps []int64) {
+	for i := range timestamps {
+		if i > 0 && timestamps[i-1] > timestamps[i] {
+			logger.Panicf("log entries must be sorted by timestamp; got the previous entry with bigger timestamp %d than the current entry with timestamp %d",
+				timestamps[i-1], timestamps[i])
+		}
+	}
+}
+
+func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues) {
+	dataPointsLen := len(tagFamilies)
+	if dataPointsLen == 0 {
+		return
+	}
+	for i, tff := range tagFamilies {
+		b.processTagFamilies(tff, i, dataPointsLen)
+	}
+	for i, f := range fields {
+		columns := b.field.resizeColumns(len(f.values))
+		for j, t := range f.values {
+			columns[j].Name = t.name
+			columns[j].resizeValues(dataPointsLen)
+			columns[j].ValueType = t.valueType
+			columns[j].Values[i] = t.marshal()
+		}
+	}
+}
+
+func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
+	tagFamilies := b.resizeTagFamilies(len(tff))
+	for j, tf := range tff {
+		tagFamilies[j].Name = tf.name
+		b.processTags(tf, j, i, dataPointsLen)
+	}
+}
+
+func (b *block) processTags(tf nameValues, columnFamilyIdx, i int, dataPointsLen int) {
+	columns := b.tagFamilies[columnFamilyIdx].resizeColumns(len(tf.values))
+	for j, t := range tf.values {
+		columns[j].Name = t.name
+		columns[j].resizeValues(dataPointsLen)
+		columns[j].ValueType = t.valueType
+		columns[j].Values[i] = t.marshal()
+	}
+}
+
+func (b *block) resizeTagFamilies(tagFamiliesLen int) []ColumnFamily {
+	tff := b.tagFamilies[:0]
+	if n := tagFamiliesLen - cap(tff); n > 0 {
+		tff = append(tff[:cap(tff)], make([]ColumnFamily, n)...)
+	}
+	tff = tff[:tagFamiliesLen]
+	b.tagFamilies = tff
+	return tff
+}
+
+func (b *block) Len() int {
+	return len(b.timestamps)
+}
+
+func (b *block) mustWriteTo(sid common.SeriesID, bh *blockMetadata, sw *writers) {
+	b.validate()
+	bh.reset()
+
+	bh.seriesID = sid
+	bh.uncompressedSizeBytes = b.uncompressedSizeBytes()
+	bh.count = uint64(b.Len())
+
+	mustWriteTimestampsTo(&bh.timestamps, b.timestamps, sw.timestampsWriter)
+
+	tff := b.tagFamilies
+	for ti := range tff {
+		b.marshalTagFamily(tff[ti], bh, sw)
+	}
+
+	f := b.field
+	cc := f.Columns
+	chh := bh.field.resizeColumnMetadata(len(cc))
+	for i := range cc {
+		cc[i].mustWriteTo(&chh[i], &sw.fieldValuesWriter)
+	}
+}
+
+func (b *block) validate() {
 	timestamps := b.timestamps
 	for i := 1; i < len(timestamps); i++ {
 		if timestamps[i-1] > timestamps[i] {
@@ -69,96 +170,6 @@ func (b *block) assertValid() {
 		if len(f.Values) != itemsCount {
 			logger.Panicf("unexpected number of values for fields %q: got %d; want %d", f.Name, len(f.Values), itemsCount)
 		}
-	}
-}
-
-func (b *block) MustInitFromDataPoints(timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
-	b.reset()
-
-	assertTimestampsSorted(timestamps)
-	b.timestamps = append(b.timestamps, timestamps...)
-	b.mustInitFromDataPoints(tagFamilies, fields)
-}
-
-func assertTimestampsSorted(timestamps []int64) {
-	for i := range timestamps {
-		if i > 0 && timestamps[i-1] > timestamps[i] {
-			logger.Panicf("log entries must be sorted by timestamp; got the previous entry with bigger timestamp %d than the current entry with timestamp %d",
-				timestamps[i-1], timestamps[i])
-		}
-	}
-}
-
-func (b *block) mustInitFromDataPoints(tagFamilies [][]nameValues, fields []nameValues) {
-	dataPointsLen := len(tagFamilies)
-	if dataPointsLen == 0 {
-		return
-	}
-	for i, tff := range tagFamilies {
-		b.processTagFamilies(tff, i, dataPointsLen)
-	}
-	for i, f := range fields {
-		b.processTags(f, b.field, i, dataPointsLen)
-	}
-}
-
-func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
-	tagFamilies := b.resizeTagFamilies(len(tff))
-	for j, tf := range tff {
-		b.processTags(tf, tagFamilies[j], i, dataPointsLen)
-	}
-}
-
-func (b *block) processTags(tf nameValues, cf ColumnFamily, i int, dataPointsLen int) {
-	cf.resizeColumns(len(tf.values))
-	for k, t := range tf.values {
-		b.processTag(t, cf.Columns[k], i, dataPointsLen)
-	}
-}
-
-func (b *block) processTag(t *nameValue, c Column, i int, dataPointsLen int) {
-	c.resizeValues(dataPointsLen)
-	c.ValueType = t.valueType
-	c.Values[i] = t.marshal()
-}
-
-func (b *block) resizeTagFamilies(tagFamiliesLen int) []ColumnFamily {
-	tff := b.tagFamilies[:0]
-	if n := tagFamiliesLen - cap(tff); n > 0 {
-		tff = append(tff[:cap(tff)], make([]ColumnFamily, n)...)
-	}
-	tff = tff[:tagFamiliesLen]
-	b.tagFamilies = tff
-	return tff
-}
-
-func (b *block) Len() int {
-	return len(b.timestamps)
-}
-
-func (b *block) mustWriteTo(sid common.SeriesID, bh *blockMetadata, sw *writers) {
-	b.assertValid()
-	bh.reset()
-
-	bh.seriesID = sid
-	bh.uncompressedSizeBytes = b.uncompressedSizeBytes()
-	bh.count = uint64(b.Len())
-
-	// Marshal timestamps
-	mustWriteTimestampsTo(&bh.timestamps, b.timestamps, sw)
-
-	// Marshal tagFamilies
-	tff := b.tagFamilies
-	for ti := range tff {
-		b.marshalTagFamily(tff[ti], bh, sw)
-	}
-
-	// Marshal field
-	f := b.field
-	cc := f.Columns
-	chh := bh.field.resizeColumnMetadata(len(cc))
-	for i := range cc {
-		cc[i].mustWriteTo(&chh[i], &sw.fieldValuesWriter)
 	}
 }
 
@@ -199,7 +210,6 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	for i, c := range cc {
 		c.mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
 	}
-
 }
 
 func (b *block) uncompressedSizeBytes() uint64 {
@@ -209,7 +219,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 
 	tff := b.tagFamilies
 	for i := range tff {
-		tf := &tff[i]
+		tf := tff[i]
 		nameLen := uint64(len(tf.Name))
 		for _, c := range tf.Columns {
 			nameLen += uint64(len(c.Name))
@@ -223,7 +233,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 
 	ff := b.field
 	for i := range ff.Columns {
-		c := &ff.Columns[i]
+		c := ff.Columns[i]
 		nameLen := uint64(len(c.Name))
 		for _, v := range c.Values {
 			if len(v) > 0 {
@@ -249,31 +259,30 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *b
 	for i, c := range cc {
 		c.mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
 	}
-
 }
 
-func mustWriteTimestampsTo(th *timestampsMetadata, timestamps []int64, sw *writers) {
-	th.reset()
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter writer) {
+	tm.reset()
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf, th.marshalType, th.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
+	bb.Buf, tm.encodeType, tm.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
 	if len(bb.Buf) > maxTimestampsBlockSize {
 		logger.Panicf("too big block with timestamps: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxTimestampsBlockSize)
 	}
-	th.max = timestamps[len(timestamps)-1]
-	th.offset = sw.timestampsWriter.bytesWritten
-	th.size = uint64(len(bb.Buf))
-	sw.timestampsWriter.MustWrite(bb.Buf)
-
+	tm.max = timestamps[len(timestamps)-1]
+	tm.offset = timestampsWriter.bytesWritten
+	tm.size = uint64(len(bb.Buf))
+	timestampsWriter.MustWrite(bb.Buf)
 }
 
 func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader fs.Reader) []int64 {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.marshalType, tm.min, count)
+	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
 	}

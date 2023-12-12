@@ -79,8 +79,7 @@ type OrderBy struct {
 }
 
 // AnyEntry is the `*` for a regular expression. It could match "any" Entry in an Entity.
-var anyEntry = &modelv1.TagValue_Null{}
-var AnyTagValue = &modelv1.TagValue{Value: anyEntry}
+var AnyTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 
 type Tag struct {
 	Name   string
@@ -122,3 +121,9 @@ type MeasureQueryResult interface {
 	Pull() *Result
 	Release()
 }
+
+var (
+	NullFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+	NullTagFamily  = &modelv1.TagFamilyForWrite{}
+	NullTagValue   = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+)

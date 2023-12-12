@@ -20,12 +20,13 @@ package measure
 import (
 	"bytes"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/pkg/errors"
 )
 
 type nameValue struct {

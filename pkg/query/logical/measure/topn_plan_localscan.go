@@ -164,7 +164,6 @@ type localScan struct {
 }
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-
 	ec := executor.FromMeasureExecutionContext(ctx)
 	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
@@ -180,7 +179,6 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 	return &resultMIterator{
 		results: []pbv1.MeasureQueryResult{result},
 	}, nil
-
 }
 
 func (i *localScan) String() string {

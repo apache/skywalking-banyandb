@@ -269,7 +269,6 @@ type tableIterator struct {
 }
 
 func (si *tableIterator) reset() {
-
 }
 
 // func (si *tableIterator) init(seriesTablesList []*seriesTables) {
@@ -393,7 +392,9 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 			Value: &modelv1.TagValue_IntArray{
 				IntArray: &modelv1.IntArray{
 					Value: values,
-				}}}
+				},
+			},
+		}
 	case pbv1.ValueTypeStrArr:
 		var values []string
 		bb := bigValuePool.Generate()
@@ -409,7 +410,9 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 			Value: &modelv1.TagValue_StrArray{
 				StrArray: &modelv1.StrArray{
 					Value: values,
-				}}}
+				},
+			},
+		}
 	default:
 		logger.Panicf("unsupported value type: %v", valueType)
 		return nil

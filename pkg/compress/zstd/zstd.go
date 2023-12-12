@@ -21,8 +21,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
