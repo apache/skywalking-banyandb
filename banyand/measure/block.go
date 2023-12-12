@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -124,26 +125,25 @@ func (b *block) Len() int {
 	return len(b.timestamps)
 }
 
-func (b *block) mustWriteTo(sid common.SeriesID, bh *blockMetadata, sw *writers) {
+func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers) {
 	b.validate()
-	bh.reset()
+	bm.reset()
 
-	bh.seriesID = sid
-	bh.uncompressedSizeBytes = b.uncompressedSizeBytes()
-	bh.count = uint64(b.Len())
+	bm.seriesID = sid
+	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
+	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bh.timestamps, b.timestamps, sw.timestampsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, ww.timestampsWriter)
 
-	tff := b.tagFamilies
-	for ti := range tff {
-		b.marshalTagFamily(tff[ti], bh, sw)
+	for ti := range b.tagFamilies {
+		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
 	}
 
 	f := b.field
 	cc := f.Columns
-	chh := bh.field.resizeColumnMetadata(len(cc))
+	cmm := bm.field.resizeColumnMetadata(len(cc))
 	for i := range cc {
-		cc[i].mustWriteTo(&chh[i], &sw.fieldValuesWriter)
+		cc[i].mustWriteTo(&cmm[i], &ww.fieldValuesWriter)
 	}
 }
 
@@ -173,30 +173,30 @@ func (b *block) validate() {
 	}
 }
 
-func (b *block) marshalTagFamily(tf ColumnFamily, bh *blockMetadata, sw *writers) {
-	hw, w := sw.getColumnMetadataWriterAndColumnWriter(tf.Name)
+func (b *block) marshalTagFamily(tf ColumnFamily, bm *blockMetadata, ww *writers) {
+	hw, w := ww.getColumnMetadataWriterAndColumnWriter(tf.Name)
 	cc := tf.Columns
-	cfh := generateColumnFamilyMetadata()
-	chh := cfh.resizeColumnMetadata(len(cc))
+	cfm := generateColumnFamilyMetadata()
+	cmm := cfm.resizeColumnMetadata(len(cc))
 	for i := range cc {
-		cc[i].mustWriteTo(&chh[i], w)
+		cc[i].mustWriteTo(&cmm[i], w)
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf = cfh.marshal(bb.Buf)
-	releaseColumnFamilyMetadata(cfh)
-	tfh := bh.getTagFamilyMetadata(tf.Name)
-	tfh.offset = w.bytesWritten
-	tfh.size = uint64(len(bb.Buf))
-	if tfh.size > maxTagFamiliesMetadataSize {
-		logger.Panicf("too big columnFamilyMetadataSize: %d bytes; mustn't exceed %d bytes", tfh.size, maxTagFamiliesMetadataSize)
+	bb.Buf = cfm.marshal(bb.Buf)
+	releaseColumnFamilyMetadata(cfm)
+	tfm := bm.getTagFamilyMetadata(tf.Name)
+	tfm.offset = hw.bytesWritten
+	tfm.size = uint64(len(bb.Buf))
+	if tfm.size > maxTagFamiliesMetadataSize {
+		logger.Panicf("too big columnFamilyMetadataSize: %d bytes; mustn't exceed %d bytes", tfm.size, maxTagFamiliesMetadataSize)
 	}
 	hw.MustWrite(bb.Buf)
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string, columnFamilyMetadataBlock *dataBlock, metaReader, valueReader fs.Reader) {
 	bb := bigValuePool.Generate()
-	bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(columnFamilyMetadataBlock.offset), bb.Buf)
 	cfm := generateColumnFamilyMetadata()
 	defer releaseColumnFamilyMetadata(cfm)
@@ -205,10 +205,10 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
-	tf := b.tagFamilies[tfIndex]
-	cc := tf.resizeColumns(len(cfm.columnMetadata))
-	for i, c := range cc {
-		c.mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+	b.tagFamilies[tfIndex].Name = name
+	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
+	for i := range cc {
+		cc[i].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
 	}
 }
 
@@ -244,7 +244,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *blockMetadata, opts *QueryOptions) {
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *blockMetadata) {
 	b.reset()
 
 	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
@@ -256,9 +256,16 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *b
 		i++
 	}
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
-	for i, c := range cc {
-		c.mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
+	for i := range cc {
+		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
 	}
+}
+
+// For testing purpose only.
+func (b *block) sortTagFamilies() {
+	sort.Slice(b.tagFamilies, func(i, j int) bool {
+		return b.tagFamilies[i].Name < b.tagFamilies[j].Name
+	})
 }
 
 func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter writer) {
@@ -345,7 +352,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts *QueryOptions) {
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.reset()
 	tmpBlock.reset()
-	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm, bc.opts)
+	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
 
 	start, end, ok := findRange(tmpBlock.timestamps, bc.opts.minTimestamp, bc.opts.maxTimestamp)
 	if !ok {

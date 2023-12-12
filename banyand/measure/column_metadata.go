@@ -56,7 +56,7 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadata.name: %w", err)
 	}
-	cm.name = convert.BytesToString(nameBytes)
+	cm.name = string(nameBytes)
 	if len(src) < 1 {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadata.valueType: src is too short")
 	}

@@ -126,7 +126,7 @@ func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*w
 }
 
 type blockWriter struct {
-	streamWriters writers
+	writers writers
 
 	sidLast common.SeriesID
 
@@ -158,7 +158,7 @@ type blockWriter struct {
 }
 
 func (bw *blockWriter) reset() {
-	bw.streamWriters.reset()
+	bw.writers.reset()
 	bw.sidLast = 0
 	bw.sidFirst = 0
 	bw.minTimestampLast = 0
@@ -177,13 +177,11 @@ func (bw *blockWriter) reset() {
 
 func (bsw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bsw.reset()
-	bsw.streamWriters = writers{
-		mustCreateTagFamilyWriters: mp.mustCreateMemTagFamilyWriters,
-	}
-	bsw.streamWriters.metaWriter.init(&mp.meta)
-	bsw.streamWriters.primaryWriter.init(&mp.primary)
-	bsw.streamWriters.timestampsWriter.init(&mp.timestamps)
-	bsw.streamWriters.fieldValuesWriter.init(&mp.fieldValues)
+	bsw.writers.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
+	bsw.writers.metaWriter.init(&mp.meta)
+	bsw.writers.primaryWriter.init(&mp.primary)
+	bsw.writers.timestampsWriter.init(&mp.timestamps)
+	bsw.writers.fieldValuesWriter.init(&mp.fieldValues)
 }
 
 func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
@@ -209,7 +207,7 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 	bsw.sidLast = sid
 
 	bh := generateBlockMetadata()
-	b.mustWriteTo(sid, bh, &bsw.streamWriters)
+	b.mustWriteTo(sid, bh, &bsw.writers)
 	th := &bh.timestamps
 	if bsw.totalCount == 0 || th.min < bsw.totalMinTimestamp {
 		bsw.totalMinTimestamp = th.min
@@ -242,7 +240,7 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 
 func (bsw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bsw.primaryBlockMetadata.mustWriteBlock(data, bsw.sidFirst, bsw.minTimestamp, bsw.maxTimestamp, &bsw.streamWriters)
+		bsw.primaryBlockMetadata.mustWriteBlock(data, bsw.sidFirst, bsw.minTimestamp, bsw.maxTimestamp, &bsw.writers)
 		bsw.metaData = bsw.primaryBlockMetadata.marshal(bsw.metaData)
 	}
 	bsw.hasWrittenBlocks = false
@@ -262,19 +260,24 @@ func (bsw *blockWriter) Flush(ph *partMetadata) {
 
 	bb := bigValuePool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], bsw.metaData, 1)
-	bsw.streamWriters.metaWriter.MustWrite(bb.Buf)
+	bsw.writers.metaWriter.MustWrite(bb.Buf)
 	bigValuePool.Release(bb)
 
-	ph.CompressedSizeBytes = bsw.streamWriters.totalBytesWritten()
+	ph.CompressedSizeBytes = bsw.writers.totalBytesWritten()
 
-	bsw.streamWriters.MustClose()
+	bsw.writers.MustClose()
 	bsw.reset()
 }
 
 func generateBlockWriter() *blockWriter {
 	v := blockWriterPool.Get()
 	if v == nil {
-		return &blockWriter{}
+		return &blockWriter{
+			writers: writers{
+				tagFamilyMetadataWriters: make(map[string]*writer),
+				tagFamilyWriters:         make(map[string]*writer),
+			},
+		}
 	}
 	return v.(*blockWriter)
 }

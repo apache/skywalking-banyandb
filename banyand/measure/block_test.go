@@ -23,8 +23,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -68,6 +71,30 @@ func Test_block_reset(t *testing.T) {
 	}
 }
 
+var conventionalBlock = block{
+	timestamps: []int64{1, 2},
+	tagFamilies: []ColumnFamily{
+		{"arrTag", []Column{
+			{"strArrTag", pbv1.ValueTypeStrArr, [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})}},
+			{"intArrTag", pbv1.ValueTypeInt64Arr, [][]byte{marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}), marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)})}},
+		}},
+		{"binaryTag", []Column{
+			{Name: "binaryTag", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+		}},
+		{"singleTag", []Column{
+			{"strTag", pbv1.ValueTypeStr, [][]byte{[]byte("value1"), []byte("value2")}},
+			{"intTag", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
+			{"floatTag", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(12233.343), convert.Float64ToBytes(24466.686)}},
+		}},
+	},
+	field: ColumnFamily{Columns: []Column{
+		{"strField", pbv1.ValueTypeStr, [][]byte{[]byte("field1"), []byte("field2")}},
+		{"intField", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
+		{"floatField", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
+		{Name: "binaryField", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+	}},
+}
+
 func Test_block_mustInitFromDataPoints(t *testing.T) {
 	type args struct {
 		timestamps  []int64
@@ -85,12 +112,6 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 				timestamps: []int64{1, 2},
 				tagFamilies: [][]nameValues{{
 					{
-						"singleTag", []*nameValue{
-							{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
-							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
-							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(12233.343), nil},
-						},
-					}, {
 						"arrTag", []*nameValue{
 							{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
 							{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
@@ -99,15 +120,15 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						"binaryTag", []*nameValue{
 							{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
 						},
+					}, {
+						"singleTag", []*nameValue{
+							{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
+							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
+							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(12233.343), nil},
+						},
 					},
 				}, {
 					{
-						"singleTag", []*nameValue{
-							{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
-							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
-							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(24466.686), nil},
-						},
-					}, {
 						"arrTag", []*nameValue{
 							{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value3"), []byte("value4")}},
 							{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
@@ -115,6 +136,12 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 					}, {
 						"binaryTag", []*nameValue{
 							{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+						},
+					}, {
+						"singleTag", []*nameValue{
+							{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
+							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
+							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(24466.686), nil},
 						},
 					},
 				}},
@@ -134,29 +161,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 					},
 				}},
 			},
-			want: block{
-				timestamps: []int64{1, 2},
-				tagFamilies: []ColumnFamily{
-					{"singleTag", []Column{
-						{"strTag", pbv1.ValueTypeStr, [][]byte{[]byte("value1"), []byte("value2")}},
-						{"intTag", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
-						{"floatTag", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(12233.343), convert.Float64ToBytes(24466.686)}},
-					}},
-					{"arrTag", []Column{
-						{"strArrTag", pbv1.ValueTypeStrArr, [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})}},
-						{"intArrTag", pbv1.ValueTypeInt64Arr, [][]byte{marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}), marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)})}},
-					}},
-					{"binaryTag", []Column{
-						{Name: "binaryTag", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
-					}},
-				},
-				field: ColumnFamily{Columns: []Column{
-					{"strField", pbv1.ValueTypeStr, [][]byte{[]byte("field1"), []byte("field2")}},
-					{"intField", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
-					{"floatField", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
-					{Name: "binaryField", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
-				}},
-			},
+			want: conventionalBlock,
 		},
 	}
 	for _, tt := range tests {
@@ -236,4 +241,87 @@ func getBitInt64Arr() []int64 {
 		randSlice[i] = r.Int63()
 	}
 	return randSlice
+}
+
+func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
+	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	ww := &writers{
+		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
+			return metaBuffer, dataBuffer
+		},
+		tagFamilyMetadataWriters: make(map[string]*writer),
+		tagFamilyWriters:         make(map[string]*writer),
+	}
+	b := &conventionalBlock
+	tfIndex := 0
+	name := "arrTag"
+	decoder := &encoding.BytesBlockDecoder{}
+	bm := &blockMetadata{}
+
+	b.marshalTagFamily(b.tagFamilies[tfIndex], bm, ww)
+
+	metaWriter, ok1 := ww.tagFamilyMetadataWriters[name]
+	valueWriter, ok2 := ww.tagFamilyWriters[name]
+	if !ok1 || !ok2 {
+		t.Fatalf("Writers not correctly added to maps")
+	}
+	if metaWriter.w != metaBuffer || valueWriter.w != dataBuffer {
+		t.Fatalf("Writers not correctly added to maps")
+	}
+
+	unmarshaled := generateBlock()
+	defer releaseBlock(unmarshaled)
+	// set the timestamps to the same length as the original block
+	// the data size in a block depends on the timestamps length
+	unmarshaled.timestamps = make([]int64, len(b.timestamps))
+	unmarshaled.resizeTagFamilies(1)
+
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaBuffer, dataBuffer)
+
+	if !reflect.DeepEqual(b.tagFamilies[0], unmarshaled.tagFamilies[0]) {
+		t.Errorf("block.unmarshalTagFamily() = %+v, want %+v", unmarshaled.tagFamilies, b.tagFamilies)
+	}
+}
+
+func Test_marshalAndUnmarshalBlock(t *testing.T) {
+	timestampBuffer, fieldBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	ww := &writers{
+		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
+			return &bytes.Buffer{}, &bytes.Buffer{}
+		},
+		tagFamilyMetadataWriters: make(map[string]*writer),
+		tagFamilyWriters:         make(map[string]*writer),
+		timestampsWriter:         writer{w: timestampBuffer},
+		fieldValuesWriter:        writer{w: fieldBuffer},
+	}
+	p := &part{
+		timestamps:  timestampBuffer,
+		fieldValues: fieldBuffer,
+	}
+	b := &conventionalBlock
+	decoder := &encoding.BytesBlockDecoder{}
+	sid := common.SeriesID(1)
+	bm := &blockMetadata{}
+
+	b.mustWriteTo(sid, bm, ww)
+
+	tagFamilyMetadataReaders := make(map[string]fs.Reader)
+	tagFamilyReaders := make(map[string]fs.Reader)
+
+	for k, w := range ww.tagFamilyMetadataWriters {
+		tagFamilyMetadataReaders[k] = w.w.(*bytes.Buffer)
+		tagFamilyReaders[k] = ww.tagFamilyWriters[k].w.(*bytes.Buffer)
+	}
+	p.tagFamilyMetadata = tagFamilyMetadataReaders
+	p.tagFamilies = tagFamilyReaders
+
+	unmarshaled := generateBlock()
+	defer releaseBlock(unmarshaled)
+	unmarshaled.mustReadFrom(decoder, p, bm)
+	// blockMetadata is using a map, so the order of tag families is not guaranteed
+	unmarshaled.sortTagFamilies()
+
+	if !reflect.DeepEqual(b, unmarshaled) {
+		t.Errorf("block.mustReadFrom() = %+v, want %+v", unmarshaled, b)
+	}
 }
