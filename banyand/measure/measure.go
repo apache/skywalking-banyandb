@@ -44,6 +44,8 @@ const (
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
+
+	maxBlockLength = 8 * 1024
 )
 
 type measure struct {

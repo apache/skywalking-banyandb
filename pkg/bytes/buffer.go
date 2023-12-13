@@ -19,6 +19,7 @@ package bytes
 
 import (
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -51,7 +52,12 @@ func (b *Buffer) Write(bb []byte) (int, error) {
 
 // Read implements fs.Reader.
 func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
-	return copy(buffer, b.Buf[offset:]), nil
+	var err error
+	n := copy(buffer, b.Buf[offset:])
+	if n < len(buffer) {
+		err = io.EOF
+	}
+	return n, err
 }
 
 func (b *Buffer) Reset() {

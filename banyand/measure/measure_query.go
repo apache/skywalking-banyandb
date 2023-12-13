@@ -243,7 +243,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	for tstIter.NextBlock() {
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
-		bc.init(p.p, p.bm, qo)
+		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 	}
 	if mqo.Order != nil {

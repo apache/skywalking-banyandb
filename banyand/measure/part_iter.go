@@ -20,9 +20,7 @@ package measure
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
-	"strings"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -32,7 +30,7 @@ import (
 )
 
 type partIter struct {
-	bm *blockMetadata
+	curBlock blockMetadata
 
 	p *part
 
@@ -48,122 +46,126 @@ type partIter struct {
 	bms []blockMetadata
 
 	compressedPrimaryBuf []byte
-	indexBuf             []byte
+	primaryBuf           []byte
 
 	err error
 }
 
-func (ps *partIter) reset() {
-	ps.bm = nil
-	ps.p = nil
-	ps.sids = nil
-	ps.sidIdx = 0
-	ps.primaryBlockMetadata = nil
-	ps.bms = nil
-	ps.compressedPrimaryBuf = ps.compressedPrimaryBuf[:0]
-	ps.indexBuf = ps.indexBuf[:0]
-	ps.err = nil
+func (pi *partIter) reset() {
+	pi.curBlock = blockMetadata{}
+	pi.p = nil
+	pi.sids = nil
+	pi.sidIdx = 0
+	pi.primaryBlockMetadata = nil
+	pi.bms = nil
+	pi.compressedPrimaryBuf = pi.compressedPrimaryBuf[:0]
+	pi.primaryBuf = pi.primaryBuf[:0]
+	pi.err = nil
 }
 
-var isInTest = func() bool {
-	return strings.HasSuffix(os.Args[0], ".test")
-}()
+func (pi *partIter) init(p *part, sids []common.SeriesID, opt *QueryOptions) {
+	pi.reset()
+	pi.p = p
 
-func (ps *partIter) init(p *part, sids []common.SeriesID, opt *QueryOptions) {
-	ps.reset()
-	ps.p = p
+	pi.sids = sids
+	pi.minTimestamp = opt.minTimestamp
+	pi.maxTimestamp = opt.maxTimestamp
 
-	ps.sids = sids
-	ps.minTimestamp = opt.minTimestamp
-	ps.maxTimestamp = opt.maxTimestamp
+	pi.primaryBlockMetadata = p.primaryBlockMetadata
 
-	ps.primaryBlockMetadata = p.primaryBlockMetadata
-
-	ps.nextSeriesID()
+	pi.nextSeriesID()
 }
 
-func (ps *partIter) NextBlock() bool {
+func (pi *partIter) nextBlock() bool {
 	for {
-		if ps.err != nil {
+		if pi.err != nil {
 			return false
 		}
-		if len(ps.bms) == 0 {
-			if !ps.nextBlockMetadata() {
+		if len(pi.bms) == 0 {
+			if !pi.loadNextBlockMetadata() {
 				return false
 			}
 		}
-		if ps.searchBlockMetadata() {
+		if pi.findBlock() {
 			return true
 		}
 	}
 }
 
-func (ps *partIter) Error() error {
-	if ps.err == io.EOF {
+func (pi *partIter) Error() error {
+	if pi.err == io.EOF {
 		return nil
 	}
-	return ps.err
+	return pi.err
 }
 
-func (ps *partIter) nextSeriesID() bool {
-	if ps.sidIdx >= len(ps.sids) {
-		ps.err = io.EOF
+func (pi *partIter) nextSeriesID() bool {
+	if pi.sidIdx >= len(pi.sids) {
+		pi.err = io.EOF
 		return false
 	}
-	ps.bm.seriesID = ps.sids[ps.sidIdx]
-	ps.sidIdx++
+	pi.curBlock.seriesID = pi.sids[pi.sidIdx]
+	pi.sidIdx++
 	return true
 }
 
-func (ps *partIter) skipSeriesIDsSmallerThan(sid common.SeriesID) bool {
-	sids := ps.sids[ps.sidIdx:]
-	ps.sidIdx += sort.Search(len(sids), func(i int) bool {
+func (pi *partIter) searchTargetSeriesID(sid common.SeriesID) bool {
+	if pi.curBlock.seriesID >= sid {
+		return true
+	}
+	if !pi.nextSeriesID() {
+		return false
+	}
+	if pi.curBlock.seriesID >= sid {
+		return true
+	}
+	sids := pi.sids[pi.sidIdx:]
+	pi.sidIdx += sort.Search(len(sids), func(i int) bool {
 		return sid < sids[i]
 	})
-	if ps.sidIdx >= len(ps.sids) {
-		ps.sidIdx = len(ps.sids)
-		ps.err = io.EOF
+	if pi.sidIdx >= len(pi.sids) {
+		pi.sidIdx = len(pi.sids)
+		pi.err = io.EOF
 		return false
 	}
-	ps.bm.seriesID = ps.sids[ps.sidIdx]
-	ps.sidIdx++
+	pi.curBlock.seriesID = pi.sids[pi.sidIdx]
+	pi.sidIdx++
 	return true
 }
 
-func (ps *partIter) nextBlockMetadata() bool {
-	for len(ps.primaryBlockMetadata) > 0 {
-		if !ps.skipSeriesIDsSmallerThan(ps.primaryBlockMetadata[0].seriesID) {
+func (pi *partIter) loadNextBlockMetadata() bool {
+	for len(pi.primaryBlockMetadata) > 0 {
+		if !pi.searchTargetSeriesID(pi.primaryBlockMetadata[0].seriesID) {
 			return false
 		}
-		ps.primaryBlockMetadata = skipSmallMetaindexRows(ps.primaryBlockMetadata, ps.bm.seriesID)
+		pi.primaryBlockMetadata = searchPBM(pi.primaryBlockMetadata, pi.curBlock.seriesID)
 
-		mr := &ps.primaryBlockMetadata[0]
-		ps.primaryBlockMetadata = ps.primaryBlockMetadata[1:]
-		if ps.bm.seriesID < mr.seriesID {
-			logger.Panicf("BUG: invariant violation: ps.BlockRef.bh.TSID cannot be smaller than mr.TSID; got %+v vs %+v", &ps.bm.seriesID, &mr.seriesID)
+		pbm := &pi.primaryBlockMetadata[0]
+		pi.primaryBlockMetadata = pi.primaryBlockMetadata[1:]
+		if pi.curBlock.seriesID < pbm.seriesID {
+			logger.Panicf("invariant violation: pi.curBlock.seriesID cannot be smaller than pbm.seriesID; got %+v vs %+v", &pi.curBlock.seriesID, &pbm.seriesID)
 		}
 
-		if mr.maxTimestamp < ps.minTimestamp || mr.minTimestamp > ps.maxTimestamp {
+		if pbm.maxTimestamp < pi.minTimestamp || pbm.minTimestamp > pi.maxTimestamp {
 			continue
 		}
 
-		bm, err := ps.readPrimaryBlock(mr)
+		bm, err := pi.readPrimaryBlock(pbm)
 		if err != nil {
-			ps.err = fmt.Errorf("cannot read index block for part %q at offset %d with size %d: %w",
-				&ps.p.partMetadata, mr.offset, mr.size, err)
+			pi.err = fmt.Errorf("cannot read primary block for part %q at offset %d with size %d: %w",
+				&pi.p.partMetadata, pbm.offset, pbm.size, err)
 			return false
 		}
-		ps.bms = bm
+		pi.bms = bm
 		return true
 	}
-
-	ps.err = io.EOF
+	pi.err = io.EOF
 	return false
 }
 
-func skipSmallMetaindexRows(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBlockMetadata {
+func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBlockMetadata {
 	if sid < pbmIndex[0].seriesID {
-		logger.Panicf("BUG: invariant violation: tsid cannot be smaller than metaindex[0]; got %d vs %d", sid, &pbmIndex[0].seriesID)
+		logger.Panicf("invariant violation: sid cannot be smaller than pbmIndex[0]; got %d vs %d", sid, &pbmIndex[0].seriesID)
 	}
 
 	if sid == pbmIndex[0].seriesID {
@@ -171,39 +173,39 @@ func skipSmallMetaindexRows(pbmIndex []primaryBlockMetadata, sid common.SeriesID
 	}
 
 	n := sort.Search(len(pbmIndex), func(i int) bool {
-		return sid > pbmIndex[i].seriesID
+		return sid <= pbmIndex[i].seriesID
 	})
 	if n == 0 {
-		logger.Panicf("BUG: invariant violation: sort.Search returned 0 for tsid > metaindex[0].TSID; tsid=%+v; metaindex[0].TSID=%+v",
+		logger.Panicf("invariant violation: sort.Search returned 0 for sid > pbmIndex[0].seriesID; sid=%+v; pbmIndex[0].seriesID=%+v",
 			sid, &pbmIndex[0].seriesID)
 	}
 	return pbmIndex[n-1:]
 }
 
-func (ps *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata, error) {
-	ps.compressedPrimaryBuf = bytes.ResizeOver(ps.compressedPrimaryBuf, int(mr.size))
-	fs.MustReadData(ps.p.primary, int64(mr.offset), ps.compressedPrimaryBuf)
+func (pi *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata, error) {
+	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
+	fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
 
 	var err error
-	ps.indexBuf, err = zstd.Decompress(ps.indexBuf[:0], ps.compressedPrimaryBuf)
+	pi.primaryBuf, err = zstd.Decompress(pi.primaryBuf[:0], pi.compressedPrimaryBuf)
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
 	bm := make([]blockMetadata, 0)
-	bm, err = unmarshalBlockMetadata(bm, ps.indexBuf)
+	bm, err = unmarshalBlockMetadata(bm, pi.primaryBuf)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
 	return bm, nil
 }
 
-func (ps *partIter) searchBlockMetadata() bool {
-	bhs := ps.bms
+func (pi *partIter) findBlock() bool {
+	bhs := pi.bms
 	for len(bhs) > 0 {
-		sid := ps.bm.seriesID
+		sid := pi.curBlock.seriesID
 		if bhs[0].seriesID < sid {
 			n := sort.Search(len(bhs), func(i int) bool {
-				return sid > bhs[i].seriesID
+				return sid <= bhs[i].seriesID
 			})
 			if n == len(bhs) {
 				break
@@ -213,28 +215,28 @@ func (ps *partIter) searchBlockMetadata() bool {
 		bm := &bhs[0]
 
 		if bm.seriesID != sid {
-			if !ps.skipSeriesIDsSmallerThan(bm.seriesID) {
+			if !pi.searchTargetSeriesID(bm.seriesID) {
 				return false
 			}
 			continue
 		}
 
-		if bm.timestamps.max < ps.minTimestamp {
+		if bm.timestamps.max < pi.minTimestamp {
 			bhs = bhs[1:]
 			continue
 		}
-		if bm.timestamps.min > ps.maxTimestamp {
-			if !ps.nextSeriesID() {
+		if bm.timestamps.min > pi.maxTimestamp {
+			if !pi.nextSeriesID() {
 				return false
 			}
 			continue
 		}
 
-		ps.bm = bm
+		pi.curBlock = *bm
 
-		ps.bms = bhs[1:]
+		pi.bms = bhs[1:]
 		return true
 	}
-	ps.bms = nil
+	pi.bms = nil
 	return false
 }

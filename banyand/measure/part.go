@@ -129,7 +129,8 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 			sidPrev = sid
 		}
 
-		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize || sid != sidPrev {
+		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
+			(i-indexPrev) > maxBlockLength || sid != sidPrev {
 			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
@@ -157,7 +158,7 @@ func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
 	return n
 }
 
-func getMemPart() *memPart {
+func generateMemPart() *memPart {
 	v := memPartPool.Get()
 	if v == nil {
 		return &memPart{}
@@ -165,7 +166,7 @@ func getMemPart() *memPart {
 	return v.(*memPart)
 }
 
-func putMemPart(mp *memPart) {
+func releaseMemPart(mp *memPart) {
 	mp.reset()
 	memPartPool.Put(mp)
 }
@@ -193,7 +194,7 @@ func (pw *partWrapper) decRef() {
 		return
 	}
 	if pw.mp != nil {
-		putMemPart(pw.mp)
+		releaseMemPart(pw.mp)
 		pw.mp = nil
 	}
 }

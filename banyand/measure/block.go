@@ -322,14 +322,14 @@ type blockCursor struct {
 
 	columnValuesDecoder encoding.BytesBlockDecoder
 	p                   *part
-	bm                  *blockMetadata
+	bm                  blockMetadata
 	opts                *QueryOptions
 }
 
 func (bc *blockCursor) reset() {
 	bc.idx = 0
 	bc.p = nil
-	bc.bm = nil
+	bc.bm = blockMetadata{}
 	bc.opts = nil
 
 	bc.timestamps = bc.timestamps[:0]
@@ -342,7 +342,7 @@ func (bc *blockCursor) reset() {
 	bc.fields.reset()
 }
 
-func (bc *blockCursor) init(p *part, bm *blockMetadata, opts *QueryOptions) {
+func (bc *blockCursor) init(p *part, bm blockMetadata, opts *QueryOptions) {
 	bc.reset()
 	bc.p = p
 	bc.bm = bm
@@ -350,9 +350,8 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts *QueryOptions) {
 }
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
-	bc.reset()
 	tmpBlock.reset()
-	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
+	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, &bc.bm)
 
 	start, end, ok := findRange(tmpBlock.timestamps, bc.opts.minTimestamp, bc.opts.maxTimestamp)
 	if !ok {

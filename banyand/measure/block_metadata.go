@@ -175,7 +175,7 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 	return src, nil
 }
 
-func (bh *blockMetadata) less(other *blockMetadata) bool {
+func (bh blockMetadata) less(other blockMetadata) bool {
 	if bh.seriesID == other.seriesID {
 		return bh.timestamps.min < other.timestamps.min
 	}
