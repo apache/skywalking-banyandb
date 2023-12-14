@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -54,7 +53,6 @@ type Query interface {
 type Measure interface {
 	io.Closer
 	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
-	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
 	CompanionShards(metadata *commonv1.Metadata) ([]tsdb.Shard, error)
 	Shard(id common.ShardID) (tsdb.Shard, error)
 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
@@ -89,8 +87,6 @@ type QueryResult struct {
 	asc            bool
 }
 
-const round = time.Millisecond
-
 func (qr *QueryResult) Pull() *pbv1.Result {
 	if len(qr.data) == 0 {
 		return nil
@@ -111,7 +107,7 @@ func (qr *QueryResult) Pull() *pbv1.Result {
 			bc.copyAllTo(r)
 			return r
 		}
-		return qr.merge(round)
+		return qr.merge()
 	}
 	originalData := qr.data
 	var lastSeriesID common.SeriesID
@@ -121,13 +117,13 @@ func (qr *QueryResult) Pull() *pbv1.Result {
 			qr.data = qr.data[:0]
 			qr.data = append(qr.data, originalData[qr.lastIndex:i]...)
 			qr.lastIndex = i
-			return qr.merge(round)
+			return qr.merge()
 		}
 		lastSeriesID = bc.bm.seriesID
 	}
 	if qr.lastIndex < len(originalData)-1 {
 		qr.data = originalData[qr.lastIndex:]
-		return qr.merge(round)
+		return qr.merge()
 	}
 	return nil
 }
@@ -171,23 +167,20 @@ func (qr *QueryResult) Pop() interface{} {
 	return x
 }
 
-func (qr *QueryResult) merge(round time.Duration) *pbv1.Result {
+func (qr *QueryResult) merge() *pbv1.Result {
 	result := &pbv1.Result{}
-	var lastOriginalTimestamp int64
-	r := int64(round)
+	var lastPartVersion int64
 
 	for qr.Len() > 0 {
 		bc := heap.Pop(qr).(*blockCursor)
 
-		roundedTimestamp := (bc.timestamps[bc.idx] / r) * r
-
-		if len(result.Timestamps) > 0 && roundedTimestamp == result.Timestamps[len(result.Timestamps)-1] {
-			if bc.timestamps[bc.idx] > lastOriginalTimestamp {
-				lastOriginalTimestamp = bc.timestamps[bc.idx]
+		if len(result.Timestamps) > 0 && bc.timestamps[bc.idx] == result.Timestamps[len(result.Timestamps)-1] {
+			if bc.p.partMetadata.Version > lastPartVersion {
+				lastPartVersion = bc.p.partMetadata.Version
 			}
 		} else {
 			bc.copyTo(result)
-			lastOriginalTimestamp = bc.timestamps[bc.idx]
+			lastPartVersion = bc.p.partMetadata.Version
 		}
 
 		bc.idx++
@@ -235,12 +228,12 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(parts, sids, qo)
+	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
 	if tstIter.err != nil {
 		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.err)
 	}
 	var result QueryResult
-	for tstIter.NextBlock() {
+	for tstIter.nextBlock() {
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
@@ -262,37 +255,6 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	}
 	return &result, nil
 }
-
-type tableIterator struct {
-	sids     []common.SeriesID
-	tsTables []*tsTable
-}
-
-func (si *tableIterator) reset() {
-}
-
-// func (si *tableIterator) init(seriesTablesList []*seriesTables) {
-
-// }
-
-func (si *tableIterator) nextBlock() bool {
-	return false
-}
-
-func generateTableIterator() *tableIterator {
-	v := tiPool.Get()
-	if v == nil {
-		return &tableIterator{}
-	}
-	return v.(*tableIterator)
-}
-
-func releaseTableIterator(ti *tableIterator) {
-	ti.reset()
-	tiPool.Put(ti)
-}
-
-var tiPool sync.Pool
 
 func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 	r.Timestamps = bc.timestamps
@@ -358,6 +320,9 @@ func (bc *blockCursor) copyTo(r *pbv1.Result) {
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+	if value == nil {
+		return pbv1.NullTagValue
+	}
 	switch valueType {
 	case pbv1.ValueTypeInt64:
 		return &modelv1.TagValue{
@@ -420,6 +385,9 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 }
 
 func mustDecodeFieldValue(valueType pbv1.ValueType, value []byte) *modelv1.FieldValue {
+	if value == nil {
+		return pbv1.NullFieldValue
+	}
 	switch valueType {
 	case pbv1.ValueTypeInt64:
 		return &modelv1.FieldValue{

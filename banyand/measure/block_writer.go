@@ -19,6 +19,7 @@ package measure
 
 import (
 	"sync"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
@@ -255,6 +256,7 @@ func (bsw *blockWriter) Flush(ph *partMetadata) {
 	ph.BlocksCount = bsw.totalBlocksCount
 	ph.MinTimestamp = bsw.totalMinTimestamp
 	ph.MaxTimestamp = bsw.totalMaxTimestamp
+	ph.Version = time.Now().UnixNano() // TODO: use a global version
 
 	bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
 

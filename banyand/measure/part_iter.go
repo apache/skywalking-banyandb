@@ -63,13 +63,13 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(p *part, sids []common.SeriesID, opt *QueryOptions) {
+func (pi *partIter) init(p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.p = p
 
 	pi.sids = sids
-	pi.minTimestamp = opt.minTimestamp
-	pi.maxTimestamp = opt.maxTimestamp
+	pi.minTimestamp = minTimestamp
+	pi.maxTimestamp = maxTimestamp
 
 	pi.primaryBlockMetadata = p.primaryBlockMetadata
 

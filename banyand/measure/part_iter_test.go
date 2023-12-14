@@ -114,7 +114,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			p := openMemPart(mp)
 
 			pi := partIter{}
-			pi.init(p, tt.sids, tt.opt)
+			pi.init(p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
 
 			var got []blockMetadata
 			for pi.nextBlock() {

@@ -24,6 +24,7 @@ type partMetadata struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
+	Version               int64
 }
 
 func (ph *partMetadata) reset() {
@@ -33,4 +34,5 @@ func (ph *partMetadata) reset() {
 	ph.BlocksCount = 0
 	ph.MinTimestamp = 0
 	ph.MaxTimestamp = 0
+	ph.Version = 0
 }

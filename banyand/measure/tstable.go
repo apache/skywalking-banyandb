@@ -38,6 +38,11 @@ type tsTable struct {
 }
 
 func (tst *tsTable) Close() error {
+	tst.Lock()
+	defer tst.Unlock()
+	for _, p := range tst.memParts {
+		p.decRef()
+	}
 	return nil
 }
 
@@ -73,8 +78,6 @@ func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts *QueryOpt
 }
 
 type tstIter struct {
-	queryOpts *QueryOptions
-
 	parts []*part
 
 	piPool []partIter
@@ -105,17 +108,16 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(parts []*part, sids []common.SeriesID, queryOpts *QueryOptions) {
+func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	ti.reset()
 	ti.parts = parts
-	ti.queryOpts = queryOpts
 
 	if n := len(ti.parts) - cap(ti.piPool); n > 0 {
 		ti.piPool = append(ti.piPool[:cap(ti.piPool)], make([]partIter, n)...)
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(p, sids, queryOpts)
+		ti.piPool[i].init(p, sids, minTimestamp, maxTimestamp)
 	}
 
 	ti.piHeap = ti.piHeap[:0]
@@ -123,7 +125,7 @@ func (ti *tstIter) init(parts []*part, sids []common.SeriesID, queryOpts *QueryO
 		ps := &ti.piPool[i]
 		if !ps.nextBlock() {
 			if err := ps.Error(); err != nil {
-				ti.err = fmt.Errorf("cannot initialize tstable iteration: %w", err)
+				ti.err = fmt.Errorf("cannot initialize tsTable iteration: %w", err)
 				return
 			}
 			continue
@@ -138,7 +140,7 @@ func (ti *tstIter) init(parts []*part, sids []common.SeriesID, queryOpts *QueryO
 	ti.nextBlockNoop = true
 }
 
-func (ti *tstIter) NextBlock() bool {
+func (ti *tstIter) nextBlock() bool {
 	if ti.err != nil {
 		return false
 	}
@@ -147,7 +149,7 @@ func (ti *tstIter) NextBlock() bool {
 		return true
 	}
 
-	ti.err = ti.nextBlock()
+	ti.err = ti.next()
 	if ti.err != nil {
 		if ti.err != io.EOF {
 			ti.err = fmt.Errorf("cannot obtain the next block to search in the partition: %w", ti.err)
@@ -157,7 +159,7 @@ func (ti *tstIter) NextBlock() bool {
 	return true
 }
 
-func (ti *tstIter) nextBlock() error {
+func (ti *tstIter) next() error {
 	psMin := ti.piHeap[0]
 	if psMin.nextBlock() {
 		heap.Fix(&ti.piHeap, 0)

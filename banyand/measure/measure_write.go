@@ -50,11 +50,10 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 
 func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
-	tp := req.DataPoint.Timestamp.AsTime().Local()
-	if err := timestamp.Check(tp); err != nil {
+	t := req.DataPoint.Timestamp.AsTime().Local()
+	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %s", err)
 	}
-	t := timestamp.MToN(tp)
 	ts := uint64(t.UnixNano())
 
 	gn := req.Metadata.Group
