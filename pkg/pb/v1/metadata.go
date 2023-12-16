@@ -19,6 +19,7 @@
 package v1
 
 import (
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -97,6 +98,7 @@ type Field struct {
 }
 
 type Result struct {
+	SID         common.SeriesID
 	Timestamps  []int64
 	TagFamilies []TagFamily
 	Fields      []Field

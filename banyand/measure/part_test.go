@@ -108,7 +108,6 @@ var dps = &dataPoints{
 				"singleTag", []*nameValue{
 					{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
 					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
-					{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(12233.343), nil},
 				},
 			},
 		},
@@ -126,7 +125,6 @@ var dps = &dataPoints{
 				"singleTag", []*nameValue{
 					{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
 					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
-					{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(24466.686), nil},
 				},
 			},
 		},

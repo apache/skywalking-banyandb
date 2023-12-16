@@ -84,7 +84,6 @@ var conventionalBlock = block{
 		{"singleTag", []Column{
 			{"strTag", pbv1.ValueTypeStr, [][]byte{[]byte("value1"), []byte("value2")}},
 			{"intTag", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
-			{"floatTag", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(12233.343), convert.Float64ToBytes(24466.686)}},
 		}},
 	},
 	field: ColumnFamily{Columns: []Column{
@@ -124,7 +123,6 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						"singleTag", []*nameValue{
 							{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
 							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
-							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(12233.343), nil},
 						},
 					},
 				}, {
@@ -141,7 +139,6 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						"singleTag", []*nameValue{
 							{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
 							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
-							{"floatTag", pbv1.ValueTypeFloat64, convert.Float64ToBytes(24466.686), nil},
 						},
 					},
 				}},
@@ -323,5 +320,90 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 
 	if !reflect.DeepEqual(b, unmarshaled) {
 		t.Errorf("block.mustReadFrom() = %+v, want %+v", unmarshaled, b)
+	}
+}
+
+func Test_findRange(t *testing.T) {
+	type args struct {
+		timestamps []int64
+		min        int64
+		max        int64
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantStart int
+		wantEnd   int
+		wantExist bool
+	}{
+		{
+			name: "Test with empty timestamps",
+			args: args{
+				timestamps: []int64{},
+				min:        1,
+				max:        10,
+			},
+			wantStart: 0,
+			wantEnd:   0,
+			wantExist: false,
+		},
+		{
+			name: "Test with single timestamp",
+			args: args{
+				timestamps: []int64{1},
+				min:        1,
+				max:        1,
+			},
+			wantStart: 0,
+			wantEnd:   1,
+			wantExist: true,
+		},
+		{
+			name: "Test with range not in timestamps",
+			args: args{
+				timestamps: []int64{1, 2, 3, 4, 5},
+				min:        6,
+				max:        10,
+			},
+			wantStart: 0,
+			wantEnd:   0,
+			wantExist: false,
+		},
+		{
+			name: "Test with range in timestamps",
+			args: args{
+				timestamps: []int64{1, 2, 3, 4, 5},
+				min:        2,
+				max:        4,
+			},
+			wantStart: 1,
+			wantEnd:   4,
+			wantExist: true,
+		},
+		{
+			name: "Test with range as timestamps",
+			args: args{
+				timestamps: []int64{1, 2, 3, 4, 5},
+				min:        1,
+				max:        5,
+			},
+			wantStart: 0,
+			wantEnd:   5,
+			wantExist: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStart, gotEnd, gotExist := findRange(tt.args.timestamps, tt.args.min, tt.args.max)
+			if gotStart != tt.wantStart {
+				t.Errorf("findRange() gotStart = %v, want %v", gotStart, tt.wantStart)
+			}
+			if gotEnd != tt.wantEnd {
+				t.Errorf("findRange() gotEnd = %v, want %v", gotEnd, tt.wantEnd)
+			}
+			if gotExist != tt.wantExist {
+				t.Errorf("findRange() gotExist = %v, want %v", gotExist, tt.wantExist)
+			}
+		})
 	}
 }

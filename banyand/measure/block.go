@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type block struct {
@@ -323,14 +324,16 @@ type blockCursor struct {
 	columnValuesDecoder encoding.BytesBlockDecoder
 	p                   *part
 	bm                  blockMetadata
-	opts                *QueryOptions
+	minTimestamp        int64
+	maxTimestamp        int64
 }
 
 func (bc *blockCursor) reset() {
 	bc.idx = 0
 	bc.p = nil
 	bc.bm = blockMetadata{}
-	bc.opts = nil
+	bc.minTimestamp = 0
+	bc.maxTimestamp = 0
 
 	bc.timestamps = bc.timestamps[:0]
 
@@ -342,47 +345,138 @@ func (bc *blockCursor) reset() {
 	bc.fields.reset()
 }
 
-func (bc *blockCursor) init(p *part, bm blockMetadata, opts *QueryOptions) {
+func (bc *blockCursor) init(p *part, bm blockMetadata, minTimestamp, maxTimestamp int64) {
 	bc.reset()
 	bc.p = p
 	bc.bm = bm
-	bc.opts = opts
+	bc.minTimestamp = minTimestamp
+	bc.maxTimestamp = maxTimestamp
+}
+
+func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
+	r.SID = bc.bm.seriesID
+	r.Timestamps = bc.timestamps
+	for _, cf := range bc.tagFamilies {
+		tf := pbv1.TagFamily{
+			Name: cf.Name,
+		}
+		for _, c := range cf.Columns {
+			t := pbv1.Tag{
+				Name: c.Name,
+			}
+			for _, v := range c.Values {
+				t.Values = append(t.Values, mustDecodeTagValue(c.ValueType, v))
+			}
+			tf.Tags = append(tf.Tags, t)
+		}
+		r.TagFamilies = append(r.TagFamilies, tf)
+	}
+	for _, c := range bc.fields.Columns {
+		f := pbv1.Field{
+			Name: c.Name,
+		}
+		for _, v := range c.Values {
+			f.Values = append(f.Values, mustDecodeFieldValue(c.ValueType, v))
+		}
+		r.Fields = append(r.Fields, f)
+	}
+}
+
+func (bc *blockCursor) copyTo(r *pbv1.Result) {
+	r.SID = bc.bm.seriesID
+	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
+	if len(r.TagFamilies) != len(bc.tagFamilies) {
+		for _, cf := range bc.tagFamilies {
+			tf := pbv1.TagFamily{
+				Name: cf.Name,
+			}
+			for _, c := range cf.Columns {
+				t := pbv1.Tag{
+					Name: c.Name,
+				}
+				tf.Tags = append(tf.Tags, t)
+			}
+			r.TagFamilies = append(r.TagFamilies, tf)
+		}
+	}
+	for i, cf := range bc.tagFamilies {
+		for i2, c := range cf.Columns {
+			r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.ValueType, c.Values[bc.idx]))
+		}
+	}
+
+	if len(r.Fields) != len(bc.fields.Columns) {
+		for _, c := range bc.fields.Columns {
+			f := pbv1.Field{
+				Name: c.Name,
+			}
+			r.Fields = append(r.Fields, f)
+		}
+	}
+	for i, c := range bc.fields.Columns {
+		r.Fields[i].Values = append(r.Fields[i].Values, mustDecodeFieldValue(c.ValueType, c.Values[bc.idx]))
+	}
 }
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, &bc.bm)
 
-	start, end, ok := findRange(tmpBlock.timestamps, bc.opts.minTimestamp, bc.opts.maxTimestamp)
+	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
 		return false
 	}
 	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end]...)
-	bc.fields.Name = tmpBlock.field.Name
-	bc.fields.Columns = append(bc.fields.Columns, tmpBlock.field.Columns[start:end]...)
+
+	sort.Slice(tmpBlock.tagFamilies, func(i, j int) bool {
+		return tmpBlock.tagFamilies[i].Name < tmpBlock.tagFamilies[j].Name
+	})
 	for _, cf := range tmpBlock.tagFamilies {
 		tf := ColumnFamily{
 			Name: cf.Name,
 		}
-		tf.Columns = append(tf.Columns, cf.Columns[start:end]...)
+		for i := range cf.Columns {
+			column := Column{
+				Name:      cf.Columns[i].Name,
+				ValueType: cf.Columns[i].ValueType,
+			}
+			column.Values = append(column.Values, cf.Columns[i].Values[start:end]...)
+			tf.Columns = append(tf.Columns, column)
+		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
+	}
+	bc.fields.Name = tmpBlock.field.Name
+	for i := range tmpBlock.field.Columns {
+		column := Column{
+			Name:      tmpBlock.field.Columns[i].Name,
+			ValueType: tmpBlock.field.Columns[i].ValueType,
+		}
+		column.Values = append(column.Values, tmpBlock.field.Columns[i].Values[start:end]...)
+		bc.fields.Columns = append(bc.fields.Columns, column)
 	}
 	return true
 }
 
 func findRange(timestamps []int64, min int64, max int64) (int, int, bool) {
+	l := len(timestamps)
 	start, end := -1, -1
 
-	for i, t := range timestamps {
-		if t >= min && start == -1 {
+	for i := 0; i < l; i++ {
+		if timestamps[i] > max || timestamps[l-i-1] < min {
+			break
+		}
+		if timestamps[i] >= min && start == -1 {
 			start = i
 		}
-		if t <= max {
-			end = i
+		if timestamps[l-i-1] <= max && end == -1 {
+			end = l - i
+		}
+		if start != -1 && end != -1 {
+			break
 		}
 	}
 
-	if start == -1 || end == -1 {
+	if start == -1 || end == -1 || start >= end {
 		return 0, 0, false
 	}
 
