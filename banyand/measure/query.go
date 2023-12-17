@@ -76,6 +76,11 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	if err != nil {
 		return nil, err
 	}
+
+	var result QueryResult
+	if len(sl) < 1 {
+		return &result, nil
+	}
 	var sids []common.SeriesID
 	for i := range sl {
 		sids = append(sids, sl[i].ID)
@@ -96,15 +101,17 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
 	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if tstIter.err != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.err)
+	if tstIter.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}
-	var result QueryResult
 	for tstIter.nextBlock() {
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo.minTimestamp, qo.maxTimestamp)
 		result.data = append(result.data, bc)
+	}
+	if tstIter.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 	if mqo.Order == nil {
 		result.orderByTS = true

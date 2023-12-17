@@ -89,8 +89,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 		dpg.tables = append(dpg.tables, dpt)
 	}
-	dps := dpt.dataPoints
-	dps.timestamps = append(dps.timestamps, int64(ts))
+	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, int64(ts))
 	stm, ok := w.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find measure definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -104,12 +103,12 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	series, err := tsdb.Register(shardID, &pbv1.Series{
 		Subject:      req.Metadata.Name,
-		EntityValues: writeEvent.EntityValues[1:],
+		EntityValues: writeEvent.EntityValues,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot register series: %w", err)
 	}
-	dps.seriesIDs = append(dps.seriesIDs, series.ID)
+	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
 	field := nameValues{}
 	for i := range stm.GetSchema().GetFields() {
 		var v *modelv1.FieldValue
@@ -124,8 +123,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			v,
 		))
 	}
-	dps.fields = append(dps.fields, field)
-	tagFamilies := make([]nameValues, len(req.DataPoint.TagFamilies))
+	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
+	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.DataPoint.TagFamilies) <= i {
@@ -133,8 +133,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		} else {
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
-		tf := nameValues{}
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
+		tagFamilies[i].name = tagFamilySpec.Name
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
 			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
@@ -142,14 +142,13 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			} else {
 				tagValue = tagFamily.Tags[j]
 			}
-			tf.values = append(tf.values, encodeTagValue(
+			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
 				tagFamilySpec.Tags[j].Type,
 				tagValue,
 			))
 		}
 	}
-	dps.tagFamilies = append(dps.tagFamilies, tagFamilies)
 
 	if stm.processorManager != nil {
 		stm.processorManager.onMeasureWrite(&measurev1.InternalWriteRequest{
@@ -158,7 +157,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				DataPoint: req.DataPoint,
 				MessageId: uint64(time.Now().UnixNano()),
 			},
-			EntityValues: writeEvent.EntityValues[1:],
+			EntityValues: writeEvent.EntityValues,
 		})
 	}
 	var fields []index.Field
@@ -219,7 +218,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			dps.tsTable.Table().mustAddDataPoints(dps.dataPoints)
+			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)
 			dps.tsTable.DecRef()
 		}
 		g.tsdb.IndexDB().Write(g.docs)

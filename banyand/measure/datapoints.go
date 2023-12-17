@@ -143,7 +143,7 @@ type dataPointsInTable struct {
 	timeRange timestamp.TimeRange
 	tsTable   storage.TSTableWrapper[*tsTable]
 
-	dataPoints *dataPoints
+	dataPoints dataPoints
 }
 
 type dataPointsInGroup struct {

@@ -184,7 +184,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 		}
 	}
 
-	if order == nil && order.Index == nil {
+	if order == nil || order.Index == nil {
 		return filterSeriesList(seriesList, pl), nil
 	}
 

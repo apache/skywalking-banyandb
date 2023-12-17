@@ -83,7 +83,7 @@ func (d *database[T]) Close() error {
 	for _, s := range d.sLst {
 		s.closer()
 	}
-	return nil
+	return d.index.Close()
 }
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
@@ -120,29 +120,38 @@ func (d *database[T]) Register(shardID common.ShardID, series *pbv1.Series) (*pb
 	if series, err = d.index.createPrimary(series); err != nil {
 		return nil, err
 	}
-	id := int(shardID)
-	if id < int(atomic.LoadUint32(&d.sLen)) {
-		return series, nil
-	}
-	d.Lock()
-	defer d.Unlock()
-	if id < len(d.sLst) {
-		return series, nil
-	}
-	d.logger.Info().Int("shard_id", id).Msg("creating a shard")
-	if err = d.registerShard(id); err != nil {
-		return nil, err
-	}
 	return series, nil
 }
 
 func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
+	id := uint32(shardID)
+	if id >= atomic.LoadUint32(&d.sLen) {
+		return func() (TSTableWrapper[T], error) {
+			d.Lock()
+			defer d.Unlock()
+			if int(id) >= len(d.sLst) {
+				for i := len(d.sLst); i <= int(id); i++ {
+					d.logger.Info().Int("shard_id", i).Msg("creating a shard")
+					if err := d.registerShard(i); err != nil {
+						return nil, err
+					}
+				}
+			}
+			return d.createTSTTable(shardID, ts)
+		}()
+	}
+	d.RLock()
+	defer d.RUnlock()
+	return d.createTSTTable(shardID, ts)
+}
+
+func (d *database[T]) createTSTTable(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
 	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
 	ss := d.sLst[shardID].segmentController.selectTSTables(timeRange)
 	if len(ss) > 0 {
 		return ss[0], nil
 	}
-	return d.sLst[shardID].segmentController.createTSTable(timeRange.Start)
+	return d.sLst[shardID].segmentController.createTSTable(ts)
 }
 
 func (d *database[T]) SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T] {

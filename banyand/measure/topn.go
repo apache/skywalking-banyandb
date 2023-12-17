@@ -171,6 +171,11 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 			return errors.New("fail to extract tag values from topN result")
 		}
 	}
+	for _, tv := range tagValues {
+		if tv.Value == nil {
+			t.l.Warn().Msg("tag value is nil")
+		}
+	}
 	series, shardID, err := t.locate(tagValues, rankNum)
 	if err != nil {
 		return err
@@ -212,10 +217,8 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 				},
 			},
 		},
-		ShardId: uint32(shardID),
-	}
-	if t.l.Debug().Enabled() {
-		iwr.EntityValues = series.EntityValues
+		EntityValues: series.EntityValues,
+		ShardId:      uint32(shardID),
 	}
 	message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
 	_, errWritePub := publisher.Publish(apiData.TopicMeasureWrite, message)
@@ -259,7 +262,7 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	}
 	// measureID as sharding key
 	for idx, tagVal := range tagValues {
-		series.EntityValues[idx+3] = tagVal
+		series.EntityValues[idx+2] = tagVal
 	}
 	if err := series.Marshal(); err != nil {
 		return nil, 0, fmt.Errorf("fail to marshal series: %w", err)

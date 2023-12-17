@@ -222,6 +222,7 @@ func (ei *resultMIterator) Next() bool {
 		ei.index++
 		return ei.Next()
 	}
+	ei.current = ei.current[:0]
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, int64(r.Timestamps[i]))),
@@ -245,6 +246,7 @@ func (ei *resultMIterator) Next() bool {
 				Value: f.Values[i],
 			})
 		}
+		ei.current = append(ei.current, dp)
 	}
 
 	return true

@@ -89,13 +89,28 @@ func (*local) Register(schema.EventHandler) {
 }
 
 type localBatchPublisher struct {
-	local *bus.Bus
+	local    *bus.Bus
+	messages []any
+	topic    *bus.Topic
 }
 
-func (l *localBatchPublisher) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
-	return l.local.Publish(topic, message...)
+func (l *localBatchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	if l.topic == nil {
+		l.topic = &topic
+	}
+	for i := range messages {
+		l.messages = append(l.messages, messages[i].Data())
+	}
+	return nil, nil
 }
 
 func (l *localBatchPublisher) Close() error {
+	newMessage := bus.NewMessage(1, l.messages)
+	_, err := l.local.Publish(*l.topic, newMessage)
+	if err != nil {
+		return err
+	}
+	l.messages = nil
+	l.topic = nil
 	return nil
 }
