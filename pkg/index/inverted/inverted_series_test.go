@@ -210,5 +210,6 @@ func setupData(tester *assert.Assertions, s index.SeriesStore) {
 		EntityValues: []byte("test3"),
 	}
 	tester.NoError(s.Create(series3))
+	tester.NoError(s.Create(series3)) // duplicated data
 	s.(*store).flush()
 }

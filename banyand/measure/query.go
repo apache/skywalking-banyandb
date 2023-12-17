@@ -70,6 +70,9 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	if mqo.TimeRange == nil || mqo.Entity == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
+	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
+	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
 	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order)
@@ -123,6 +126,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
 			result.ascTS = true
 		}
+		return &result, nil
 	}
 
 	result.sidToIndex = make(map[common.SeriesID]int)

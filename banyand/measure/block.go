@@ -213,9 +213,10 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
 
 	for j := range tagProjection {
-		for i := range cc {
+		for i := range cfm.columnMetadata {
 			if tagProjection[j] == cfm.columnMetadata[i].name {
-				cc[i].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+				break
 			}
 		}
 	}
@@ -372,7 +373,7 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts QueryOptions) {
 
 func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 	r.SID = bc.bm.seriesID
-	r.Timestamps = bc.timestamps
+	r.Timestamps = append(r.Timestamps, bc.timestamps...)
 	for _, cf := range bc.tagFamilies {
 		tf := pbv1.TagFamily{
 			Name: cf.Name,
@@ -479,6 +480,12 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 				Name:      cf.Columns[i].Name,
 				ValueType: cf.Columns[i].ValueType,
 			}
+			if len(cf.Columns[i].Values) == 0 {
+				continue
+			}
+			if len(cf.Columns[i].Values) != len(tmpBlock.timestamps) {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.Columns[i].Name, len(cf.Columns[i].Values), len(tmpBlock.timestamps))
+			}
 			column.Values = append(column.Values, cf.Columns[i].Values[start:end]...)
 			tf.Columns = append(tf.Columns, column)
 		}
@@ -486,6 +493,12 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	}
 	bc.fields.Name = tmpBlock.field.Name
 	for i := range tmpBlock.field.Columns {
+		if len(tmpBlock.field.Columns[i].Values) == 0 {
+			continue
+		}
+		if len(tmpBlock.field.Columns[i].Values) != len(tmpBlock.timestamps) {
+			logger.Panicf("unexpected number of values for fields %q: got %d; want %d", tmpBlock.field.Columns[i].Name, len(tmpBlock.field.Columns[i].Values), len(tmpBlock.timestamps))
+		}
 		column := Column{
 			Name:      tmpBlock.field.Columns[i].Name,
 			ValueType: tmpBlock.field.Columns[i].ValueType,

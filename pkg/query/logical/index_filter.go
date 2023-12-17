@@ -512,7 +512,7 @@ func parseEntities(op modelv1.LogicalExpression_LogicalOp, input []*modelv1.TagV
 	anyEntity := func(entities [][]*modelv1.TagValue) bool {
 		for _, entity := range entities {
 			for _, entry := range entity {
-				if entry == pbv1.AnyTagValue {
+				if entry != pbv1.AnyTagValue {
 					return false
 				}
 			}

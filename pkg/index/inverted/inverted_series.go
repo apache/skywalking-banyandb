@@ -105,11 +105,16 @@ func (s *store) SearchWildcard(wildcard []byte) ([]index.Series, error) {
 func parseResult(dmi search.DocumentMatchIterator) ([]index.Series, error) {
 	result := make([]index.Series, 0, 10)
 	next, err := dmi.Next()
+	docIDMap := make(map[uint64]struct{})
 	for err == nil && next != nil {
 		var series index.Series
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
 			if field == docIDField {
-				series.ID = common.SeriesID(convert.BytesToUint64(value))
+				id := convert.BytesToUint64(value)
+				if _, ok := docIDMap[id]; !ok {
+					series.ID = common.SeriesID(convert.BytesToUint64(value))
+					docIDMap[id] = struct{}{}
+				}
 			}
 			if field == entityField {
 				series.EntityValues = value
@@ -119,7 +124,9 @@ func parseResult(dmi search.DocumentMatchIterator) ([]index.Series, error) {
 		if err != nil {
 			return nil, errors.WithMessage(err, "visit stored fields")
 		}
-		result = append(result, series)
+		if series.ID > 0 {
+			result = append(result, series)
+		}
 		next, err = dmi.Next()
 	}
 	if err != nil {

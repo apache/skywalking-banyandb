@@ -137,14 +137,10 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 
 func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	var orderBy *pbv1.OrderBy
-	if i.order.Index != nil {
+	if i.order != nil {
 		orderBy = &pbv1.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
-		}
-	} else if i.groupByEntity {
-		orderBy = &pbv1.OrderBy{
-			Sort: i.order.Sort,
 		}
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
@@ -205,14 +201,19 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	results []pbv1.MeasureQueryResult
-	current []*measurev1.DataPoint
-	index   int
+	results      []pbv1.MeasureQueryResult
+	current      []*measurev1.DataPoint
+	index        int
+	currentIndex int
 }
 
 func (ei *resultMIterator) Next() bool {
 	if ei.index >= len(ei.results) {
 		return false
+	}
+	ei.currentIndex++
+	if ei.currentIndex < len(ei.current) {
+		return true
 	}
 
 	r := ei.results[ei.index].Pull()
@@ -221,6 +222,7 @@ func (ei *resultMIterator) Next() bool {
 		return ei.Next()
 	}
 	ei.current = ei.current[:0]
+	ei.currentIndex = 0
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, int64(r.Timestamps[i]))),
@@ -251,7 +253,7 @@ func (ei *resultMIterator) Next() bool {
 }
 
 func (ei *resultMIterator) Current() []*measurev1.DataPoint {
-	return ei.current
+	return []*measurev1.DataPoint{ei.current[ei.currentIndex]}
 }
 
 func (ei *resultMIterator) Close() error {
