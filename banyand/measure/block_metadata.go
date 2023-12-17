@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type dataBlock struct {
@@ -73,6 +74,8 @@ type blockMetadata struct {
 	timestamps  timestampsMetadata
 	field       columnFamilyMetadata
 	tagFamilies map[string]*dataBlock
+
+	tagProjection []pbv1.TagProjection
 }
 
 func (bh *blockMetadata) getTagFamilyMetadata(name string) *dataBlock {
@@ -97,6 +100,7 @@ func (bh *blockMetadata) reset() {
 		bh.tagFamilies[k].reset()
 		delete(bh.tagFamilies, k)
 	}
+	bh.tagProjection = bh.tagProjection[:0]
 }
 
 func (bh *blockMetadata) copyFrom(src *blockMetadata) {

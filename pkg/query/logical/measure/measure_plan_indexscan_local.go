@@ -48,15 +48,13 @@ type unresolvedIndexScan struct {
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
-	var projTags []pbv1.TagProjection
+	projTags := make([]pbv1.TagProjection, len(uis.projectionTags))
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
-				projTags = append(projTags, pbv1.TagProjection{
-					Family: tag.GetFamilyName(),
-					Name:   tag.GetTagName(),
-				})
+				projTags[i].Family = tag.GetFamilyName()
+				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
 			}
 		}
 		var err error

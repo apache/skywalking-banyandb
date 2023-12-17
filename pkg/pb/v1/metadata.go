@@ -106,7 +106,7 @@ type Result struct {
 
 type TagProjection struct {
 	Family string
-	Name   string
+	Names  []string
 }
 
 type MeasureQueryOptions struct {

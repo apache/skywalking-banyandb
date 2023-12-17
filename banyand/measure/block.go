@@ -195,7 +195,10 @@ func (b *block) marshalTagFamily(tf ColumnFamily, bm *blockMetadata, ww *writers
 	hw.MustWrite(bb.Buf)
 }
 
-func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string, columnFamilyMetadataBlock *dataBlock, metaReader, valueReader fs.Reader) {
+func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string, columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader) {
+	if len(tagProjection) < 1 {
+		return
+	}
 	bb := bigValuePool.Generate()
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(columnFamilyMetadataBlock.offset), bb.Buf)
@@ -207,9 +210,14 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].Name = name
-	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
-	for i := range cc {
-		cc[i].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
+
+	for j := range tagProjection {
+		for i := range cc {
+			if tagProjection[j] == cfm.columnMetadata[i].name {
+				cc[i].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+			}
+		}
 	}
 }
 
@@ -245,16 +253,19 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm *blockMetadata) {
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
 	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
 
-	_ = b.resizeTagFamilies(len(bm.tagFamilies))
-	var i int
-	for name, block := range bm.tagFamilies {
-		b.unmarshalTagFamily(decoder, i, name, block, p.tagFamilyMetadata[name], p.tagFamilies[name])
-		i++
+	_ = b.resizeTagFamilies(len(bm.tagProjection))
+	for i := range bm.tagProjection {
+		name := bm.tagProjection[i].Family
+		block, ok := bm.tagFamilies[name]
+		if !ok {
+			continue
+		}
+		b.unmarshalTagFamily(decoder, i, name, block, bm.tagProjection[i].Names, p.tagFamilyMetadata[name], p.tagFamilies[name])
 	}
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
@@ -326,6 +337,8 @@ type blockCursor struct {
 	bm                  blockMetadata
 	minTimestamp        int64
 	maxTimestamp        int64
+	tagProjection       []pbv1.TagProjection
+	fieldProjection     []string
 }
 
 func (bc *blockCursor) reset() {
@@ -334,6 +347,8 @@ func (bc *blockCursor) reset() {
 	bc.bm = blockMetadata{}
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
+	bc.tagProjection = bc.tagProjection[:0]
+	bc.fieldProjection = bc.fieldProjection[:0]
 
 	bc.timestamps = bc.timestamps[:0]
 
@@ -345,12 +360,14 @@ func (bc *blockCursor) reset() {
 	bc.fields.reset()
 }
 
-func (bc *blockCursor) init(p *part, bm blockMetadata, minTimestamp, maxTimestamp int64) {
+func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts QueryOptions) {
 	bc.reset()
 	bc.p = p
 	bc.bm = bm
-	bc.minTimestamp = minTimestamp
-	bc.maxTimestamp = maxTimestamp
+	bc.minTimestamp = queryOpts.minTimestamp
+	bc.maxTimestamp = queryOpts.maxTimestamp
+	bc.tagProjection = queryOpts.TagProjection
+	bc.fieldProjection = queryOpts.FieldProjection
 }
 
 func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
@@ -385,30 +402,36 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 func (bc *blockCursor) copyTo(r *pbv1.Result) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
-	if len(r.TagFamilies) != len(bc.tagFamilies) {
-		for _, cf := range bc.tagFamilies {
+	if len(r.TagFamilies) != len(bc.tagProjection) {
+		for _, tp := range bc.tagProjection {
 			tf := pbv1.TagFamily{
-				Name: cf.Name,
+				Name: tp.Family,
 			}
-			for _, c := range cf.Columns {
+			for _, n := range tp.Names {
 				t := pbv1.Tag{
-					Name: c.Name,
+					Name: n,
 				}
 				tf.Tags = append(tf.Tags, t)
 			}
 			r.TagFamilies = append(r.TagFamilies, tf)
 		}
 	}
+	if len(bc.tagFamilies) != len(r.TagFamilies) {
+		logger.Panicf("unexpected number of tag families: got %d; want %d", len(bc.tagFamilies), len(r.TagFamilies))
+	}
 	for i, cf := range bc.tagFamilies {
+		if len(r.TagFamilies[i].Tags) != len(cf.Columns) {
+			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
+		}
 		for i2, c := range cf.Columns {
 			r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.ValueType, c.Values[bc.idx]))
 		}
 	}
 
-	if len(r.Fields) != len(bc.fields.Columns) {
-		for _, c := range bc.fields.Columns {
+	if len(r.Fields) != len(bc.fieldProjection) {
+		for _, n := range bc.fieldProjection {
 			f := pbv1.Field{
-				Name: c.Name,
+				Name: n,
 			}
 			r.Fields = append(r.Fields, f)
 		}
@@ -420,7 +443,26 @@ func (bc *blockCursor) copyTo(r *pbv1.Result) {
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
-	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, &bc.bm)
+	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
+	for j := range bc.fieldProjection {
+		for i := range bc.bm.field.columnMetadata {
+			if bc.bm.field.columnMetadata[i].name == bc.fieldProjection[j] {
+				cfm = append(cfm, bc.bm.field.columnMetadata[i])
+			}
+		}
+	}
+	bc.bm.field.columnMetadata = cfm
+	bc.bm.tagProjection = bc.tagProjection
+	tf := make(map[string]*dataBlock, len(bc.tagProjection))
+	for i := range bc.tagProjection {
+		for tfName, block := range bc.bm.tagFamilies {
+			if bc.tagProjection[i].Family == tfName {
+				tf[tfName] = block
+			}
+		}
+	}
+	bc.bm.tagFamilies = tf
+	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
 
 	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
@@ -428,9 +470,6 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	}
 	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end]...)
 
-	sort.Slice(tmpBlock.tagFamilies, func(i, j int) bool {
-		return tmpBlock.tagFamilies[i].Name < tmpBlock.tagFamilies[j].Name
-	})
 	for _, cf := range tmpBlock.tagFamilies {
 		tf := ColumnFamily{
 			Name: cf.Name,

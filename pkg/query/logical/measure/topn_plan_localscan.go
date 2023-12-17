@@ -48,14 +48,12 @@ type unresolvedLocalScan struct {
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	var projTagsRefs [][]*logical.TagRef
-	var projTags []pbv1.TagProjection
+	projTags := make([]pbv1.TagProjection, len(uls.projectionTags))
 	if len(uls.projectionTags) > 0 {
 		for i := range uls.projectionTags {
 			for _, tag := range uls.projectionTags[i] {
-				projTags = append(projTags, pbv1.TagProjection{
-					Family: tag.GetFamilyName(),
-					Name:   tag.GetTagName(),
-				})
+				projTags[i].Family = tag.GetFamilyName()
+				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
 			}
 		}
 		var err error

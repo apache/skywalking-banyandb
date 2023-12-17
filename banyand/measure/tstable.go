@@ -62,7 +62,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	tst.memParts = append(tst.memParts, pw)
 }
 
-func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts *QueryOptions) ([]*partWrapper, []*part) {
+func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts QueryOptions) ([]*partWrapper, []*part) {
 	tst.RLock()
 	defer tst.RUnlock()
 	for _, p := range tst.memParts {

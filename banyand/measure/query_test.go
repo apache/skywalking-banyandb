@@ -370,10 +370,11 @@ func TestQueryResult(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			pws, pp := tst.getParts(nil, nil, &QueryOptions{
+			queryOpts := QueryOptions{
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
-			})
+			}
+			pws, pp := tst.getParts(nil, nil, queryOpts)
 			defer func() {
 				for _, pw := range pws {
 					pw.decRef()
@@ -391,7 +392,10 @@ func TestQueryResult(t *testing.T) {
 			for ti.nextBlock() {
 				bc := generateBlockCursor()
 				p := ti.piHeap[0]
-				bc.init(p.p, p.curBlock, tt.minTimestamp, tt.maxTimestamp)
+				opts := queryOpts
+				opts.TagProjection = tagProjections[int(p.curBlock.seriesID)]
+				opts.FieldProjection = fieldProjections[int(p.curBlock.seriesID)]
+				bc.init(p.p, p.curBlock, opts)
 				result.data = append(result.data, bc)
 			}
 			defer result.Release()

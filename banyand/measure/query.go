@@ -87,7 +87,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	}
 	var pws []*partWrapper
 	var parts []*part
-	qo := &QueryOptions{
+	qo := QueryOptions{
 		MeasureQueryOptions: mqo,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
@@ -107,7 +107,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	for tstIter.nextBlock() {
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
-		bc.init(p.p, p.curBlock, qo.minTimestamp, qo.maxTimestamp)
+		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 	}
 	if tstIter.Error() != nil {

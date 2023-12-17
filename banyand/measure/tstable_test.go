@@ -168,7 +168,7 @@ func Test_tstIter(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			pws, pp := tst.getParts(nil, nil, &QueryOptions{
+			pws, pp := tst.getParts(nil, nil, QueryOptions{
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
 			})
@@ -201,6 +201,22 @@ func Test_tstIter(t *testing.T) {
 			}
 		})
 	}
+}
+
+var tagProjections = map[int][]pbv1.TagProjection{
+	1: {
+		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
+		{Family: "binaryTag", Names: []string{"binaryTag"}},
+		{Family: "singleTag", Names: []string{"strTag", "intTag"}},
+	},
+	2: {
+		{Family: "singleTag", Names: []string{"strTag1", "strTag2"}},
+	},
+}
+
+var fieldProjections = map[int][]string{
+	1: {"strField", "intField", "floatField", "binaryField"},
+	3: {"intField"},
 }
 
 var dps_ts1 = &dataPoints{

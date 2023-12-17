@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -69,6 +71,18 @@ func Test_block_reset(t *testing.T) {
 			}
 		})
 	}
+}
+
+func toTagProjection(b block) map[string][]string {
+	result := make(map[string][]string, len(b.tagFamilies))
+	for i := range b.tagFamilies {
+		names := make([]string, len(b.tagFamilies[i].Columns))
+		for i2 := range b.tagFamilies[i].Columns {
+			names[i2] = b.tagFamilies[i].Columns[i2].Name
+		}
+		result[b.tagFamilies[i].Name] = names
+	}
+	return result
 }
 
 var conventionalBlock = block{
@@ -250,6 +264,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 		tagFamilyWriters:         make(map[string]*writer),
 	}
 	b := &conventionalBlock
+	tagProjection := toTagProjection(*b)
 	tfIndex := 0
 	name := "arrTag"
 	decoder := &encoding.BytesBlockDecoder{}
@@ -273,10 +288,10 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaBuffer, dataBuffer)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
 
-	if !reflect.DeepEqual(b.tagFamilies[0], unmarshaled.tagFamilies[0]) {
-		t.Errorf("block.unmarshalTagFamily() = %+v, want %+v", unmarshaled.tagFamilies, b.tagFamilies)
+	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0]); diff != "" {
+		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}
 }
 
@@ -296,11 +311,12 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		fieldValues: fieldBuffer,
 	}
 	b := &conventionalBlock
+	tagProjection := toTagProjection(*b)
 	decoder := &encoding.BytesBlockDecoder{}
 	sid := common.SeriesID(1)
-	bm := &blockMetadata{}
+	bm := blockMetadata{}
 
-	b.mustWriteTo(sid, bm, ww)
+	b.mustWriteTo(sid, &bm, ww)
 
 	tagFamilyMetadataReaders := make(map[string]fs.Reader)
 	tagFamilyReaders := make(map[string]fs.Reader)
@@ -314,6 +330,15 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 
 	unmarshaled := generateBlock()
 	defer releaseBlock(unmarshaled)
+
+	var tp []pbv1.TagProjection
+	for family, names := range tagProjection {
+		tp = append(tp, pbv1.TagProjection{
+			Family: family,
+			Names:  names,
+		})
+	}
+	bm.tagProjection = tp
 	unmarshaled.mustReadFrom(decoder, p, bm)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
