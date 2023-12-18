@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"time"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -208,8 +210,22 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	groups := make(map[string]*dataPointsInGroup)
 	for i := range events {
+		var writeEvent *measurev1.InternalWriteRequest
+		switch e := events[i].(type) {
+		case *measurev1.InternalWriteRequest:
+			writeEvent = e
+		case *anypb.Any:
+			writeEvent = &measurev1.InternalWriteRequest{}
+			if err := e.UnmarshalTo(writeEvent); err != nil {
+				w.l.Error().Err(err).RawJSON("written", logger.Proto(e)).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
+			w.l.Warn().Msg("invalid event data type")
+			continue
+		}
 		var err error
-		if groups, err = w.handle(groups, events[i].(*measurev1.InternalWriteRequest)); err != nil {
+		if groups, err = w.handle(groups, writeEvent); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			continue
 		}

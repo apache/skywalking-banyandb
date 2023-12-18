@@ -75,9 +75,14 @@ func NewMessage(id MessageID, data interface{}) Message {
 	return Message{id: id, node: "local", payload: data}
 }
 
+// NewBatchMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
+func NewBatchMessageWithNode(id MessageID, node string, data interface{}) Message {
+	return Message{id: id, node: node, payload: data, batchMode: true}
+}
+
 // NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
 func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
-	return Message{id: id, node: node, payload: data, batchMode: true}
+	return Message{id: id, node: node, payload: data}
 }
 
 // MessageListener is the signature of functions that can handle an EventMessage.

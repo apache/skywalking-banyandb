@@ -220,7 +220,7 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 		EntityValues: series.EntityValues,
 		ShardId:      uint32(shardID),
 	}
-	message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
+	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
 	_, errWritePub := publisher.Publish(apiData.TopicMeasureWrite, message)
 	return errWritePub
 }

@@ -62,7 +62,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 				reply(writeEntity, err, "no listener found")
 				return nil
 			}
-			_ = listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), dataCollection))
+			_ = listener.Rev(bus.NewMessage(bus.MessageID(0), dataCollection))
 			return nil
 		}
 		if err != nil {

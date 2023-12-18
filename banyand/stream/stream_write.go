@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -157,15 +158,25 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	for _, event := range events {
-		writeEvent, ok := event.(*streamv1.InternalWriteRequest)
-		if !ok {
+		var writeEvent *streamv1.InternalWriteRequest
+		switch e := event.(type) {
+		case *streamv1.InternalWriteRequest:
+			writeEvent = e
+		case *anypb.Any:
+			writeEvent = &streamv1.InternalWriteRequest{}
+			if err := e.UnmarshalTo(writeEvent); err != nil {
+				w.l.Error().Err(err).RawJSON("written", logger.Proto(e)).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
 			w.l.Warn().Msg("invalid event data type")
-			return
+			continue
+
 		}
 		stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 		if !ok {
 			w.l.Warn().Msg("cannot find stream definition")
-			return
+			continue
 		}
 		err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
 			tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())

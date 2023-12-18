@@ -125,7 +125,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
