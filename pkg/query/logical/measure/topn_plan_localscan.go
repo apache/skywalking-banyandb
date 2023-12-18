@@ -101,7 +101,7 @@ func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.Ta
 	entity[0] = &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
-				Value: int64(uls.sort),
+				Value: int64(uls.sort.Number()),
 			},
 		},
 	}
@@ -119,7 +119,7 @@ func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.Ta
 		if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
 			entity[entityIdx] = pairQuery.Value
 			switch pairQuery.GetValue().GetValue().(type) {
-			case *modelv1.TagValue_Str, *modelv1.TagValue_Int:
+			case *modelv1.TagValue_Str, *modelv1.TagValue_Int, *modelv1.TagValue_Null:
 				entity[entityIdx] = pairQuery.Value
 			default:
 				return nil, errors.New("unsupported condition tag type for entity")

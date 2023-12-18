@@ -67,6 +67,7 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 	dest = append(dest, byte(MustTagValueToValueType(tv)))
 	switch tv.Value.(type) {
 	case *modelv1.TagValue_Null:
+		dest = marshalEntityValue(dest, nil)
 	case *modelv1.TagValue_Str:
 		dest = marshalEntityValue(dest, convert.StringToBytes(tv.GetStr().Value))
 	case *modelv1.TagValue_Int:
@@ -88,7 +89,8 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 	vt := ValueType(src[0])
 	switch vt {
 	case ValueTypeUnknown:
-		return dest, src[1:], NullTagValue, nil
+		// skip ValueType and entityDelimiter
+		return dest, src[2:], NullTagValue, nil
 	case ValueTypeStr:
 		if dest, src, err = unmarshalEntityValue(dest, src[1:]); err != nil {
 			return nil, nil, nil, errors.WithMessage(err, "unmarshal string tag value")
@@ -107,7 +109,7 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 		return dest, src, &modelv1.TagValue{
 			Value: &modelv1.TagValue_Int{
 				Int: &modelv1.Int{
-					Value: convert.BytesToInt64(dest),
+					Value: encoding.BytesToInt64(dest),
 				},
 			},
 		}, nil

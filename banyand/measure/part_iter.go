@@ -121,7 +121,7 @@ func (pi *partIter) searchTargetSeriesID(sid common.SeriesID) bool {
 	}
 	sids := pi.sids[pi.sidIdx:]
 	pi.sidIdx += sort.Search(len(sids), func(i int) bool {
-		return sid < sids[i]
+		return sid <= sids[i]
 	})
 	if pi.sidIdx >= len(pi.sids) {
 		pi.sidIdx = len(pi.sids)

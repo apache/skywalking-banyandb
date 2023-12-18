@@ -25,5 +25,4 @@ conditions:
 - name: http.uri
   op: 1
   value:
-    str:
-      value: ""
+    "null": null

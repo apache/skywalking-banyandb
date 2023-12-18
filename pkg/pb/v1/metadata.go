@@ -125,7 +125,14 @@ type MeasureQueryResult interface {
 }
 
 var (
-	NullFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
-	NullTagFamily  = &modelv1.TagFamilyForWrite{}
-	NullTagValue   = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	NullFieldValue        = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+	EmptyStrFieldValue    = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: ""}}}
+	EmptyBinaryFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: []byte{}}}
+
+	NullTagFamily       = &modelv1.TagFamilyForWrite{}
+	NullTagValue        = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	EmptyStrTagValue    = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
+	EmptyStrArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{}}}}
+	EmptyIntArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: []int64{}}}}
+	EmptyBinaryTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte{}}}
 )
