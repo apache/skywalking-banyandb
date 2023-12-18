@@ -147,20 +147,32 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) *writeCallback
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*streamv1.InternalWriteRequest)
+	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
 		return
 	}
-	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
-	if !ok {
-		w.l.Warn().Msg("cannot find stream definition")
+	if len(events) < 1 {
+		w.l.Warn().Msg("empty event")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
-		tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())
-	if err != nil {
-		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
+	for _, event := range events {
+		writeEvent, ok := event.(*streamv1.InternalWriteRequest)
+		if !ok {
+			w.l.Warn().Msg("invalid event data type")
+			return
+		}
+		stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
+		if !ok {
+			w.l.Warn().Msg("cannot find stream definition")
+			return
+		}
+		err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
+			tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())
+		if err != nil {
+			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
+		}
 	}
+
 	return
 }

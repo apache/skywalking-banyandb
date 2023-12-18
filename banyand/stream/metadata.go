@@ -225,7 +225,7 @@ func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts t
 
 func (s *supplier) OpenResource(shardNum uint32, db resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
 	streamSchema := resource.Schema().(*databasev1.Stream)
-	return openStream(shardNum, &tsdbSupplier{db: db.(tsdb.Database)}, streamSpec{
+	return openStream(shardNum, &tsdbSupplier{db: db.SupplyTSDB().(tsdb.Database)}, streamSpec{
 		schema:     streamSchema,
 		indexRules: resource.IndexRules(),
 	}, s.l), nil
