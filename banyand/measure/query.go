@@ -364,10 +364,16 @@ func (qr QueryResult) Len() int {
 }
 
 func (qr QueryResult) Less(i, j int) bool {
+	leftTS := qr.data[i].timestamps[qr.data[i].idx]
+	rightTS := qr.data[j].timestamps[qr.data[j].idx]
+	leftVersion := qr.data[i].p.partMetadata.Version
+	rightVersion := qr.data[j].p.partMetadata.Version
 	if qr.orderByTS {
-		leftTS := qr.data[i].timestamps[qr.data[i].idx]
-		rightTS := qr.data[j].timestamps[qr.data[j].idx]
 		if leftTS == rightTS {
+			if qr.data[i].bm.seriesID == qr.data[j].bm.seriesID {
+				// sort version in descending order if timestamps and seriesID are equal
+				return leftVersion > rightVersion
+			}
 			// sort seriesID in ascending order if timestamps are equal
 			return qr.data[i].bm.seriesID < qr.data[j].bm.seriesID
 		}
@@ -379,8 +385,12 @@ func (qr QueryResult) Less(i, j int) bool {
 	leftSIDIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
 	rightSIDIndex := qr.sidToIndex[qr.data[j].bm.seriesID]
 	if leftSIDIndex == rightSIDIndex {
+		if leftTS == rightTS {
+			// sort version in descending order if timestamps and seriesID are equal
+			return leftVersion > rightVersion
+		}
 		// sort timestamps in ascending order if seriesID are equal
-		return qr.data[i].timestamps[qr.data[i].idx] < qr.data[j].timestamps[qr.data[j].idx]
+		return leftTS < rightTS
 	}
 	return leftSIDIndex < rightSIDIndex
 }
@@ -424,7 +434,7 @@ func (qr *QueryResult) merge() *pbv1.Result {
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
 			if topBC.p.partMetadata.Version > lastPartVersion {
-				lastPartVersion = topBC.p.partMetadata.Version
+				logger.Panicf("following parts version should be less or equal to the previous one")
 			}
 		} else {
 			topBC.copyTo(result)

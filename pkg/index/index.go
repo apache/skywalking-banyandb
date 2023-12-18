@@ -192,8 +192,9 @@ type PostingValue struct {
 }
 
 type Document struct {
-	Fields []Field
-	DocID  uint64
+	Fields       []Field
+	EntityValues []byte
+	DocID        uint64
 }
 
 type Documents []Document

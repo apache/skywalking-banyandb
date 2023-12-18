@@ -101,12 +101,12 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if fLen > len(stm.schema.GetTagFamilies()) {
 		return nil, fmt.Errorf("%s has more tag families than expected", req.Metadata)
 	}
-	series, err := tsdb.Register(shardID, &pbv1.Series{
+	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,
 		EntityValues: writeEvent.EntityValues,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("cannot register series: %w", err)
+	}
+	if err := series.Marshal(); err != nil {
+		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
 	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
 	field := nameValues{}
@@ -187,12 +187,12 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			})
 		}
 	}
-	if len(fields) > 0 {
-		dpg.docs = append(dpg.docs, index.Document{
-			DocID:  uint64(series.ID),
-			Fields: fields,
-		})
-	}
+
+	dpg.docs = append(dpg.docs, index.Document{
+		DocID:        uint64(series.ID),
+		EntityValues: series.Buffer,
+		Fields:       fields,
+	})
 	return dst, nil
 }
 

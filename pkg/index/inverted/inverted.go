@@ -363,9 +363,12 @@ func (s *store) run() {
 
 					for _, d := range docs {
 						// TODO: generate a segment directly.
-						fk := d.Fields[0].Key
+						var fk *index.FieldKey
+						if len(d.Fields) > 0 {
+							fk = &d.Fields[0].Key
+						}
 						docIDBuffer.Reset()
-						if fk.HasSeriesID() {
+						if fk != nil && fk.HasSeriesID() {
 							docIDBuffer.Write(fk.SeriesID.Marshal())
 						}
 						docIDBuffer.Write(convert.Uint64ToBytes(d.DocID))
@@ -380,11 +383,16 @@ func (s *store) run() {
 									WithAnalyzer(analyzers[f.Key.Analyzer]))
 							}
 						}
-						if toAddSeriesIDField && fk.HasSeriesID() {
+						if fk != nil && toAddSeriesIDField && fk.HasSeriesID() {
 							doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
 						}
+
+						if d.EntityValues != nil {
+							doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
+						}
+
 						size++
-						batch.Update(doc.ID(), doc)
+						batch.Insert(doc)
 					}
 					if isBatch || size >= batchSize {
 						flush()
