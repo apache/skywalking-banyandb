@@ -8,12 +8,16 @@ Release Notes.
 
 - Support etcd client authentication.
 - Implement Local file system.
-- Add health check command for bydbctl
+- Add health check command for bydbctl.
+- Implement Inverted Index for SeriesDatabase.
+- Remove Block Level from TSDB.
+- Remove primary index.
+- Measure column-based storage:
+  - Data ingestion and retrieval.
 
 ### Bugs
 
 - Fix the bug that property merge new tags failed.
-
 
 ### Chores
 
