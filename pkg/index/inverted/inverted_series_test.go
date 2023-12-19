@@ -193,23 +193,20 @@ func TestStore_SearchPrefix(t *testing.T) {
 }
 
 func setupData(tester *assert.Assertions, s index.SeriesStore) {
-	series1 := index.Series{
-		ID:           common.SeriesID(1),
+	series1 := index.Document{
+		DocID:        1,
 		EntityValues: []byte("test1"),
 	}
-	tester.NoError(s.Create(series1))
 
-	series2 := index.Series{
-		ID:           common.SeriesID(2),
+	series2 := index.Document{
+		DocID:        2,
 		EntityValues: []byte("test2"),
 	}
-	tester.NoError(s.Create(series2))
 
-	series3 := index.Series{
-		ID:           common.SeriesID(3),
+	series3 := index.Document{
+		DocID:        3,
 		EntityValues: []byte("test3"),
 	}
-	tester.NoError(s.Create(series3))
-	tester.NoError(s.Create(series3)) // duplicated data
+	tester.NoError(s.Batch([]index.Document{series1, series2, series3, series3}))
 	s.(*store).flush()
 }

@@ -61,30 +61,6 @@ func newSeriesIndex(ctx context.Context, root string) (*seriesIndex, error) {
 	return si, nil
 }
 
-var entityKey = index.FieldKey{}
-
-func (s *seriesIndex) createPrimary(series *pbv1.Series) (*pbv1.Series, error) {
-	if err := series.Marshal(); err != nil {
-		return nil, err
-	}
-	id, err := s.store.Search(series.Buffer)
-	if err != nil {
-		return nil, err
-	}
-	if id > 0 {
-		return series, nil
-	}
-	evv := make([]byte, len(series.Buffer))
-	copy(evv, series.Buffer)
-	if err := s.store.Create(index.Series{
-		ID:           series.ID,
-		EntityValues: evv,
-	}); err != nil {
-		return nil, errors.WithMessagef(err, "create entity values -> seriesID: %s", string(evv))
-	}
-	return series, nil
-}
-
 func (s *seriesIndex) Write(docs index.Documents) error {
 	return s.store.Batch(docs)
 }

@@ -30,19 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-// Create implements index.SeriesStore.
-func (s *store) Create(series index.Series) error {
-	if !s.closer.AddRunning() {
-		return nil
-	}
-	defer s.closer.Done()
-	select {
-	case <-s.closer.CloseNotify():
-	case s.ch <- series:
-	}
-	return nil
-}
-
 // Search implements index.SeriesStore.
 func (s *store) Search(term []byte) (common.SeriesID, error) {
 	reader, err := s.writer.Reader()

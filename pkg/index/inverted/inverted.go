@@ -39,7 +39,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -133,6 +132,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 }
 
 func (s *store) Close() error {
+	s.flush()
 	s.closer.CloseThenWait()
 	if s.errClosing.Load() != nil {
 		return *s.errClosing.Load()
@@ -324,7 +324,6 @@ func (s *store) run() {
 		}
 		defer flush()
 		var docIDBuffer bytes.Buffer
-		seriesIDBuffer := make([]byte, 8)
 		for {
 			timer := time.NewTimer(s.batchInterval)
 			select {
@@ -340,16 +339,6 @@ func (s *store) run() {
 				case flushEvent:
 					flush()
 					close(d.onComplete)
-				case index.Series:
-					seriesIDBuffer = seriesIDBuffer[:0]
-					seriesIDBuffer = encoding.Uint64ToBytes(seriesIDBuffer, uint64(d.ID))
-					doc := bluge.NewDocument(string(seriesIDBuffer))
-					doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
-					size++
-					batch.Update(doc.ID(), doc)
-					if size >= batchSize {
-						flush()
-					}
 				case index.Document, index.Documents:
 					var docs []index.Document
 					var isBatch bool

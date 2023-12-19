@@ -71,7 +71,6 @@ type IndexDB interface {
 // TSDB allows listing and getting shard details.
 type TSDB[T TSTable] interface {
 	io.Closer
-	Register(shardID common.ShardID, series *pbv1.Series) (*pbv1.Series, error)
 	Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error)
 	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
 	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]

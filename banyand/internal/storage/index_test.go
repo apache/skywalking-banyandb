@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -36,14 +37,14 @@ var testSeriesPool pbv1.SeriesPool
 
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
-	tester := assert.New(t)
 	path, fn := setUp(require.New(t))
 	si, err := newSeriesIndex(ctx, path)
-	tester.NoError(err)
+	require.NoError(t, err)
 	defer func() {
-		tester.NoError(si.Close())
+		require.NoError(t, si.Close())
 		fn()
 	}()
+	var docs index.Documents
 	for i := 0; i < 100; i++ {
 		series := testSeriesPool.Get()
 		series.Subject = "service_instance_latency"
@@ -53,17 +54,23 @@ func TestSeriesIndex_Primary(t *testing.T) {
 		}
 
 		// Initialize test data
-		series, err = si.createPrimary(series)
-		if err != nil {
-			t.Fatalf("Failed to create primary series: %v", err)
+		if err = series.Marshal(); err != nil {
+			t.Fatalf("Failed to marshal series: %v", err)
 		}
-		tester.True(series.ID > 0)
+		require.True(t, series.ID > 0)
+		doc := index.Document{
+			DocID:        uint64(series.ID),
+			EntityValues: make([]byte, len(series.Buffer)),
+		}
+		copy(doc.EntityValues, series.Buffer)
+		docs = append(docs, doc)
 		testSeriesPool.Put(series)
 	}
+	require.NoError(t, si.Write(docs))
 	// Restart the index
-	tester.NoError(si.Close())
+	require.NoError(t, si.Close())
 	si, err = newSeriesIndex(ctx, path)
-	tester.NoError(err)
+	require.NoError(t, err)
 	tests := []struct {
 		name         string
 		subject      string
@@ -115,12 +122,12 @@ func TestSeriesIndex_Primary(t *testing.T) {
 			seriesQuery.Subject = tt.subject
 			seriesQuery.EntityValues = tt.entityValues
 			sl, err := si.searchPrimary(ctx, seriesQuery)
-			tester.NoError(err)
-			tester.Equal(1, len(sl))
-			tester.Equal(tt.subject, sl[0].Subject)
-			tester.Equal(tt.expected[0].GetStr().GetValue(), sl[0].EntityValues[0].GetStr().GetValue())
-			tester.Equal(tt.expected[1].GetStr().GetValue(), sl[0].EntityValues[1].GetStr().GetValue())
-			tester.True(sl[0].ID > 0)
+			require.NoError(t, err)
+			require.Equal(t, 1, len(sl))
+			assert.Equal(t, tt.subject, sl[0].Subject)
+			assert.Equal(t, tt.expected[0].GetStr().GetValue(), sl[0].EntityValues[0].GetStr().GetValue())
+			assert.Equal(t, tt.expected[1].GetStr().GetValue(), sl[0].EntityValues[1].GetStr().GetValue())
+			assert.True(t, sl[0].ID > 0)
 		})
 	}
 }

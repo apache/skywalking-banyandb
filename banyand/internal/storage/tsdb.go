@@ -36,7 +36,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -113,14 +112,6 @@ func OpenTSDB[T TSTable](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error)
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load database failed").Error())
 	}
 	return db, nil
-}
-
-func (d *database[T]) Register(shardID common.ShardID, series *pbv1.Series) (*pbv1.Series, error) {
-	var err error
-	if series, err = d.index.createPrimary(series); err != nil {
-		return nil, err
-	}
-	return series, nil
 }
 
 func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {

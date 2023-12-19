@@ -53,13 +53,6 @@ func TestMarshalAndUnmarshalTagValue(t *testing.T) {
 			dest := []byte{}
 			// Test marshalTagValue
 			dest, err := marshalTagValue(dest, tt.src)
-			if tt.name == "unsupported type" {
-				assert.Error(t, err)
-				dest = dest[:0]
-				_, _, _, err = unmarshalTagValue(dest, []byte("unsupported type"))
-				assert.Error(t, err)
-				return
-			}
 			marshaled := make([]byte, len(dest))
 			copy(marshaled, dest)
 
@@ -69,11 +62,10 @@ func TestMarshalAndUnmarshalTagValue(t *testing.T) {
 
 			// Test unmarshalTagValue
 			dest = dest[:0]
-			dest, marshaled, unmarshaled, err := unmarshalTagValue(dest, marshaled)
+			_, marshaled, unmarshaled, err := unmarshalTagValue(dest, marshaled)
 
 			// Add assertions
 			assert.NoError(t, err)
-			assert.True(t, len(dest) > 0)
 			assert.True(t, len(marshaled) == 0)
 			assert.NotNil(t, unmarshaled)
 

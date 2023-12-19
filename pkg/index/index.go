@@ -234,7 +234,6 @@ type Series struct {
 
 type SeriesStore interface {
 	Store
-	Create(Series) error
 	Search([]byte) (common.SeriesID, error)
 	SearchPrefix([]byte) ([]Series, error)
 	SearchWildcard([]byte) ([]Series, error)
