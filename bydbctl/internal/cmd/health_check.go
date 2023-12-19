@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -45,6 +46,11 @@ func newHealthCheckCmd() *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			opts := make([]grpc.DialOption, 0, 1)
+			if grpcAddr == "" {
+				return rest(nil, func(request request) (*resty.Response, error) {
+					return request.req.Get(getPath("/api/healthz"))
+				}, yamlPrinter, enableTLS, insecure, grpcCert)
+			}
 			if enableTLS {
 				// #nosec G402
 				config := &tls.Config{
@@ -73,7 +79,7 @@ func newHealthCheckCmd() *cobra.Command {
 			return err
 		},
 	}
-	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "localhost:17912", "Grpc server's address, the format is Domain:Port")
+	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "", "Grpc server's address, the format is Domain:Port")
 	bindTLSRelatedFlag(healthCheckCmd)
 	return healthCheckCmd
 }

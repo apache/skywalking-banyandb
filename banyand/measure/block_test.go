@@ -320,7 +320,9 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 
 	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
 
-	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0]); diff != "" {
+	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
+		cmp.AllowUnexported(columnFamily{}, column{}),
+	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}
 }

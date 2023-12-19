@@ -14,21 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.21 AS base
-
-ENV GOPATH "/go"
-ENV GO111MODULE "on"
-WORKDIR /src
-COPY go.* ./
-RUN go mod download
-
-FROM base AS builder
-
-RUN --mount=target=. \
-            --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out make -C bydbctl build
-
-FROM busybox:stable-glibc
-
-COPY --from=builder /out/bydbctl /bydbctl
-ENTRYPOINT ["/bydbctl"]
+IMG_NAME := skywalking-banyandb
+include ../scripts/build/docker.mk

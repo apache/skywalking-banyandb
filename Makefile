@@ -148,13 +148,21 @@ license-dep: default ## Fix license header issues
 
 ##@ Docker targets
 
-docker: TARGET=docker
-docker: PROJECTS:=$(PROJECTS)
-docker: default  ## Run docker for all projects
+docker.build: TARGET=docker
+docker.build: DIR=docker
+docker.build: 
+	$(MAKE) $(TARGET) -C $(DIR); \
+	if [ $$? -ne 0 ]; then \
+		exit 1; \
+	fi; \
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:=$(PROJECTS)
-docker.push: default  ## Run docker.push for all projects
+docker.push: DIR=docker
+docker.push: 
+	$(MAKE) $(TARGET) -C $(DIR); \
+	if [ $$? -ne 0 ]; then \
+		exit 1; \
+	fi; \
 
 default:
 	@for PRJ in $(PROJECTS); do \
