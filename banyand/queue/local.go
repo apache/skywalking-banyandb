@@ -105,6 +105,9 @@ func (l *localBatchPublisher) Publish(topic bus.Topic, messages ...bus.Message) 
 }
 
 func (l *localBatchPublisher) Close() error {
+	if l.local == nil || len(l.messages) == 0 {
+		return nil
+	}
 	newMessage := bus.NewMessage(1, l.messages)
 	_, err := l.local.Publish(*l.topic, newMessage)
 	if err != nil {
