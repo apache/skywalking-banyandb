@@ -31,9 +31,9 @@ import (
 
 type nameValue struct {
 	name      string
-	valueType pbv1.ValueType
 	value     []byte
 	valueArr  [][]byte
+	valueType pbv1.ValueType
 }
 
 func (n *nameValue) size() int {

@@ -27,8 +27,8 @@ import (
 )
 
 type columnMetadata struct {
+	name string
 	dataBlock
-	name      string
 	valueType pbv1.ValueType
 }
 

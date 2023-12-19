@@ -325,21 +325,17 @@ func releaseBlock(b *block) {
 var blockPool sync.Pool
 
 type blockCursor struct {
-	idx int
-
-	timestamps []int64
-
-	tagFamilies []ColumnFamily
-
-	fields ColumnFamily
-
-	columnValuesDecoder encoding.BytesBlockDecoder
 	p                   *part
 	bm                  blockMetadata
-	minTimestamp        int64
-	maxTimestamp        int64
+	fields              ColumnFamily
+	timestamps          []int64
+	tagFamilies         []ColumnFamily
+	columnValuesDecoder encoding.BytesBlockDecoder
 	tagProjection       []pbv1.TagProjection
 	fieldProjection     []string
+	idx                 int
+	minTimestamp        int64
+	maxTimestamp        int64
 }
 
 func (bc *blockCursor) reset() {

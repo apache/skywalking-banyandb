@@ -38,16 +38,16 @@ var errEndOfSegment = errors.New("reached the end of the segment")
 
 type segment[T TSTable] struct {
 	bucket.Reporter
-	tsTable       T
+	tsTable  T
+	l        *logger.Logger
+	position common.Position
+	timestamp.TimeRange
+	path          string
+	suffix        string
+	closeOnce     sync.Once
 	refCount      int32
 	mustBeDeleted uint32
-	l             *logger.Logger
-	position      common.Position
-	timestamp.TimeRange
-	path      string
-	suffix    string
-	closeOnce sync.Once
-	id        SegID
+	id            SegID
 }
 
 func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,

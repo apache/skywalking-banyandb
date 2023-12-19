@@ -88,24 +88,35 @@ func toTagProjection(b block) map[string][]string {
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
 	tagFamilies: []ColumnFamily{
-		{"arrTag", []Column{
-			{"strArrTag", pbv1.ValueTypeStrArr, [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})}},
-			{"intArrTag", pbv1.ValueTypeInt64Arr, [][]byte{marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}), marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)})}},
-		}},
-		{"binaryTag", []Column{
-			{Name: "binaryTag", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
-		}},
-		{"singleTag", []Column{
-			{"strTag", pbv1.ValueTypeStr, [][]byte{[]byte("value1"), []byte("value2")}},
-			{"intTag", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
-		}},
+		{
+			Name: "arrTag",
+			Columns: []Column{
+				{Name: "strArrTag", ValueType: pbv1.ValueTypeStrArr, Values: [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})}},
+				{Name: "intArrTag", ValueType: pbv1.ValueTypeInt64Arr, Values: [][]byte{marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}), marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)})}},
+			},
+		},
+		{
+			Name: "binaryTag",
+			Columns: []Column{
+				{Name: "binaryTag", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+			},
+		},
+		{
+			Name: "singleTag",
+			Columns: []Column{
+				{Name: "strTag", ValueType: pbv1.ValueTypeStr, Values: [][]byte{[]byte("value1"), []byte("value2")}},
+				{Name: "intTag", ValueType: pbv1.ValueTypeInt64, Values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
+			},
+		},
 	},
-	field: ColumnFamily{Columns: []Column{
-		{"strField", pbv1.ValueTypeStr, [][]byte{[]byte("field1"), []byte("field2")}},
-		{"intField", pbv1.ValueTypeInt64, [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
-		{"floatField", pbv1.ValueTypeFloat64, [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
-		{Name: "binaryField", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
-	}},
+	field: ColumnFamily{
+		Columns: []Column{
+			{Name: "strField", ValueType: pbv1.ValueTypeStr, Values: [][]byte{[]byte("field1"), []byte("field2")}},
+			{Name: "intField", ValueType: pbv1.ValueTypeInt64, Values: [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
+			{Name: "floatField", ValueType: pbv1.ValueTypeFloat64, Values: [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
+			{Name: "binaryField", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+		},
+	},
 }
 
 func Test_block_mustInitFromDataPoints(t *testing.T) {
@@ -123,54 +134,64 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			name: "Test mustInitFromDataPoints",
 			args: args{
 				timestamps: []int64{1, 2},
-				tagFamilies: [][]nameValues{{
+				tagFamilies: [][]nameValues{
 					{
-						"arrTag", []*nameValue{
-							{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
-							{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+						{
+							"arrTag", []*nameValue{
+								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+							},
 						},
-					}, {
-						"binaryTag", []*nameValue{
-							{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+						{
+							"binaryTag", []*nameValue{
+								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+							},
 						},
-					}, {
-						"singleTag", []*nameValue{
-							{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
-							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
+						{
+							"singleTag", []*nameValue{
+								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+								{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+							},
 						},
 					},
-				}, {
 					{
-						"arrTag", []*nameValue{
-							{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value3"), []byte("value4")}},
-							{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
+						{
+							"arrTag", []*nameValue{
+								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
+							},
 						},
-					}, {
-						"binaryTag", []*nameValue{
-							{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+						{
+							"binaryTag", []*nameValue{
+								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+							},
 						},
-					}, {
-						"singleTag", []*nameValue{
-							{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
-							{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
+						{
+							"singleTag", []*nameValue{
+								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
+								{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
+							},
 						},
 					},
-				}},
-				fields: []nameValues{{
-					"skipped", []*nameValue{
-						{"strField", pbv1.ValueTypeStr, []byte("field1"), nil},
-						{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
-						{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(1221233.343), nil},
-						{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+				},
+				fields: []nameValues{
+					{
+						"skipped", []*nameValue{
+							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+						},
 					},
-				}, {
-					"skipped", []*nameValue{
-						{"strField", pbv1.ValueTypeStr, []byte("field2"), nil},
-						{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(2220), nil},
-						{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(2442466.686), nil},
-						{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+					{
+						"skipped", []*nameValue{
+							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
+							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
+							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+						},
 					},
-				}},
+				},
 			},
 			want: conventionalBlock,
 		},

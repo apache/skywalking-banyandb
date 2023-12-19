@@ -32,16 +32,15 @@ import (
 
 func TestQueryResult(t *testing.T) {
 	tests := []struct {
+		wantErr       error
 		name          string
 		dpsList       []*dataPoints
 		sids          []common.SeriesID
+		want          []pbv1.Result
 		minTimestamp  int64
 		maxTimestamp  int64
 		orderBySeries bool
 		ascTS         bool
-
-		want    []pbv1.Result
-		wantErr error
 	}{
 		{
 			name:         "Test with multiple parts with duplicated data order by TS",

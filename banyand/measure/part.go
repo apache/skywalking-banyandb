@@ -29,16 +29,14 @@ import (
 )
 
 type part struct {
-	partMetadata partMetadata
-
+	meta                 fs.Reader
+	primary              fs.Reader
+	timestamps           fs.Reader
+	fieldValues          fs.Reader
+	tagFamilyMetadata    map[string]fs.Reader
+	tagFamilies          map[string]fs.Reader
 	primaryBlockMetadata []primaryBlockMetadata
-
-	meta              fs.Reader
-	primary           fs.Reader
-	tagFamilyMetadata map[string]fs.Reader
-	tagFamilies       map[string]fs.Reader
-	timestamps        fs.Reader
-	fieldValues       fs.Reader
+	partMetadata         partMetadata
 }
 
 func openMemPart(mp *memPart) *part {
@@ -64,14 +62,13 @@ func openMemPart(mp *memPart) *part {
 }
 
 type memPart struct {
-	partMetadata partMetadata
-
-	meta              bytes.Buffer
-	primary           bytes.Buffer
 	tagFamilyMetadata map[string]*bytes.Buffer
 	tagFamilies       map[string]*bytes.Buffer
+	meta              bytes.Buffer
+	primary           bytes.Buffer
 	timestamps        bytes.Buffer
 	fieldValues       bytes.Buffer
+	partMetadata      partMetadata
 }
 
 func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Writer) {
@@ -174,10 +171,9 @@ func releaseMemPart(mp *memPart) {
 var memPartPool sync.Pool
 
 type partWrapper struct {
+	mp  *memPart
+	p   *part
 	ref int32
-
-	mp *memPart
-	p  *part
 }
 
 func newMemPartWrapper(mp *memPart, p *part) *partWrapper {

@@ -29,8 +29,8 @@ import (
 
 func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 	tests := []struct {
-		name string
 		dps  *dataPoints
+		name string
 		want partMetadata
 	}{
 		{
@@ -48,17 +48,23 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 			dps: &dataPoints{
 				timestamps: []int64{1},
 				seriesIDs:  []common.SeriesID{1},
-				tagFamilies: [][]nameValues{{{
-					"arrTag", []*nameValue{
-						{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
-						{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				tagFamilies: [][]nameValues{
+					{
+						{
+							"arrTag", []*nameValue{
+								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+							},
+						},
 					},
-				}}},
-				fields: []nameValues{{
-					"skipped", []*nameValue{
-						{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
+				},
+				fields: []nameValues{
+					{
+						"skipped", []*nameValue{
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+						},
 					},
-				}},
+				},
 			},
 			want: partMetadata{
 				BlocksCount:  1,
@@ -96,51 +102,55 @@ var dps = &dataPoints{
 	tagFamilies: [][]nameValues{
 		{
 			{
-				"arrTag", []*nameValue{
-					{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
-					{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 				},
-			}, {
-				"binaryTag", []*nameValue{
-					{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 				},
-			}, {
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
-					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				"arrTag", []*nameValue{
-					{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value3"), []byte("value4")}},
-					{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
 				},
-			}, {
-				"binaryTag", []*nameValue{
-					{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 				},
-			}, {
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("value2"), nil},
-					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(20), nil},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("tag1"), nil},
-					{"strTag", pbv1.ValueTypeInt64, []byte("tag2"), nil},
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag2"), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("tag11"), nil},
-					{"strTag", pbv1.ValueTypeInt64, []byte("tag22"), nil},
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag11"), valueArr: nil},
+					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag22"), valueArr: nil},
 				},
 			},
 		},
@@ -149,31 +159,31 @@ var dps = &dataPoints{
 	},
 	fields: []nameValues{
 		{
-			"skipped", []*nameValue{
-				{"strField", pbv1.ValueTypeStr, []byte("field1"), nil},
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
-				{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(1221233.343), nil},
-				{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 			},
 		},
 		{
-			"skipped", []*nameValue{
-				{"strField", pbv1.ValueTypeStr, []byte("field2"), nil},
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(2220), nil},
-				{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(2442466.686), nil},
-				{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 			},
 		},
 		{},
 		{}, // empty fields for seriesID 2
 		{
-			"onlyFields", []*nameValue{
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 			},
 		},
 		{
-			"onlyFields", []*nameValue{
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(2220), nil},
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
 			},
 		},
 	},

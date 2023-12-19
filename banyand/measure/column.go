@@ -27,8 +27,8 @@ import (
 
 type Column struct {
 	Name      string
-	ValueType pbv1.ValueType
 	Values    [][]byte
+	ValueType pbv1.ValueType
 }
 
 func (c *Column) reset() {

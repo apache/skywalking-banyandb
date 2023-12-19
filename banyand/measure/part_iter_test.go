@@ -29,11 +29,11 @@ import (
 // TODO: test more scenarios
 func Test_partIter_nextBlock(t *testing.T) {
 	tests := []struct {
+		wantErr error
+		opt     *QueryOptions
 		name    string
 		sids    []common.SeriesID
-		opt     *QueryOptions
 		want    []blockMetadata
-		wantErr error
 	}{
 		{
 			name: "Test with all seriesIDs",

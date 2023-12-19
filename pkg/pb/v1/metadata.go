@@ -98,10 +98,10 @@ type Field struct {
 }
 
 type Result struct {
-	SID         common.SeriesID
 	Timestamps  []int64
 	TagFamilies []TagFamily
 	Fields      []Field
+	SID         common.SeriesID
 }
 
 type TagProjection struct {

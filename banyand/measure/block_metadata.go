@@ -65,17 +65,13 @@ func (h *dataBlock) unmarshal(src []byte) ([]byte, error) {
 }
 
 type blockMetadata struct {
-	seriesID common.SeriesID
-
+	tagFamilies           map[string]*dataBlock
+	field                 columnFamilyMetadata
+	tagProjection         []pbv1.TagProjection
+	timestamps            timestampsMetadata
+	seriesID              common.SeriesID
 	uncompressedSizeBytes uint64
-
-	count uint64
-
-	timestamps  timestampsMetadata
-	field       columnFamilyMetadata
-	tagFamilies map[string]*dataBlock
-
-	tagProjection []pbv1.TagProjection
+	count                 uint64
 }
 
 func (bh *blockMetadata) getTagFamilyMetadata(name string) *dataBlock {

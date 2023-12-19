@@ -151,8 +151,8 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 
 func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 	testCases := []struct {
-		name     string
 		original *blockMetadata
+		name     string
 	}{
 		{
 			name: "Zero values",

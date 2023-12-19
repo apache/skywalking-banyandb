@@ -30,25 +30,17 @@ import (
 )
 
 type partIter struct {
-	curBlock blockMetadata
-
-	p *part
-
-	sids []common.SeriesID
-
-	sidIdx int
-
-	minTimestamp int64
-	maxTimestamp int64
-
+	err                  error
+	p                    *part
+	curBlock             blockMetadata
+	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
-
-	bms []blockMetadata
-
+	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
-
-	err error
+	sidIdx               int
+	minTimestamp         int64
+	maxTimestamp         int64
 }
 
 func (pi *partIter) reset() {

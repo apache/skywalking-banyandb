@@ -303,15 +303,13 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 }
 
 type QueryResult struct {
-	data       []*blockCursor
-	loaded     bool
 	sidToIndex map[common.SeriesID]int
+	data       []*blockCursor
+	pws        []*partWrapper
+	lastIndex  int
+	loaded     bool
 	orderByTS  bool
 	ascTS      bool
-
-	lastIndex int
-
-	pws []*partWrapper
 }
 
 func (qr *QueryResult) Pull() *pbv1.Result {

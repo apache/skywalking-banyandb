@@ -127,35 +127,21 @@ func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*w
 }
 
 type blockWriter struct {
-	writers writers
-
-	sidLast common.SeriesID
-
-	sidFirst common.SeriesID
-
-	minTimestampLast int64
-
-	minTimestamp int64
-
-	maxTimestamp int64
-
-	hasWrittenBlocks bool
-
+	writers                    writers
+	metaData                   []byte
+	primaryBlockData           []byte
+	primaryBlockMetadata       primaryBlockMetadata
+	totalBlocksCount           uint64
+	maxTimestamp               int64
 	totalUncompressedSizeBytes uint64
-
-	totalCount uint64
-
-	totalBlocksCount uint64
-
-	totalMinTimestamp int64
-
-	totalMaxTimestamp int64
-
-	primaryBlockData []byte
-
-	metaData []byte
-
-	primaryBlockMetadata primaryBlockMetadata
+	totalCount                 uint64
+	minTimestamp               int64
+	totalMinTimestamp          int64
+	totalMaxTimestamp          int64
+	minTimestampLast           int64
+	sidFirst                   common.SeriesID
+	sidLast                    common.SeriesID
+	hasWrittenBlocks           bool
 }
 
 func (bw *blockWriter) reset() {

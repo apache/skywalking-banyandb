@@ -131,8 +131,8 @@ func Test_columnFamilyMetadata_resizeColumnMetadata(t *testing.T) {
 
 func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
 	tests := []struct {
-		name     string
 		original *columnFamilyMetadata
+		name     string
 	}{
 		{
 			name: "Non-empty columnMetadata",

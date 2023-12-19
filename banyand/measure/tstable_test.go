@@ -55,17 +55,23 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 				{
 					timestamps: []int64{1},
 					seriesIDs:  []common.SeriesID{1},
-					tagFamilies: [][]nameValues{{{
-						"arrTag", []*nameValue{
-							{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
-							{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+					tagFamilies: [][]nameValues{
+						{
+							{
+								name: "arrTag", values: []*nameValue{
+									{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+									{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+								},
+							},
 						},
-					}}},
-					fields: []nameValues{{
-						"skipped", []*nameValue{
-							{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
+					},
+					fields: []nameValues{
+						{
+							name: "skipped", values: []*nameValue{
+								{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+							},
 						},
-					}},
+					},
 				},
 			},
 			want: 1,
@@ -102,13 +108,13 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 
 func Test_tstIter(t *testing.T) {
 	tests := []struct {
+		wantErr      error
 		name         string
 		dpsList      []*dataPoints
 		sids         []common.SeriesID
+		want         []blockMetadata
 		minTimestamp int64
 		maxTimestamp int64
-		want         []blockMetadata
-		wantErr      error
 	}{
 		{
 			name:         "Test with no data points",
@@ -225,26 +231,28 @@ var dps_ts1 = &dataPoints{
 	tagFamilies: [][]nameValues{
 		{
 			{
-				"arrTag", []*nameValue{
-					{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value1"), []byte("value2")}},
-					{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 				},
-			}, {
-				"binaryTag", []*nameValue{
-					{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 				},
-			}, {
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("value1"), nil},
-					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(10), nil},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				"singleTag", []*nameValue{
-					{"strTag1", pbv1.ValueTypeStr, []byte("tag1"), nil},
-					{"strTag2", pbv1.ValueTypeStr, []byte("tag2"), nil},
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
 				},
 			},
 		},
@@ -252,17 +260,17 @@ var dps_ts1 = &dataPoints{
 	},
 	fields: []nameValues{
 		{
-			"skipped", []*nameValue{
-				{"strField", pbv1.ValueTypeStr, []byte("field1"), nil},
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
-				{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(1221233.343), nil},
-				{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 			},
 		},
 		{}, // empty fields for seriesID 2
 		{
-			"onlyFields", []*nameValue{
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(1110), nil},
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 			},
 		},
 	},
@@ -274,26 +282,28 @@ var dps_ts2 = &dataPoints{
 	tagFamilies: [][]nameValues{
 		{
 			{
-				"arrTag", []*nameValue{
-					{"strArrTag", pbv1.ValueTypeStrArr, nil, [][]byte{[]byte("value5"), []byte("value6")}},
-					{"intArrTag", pbv1.ValueTypeInt64Arr, nil, [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
 				},
-			}, {
-				"binaryTag", []*nameValue{
-					{"binaryTag", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 				},
-			}, {
-				"singleTag", []*nameValue{
-					{"strTag", pbv1.ValueTypeStr, []byte("value3"), nil},
-					{"intTag", pbv1.ValueTypeInt64, convert.Int64ToBytes(30), nil},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				"singleTag", []*nameValue{
-					{"strTag1", pbv1.ValueTypeStr, []byte("tag3"), nil},
-					{"strTag2", pbv1.ValueTypeStr, []byte("tag4"), nil},
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
 				},
 			},
 		},
@@ -301,17 +311,17 @@ var dps_ts2 = &dataPoints{
 	},
 	fields: []nameValues{
 		{
-			"skipped", []*nameValue{
-				{"strField", pbv1.ValueTypeStr, []byte("field3"), nil},
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(3330), nil},
-				{"floatField", pbv1.ValueTypeFloat64, convert.Float64ToBytes(3663699.029), nil},
-				{"binaryField", pbv1.ValueTypeBinaryData, []byte(longText), nil},
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(3663699.029), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
 			},
 		},
 		{}, // empty fields for seriesID 5
 		{
-			"onlyFields", []*nameValue{
-				{"intField", pbv1.ValueTypeInt64, convert.Int64ToBytes(4440), nil},
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
 			},
 		},
 	},

@@ -228,8 +228,8 @@ type Store interface {
 }
 
 type Series struct {
-	ID           common.SeriesID
 	EntityValues []byte
+	ID           common.SeriesID
 }
 
 type SeriesStore interface {

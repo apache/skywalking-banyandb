@@ -78,13 +78,10 @@ func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts QueryOpti
 }
 
 type tstIter struct {
-	parts []*part
-
-	piPool []partIter
-	piHeap partIterHeap
-
-	err error
-
+	err           error
+	parts         []*part
+	piPool        []partIter
+	piHeap        partIterHeap
 	nextBlockNoop bool
 }
 
