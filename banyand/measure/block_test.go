@@ -18,10 +18,10 @@
 package measure
 
 import (
-	"math/rand"
+	"crypto/rand"
+	"encoding/binary"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -36,8 +36,8 @@ import (
 func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
-		tagFamilies []ColumnFamily
-		field       ColumnFamily
+		tagFamilies []columnFamily
+		field       columnFamily
 	}
 	tests := []struct {
 		name   string
@@ -48,13 +48,13 @@ func Test_block_reset(t *testing.T) {
 			name: "Test reset",
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
-				tagFamilies: []ColumnFamily{{}, {}, {}},
-				field:       ColumnFamily{Columns: []Column{{}, {}}},
+				tagFamilies: []columnFamily{{}, {}, {}},
+				field:       columnFamily{columns: []column{{}, {}}},
 			},
 			want: block{
 				timestamps:  []int64{},
-				tagFamilies: []ColumnFamily{},
-				field:       ColumnFamily{Columns: []Column{}},
+				tagFamilies: []columnFamily{},
+				field:       columnFamily{columns: []column{}},
 			},
 		},
 	}
@@ -76,45 +76,54 @@ func Test_block_reset(t *testing.T) {
 func toTagProjection(b block) map[string][]string {
 	result := make(map[string][]string, len(b.tagFamilies))
 	for i := range b.tagFamilies {
-		names := make([]string, len(b.tagFamilies[i].Columns))
-		for i2 := range b.tagFamilies[i].Columns {
-			names[i2] = b.tagFamilies[i].Columns[i2].Name
+		names := make([]string, len(b.tagFamilies[i].columns))
+		for i2 := range b.tagFamilies[i].columns {
+			names[i2] = b.tagFamilies[i].columns[i2].name
 		}
-		result[b.tagFamilies[i].Name] = names
+		result[b.tagFamilies[i].name] = names
 	}
 	return result
 }
 
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
-	tagFamilies: []ColumnFamily{
+	tagFamilies: []columnFamily{
 		{
-			Name: "arrTag",
-			Columns: []Column{
-				{Name: "strArrTag", ValueType: pbv1.ValueTypeStrArr, Values: [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})}},
-				{Name: "intArrTag", ValueType: pbv1.ValueTypeInt64Arr, Values: [][]byte{marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}), marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)})}},
+			name: "arrTag",
+			columns: []column{
+				{
+					name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+					values: [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})},
+				},
+				{
+					name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr,
+					values: [][]byte{
+						marshalIntArr([][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}),
+						marshalIntArr([][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}),
+					},
+				},
 			},
 		},
 		{
-			Name: "binaryTag",
-			Columns: []Column{
-				{Name: "binaryTag", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+			name: "binaryTag",
+			columns: []column{
+				{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{longText, longText}},
 			},
 		},
 		{
-			Name: "singleTag",
-			Columns: []Column{
-				{Name: "strTag", ValueType: pbv1.ValueTypeStr, Values: [][]byte{[]byte("value1"), []byte("value2")}},
-				{Name: "intTag", ValueType: pbv1.ValueTypeInt64, Values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
+			name: "singleTag",
+			columns: []column{
+				{name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2")}},
+				{name: "intTag", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
 			},
 		},
 	},
-	field: ColumnFamily{
-		Columns: []Column{
-			{Name: "strField", ValueType: pbv1.ValueTypeStr, Values: [][]byte{[]byte("field1"), []byte("field2")}},
-			{Name: "intField", ValueType: pbv1.ValueTypeInt64, Values: [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
-			{Name: "floatField", ValueType: pbv1.ValueTypeFloat64, Values: [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
-			{Name: "binaryField", ValueType: pbv1.ValueTypeBinaryData, Values: [][]byte{[]byte(longText), []byte(longText)}},
+	field: columnFamily{
+		columns: []column{
+			{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2")}},
+			{name: "intField", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
+			{name: "floatField", valueType: pbv1.ValueTypeFloat64, values: [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
+			{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{longText, longText}},
 		},
 	},
 }
@@ -144,7 +153,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						},
 						{
 							"binaryTag", []*nameValue{
-								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 							},
 						},
 						{
@@ -163,7 +172,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						},
 						{
 							"binaryTag", []*nameValue{
-								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 							},
 						},
 						{
@@ -180,7 +189,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
 							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 						},
 					},
 					{
@@ -188,7 +197,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
 							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
 							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
-							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 						},
 					},
 				},
@@ -265,12 +274,12 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 }
 
 func getBitInt64Arr() []int64 {
-	src := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(src)
 	size := maxTimestampsBlockSize + 1
 	randSlice := make([]int64, size)
 	for i := range randSlice {
-		randSlice[i] = r.Int63()
+		b := make([]byte, 8)
+		_, _ = rand.Read(b)
+		randSlice[i] = int64(binary.BigEndian.Uint64(b))
 	}
 	return randSlice
 }

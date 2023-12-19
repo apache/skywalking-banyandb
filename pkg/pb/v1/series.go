@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
+// Series denotes a series of data points.
 type Series struct {
 	Subject      string
 	EntityValues []*modelv1.TagValue
@@ -37,6 +38,7 @@ type Series struct {
 	ID           common.SeriesID
 }
 
+// Marshal encodes series to internal Buffer and generates ID.
 func (s *Series) Marshal() error {
 	s.Buffer = marshalEntityValue(s.Buffer, convert.StringToBytes(s.Subject))
 	var err error
@@ -49,6 +51,7 @@ func (s *Series) Marshal() error {
 	return nil
 }
 
+// Unmarshal decodes series from internal Buffer.
 func (s *Series) Unmarshal(src []byte) error {
 	var err error
 	s.Buffer = s.Buffer[:0]
@@ -74,11 +77,13 @@ func (s *Series) reset() {
 	s.Buffer = s.Buffer[:0]
 }
 
+// SeriesPool is a pool of Series.
 type SeriesPool struct {
 	pool sync.Pool
 }
 
-func (sp *SeriesPool) Get() *Series {
+// Generate creates a new Series or gets one from the pool.
+func (sp *SeriesPool) Generate() *Series {
 	sv := sp.pool.Get()
 	if sv == nil {
 		return &Series{}
@@ -86,7 +91,8 @@ func (sp *SeriesPool) Get() *Series {
 	return sv.(*Series)
 }
 
-func (sp *SeriesPool) Put(s *Series) {
+// Release puts a Series back to the pool.
+func (sp *SeriesPool) Release(s *Series) {
 	s.reset()
 	sp.pool.Put(s)
 }
@@ -140,6 +146,7 @@ func (a SeriesList) Merge(other SeriesList) SeriesList {
 	return final
 }
 
+// ToList converts SeriesList to posting.List.
 func (a SeriesList) ToList() posting.List {
 	pl := roaring.NewPostingList()
 	for _, v := range a {

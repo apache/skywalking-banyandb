@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -203,7 +202,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 		Interval: sourceMeasureSchema.GetInterval(),
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: TopNTagFamily,
+				Name: topNTagFamily,
 				Tags: append([]*databasev1.TagSpec{
 					{
 						Name: "measure_id",
@@ -212,7 +211,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 				}, seriesSpecs...),
 			},
 		},
-		Fields: []*databasev1.FieldSpec{TopNValueFieldSpec},
+		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
 		Entity: sourceMeasureSchema.GetEntity(),
 	}
 	if oldTopNSchema == nil {
@@ -359,14 +358,6 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 			return p
 		}),
 		opts)
-}
-
-func intervalFn(key []byte) time.Duration {
-	_, interval, err := pbv1.DecodeFieldFlag(key)
-	if err != nil {
-		panic(err)
-	}
-	return interval
 }
 
 type portableSupplier struct {

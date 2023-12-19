@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package zstd provides ZSTD compression and decompression.
 package zstd
 
 import (
@@ -45,10 +46,12 @@ func init() {
 	}
 }
 
+// Decompress decompresses the src into dst.
 func Decompress(dst, src []byte) ([]byte, error) {
 	return decoder.DecodeAll(src, dst)
 }
 
+// Compress compresses the src into dst.
 func Compress(dst, src []byte, compressionLevel int) []byte {
 	e := getEncoder(compressionLevel)
 	return e.EncodeAll(src, dst)

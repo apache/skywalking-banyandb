@@ -45,6 +45,7 @@ func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
 }
 
+// AppendToBytes appends series id to bytes.
 func (s SeriesID) AppendToBytes(dest []byte) []byte {
 	return encoding.Uint64ToBytes(dest, uint64(s))
 }

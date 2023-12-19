@@ -109,7 +109,7 @@ var dps = &dataPoints{
 			},
 			{
 				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
@@ -128,7 +128,7 @@ var dps = &dataPoints{
 			},
 			{
 				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
@@ -163,7 +163,7 @@ var dps = &dataPoints{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 			},
 		},
 		{
@@ -171,7 +171,7 @@ var dps = &dataPoints{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
 				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 			},
 		},
 		{},

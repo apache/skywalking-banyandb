@@ -19,6 +19,7 @@ package measure
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -28,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func newTSTable(root string, position common.Position, l *logger.Logger, timeRange timestamp.TimeRange) (*tsTable, error) {
+func newTSTable(_ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
 	return &tsTable{}, nil
 }
 
@@ -62,7 +63,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	tst.memParts = append(tst.memParts, pw)
 }
 
-func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts QueryOptions) ([]*partWrapper, []*part) {
+func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts queryOptions) ([]*partWrapper, []*part) {
 	tst.RLock()
 	defer tst.RUnlock()
 	for _, p := range tst.memParts {
@@ -121,7 +122,7 @@ func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, max
 	for i := range ti.piPool {
 		ps := &ti.piPool[i]
 		if !ps.nextBlock() {
-			if err := ps.Error(); err != nil {
+			if err := ps.error(); err != nil {
 				ti.err = fmt.Errorf("cannot initialize tsTable iteration: %w", err)
 				return
 			}
@@ -148,7 +149,7 @@ func (ti *tstIter) nextBlock() bool {
 
 	ti.err = ti.next()
 	if ti.err != nil {
-		if ti.err != io.EOF {
+		if errors.Is(ti.err, io.EOF) {
 			ti.err = fmt.Errorf("cannot obtain the next block to search in the partition: %w", ti.err)
 		}
 		return false
@@ -163,7 +164,7 @@ func (ti *tstIter) next() error {
 		return nil
 	}
 
-	if err := psMin.Error(); err != nil {
+	if err := psMin.error(); err != nil {
 		return err
 	}
 
@@ -176,7 +177,7 @@ func (ti *tstIter) next() error {
 }
 
 func (ti *tstIter) Error() error {
-	if ti.err == io.EOF {
+	if errors.Is(ti.err, io.EOF) {
 		return nil
 	}
 	return ti.err

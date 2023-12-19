@@ -90,8 +90,8 @@ func (*local) Register(schema.EventHandler) {
 
 type localBatchPublisher struct {
 	local    *bus.Bus
-	messages []any
 	topic    *bus.Topic
+	messages []any
 }
 
 func (l *localBatchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {

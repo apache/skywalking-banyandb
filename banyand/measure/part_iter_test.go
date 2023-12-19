@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -26,11 +27,11 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 )
 
-// TODO: test more scenarios
+// TODO: test more scenarios.
 func Test_partIter_nextBlock(t *testing.T) {
 	tests := []struct {
 		wantErr error
-		opt     *QueryOptions
+		opt     *queryOptions
 		name    string
 		sids    []common.SeriesID
 		want    []blockMetadata
@@ -38,7 +39,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with all seriesIDs",
 			sids: []common.SeriesID{1, 2, 3},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -49,7 +50,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with no seriesIDs",
 			sids: []common.SeriesID{},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -58,7 +59,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with a single seriesID",
 			sids: []common.SeriesID{1},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -67,7 +68,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with non-sequential seriesIDs",
 			sids: []common.SeriesID{1, 3},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -76,7 +77,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with seriesID not in data",
 			sids: []common.SeriesID{4},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -86,7 +87,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with multiple seriesIDs not in data",
 			sids: []common.SeriesID{4, 5, 6},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -96,7 +97,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		{
 			name: "Test with some seriesIDs in data and some not",
 			sids: []common.SeriesID{1, 4},
-			opt: &QueryOptions{
+			opt: &queryOptions{
 				minTimestamp: 1,
 				maxTimestamp: 220,
 			},
@@ -124,7 +125,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 				got = append(got, pi.curBlock)
 			}
 
-			if pi.Error() != tt.wantErr {
+			if !errors.Is(pi.error(), tt.wantErr) {
 				t.Errorf("Unexpected error: got %v, want %v", pi.err, tt.wantErr)
 			}
 

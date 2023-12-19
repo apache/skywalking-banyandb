@@ -72,6 +72,7 @@ type Resource interface {
 	Delegated() io.Closer
 }
 
+// Supplier allows open a tsdb.
 type Supplier interface {
 	SupplyTSDB() io.Closer
 }

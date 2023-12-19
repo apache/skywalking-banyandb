@@ -40,7 +40,7 @@ type store struct {
 }
 
 // Batch implements index.Store.
-func (*store) Batch(docs index.Documents) error {
+func (*store) Batch(_ index.Documents) error {
 	panic("unimplemented")
 }
 

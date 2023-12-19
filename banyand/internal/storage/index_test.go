@@ -46,7 +46,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	}()
 	var docs index.Documents
 	for i := 0; i < 100; i++ {
-		series := testSeriesPool.Get()
+		series := testSeriesPool.Generate()
 		series.Subject = "service_instance_latency"
 		series.EntityValues = []*modelv1.TagValue{
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("svc_%d", i)}}},
@@ -64,7 +64,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 		}
 		copy(doc.EntityValues, series.Buffer)
 		docs = append(docs, doc)
-		testSeriesPool.Put(series)
+		testSeriesPool.Release(series)
 	}
 	require.NoError(t, si.Write(docs))
 	// Restart the index
@@ -117,8 +117,8 @@ func TestSeriesIndex_Primary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			seriesQuery := testSeriesPool.Get()
-			defer testSeriesPool.Put(seriesQuery)
+			seriesQuery := testSeriesPool.Generate()
+			defer testSeriesPool.Release(seriesQuery)
 			seriesQuery.Subject = tt.subject
 			seriesQuery.EntityValues = tt.entityValues
 			sl, err := si.searchPrimary(ctx, seriesQuery)

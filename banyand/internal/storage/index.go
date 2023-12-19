@@ -42,9 +42,8 @@ func (d *database[T]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.Ser
 }
 
 type seriesIndex struct {
-	store    index.SeriesStore
-	l        *logger.Logger
-	position common.Position
+	store index.SeriesStore
+	l     *logger.Logger
 }
 
 func newSeriesIndex(ctx context.Context, root string) (*seriesIndex, error) {
@@ -67,7 +66,7 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (s *seriesIndex) searchPrimary(_ context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
 

@@ -28,10 +28,10 @@ import (
 func TestInt64ListToBytes(t *testing.T) {
 	testCases := []struct {
 		name           string
-		mt             encoding.EncodeType
-		firstValue     int64
 		values         []int64
+		firstValue     int64
 		expectedDstLen int
+		mt             encoding.EncodeType
 	}{
 		{
 			name:       "EncodeTypeDelta",

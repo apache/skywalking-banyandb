@@ -28,8 +28,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// ValueType is the type of the tag and field value.
 type ValueType byte
 
+// ValueType constants.
 const (
 	ValueTypeUnknown ValueType = iota
 	ValueTypeStr
@@ -40,6 +42,7 @@ const (
 	ValueTypeInt64Arr
 )
 
+// MustTagValueToValueType converts modelv1.TagValue to ValueType.
 func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 	switch tag.Value.(type) {
 	case *modelv1.TagValue_Null:
@@ -124,8 +127,9 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 				BinaryData: data,
 			},
 		}, nil
+	default:
+		return nil, nil, nil, errors.New("unsupported tag value type")
 	}
-	return nil, nil, nil, errors.New("unsupported tag value type")
 }
 
 const (
@@ -179,6 +183,9 @@ func unmarshalEntityValue(dest, src []byte) ([]byte, []byte, error) {
 	return nil, nil, errors.New("invalid entity value")
 }
 
+// MustCompareTagValue compares two tag values.
+// It returns 0 if tv1 == tv2, -1 if tv1 < tv2, 1 if tv1 > tv2.
+// It panics if the tag value type is inconsistent.
 func MustCompareTagValue(tv1, tv2 *modelv1.TagValue) int {
 	if tv1 == nil && tv2 == nil {
 		return 0

@@ -79,8 +79,10 @@ type BufferWriter interface {
 	Bytes() []byte
 }
 
+// EncodeType indicates the encoding type of a series.
 type EncodeType byte
 
+// EncodeType constants.
 const (
 	EncodeTypeUnknown EncodeType = iota
 	EncodeTypeConst

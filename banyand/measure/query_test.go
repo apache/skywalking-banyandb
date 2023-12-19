@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestQueryResult(t *testing.T) {
 	}{
 		{
 			name:         "Test with multiple parts with duplicated data order by TS",
-			dpsList:      []*dataPoints{dps_ts1, dps_ts1},
+			dpsList:      []*dataPoints{dpsTS1, dpsTS1},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
@@ -91,7 +92,7 @@ func TestQueryResult(t *testing.T) {
 		},
 		{
 			name:         "Test with multiple parts with multiple data orderBy TS desc",
-			dpsList:      []*dataPoints{dps_ts1, dps_ts2},
+			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
@@ -177,7 +178,7 @@ func TestQueryResult(t *testing.T) {
 		},
 		{
 			name:         "Test with multiple parts with multiple data orderBy TS asc",
-			dpsList:      []*dataPoints{dps_ts1, dps_ts2},
+			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
 			sids:         []common.SeriesID{1, 2, 3},
 			ascTS:        true,
 			minTimestamp: 1,
@@ -264,7 +265,7 @@ func TestQueryResult(t *testing.T) {
 		},
 		{
 			name:          "Test with multiple parts with duplicated data order by Series",
-			dpsList:       []*dataPoints{dps_ts1, dps_ts1},
+			dpsList:       []*dataPoints{dpsTS1, dpsTS1},
 			sids:          []common.SeriesID{1, 2, 3},
 			orderBySeries: true,
 			minTimestamp:  1,
@@ -312,7 +313,7 @@ func TestQueryResult(t *testing.T) {
 		},
 		{
 			name:          "Test with multiple parts with multiple data order by Series",
-			dpsList:       []*dataPoints{dps_ts1, dps_ts2},
+			dpsList:       []*dataPoints{dpsTS1, dpsTS2},
 			sids:          []common.SeriesID{2, 1, 3},
 			orderBySeries: true,
 			minTimestamp:  1,
@@ -369,7 +370,7 @@ func TestQueryResult(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			queryOpts := QueryOptions{
+			queryOpts := queryOptions{
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
 			}
@@ -387,7 +388,7 @@ func TestQueryResult(t *testing.T) {
 			ti := &tstIter{}
 			ti.init(pp, sids, tt.minTimestamp, tt.maxTimestamp)
 
-			var result QueryResult
+			var result queryResult
 			for ti.nextBlock() {
 				bc := generateBlockCursor()
 				p := ti.piHeap[0]
@@ -419,7 +420,7 @@ func TestQueryResult(t *testing.T) {
 				got = append(got, *r)
 			}
 
-			if ti.Error() != tt.wantErr {
+			if !errors.Is(ti.Error(), tt.wantErr) {
 				t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
 			}
 
@@ -428,15 +429,5 @@ func TestQueryResult(t *testing.T) {
 				t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
 			}
 		})
-	}
-}
-
-func strField(value string) *modelv1.FieldValue {
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_Str{
-			Str: &modelv1.Str{
-				Value: value,
-			},
-		},
 	}
 }

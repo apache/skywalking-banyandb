@@ -19,6 +19,7 @@ package bytes
 
 import "math/bits"
 
+// ResizeOver resizes the byte slice to the nearest power of 2.
 func ResizeOver(b []byte, n int) []byte {
 	if n <= cap(b) {
 		return b[:n]
@@ -28,6 +29,7 @@ func ResizeOver(b []byte, n int) []byte {
 	return bNew[:n]
 }
 
+// ResizeExact resizes the byte slice to the exact size.
 func ResizeExact(b []byte, n int) []byte {
 	if n <= cap(b) {
 		return b[:n]

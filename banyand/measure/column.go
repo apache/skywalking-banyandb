@@ -25,37 +25,37 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type Column struct {
-	Name      string
-	Values    [][]byte
-	ValueType pbv1.ValueType
+type column struct {
+	name      string
+	values    [][]byte
+	valueType pbv1.ValueType
 }
 
-func (c *Column) reset() {
-	c.Name = ""
+func (c *column) reset() {
+	c.name = ""
 
-	values := c.Values
+	values := c.values
 	for i := range values {
 		values[i] = nil
 	}
-	c.Values = values[:0]
+	c.values = values[:0]
 }
 
-func (c *Column) resizeValues(valuesLen int) [][]byte {
-	values := c.Values
+func (c *column) resizeValues(valuesLen int) [][]byte {
+	values := c.values
 	if n := valuesLen - cap(values); n > 0 {
 		values = append(values[:cap(values)], make([][]byte, n)...)
 	}
 	values = values[:valuesLen]
-	c.Values = values
+	c.values = values
 	return values
 }
 
-func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
+func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	ch.reset()
 
-	ch.name = c.Name
-	ch.valueType = c.ValueType
+	ch.name = c.name
+	ch.valueType = c.valueType
 
 	// TODO: encoding values based on value type
 
@@ -63,7 +63,7 @@ func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	defer bigValuePool.Release(bb)
 
 	// marshal values
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.Values)
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
 	ch.size = uint64(len(bb.Buf))
 	if ch.size > maxValuesBlockSize {
 		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", ch.size, maxValuesBlockSize)
@@ -72,9 +72,9 @@ func (c *Column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 	columnWriter.MustWrite(bb.Buf)
 }
 
-func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
-	c.Name = cm.name
-	c.ValueType = cm.valueType
+func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
+	c.name = cm.name
+	c.valueType = cm.valueType
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
@@ -85,7 +85,7 @@ func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
 	var err error
-	c.Values, err = decoder.Decode(c.Values[:0], bb.Buf, count)
+	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
 	}
@@ -93,27 +93,27 @@ func (c *Column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 
 var bigValuePool bytes.BufferPool
 
-type ColumnFamily struct {
-	Name    string
-	Columns []Column
+type columnFamily struct {
+	name    string
+	columns []column
 }
 
-func (cf *ColumnFamily) reset() {
-	cf.Name = ""
+func (cf *columnFamily) reset() {
+	cf.name = ""
 
-	columns := cf.Columns
+	columns := cf.columns
 	for i := range columns {
 		columns[i].reset()
 	}
-	cf.Columns = columns[:0]
+	cf.columns = columns[:0]
 }
 
-func (cf *ColumnFamily) resizeColumns(columnsLen int) []Column {
-	columns := cf.Columns
+func (cf *columnFamily) resizeColumns(columnsLen int) []column {
+	columns := cf.columns
 	if n := columnsLen - cap(columns); n > 0 {
-		columns = append(columns[:cap(columns)], make([]Column, n)...)
+		columns = append(columns[:cap(columns)], make([]column, n)...)
 	}
 	columns = columns[:columnsLen]
-	cf.Columns = columns
+	cf.columns = columns
 	return columns
 }

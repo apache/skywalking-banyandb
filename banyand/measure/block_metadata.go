@@ -99,18 +99,6 @@ func (bh *blockMetadata) reset() {
 	bh.tagProjection = bh.tagProjection[:0]
 }
 
-func (bh *blockMetadata) copyFrom(src *blockMetadata) {
-	bh.reset()
-	bh.seriesID = src.seriesID
-	bh.uncompressedSizeBytes = src.uncompressedSizeBytes
-	bh.count = src.count
-	bh.timestamps.copyFrom(&src.timestamps)
-	bh.field.copyFrom(&src.field)
-	for k, v := range src.tagFamilies {
-		bh.tagFamilies[k] = v
-	}
-}
-
 func (bh *blockMetadata) marshal(dst []byte) []byte {
 	dst = bh.seriesID.AppendToBytes(dst)
 	dst = encoding.VarUint64ToBytes(dst, bh.uncompressedSizeBytes)

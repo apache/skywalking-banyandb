@@ -37,8 +37,6 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-var errTagFamilyNotExist = errors.New("tag family doesn't exist")
-
 // Query allow to retrieve measure data points.
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)
@@ -60,7 +58,7 @@ func (s *measure) SetSchema(schema *databasev1.Measure) {
 	s.schema = schema
 }
 
-type QueryOptions struct {
+type queryOptions struct {
 	pbv1.MeasureQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -80,7 +78,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		return nil, err
 	}
 
-	var result QueryResult
+	var result queryResult
 	if len(sl) < 1 {
 		return &result, nil
 	}
@@ -90,7 +88,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	}
 	var pws []*partWrapper
 	var parts []*part
-	qo := QueryOptions{
+	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
@@ -302,17 +300,16 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 	}
 }
 
-type QueryResult struct {
+type queryResult struct {
 	sidToIndex map[common.SeriesID]int
 	data       []*blockCursor
 	pws        []*partWrapper
-	lastIndex  int
 	loaded     bool
 	orderByTS  bool
 	ascTS      bool
 }
 
-func (qr *QueryResult) Pull() *pbv1.Result {
+func (qr *queryResult) Pull() *pbv1.Result {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
@@ -345,7 +342,7 @@ func (qr *QueryResult) Pull() *pbv1.Result {
 	return qr.merge()
 }
 
-func (qr *QueryResult) Release() {
+func (qr *queryResult) Release() {
 	for i, v := range qr.data {
 		releaseBlockCursor(v)
 		qr.data[i] = nil
@@ -357,11 +354,11 @@ func (qr *QueryResult) Release() {
 	qr.pws = qr.pws[:0]
 }
 
-func (qr QueryResult) Len() int {
+func (qr queryResult) Len() int {
 	return len(qr.data)
 }
 
-func (qr QueryResult) Less(i, j int) bool {
+func (qr queryResult) Less(i, j int) bool {
 	leftTS := qr.data[i].timestamps[qr.data[i].idx]
 	rightTS := qr.data[j].timestamps[qr.data[j].idx]
 	leftVersion := qr.data[i].p.partMetadata.Version
@@ -393,15 +390,15 @@ func (qr QueryResult) Less(i, j int) bool {
 	return leftSIDIndex < rightSIDIndex
 }
 
-func (qr QueryResult) Swap(i, j int) {
+func (qr queryResult) Swap(i, j int) {
 	qr.data[i], qr.data[j] = qr.data[j], qr.data[i]
 }
 
-func (qr *QueryResult) Push(x interface{}) {
+func (qr *queryResult) Push(x interface{}) {
 	qr.data = append(qr.data, x.(*blockCursor))
 }
 
-func (qr *QueryResult) Pop() interface{} {
+func (qr *queryResult) Pop() interface{} {
 	old := qr.data
 	n := len(old)
 	x := old[n-1]
@@ -409,11 +406,11 @@ func (qr *QueryResult) Pop() interface{} {
 	return x
 }
 
-func (qr *QueryResult) orderByTimestampDesc() bool {
+func (qr *queryResult) orderByTimestampDesc() bool {
 	return qr.orderByTS && !qr.ascTS
 }
 
-func (qr *QueryResult) merge() *pbv1.Result {
+func (qr *queryResult) merge() *pbv1.Result {
 	step := 1
 	if qr.orderByTimestampDesc() {
 		step = -1

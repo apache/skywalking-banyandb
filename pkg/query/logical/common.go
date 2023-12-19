@@ -173,10 +173,12 @@ func (t *Tag) GetCompoundName() string {
 	return t.familyName + ":" + t.name
 }
 
+// GetTagName returns the tag name.
 func (t *Tag) GetTagName() string {
 	return t.name
 }
 
+// GetFamilyName returns the tag family name.
 func (t *Tag) GetFamilyName() string {
 	return t.familyName
 }

@@ -171,7 +171,6 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		default:
 			w.l.Warn().Msg("invalid event data type")
 			continue
-
 		}
 		stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 		if !ok {

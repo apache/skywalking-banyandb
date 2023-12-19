@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package bytes provides utilities for operating bytes.
 package bytes
 
 import (
@@ -30,6 +31,7 @@ var (
 	_ fs.Reader = (*Buffer)(nil)
 )
 
+// Buffer is a in-memory buffer.
 type Buffer struct {
 	Buf []byte
 }
@@ -60,14 +62,17 @@ func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
 	return n, err
 }
 
+// Reset resets the buffer.
 func (b *Buffer) Reset() {
 	b.Buf = b.Buf[:0]
 }
 
+// BufferPool is a pool of Buffer.
 type BufferPool struct {
 	p sync.Pool
 }
 
+// Generate generates a Buffer.
 func (bp *BufferPool) Generate() *Buffer {
 	bbv := bp.p.Get()
 	if bbv == nil {
@@ -76,6 +81,7 @@ func (bp *BufferPool) Generate() *Buffer {
 	return bbv.(*Buffer)
 }
 
+// Release releases a Buffer.
 func (bp *BufferPool) Release(b *Buffer) {
 	b.Reset()
 	bp.p.Put(b)

@@ -51,8 +51,7 @@ import (
 
 const (
 	timeBucketFormat = "200601021504"
-	// TopNTagFamily is the identity of a tag family which contains the topN calculated result.
-	TopNTagFamily = "__topN__"
+	topNTagFamily    = "__topN__"
 )
 
 var (
@@ -60,8 +59,7 @@ var (
 	_ io.Closer = (*topNProcessorManager)(nil)
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 
-	// TopNValueFieldSpec denotes the field specification of the topN calculated result.
-	TopNValueFieldSpec = &databasev1.FieldSpec{
+	topNValueFieldSpec = &databasev1.FieldSpec{
 		Name:              "value",
 		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
 		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,

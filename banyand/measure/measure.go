@@ -26,7 +26,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -35,10 +34,6 @@ import (
 )
 
 const (
-	plainChunkSize = 1 << 20
-	intChunkNum    = 120
-	intChunkSize   = 4 * 1024
-
 	maxValuesBlockSize              = 8 * 1024 * 1024
 	maxTimestampsBlockSize          = 8 * 1024 * 1024
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
@@ -52,7 +47,6 @@ type measure struct {
 	databaseSupplier  schema.Supplier
 	l                 *logger.Logger
 	schema            *databasev1.Measure
-	indexWriter       *index.Writer
 	processorManager  *topNProcessorManager
 	name              string
 	group             string

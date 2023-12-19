@@ -28,11 +28,6 @@ func newReader(r fs.Reader) *reader {
 	return &reader{r: r}
 }
 
-func (r *reader) reset() {
-	r.r = nil
-	r.bytesRead = 0
-}
-
 func (r *reader) Path() string {
 	return r.r.Path()
 }

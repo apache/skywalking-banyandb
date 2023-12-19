@@ -67,12 +67,16 @@ func BytesToInt64(src []byte) int64 {
 	return v
 }
 
+// VarInt64ToBytes appends the bytes of the given int64 to the given byte slice.
+// It uses variable-length encoding.
 func VarInt64ToBytes(dst []byte, v int64) []byte {
 	var tmp [1]int64
 	tmp[0] = v
 	return VarInt64ListToBytes(dst, tmp[:])
 }
 
+// VarInt64ListToBytes appends the bytes of the given int64s to the given byte slice.
+// It uses variable-length encoding.
 func VarInt64ListToBytes(dst []byte, vs []int64) []byte {
 	for _, v := range vs {
 		if v < 0x40 && v > -0x40 {
@@ -93,12 +97,16 @@ func VarInt64ListToBytes(dst []byte, vs []int64) []byte {
 	return dst
 }
 
+// BytesToVarInt64 converts the first bytes of the given byte slice to an int64.
+// It uses variable-length encoding.
 func BytesToVarInt64(src []byte) ([]byte, int64, error) {
 	var tmp [1]int64
 	tail, err := BytesToVarInt64List(tmp[:], src)
 	return tail, tmp[0], err
 }
 
+// BytesToVarInt64List converts the first bytes of the given byte slice to an int64s.
+// It uses variable-length encoding.
 func BytesToVarInt64List(dst []int64, src []byte) ([]byte, error) {
 	idx := uint(0)
 	for i := range dst {
@@ -138,12 +146,16 @@ func BytesToVarInt64List(dst []int64, src []byte) ([]byte, error) {
 	return src[idx:], nil
 }
 
+// VarUint64ToBytes appends the bytes of the given uint64 to the given byte slice.
+// It uses variable-length encoding.
 func VarUint64ToBytes(dst []byte, u uint64) []byte {
 	var tmp [1]uint64
 	tmp[0] = u
 	return VarUint64sToBytes(dst, tmp[:])
 }
 
+// VarUint64sToBytes appends the bytes of the given uint64s to the given byte slice.
+// It uses variable-length encoding.
 func VarUint64sToBytes(dst []byte, us []uint64) []byte {
 	for _, u := range us {
 		if u < 0x80 {
@@ -159,12 +171,16 @@ func VarUint64sToBytes(dst []byte, us []uint64) []byte {
 	return dst
 }
 
+// BytesToVarUint64 converts the first bytes of the given byte slice to a uint64.
+// It uses variable-length encoding.
 func BytesToVarUint64(src []byte) ([]byte, uint64, error) {
 	var tmp [1]uint64
 	tail, err := BytesToVarUint64s(tmp[:], src)
 	return tail, tmp[0], err
 }
 
+// BytesToVarUint64s converts the first bytes of the given byte slice to a uint64s.
+// It uses variable-length encoding.
 func BytesToVarUint64s(dst []uint64, src []byte) ([]byte, error) {
 	idx := uint(0)
 	for i := range dst {
@@ -199,6 +215,8 @@ func BytesToVarUint64s(dst []uint64, src []byte) ([]byte, error) {
 	return src[idx:], nil
 }
 
+// GenerateInt64List generates a list of int64 with the given size.
+// The returned list may be from a pool and should be released after use.
 func GenerateInt64List(size int) *Int64List {
 	v := int64ListPool.Get()
 	if v == nil {
@@ -214,16 +232,21 @@ func GenerateInt64List(size int) *Int64List {
 	return is
 }
 
+// ReleaseInt64List releases the given list of int64.
+// The list may be put into a pool for reuse.
 func ReleaseInt64List(is *Int64List) {
 	int64ListPool.Put(is)
 }
 
+// Int64List is a list of int64.
 type Int64List struct {
 	L []int64
 }
 
 var int64ListPool sync.Pool
 
+// GenerateUint64List generates a list of uint64 with the given size.
+// The returned list may be from a pool and should be released after use.
 func GenerateUint64List(size int) *Uint64List {
 	v := uint64ListPool.Get()
 	if v == nil {
@@ -239,10 +262,13 @@ func GenerateUint64List(size int) *Uint64List {
 	return is
 }
 
+// ReleaseUint64List releases the given list of uint64.
+// The list may be put into a pool for reuse.
 func ReleaseUint64List(is *Uint64List) {
 	uint64ListPool.Put(is)
 }
 
+// Uint64List is a list of uint64.
 type Uint64List struct {
 	L []uint64
 }

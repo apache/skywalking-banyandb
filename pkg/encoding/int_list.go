@@ -23,6 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// Int64ListToBytes encodes a list of int64 into bytes.
 func Int64ListToBytes(dst []byte, a []int64) (result []byte, mt EncodeType, firstValue int64) {
 	if len(a) == 0 {
 		logger.Panicf("a must contain at least one item")
@@ -38,7 +39,6 @@ func Int64ListToBytes(dst []byte, a []int64) (result []byte, mt EncodeType, firs
 		return dst, EncodeTypeDeltaConst, firstValue
 	}
 	if isDelta {
-		var firstValue int64
 		dst, firstValue = int64sDeltaOfDeltaToBytes(dst, a)
 		return dst, EncodeTypeDeltaOfDelta, firstValue
 	}
@@ -47,13 +47,13 @@ func Int64ListToBytes(dst []byte, a []int64) (result []byte, mt EncodeType, firs
 		mt = EncodeTypeDeltaOfDelta
 		dst, firstValue = int64sDeltaOfDeltaToBytes(dst, a)
 		return dst, mt, firstValue
-
 	}
 	mt = EncodeTypeDelta
 	dst, firstValue = int64ListDeltaToBytes(dst, a)
 	return dst, mt, firstValue
 }
 
+// BytesToInt64List decodes bytes into a list of int64.
 func BytesToInt64List(dst []int64, src []byte, mt EncodeType, firstValue int64, itemsCount int) ([]int64, error) {
 	dst = extendInt64ListCapacity(dst, itemsCount)
 

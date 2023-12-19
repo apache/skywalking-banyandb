@@ -36,6 +36,7 @@ type Iter struct {
 	buffer   []byte
 }
 
+// Writer allows writing data to a file.
 type Writer interface {
 	// Append mode, which adds new data to the end of a file.
 	Write(buffer []byte) (int, error)
@@ -45,6 +46,7 @@ type Writer interface {
 	Close() error
 }
 
+// Reader allows reading data from a file.
 type Reader interface {
 	// Read the entire file using streaming read.
 	Read(offset int64, buffer []byte) (int, error)
@@ -54,6 +56,7 @@ type Reader interface {
 	Close() error
 }
 
+// Closer allows closing a file.
 type Closer interface {
 	// Returns the absolute path of the file.
 	Path() string
@@ -133,6 +136,7 @@ func MustReadData(r Reader, offset int64, buff []byte) {
 	}
 }
 
+// MustClose closes c and panics if it cannot close.
 func MustClose(c Closer) {
 	err := c.Close()
 	if err != nil {

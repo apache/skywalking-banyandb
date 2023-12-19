@@ -28,7 +28,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -54,7 +53,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %s", err)
+		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := uint64(t.UnixNano())
 
@@ -237,13 +236,11 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)
 			dps.tsTable.DecRef()
 		}
-		g.tsdb.IndexDB().Write(g.docs)
+		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
+			w.l.Error().Err(err).Msg("cannot write index")
+		}
 	}
 	return
-}
-
-func familyIdentity(name string, flag []byte) []byte {
-	return bytes.Join([][]byte{tsdb.Hash([]byte(name)), flag}, nil)
 }
 
 func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *modelv1.FieldValue) *nameValue {

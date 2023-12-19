@@ -46,6 +46,7 @@ func NewLocalFileSystem() FileSystem {
 	}
 }
 
+// NewLocalFileSystemWithLogger is used to create the Local File system with logger.
 func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
 	return &localFileSystem{
 		logger: parent.Named(moduleName),
@@ -334,8 +335,8 @@ func (file *LocalFile) Size() (int64, error) {
 }
 
 // Path returns the absolute path of the file.
-func (fs *LocalFile) Path() string {
-	return fs.file.Name()
+func (file *LocalFile) Path() string {
+	return file.file.Name()
 }
 
 // Close is used to close File.

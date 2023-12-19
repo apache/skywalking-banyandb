@@ -15,12 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package tsdb implements a time-series-based storage engine.
-// It provides:
-//   - Partition data based on a time axis.
-//   - Sharding data based on a series id which represents a unique entity of stream/measure
-//   - Retrieving data based on index.Filter.
-//   - Cleaning expired data, or the data retention.
 package storage
 
 import (
@@ -58,12 +52,11 @@ type TSDBOpts[T TSTable] struct {
 }
 
 type (
-	// SegID is the kind of a segment.
-	SegID uint32
+	segmentID uint32
 )
 
-func GenerateSegID(unit IntervalUnit, suffix int) SegID {
-	return SegID(unit)<<31 | ((SegID(suffix) << 1) >> 1)
+func generateSegID(unit IntervalUnit, suffix int) segmentID {
+	return segmentID(unit)<<31 | ((segmentID(suffix) << 1) >> 1)
 }
 
 type database[T TSTable] struct {

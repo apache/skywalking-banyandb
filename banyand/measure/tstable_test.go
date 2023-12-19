@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -79,8 +80,8 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 		{
 			name: "Test with multiple calls to mustAddDataPoints",
 			dpsList: []*dataPoints{
-				dps_ts1,
-				dps_ts2,
+				dpsTS1,
+				dpsTS2,
 			},
 			want: 2,
 		},
@@ -125,7 +126,7 @@ func Test_tstIter(t *testing.T) {
 		},
 		{
 			name:         "Test with single part",
-			dpsList:      []*dataPoints{dps_ts1},
+			dpsList:      []*dataPoints{dpsTS1},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
@@ -137,7 +138,7 @@ func Test_tstIter(t *testing.T) {
 		},
 		{
 			name:         "Test with multiple parts with different ts",
-			dpsList:      []*dataPoints{dps_ts1, dps_ts2},
+			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
@@ -152,7 +153,7 @@ func Test_tstIter(t *testing.T) {
 		},
 		{
 			name:         "Test with multiple parts with same ts",
-			dpsList:      []*dataPoints{dps_ts1, dps_ts1},
+			dpsList:      []*dataPoints{dpsTS1, dpsTS1},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
@@ -174,7 +175,7 @@ func Test_tstIter(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			pws, pp := tst.getParts(nil, nil, QueryOptions{
+			pws, pp := tst.getParts(nil, nil, queryOptions{
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
 			})
@@ -193,7 +194,7 @@ func Test_tstIter(t *testing.T) {
 				got = append(got, ti.piHeap[0].curBlock)
 			}
 
-			if ti.Error() != tt.wantErr {
+			if !errors.Is(ti.Error(), tt.wantErr) {
 				t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
 			}
 
@@ -225,7 +226,7 @@ var fieldProjections = map[int][]string{
 	3: {"intField"},
 }
 
-var dps_ts1 = &dataPoints{
+var dpsTS1 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
 	tagFamilies: [][]nameValues{
@@ -238,7 +239,7 @@ var dps_ts1 = &dataPoints{
 			},
 			{
 				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
@@ -264,7 +265,7 @@ var dps_ts1 = &dataPoints{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 			},
 		},
 		{}, // empty fields for seriesID 2
@@ -276,7 +277,7 @@ var dps_ts1 = &dataPoints{
 	},
 }
 
-var dps_ts2 = &dataPoints{
+var dpsTS2 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
 	tagFamilies: [][]nameValues{
@@ -289,7 +290,7 @@ var dps_ts2 = &dataPoints{
 			},
 			{
 				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
@@ -315,7 +316,7 @@ var dps_ts2 = &dataPoints{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
 				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(3663699.029), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: []byte(longText), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 			},
 		},
 		{}, // empty fields for seriesID 5

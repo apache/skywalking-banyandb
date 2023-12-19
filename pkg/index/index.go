@@ -191,12 +191,14 @@ type PostingValue struct {
 	Term  []byte
 }
 
+// Document represents a document in a index.
 type Document struct {
 	Fields       []Field
 	EntityValues []byte
 	DocID        uint64
 }
 
+// Documents is a collection of documents.
 type Documents []Document
 
 // Writer allows writing fields and docID in a document to a index.
@@ -227,11 +229,13 @@ type Store interface {
 	SizeOnDisk() int64
 }
 
+// Series represents a series in a index.
 type Series struct {
 	EntityValues []byte
 	ID           common.SeriesID
 }
 
+// SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
 	Search([]byte) (common.SeriesID, error)

@@ -162,16 +162,16 @@ func (bw *blockWriter) reset() {
 	bw.primaryBlockMetadata.reset()
 }
 
-func (bsw *blockWriter) MustInitForMemPart(mp *memPart) {
-	bsw.reset()
-	bsw.writers.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
-	bsw.writers.metaWriter.init(&mp.meta)
-	bsw.writers.primaryWriter.init(&mp.primary)
-	bsw.writers.timestampsWriter.init(&mp.timestamps)
-	bsw.writers.fieldValuesWriter.init(&mp.fieldValues)
+func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
+	bw.reset()
+	bw.writers.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
+	bw.writers.metaWriter.init(&mp.meta)
+	bw.writers.primaryWriter.init(&mp.primary)
+	bw.writers.timestampsWriter.init(&mp.timestamps)
+	bw.writers.fieldValuesWriter.init(&mp.fieldValues)
 }
 
-func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
 	if len(timestamps) == 0 {
 		return
 	}
@@ -182,79 +182,79 @@ func (bsw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []in
 	if b.Len() == 0 {
 		return
 	}
-	if sid < bsw.sidLast {
-		logger.Panicf("the sid=%d cannot be smaller than the previously written sid=%d", sid, &bsw.sidLast)
+	if sid < bw.sidLast {
+		logger.Panicf("the sid=%d cannot be smaller than the previously written sid=%d", sid, &bw.sidLast)
 	}
-	hasWrittenBlocks := bsw.hasWrittenBlocks
+	hasWrittenBlocks := bw.hasWrittenBlocks
 	if !hasWrittenBlocks {
-		bsw.sidFirst = sid
-		bsw.hasWrittenBlocks = true
+		bw.sidFirst = sid
+		bw.hasWrittenBlocks = true
 	}
-	isSeenSid := sid == bsw.sidLast
-	bsw.sidLast = sid
+	isSeenSid := sid == bw.sidLast
+	bw.sidLast = sid
 
 	bh := generateBlockMetadata()
-	b.mustWriteTo(sid, bh, &bsw.writers)
+	b.mustWriteTo(sid, bh, &bw.writers)
 	th := &bh.timestamps
-	if bsw.totalCount == 0 || th.min < bsw.totalMinTimestamp {
-		bsw.totalMinTimestamp = th.min
+	if bw.totalCount == 0 || th.min < bw.totalMinTimestamp {
+		bw.totalMinTimestamp = th.min
 	}
-	if bsw.totalCount == 0 || th.max > bsw.totalMaxTimestamp {
-		bsw.totalMaxTimestamp = th.max
+	if bw.totalCount == 0 || th.max > bw.totalMaxTimestamp {
+		bw.totalMaxTimestamp = th.max
 	}
-	if !hasWrittenBlocks || th.min < bsw.minTimestamp {
-		bsw.minTimestamp = th.min
+	if !hasWrittenBlocks || th.min < bw.minTimestamp {
+		bw.minTimestamp = th.min
 	}
-	if !hasWrittenBlocks || th.max > bsw.maxTimestamp {
-		bsw.maxTimestamp = th.max
+	if !hasWrittenBlocks || th.max > bw.maxTimestamp {
+		bw.maxTimestamp = th.max
 	}
-	if isSeenSid && th.min < bsw.minTimestampLast {
-		logger.Panicf("the block for sid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", sid, bsw.minTimestampLast, th.min)
+	if isSeenSid && th.min < bw.minTimestampLast {
+		logger.Panicf("the block for sid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", sid, bw.minTimestampLast, th.min)
 	}
-	bsw.minTimestampLast = th.min
+	bw.minTimestampLast = th.min
 
-	bsw.totalUncompressedSizeBytes += bh.uncompressedSizeBytes
-	bsw.totalCount += bh.count
-	bsw.totalBlocksCount++
+	bw.totalUncompressedSizeBytes += bh.uncompressedSizeBytes
+	bw.totalCount += bh.count
+	bw.totalBlocksCount++
 
-	bsw.primaryBlockData = bh.marshal(bsw.primaryBlockData)
+	bw.primaryBlockData = bh.marshal(bw.primaryBlockData)
 	releaseBlockMetadata(bh)
-	if len(bsw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
-		bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
-		bsw.primaryBlockData = bsw.primaryBlockData[:0]
+	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
+		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
+		bw.primaryBlockData = bw.primaryBlockData[:0]
 	}
 }
 
-func (bsw *blockWriter) mustFlushPrimaryBlock(data []byte) {
+func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bsw.primaryBlockMetadata.mustWriteBlock(data, bsw.sidFirst, bsw.minTimestamp, bsw.maxTimestamp, &bsw.writers)
-		bsw.metaData = bsw.primaryBlockMetadata.marshal(bsw.metaData)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.sidFirst, bw.minTimestamp, bw.maxTimestamp, &bw.writers)
+		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
-	bsw.hasWrittenBlocks = false
-	bsw.minTimestamp = 0
-	bsw.maxTimestamp = 0
-	bsw.sidFirst = 0
+	bw.hasWrittenBlocks = false
+	bw.minTimestamp = 0
+	bw.maxTimestamp = 0
+	bw.sidFirst = 0
 }
 
-func (bsw *blockWriter) Flush(ph *partMetadata) {
-	ph.UncompressedSizeBytes = bsw.totalUncompressedSizeBytes
-	ph.TotalCount = bsw.totalCount
-	ph.BlocksCount = bsw.totalBlocksCount
-	ph.MinTimestamp = bsw.totalMinTimestamp
-	ph.MaxTimestamp = bsw.totalMaxTimestamp
+func (bw *blockWriter) Flush(ph *partMetadata) {
+	ph.UncompressedSizeBytes = bw.totalUncompressedSizeBytes
+	ph.TotalCount = bw.totalCount
+	ph.BlocksCount = bw.totalBlocksCount
+	ph.MinTimestamp = bw.totalMinTimestamp
+	ph.MaxTimestamp = bw.totalMaxTimestamp
 	ph.Version = time.Now().UnixNano() // TODO: use a global version
 
-	bsw.mustFlushPrimaryBlock(bsw.primaryBlockData)
+	bw.mustFlushPrimaryBlock(bw.primaryBlockData)
 
 	bb := bigValuePool.Generate()
-	bb.Buf = zstd.Compress(bb.Buf[:0], bsw.metaData, 1)
-	bsw.writers.metaWriter.MustWrite(bb.Buf)
+	bb.Buf = zstd.Compress(bb.Buf[:0], bw.metaData, 1)
+	bw.writers.metaWriter.MustWrite(bb.Buf)
 	bigValuePool.Release(bb)
 
-	ph.CompressedSizeBytes = bsw.writers.totalBytesWritten()
+	ph.CompressedSizeBytes = bw.writers.totalBytesWritten()
 
-	bsw.writers.MustClose()
-	bsw.reset()
+	bw.writers.MustClose()
+	bw.reset()
 }
 
 func generateBlockWriter() *blockWriter {

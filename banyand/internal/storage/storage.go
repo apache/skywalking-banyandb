@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package tsdb implements a time-series-based storage engine.
+// Package storage implements a time-series-based storage engine.
 // It provides:
 //   - Partition data based on a time axis.
 //   - Sharding data based on a series id which represents a unique entity of stream/measure
@@ -60,9 +60,10 @@ var (
 	lfs = fs.NewLocalFileSystemWithLogger(logger.GetLogger("storage"))
 )
 
-// Supplier allows getting a tsdb's runtime.
+// SupplyTSDB allows getting a tsdb's runtime.
 type SupplyTSDB[T TSTable] func() T
 
+// IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
 	Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error)
@@ -82,6 +83,8 @@ type TSTable interface {
 	io.Closer
 }
 
+// TSTableWrapper is a wrapper of TSTable.
+// It is used to manage the reference count of TSTable.
 type TSTableWrapper[T TSTable] interface {
 	DecRef()
 	Table() T
@@ -137,6 +140,7 @@ func (ir IntervalRule) estimatedDuration() time.Duration {
 	panic("invalid interval unit")
 }
 
+// MustToIntervalRule converts a commonv1.IntervalRule to IntervalRule.
 func MustToIntervalRule(ir *commonv1.IntervalRule) (result IntervalRule) {
 	switch ir.Unit {
 	case commonv1.IntervalRule_UNIT_DAY:

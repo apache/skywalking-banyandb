@@ -74,29 +74,34 @@ func FieldValueTypeConv(fieldValue *modelv1.FieldValue) (tagType databasev1.Fiel
 	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, false
 }
 
+// OrderBy is the order by rule.
 type OrderBy struct {
 	Index *databasev1.IndexRule
 	Sort  modelv1.Sort
 }
 
-// AnyEntry is the `*` for a regular expression. It could match "any" Entry in an Entity.
+// AnyTagValue is the `*` for a regular expression. It could match "any" Entry in an Entity.
 var AnyTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 
+// Tag is a tag name and its values.
 type Tag struct {
 	Name   string
 	Values []*modelv1.TagValue
 }
 
+// TagFamily is a tag family name and its tags.
 type TagFamily struct {
 	Name string
 	Tags []Tag
 }
 
+// Field is a field name and its values.
 type Field struct {
 	Name   string
 	Values []*modelv1.FieldValue
 }
 
+// Result is the result of a query.
 type Result struct {
 	Timestamps  []int64
 	TagFamilies []TagFamily
@@ -104,11 +109,13 @@ type Result struct {
 	SID         common.SeriesID
 }
 
+// TagProjection is the projection of a tag family and its tags.
 type TagProjection struct {
 	Family string
 	Names  []string
 }
 
+// MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
 	Name            string
 	TimeRange       *timestamp.TimeRange
@@ -119,20 +126,37 @@ type MeasureQueryOptions struct {
 	FieldProjection []string
 }
 
+// MeasureQueryResult is the result of a measure query.
 type MeasureQueryResult interface {
 	Pull() *Result
 	Release()
 }
 
 var (
-	NullFieldValue        = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
-	EmptyStrFieldValue    = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: ""}}}
+	// NullFieldValue represents a null field value in the model.
+	NullFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+
+	// EmptyStrFieldValue represents an empty string field value in the model.
+	EmptyStrFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: ""}}}
+
+	// EmptyBinaryFieldValue represents an empty binary field value in the model.
 	EmptyBinaryFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: []byte{}}}
 
-	NullTagFamily       = &modelv1.TagFamilyForWrite{}
-	NullTagValue        = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-	EmptyStrTagValue    = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
+	// NullTagFamily represents a null tag family in the model.
+	NullTagFamily = &modelv1.TagFamilyForWrite{}
+
+	// NullTagValue represents a null tag value in the model.
+	NullTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+
+	// EmptyStrTagValue represents an empty string tag value in the model.
+	EmptyStrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
+
+	// EmptyStrArrTagValue represents an empty string array tag value in the model.
 	EmptyStrArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{}}}}
+
+	// EmptyIntArrTagValue represents an empty integer array tag value in the model.
 	EmptyIntArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: []int64{}}}}
+
+	// EmptyBinaryTagValue represents an empty binary tag value in the model.
 	EmptyBinaryTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte{}}}
 )

@@ -44,10 +44,9 @@ type segment[T TSTable] struct {
 	timestamp.TimeRange
 	path          string
 	suffix        string
-	closeOnce     sync.Once
 	refCount      int32
 	mustBeDeleted uint32
-	id            SegID
+	id            segmentID
 }
 
 func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
@@ -57,7 +56,7 @@ func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, p
 	if err != nil {
 		return nil, err
 	}
-	id := GenerateSegID(segmentSize.Unit, suffixInteger)
+	id := generateSegID(segmentSize.Unit, suffixInteger)
 	timeRange := timestamp.NewSectionTimeRange(startTime, endTime)
 	s = &segment[T]{
 		id:        id,
@@ -330,7 +329,7 @@ func (sc *segmentController[T]) remove(deadline time.Time) (err error) {
 	return err
 }
 
-func (sc *segmentController[T]) removeSeg(segID SegID) {
+func (sc *segmentController[T]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)

@@ -28,21 +28,21 @@ import (
 )
 
 func TestColumn_reset(t *testing.T) {
-	c := &Column{
-		Name:      "test",
-		ValueType: pbv1.ValueTypeStr,
-		Values:    [][]byte{[]byte("value1"), []byte("value2")},
+	c := &column{
+		name:      "test",
+		valueType: pbv1.ValueTypeStr,
+		values:    [][]byte{[]byte("value1"), []byte("value2")},
 	}
 
 	c.reset()
 
-	assert.Equal(t, "", c.Name)
-	assert.Equal(t, 0, len(c.Values))
+	assert.Equal(t, "", c.name)
+	assert.Equal(t, 0, len(c.values))
 }
 
 func TestColumn_resizeValues(t *testing.T) {
-	c := &Column{
-		Values: make([][]byte, 2, 5),
+	c := &column{
+		values: make([][]byte, 2, 5),
 	}
 
 	values := c.resizeValues(3)
@@ -55,10 +55,10 @@ func TestColumn_resizeValues(t *testing.T) {
 }
 
 func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
-	original := &Column{
-		Name:      "test",
-		ValueType: pbv1.ValueTypeStr,
-		Values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+	original := &column{
+		name:      "test",
+		valueType: pbv1.ValueTypeStr,
+		values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
 	}
 
 	cm := &columnMetadata{}
@@ -69,46 +69,46 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 	assert.Equal(t, w.bytesWritten, cm.size)
 	assert.Equal(t, uint64(len(buf.Buf)), cm.size)
 	assert.Equal(t, uint64(0), cm.offset)
-	assert.Equal(t, original.Name, cm.name)
-	assert.Equal(t, original.ValueType, cm.valueType)
+	assert.Equal(t, original.name, cm.name)
+	assert.Equal(t, original.valueType, cm.valueType)
 
 	decoder := &encoding.BytesBlockDecoder{}
 
-	unmarshaled := &Column{}
-	unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.Values)))
+	unmarshaled := &column{}
+	unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.values)))
 
 	// Check that the original and new instances are equal
-	assert.Equal(t, original.Name, unmarshaled.Name)
-	assert.Equal(t, original.ValueType, unmarshaled.ValueType)
-	assert.Equal(t, original.Values, unmarshaled.Values)
+	assert.Equal(t, original.name, unmarshaled.name)
+	assert.Equal(t, original.valueType, unmarshaled.valueType)
+	assert.Equal(t, original.values, unmarshaled.values)
 }
 
 func TestColumnFamily_reset(t *testing.T) {
-	cf := &ColumnFamily{
-		Name: "test",
-		Columns: []Column{
+	cf := &columnFamily{
+		name: "test",
+		columns: []column{
 			{
-				Name:      "test1",
-				ValueType: pbv1.ValueTypeStr,
-				Values:    [][]byte{[]byte("value1"), []byte("value2")},
+				name:      "test1",
+				valueType: pbv1.ValueTypeStr,
+				values:    [][]byte{[]byte("value1"), []byte("value2")},
 			},
 			{
-				Name:      "test2",
-				ValueType: pbv1.ValueTypeInt64,
-				Values:    [][]byte{[]byte("value3"), []byte("value4")},
+				name:      "test2",
+				valueType: pbv1.ValueTypeInt64,
+				values:    [][]byte{[]byte("value3"), []byte("value4")},
 			},
 		},
 	}
 
 	cf.reset()
 
-	assert.Equal(t, "", cf.Name)
-	assert.Equal(t, 0, len(cf.Columns))
+	assert.Equal(t, "", cf.name)
+	assert.Equal(t, 0, len(cf.columns))
 }
 
 func TestColumnFamily_resizeColumns(t *testing.T) {
-	cf := &ColumnFamily{
-		Columns: make([]Column, 2, 5),
+	cf := &columnFamily{
+		columns: make([]column, 2, 5),
 	}
 
 	columns := cf.resizeColumns(3)

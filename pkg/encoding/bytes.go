@@ -24,12 +24,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 )
 
+// EncodeBytes encodes a string into dst.
 func EncodeBytes(dst, b []byte) []byte {
 	dst = VarUint64ToBytes(dst, uint64(len(b)))
 	dst = append(dst, b...)
 	return dst
 }
 
+// DecodeBytes decodes a string from src.
 func DecodeBytes(src []byte) ([]byte, []byte, error) {
 	tail, n, err := BytesToVarUint64(src)
 	if err != nil {
@@ -42,6 +44,7 @@ func DecodeBytes(src []byte) ([]byte, []byte, error) {
 	return src[n:], src[:n], nil
 }
 
+// EncodeBytesBlock encodes a block of strings into dst.
 func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 	u64s := GenerateUint64List(len(a))
 	aLens := u64s.L[:0]
@@ -64,14 +67,18 @@ func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 	return dst
 }
 
+// BytesBlockDecoder decodes a block of strings from src.
+// It reuses the underlying buffer for storing the decoded strings.
 type BytesBlockDecoder struct {
 	data []byte
 }
 
+// Reset resets the decoder.
 func (bbd *BytesBlockDecoder) Reset() {
 	bbd.data = bbd.data[:0]
 }
 
+// Decode decodes a block of strings from src.
 func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, error) {
 	u64List := GenerateUint64List(0)
 	defer ReleaseUint64List(u64List)
@@ -168,7 +175,7 @@ func encodeUint64List(dst []byte, a []uint64) []byte {
 	default:
 		dst = append(dst, uintBlockType64)
 		for _, n := range a {
-			dst = Uint64ToBytes(dst, uint64(n))
+			dst = Uint64ToBytes(dst, n)
 		}
 	}
 	return dst
@@ -229,8 +236,7 @@ const (
 
 func compressBlock(dst, src []byte) []byte {
 	if len(src) < 128 {
-		dst = append(dst, compressTypePlain)
-		dst = append(dst, byte(len(src)))
+		dst = append(dst, compressTypePlain, byte(len(src)))
 		return append(dst, src...)
 	}
 

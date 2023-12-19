@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -32,12 +33,12 @@ import (
 type partIter struct {
 	err                  error
 	p                    *part
-	curBlock             blockMetadata
 	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
+	curBlock             blockMetadata
 	sidIdx               int
 	minTimestamp         int64
 	maxTimestamp         int64
@@ -84,8 +85,8 @@ func (pi *partIter) nextBlock() bool {
 	}
 }
 
-func (pi *partIter) Error() error {
-	if pi.err == io.EOF {
+func (pi *partIter) error() error {
+	if errors.Is(pi.err, io.EOF) {
 		return nil
 	}
 	return pi.err

@@ -305,6 +305,7 @@ func parseEntitiesDeprecated(op modelv1.LogicalExpression_LogicalOp, input tsdb.
 	return []tsdb.Entity{result}
 }
 
+// BuildLocalFilter returns a new index.Filter for local indices.
 func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue, mandatoryIndexRule bool,
 ) (index.Filter, [][]*modelv1.TagValue, error) {

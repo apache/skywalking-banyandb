@@ -225,7 +225,7 @@ func (ei *resultMIterator) Next() bool {
 	ei.currentIndex = 0
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
-			Timestamp: timestamppb.New(time.Unix(0, int64(r.Timestamps[i]))),
+			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 		}
 
 		for _, tf := range r.TagFamilies {

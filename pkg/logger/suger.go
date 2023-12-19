@@ -17,22 +17,33 @@
 
 package logger
 
+// Panicf logs a message at the panic level.
+// It panics after logging the message.
+// It uses sprintf-style formatting for its message.
 func Panicf(f string, v ...interface{}) {
 	GetLogger().Panic().Msgf(f, v...)
 }
 
+// Errorf logs a message at the error level.
+// It uses sprintf-style formatting for its message.
 func Errorf(f string, v ...interface{}) {
 	GetLogger().Error().Msgf(f, v...)
 }
 
+// Warningf logs a message at the warning level.
+// It uses sprintf-style formatting for its message.
 func Warningf(f string, v ...interface{}) {
 	GetLogger().Warn().Msgf(f, v...)
 }
 
+// Infof logs a message at the info level.
+// It uses sprintf-style formatting for its message.
 func Infof(f string, v ...interface{}) {
 	GetLogger().Info().Msgf(f, v...)
 }
 
+// Debugf logs a message at the debug level.
+// It uses sprintf-style formatting for its message.
 func Debugf(f string, v ...interface{}) {
 	GetLogger().Debug().Msgf(f, v...)
 }
