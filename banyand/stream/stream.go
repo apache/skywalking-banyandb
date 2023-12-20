@@ -15,74 +15,189 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package stream implements a time-series-based storage which is consists of a sequence of element.
-// Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
+// // Package stream implements a time-series-based storage which is consists of a sequence of element.
+// // Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
+// package stream
+
+// import (
+// 	"context"
+
+// 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+// 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+// 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
+// 	"github.com/apache/skywalking-banyandb/pkg/logger"
+// )
+
+// // a chunk is 1MB.
+// const chunkSize = 1 << 20
+
+// type stream struct {
+// 	db          tsdb.Supplier
+// 	l           *logger.Logger
+// 	schema      *databasev1.Stream
+// 	indexWriter *index.Writer
+// 	name        string
+// 	group       string
+// 	indexRules  []*databasev1.IndexRule
+// 	shardNum    uint32
+// }
+
+// func (s *stream) GetSchema() *databasev1.Stream {
+// 	return s.schema
+// }
+
+// func (s *stream) GetIndexRules() []*databasev1.IndexRule {
+// 	return s.indexRules
+// }
+
+// func (s *stream) Close() error {
+// 	return nil
+// }
+
+// func (s *stream) parseSpec() {
+// 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
+// }
+
+// type streamSpec struct {
+// 	schema     *databasev1.Stream
+// 	indexRules []*databasev1.IndexRule
+// }
+
+// func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) *stream {
+// 	sm := &stream{
+// 		shardNum:   shardNum,
+// 		schema:     spec.schema,
+// 		indexRules: spec.indexRules,
+// 		l:          l,
+// 	}
+// 	sm.parseSpec()
+// 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
+
+// 	if db == nil {
+// 		return sm
+// 	}
+// 	sm.db = db
+// 	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
+// 		DB:                db,
+// 		ShardNum:          shardNum,
+// 		Families:          spec.schema.TagFamilies,
+// 		IndexRules:        spec.indexRules,
+// 		EnableGlobalIndex: true,
+// 	})
+// 	return sm
+// }
+
+// // Package stream implements a time-series-based storage which is consists of a sequence of element.
+// // Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
 package stream
 
 import (
-	"context"
+	"time"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// a chunk is 1MB.
-const chunkSize = 1 << 20
+const (
+	maxValuesBlockSize              = 8 * 1024 * 1024
+	maxTimestampsBlockSize          = 8 * 1024 * 1024
+	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
+	maxUncompressedBlockSize        = 2 * 1024 * 1024
+	maxUncompressedPrimaryBlockSize = 128 * 1024
 
-type stream struct {
-	db          tsdb.Supplier
-	l           *logger.Logger
-	schema      *databasev1.Stream
-	indexWriter *index.Writer
-	name        string
-	group       string
-	indexRules  []*databasev1.IndexRule
-	shardNum    uint32
+	maxBlockLength = 8 * 1024
+)
+
+type measure struct {
+	databaseSupplier  schema.Supplier
+	l                 *logger.Logger
+	schema            *databasev1.Measure
+	processorManager  *topNProcessorManager
+	name              string
+	group             string
+	indexRules        []*databasev1.IndexRule
+	indexRuleLocators []*partition.IndexRuleLocator
+	topNAggregations  []*databasev1.TopNAggregation
+	interval          time.Duration
+	shardNum          uint32
 }
 
-func (s *stream) GetSchema() *databasev1.Stream {
+func (s *measure) startSteamingManager(pipeline queue.Queue) error {
+	if len(s.topNAggregations) == 0 {
+		return nil
+	}
+	tagMapSpec := logical.TagSpecMap{}
+	tagMapSpec.RegisterTagFamilies(s.schema.GetTagFamilies())
+
+	s.processorManager = &topNProcessorManager{
+		l:            s.l,
+		pipeline:     pipeline,
+		m:            s,
+		s:            tagMapSpec,
+		topNSchemas:  s.topNAggregations,
+		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
+	}
+
+	return s.processorManager.start()
+}
+
+func (s *measure) GetSchema() *databasev1.Measure {
 	return s.schema
 }
 
-func (s *stream) GetIndexRules() []*databasev1.IndexRule {
+func (s *measure) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
-func (s *stream) Close() error {
-	return nil
+func (s *measure) Close() error {
+	if s.processorManager == nil {
+		return nil
+	}
+	return s.processorManager.Close()
 }
 
-func (s *stream) parseSpec() {
+func (s *measure) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-}
-
-type streamSpec struct {
-	schema     *databasev1.Stream
-	indexRules []*databasev1.IndexRule
-}
-
-func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) *stream {
-	sm := &stream{
-		shardNum:   shardNum,
-		schema:     spec.schema,
-		indexRules: spec.indexRules,
-		l:          l,
+	if s.schema.Interval != "" {
+		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
-	sm.parseSpec()
-	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
+	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
 
+	return err
+}
+
+type measureSpec struct {
+	schema           *databasev1.Measure
+	indexRules       []*databasev1.IndexRule
+	topNAggregations []*databasev1.TopNAggregation
+}
+
+func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+) (*measure, error) {
+	m := &measure{
+		shardNum:         shardNum,
+		schema:           spec.schema,
+		indexRules:       spec.indexRules,
+		topNAggregations: spec.topNAggregations,
+		l:                l,
+	}
+	if err := m.parseSpec(); err != nil {
+		return nil, err
+	}
 	if db == nil {
-		return sm
+		return m, nil
 	}
-	sm.db = db
-	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
-		DB:                db,
-		ShardNum:          shardNum,
-		Families:          spec.schema.TagFamilies,
-		IndexRules:        spec.indexRules,
-		EnableGlobalIndex: true,
-	})
-	return sm
+
+	m.databaseSupplier = db
+	if startErr := m.startSteamingManager(pipeline); startErr != nil {
+		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
+			Msg("fail to start streaming manager")
+	}
+	return m, nil
 }

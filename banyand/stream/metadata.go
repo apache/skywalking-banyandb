@@ -15,55 +15,359 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// package stream
+
+// import (
+// 	"context"
+// 	"io"
+// 	"path"
+// 	"time"
+
+// 	"github.com/pkg/errors"
+
+// 	"github.com/apache/skywalking-banyandb/api/common"
+// 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+// 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+// 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+// 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+// 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+// 	"github.com/apache/skywalking-banyandb/pkg/logger"
+// 	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
+// 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+// )
+
+// var _ Query = (*schemaRepo)(nil)
+
+// // SchemaService allows querying stream schema.
+// type SchemaService interface {
+// 	Query
+// 	Close()
+// }
+
+// type schemaRepo struct {
+// 	resourceSchema.Repository
+// 	l        *logger.Logger
+// 	metadata metadata.Repo
+// }
+
+// func newSchemaRepo(path string, metadata metadata.Repo,
+// 	bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
+// ) schemaRepo {
+// 	r := schemaRepo{
+// 		l:        l,
+// 		metadata: metadata,
+// 		Repository: resourceSchema.NewRepository(
+// 			metadata,
+// 			l,
+// 			newSupplier(path, metadata, bufferSize, dbOpts, l),
+// 		),
+// 	}
+// 	r.start()
+// 	return r
+// }
+
+// // NewPortableRepository creates a new portable repository.
+// func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
+// 	r := &schemaRepo{
+// 		l:        l,
+// 		metadata: metadata,
+// 		Repository: resourceSchema.NewPortableRepository(
+// 			metadata,
+// 			l,
+// 			newPortableSupplier(metadata, l),
+// 		),
+// 	}
+// 	r.start()
+// 	return r
+// }
+
+// func (sr *schemaRepo) start() {
+// 	sr.Watcher()
+// 	sr.metadata.RegisterHandler("stream",
+// 		schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
+// 		sr)
+// }
+
+// func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
+// 	sm, ok := sr.loadStream(metadata)
+// 	if !ok {
+// 		return nil, errors.WithStack(errStreamNotExist)
+// 	}
+// 	return sm, nil
+// }
+
+// func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
+// 	switch m.Kind {
+// 	case schema.KindGroup:
+// 		g := m.Spec.(*commonv1.Group)
+// 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+// 			return
+// 		}
+// 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 			Typ:      resourceSchema.EventAddOrUpdate,
+// 			Kind:     resourceSchema.EventKindGroup,
+// 			Metadata: g.GetMetadata(),
+// 		})
+// 	case schema.KindStream:
+// 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 			Typ:      resourceSchema.EventAddOrUpdate,
+// 			Kind:     resourceSchema.EventKindResource,
+// 			Metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
+// 		})
+// 	case schema.KindIndexRuleBinding:
+// 		irb, ok := m.Spec.(*databasev1.IndexRuleBinding)
+// 		if !ok {
+// 			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
+// 			return
+// 		}
+// 		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+// 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
+// 				Name:  irb.GetSubject().GetName(),
+// 				Group: m.Group,
+// 			})
+// 			cancel()
+// 			if err != nil {
+// 				return
+// 			}
+// 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 				Typ:      resourceSchema.EventAddOrUpdate,
+// 				Kind:     resourceSchema.EventKindResource,
+// 				Metadata: stm.GetMetadata(),
+// 			})
+// 		}
+// 	case schema.KindIndexRule:
+// 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 		subjects, err := sr.metadata.Subjects(ctx, m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
+// 		cancel()
+// 		if err != nil {
+// 			return
+// 		}
+// 		for _, sub := range subjects {
+// 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 				Typ:      resourceSchema.EventAddOrUpdate,
+// 				Kind:     resourceSchema.EventKindResource,
+// 				Metadata: sub.(*databasev1.Stream).GetMetadata(),
+// 			})
+// 		}
+// 	default:
+// 	}
+// }
+
+// func (sr *schemaRepo) OnDelete(m schema.Metadata) {
+// 	switch m.Kind {
+// 	case schema.KindGroup:
+// 		g := m.Spec.(*commonv1.Group)
+// 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+// 			return
+// 		}
+// 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 			Typ:      resourceSchema.EventDelete,
+// 			Kind:     resourceSchema.EventKindGroup,
+// 			Metadata: g.GetMetadata(),
+// 		})
+// 	case schema.KindStream:
+// 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 			Typ:      resourceSchema.EventDelete,
+// 			Kind:     resourceSchema.EventKindResource,
+// 			Metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
+// 		})
+// 	case schema.KindIndexRuleBinding:
+// 		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+// 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
+// 				Name:  m.Name,
+// 				Group: m.Group,
+// 			})
+// 			cancel()
+// 			if err != nil {
+// 				return
+// 			}
+// 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+// 				Typ:      resourceSchema.EventDelete,
+// 				Kind:     resourceSchema.EventKindResource,
+// 				Metadata: stm.GetMetadata(),
+// 			})
+// 		}
+// 	case schema.KindIndexRule:
+// 	default:
+// 	}
+// }
+
+// func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
+// 	r, ok := sr.LoadResource(metadata)
+// 	if !ok {
+// 		return nil, false
+// 	}
+// 	s, ok := r.Delegated().(*stream)
+// 	return s, ok
+// }
+
+// var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
+
+// type supplier struct {
+// 	metadata   metadata.Repo
+// 	l          *logger.Logger
+// 	path       string
+// 	dbOpts     tsdb.DatabaseOpts
+// 	bufferSize int64
+// }
+
+// func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
+// 	return &supplier{
+// 		path:       path,
+// 		bufferSize: bufferSize,
+// 		dbOpts:     dbOpts,
+// 		metadata:   metadata,
+// 		l:          l,
+// 	}
+// }
+
+// func (s *supplier) OpenResource(shardNum uint32, db resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+// 	streamSchema := resource.Schema().(*databasev1.Stream)
+// 	return openStream(shardNum, &tsdbSupplier{db: db.SupplyTSDB().(tsdb.Database)}, streamSpec{
+// 		schema:     streamSchema,
+// 		indexRules: resource.IndexRules(),
+// 	}, s.l), nil
+// }
+
+// type tsdbSupplier struct {
+// 	db tsdb.Database
+// }
+
+// func (s *tsdbSupplier) SupplyTSDB() tsdb.Database {
+// 	return s.db
+// }
+
+// func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 	defer cancel()
+// 	return s.metadata.StreamRegistry().GetStream(ctx, md)
+// }
+
+// func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+// 	name := groupSchema.Metadata.Name
+// 	opts := s.dbOpts
+// 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
+// 	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
+// 	opts.TSTableFactory = &tsTableFactory{
+// 		bufferSize:        s.bufferSize,
+// 		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+// 		chunkSize:         chunkSize,
+// 	}
+// 	var err error
+// 	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {
+// 		return nil, err
+// 	}
+// 	if opts.SegmentInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.SegmentInterval); err != nil {
+// 		return nil, err
+// 	}
+// 	if opts.TTL, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.Ttl); err != nil {
+// 		return nil, err
+// 	}
+// 	return tsdb.OpenDatabase(
+// 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
+// 			p.Module = "stream"
+// 			p.Database = name
+// 			return p
+// 		}),
+// 		opts)
+// }
+
+// type portableSupplier struct {
+// 	metadata metadata.Repo
+// 	l        *logger.Logger
+// }
+
+// func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
+// 	panic("do not support open db")
+// }
+
+// func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+// 	streamSchema := resource.Schema().(*databasev1.Stream)
+// 	return openStream(shardNum, nil, streamSpec{
+// 		schema:     streamSchema,
+// 		indexRules: resource.IndexRules(),
+// 	}, s.l), nil
+// }
+
+// func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
+// 	return &portableSupplier{
+// 		metadata: metadata,
+// 		l:        l,
+// 	}
+// }
+
+// func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 	defer cancel()
+// 	return s.metadata.StreamRegistry().GetStream(ctx, md)
+// }
+
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package stream
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pb_v1 "github.com/apache/skywalking-banyandb/pkg/pb/v1/tsdb"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-var _ Query = (*schemaRepo)(nil)
-
-// SchemaService allows querying stream schema.
+// SchemaService allows querying schema information.
 type SchemaService interface {
 	Query
 	Close()
 }
-
 type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, metadata metadata.Repo,
-	bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger,
-) schemaRepo {
-	r := schemaRepo{
-		l:        l,
-		metadata: metadata,
+func newSchemaRepo(path string, svc *service) schemaRepo {
+	sr := schemaRepo{
+		l:        svc.l,
+		metadata: svc.metadata,
 		Repository: resourceSchema.NewRepository(
-			metadata,
-			l,
-			newSupplier(path, metadata, bufferSize, dbOpts, l),
+			svc.metadata,
+			svc.l,
+			newSupplier(path, svc),
 		),
 	}
-	r.start()
-	return r
+	sr.start()
+	return sr
 }
 
 // NewPortableRepository creates a new portable repository.
@@ -83,24 +387,24 @@ func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaServi
 
 func (sr *schemaRepo) start() {
 	sr.Watcher()
-	sr.metadata.RegisterHandler("stream",
-		schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
-		sr)
+	sr.metadata.
+		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+			sr)
 }
 
-func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
-	sm, ok := sr.loadStream(metadata)
+func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
+	sm, ok := sr.loadMeasure(metadata)
 	if !ok {
-		return nil, errors.WithStack(errStreamNotExist)
+		return nil, errors.WithStack(ErrMeasureNotExist)
 	}
 	return sm, nil
 }
 
-func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
-	switch m.Kind {
+func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
+	switch metadata.Kind {
 	case schema.KindGroup:
-		g := m.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+		g := metadata.Spec.(*commonv1.Group)
+		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -108,23 +412,23 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g.GetMetadata(),
 		})
-	case schema.KindStream:
+	case schema.KindMeasure:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
-		irb, ok := m.Spec.(*databasev1.IndexRuleBinding)
+		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
 		if !ok {
 			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
 			return
 		}
-		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
+			stm, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  irb.GetSubject().GetName(),
-				Group: m.Group,
+				Group: metadata.Group,
 			})
 			cancel()
 			if err != nil {
@@ -138,8 +442,8 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 		}
 	case schema.KindIndexRule:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		subjects, err := sr.metadata.Subjects(ctx, m.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
-		cancel()
+		defer cancel()
+		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
 		if err != nil {
 			return
 		}
@@ -147,18 +451,101 @@ func (sr *schemaRepo) OnAddOrUpdate(m schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Stream).GetMetadata(),
+				Metadata: sub.(*databasev1.Measure).GetMetadata(),
 			})
 		}
+	case schema.KindTopNAggregation:
+		// createOrUpdate TopN schemas in advance
+		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
+		if err != nil {
+			return
+		}
+		// reload source measure
+		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+			Typ:      resourceSchema.EventAddOrUpdate,
+			Kind:     resourceSchema.EventKindResource,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+		})
 	default:
 	}
 }
 
-func (sr *schemaRepo) OnDelete(m schema.Metadata) {
-	switch m.Kind {
+func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
+	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
+	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		return nil, err
+	}
+
+	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
+	if err != nil {
+		return nil, err
+	}
+
+	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
+	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
+
+	for _, tagName := range tagNames {
+		var found bool
+		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
+			for _, tSpec := range fSpec.GetTags() {
+				if tSpec.GetName() == tagName {
+					seriesSpecs = append(seriesSpecs, tSpec)
+					found = true
+					goto CHECK
+				}
+			}
+		}
+
+	CHECK:
+		if !found {
+			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
+		}
+	}
+
+	// create a new "derived" measure for TopN result
+	newTopNMeasure := &databasev1.Measure{
+		Metadata: topNSchema.GetMetadata(),
+		Interval: sourceMeasureSchema.GetInterval(),
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: topNTagFamily,
+				Tags: append([]*databasev1.TagSpec{
+					{
+						Name: "measure_id",
+						Type: databasev1.TagType_TAG_TYPE_STRING,
+					},
+				}, seriesSpecs...),
+			},
+		},
+		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
+		Entity: sourceMeasureSchema.GetEntity(),
+	}
+	if oldTopNSchema == nil {
+		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
+			return nil, innerErr
+		}
+		return newTopNMeasure, nil
+	}
+	// compare with the old one
+	if cmp.Diff(newTopNMeasure, oldTopNSchema,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
+		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+		protocmp.Transform()) == "" {
+		return oldTopNSchema, nil
+	}
+	// update
+	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
+		return nil, err
+	}
+	return newTopNMeasure, nil
+}
+
+func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
+	switch metadata.Kind {
 	case schema.KindGroup:
-		g := m.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+		g := metadata.Spec.(*commonv1.Group)
+		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -166,108 +553,113 @@ func (sr *schemaRepo) OnDelete(m schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g.GetMetadata(),
 		})
-	case schema.KindStream:
+	case schema.KindMeasure:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: m.Spec.(*databasev1.Stream).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
-		if m.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
-				Name:  m.Name,
-				Group: m.Group,
+			defer cancel()
+			m, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+				Name:  metadata.Name,
+				Group: metadata.Group,
 			})
-			cancel()
 			if err != nil {
 				return
 			}
+			// we should update instead of delete
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventDelete,
+				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm.GetMetadata(),
+				Metadata: m.GetMetadata(),
 			})
 		}
 	case schema.KindIndexRule:
+	case schema.KindTopNAggregation:
+		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
+		if err != nil {
+			return
+		}
+		// we should update instead of delete
+		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+			Typ:      resourceSchema.EventAddOrUpdate,
+			Kind:     resourceSchema.EventKindResource,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+		})
 	default:
 	}
 }
 
-func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
+func (sr *schemaRepo) removeTopNMeasure(metadata *commonv1.Metadata) error {
+	_, err := sr.metadata.MeasureRegistry().DeleteMeasure(context.Background(), metadata)
+	return err
+}
+
+func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
 	r, ok := sr.LoadResource(metadata)
 	if !ok {
 		return nil, false
 	}
-	s, ok := r.Delegated().(*stream)
+	s, ok := r.Delegated().(*measure)
 	return s, ok
+}
+
+func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable], error) {
+	g, ok := sr.LoadGroup(groupName)
+	if !ok {
+		return nil, fmt.Errorf("group %s not found", groupName)
+	}
+	return g.SupplyTSDB().(storage.TSDB[*tsTable]), nil
 }
 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata   metadata.Repo
-	l          *logger.Logger
-	path       string
-	dbOpts     tsdb.DatabaseOpts
-	bufferSize int64
+	metadata metadata.Repo
+	pipeline queue.Queue
+	l        *logger.Logger
+	path     string
 }
 
-func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts tsdb.DatabaseOpts, l *logger.Logger) *supplier {
+func newSupplier(path string, svc *service) *supplier {
 	return &supplier{
-		path:       path,
-		bufferSize: bufferSize,
-		dbOpts:     dbOpts,
-		metadata:   metadata,
-		l:          l,
+		path:     path,
+		metadata: svc.metadata,
+		l:        svc.l,
+		pipeline: svc.localPipeline,
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
-	streamSchema := resource.Schema().(*databasev1.Stream)
-	return openStream(shardNum, &tsdbSupplier{db: db.SupplyTSDB().(tsdb.Database)}, streamSpec{
-		schema:     streamSchema,
-		indexRules: resource.IndexRules(),
-	}, s.l), nil
-}
-
-type tsdbSupplier struct {
-	db tsdb.Database
-}
-
-func (s *tsdbSupplier) SupplyTSDB() tsdb.Database {
-	return s.db
+func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
+	return openMeasure(shardNum, supplier, measureSpec{
+		schema:           measureSchema,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
+	}, s.l, s.pipeline)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.metadata.StreamRegistry().GetStream(ctx, md)
+	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+	opts := storage.TSDBOpts[*tsTable]{
+		ShardNum:        groupSchema.ResourceOpts.ShardNum,
+		Location:        path.Join(s.path, groupSchema.Metadata.Name),
+		TSTableCreator:  newTSTable,
+		SegmentInterval: storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
+		TTL:             storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+	}
 	name := groupSchema.Metadata.Name
-	opts := s.dbOpts
-	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
-	opts.Location = path.Join(s.path, groupSchema.Metadata.Name)
-	opts.TSTableFactory = &tsTableFactory{
-		bufferSize:        s.bufferSize,
-		compressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-		chunkSize:         chunkSize,
-	}
-	var err error
-	if opts.BlockInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.BlockInterval); err != nil {
-		return nil, err
-	}
-	if opts.SegmentInterval, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.SegmentInterval); err != nil {
-		return nil, err
-	}
-	if opts.TTL, err = pb_v1.ToIntervalRule(groupSchema.ResourceOpts.Ttl); err != nil {
-		return nil, err
-	}
-	return tsdb.OpenDatabase(
+	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
-			p.Module = "stream"
+			p.Module = "measure"
 			p.Database = name
 			return p
 		}),
@@ -277,18 +669,6 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 type portableSupplier struct {
 	metadata metadata.Repo
 	l        *logger.Logger
-}
-
-func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
-	panic("do not support open db")
-}
-
-func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
-	streamSchema := resource.Schema().(*databasev1.Stream)
-	return openStream(shardNum, nil, streamSpec{
-		schema:     streamSchema,
-		indexRules: resource.IndexRules(),
-	}, s.l), nil
 }
 
 func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
@@ -301,5 +681,18 @@ func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupp
 func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.metadata.StreamRegistry().GetStream(ctx, md)
+	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
+}
+
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
+	panic("do not support open db")
+}
+
+func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
+	return openMeasure(shardNum, nil, measureSpec{
+		schema:           measureSchema,
+		indexRules:       spec.IndexRules(),
+		topNAggregations: spec.TopN(),
+	}, s.l, nil)
 }

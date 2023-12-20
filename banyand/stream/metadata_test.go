@@ -15,128 +15,255 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// package stream
+
+// import (
+// 	"context"
+
+// 	g "github.com/onsi/ginkgo/v2"
+// 	"github.com/onsi/gomega"
+// 	"github.com/onsi/gomega/gleak"
+
+// 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+// 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+// 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+// )
+
+// var _ = g.Describe("Metadata", func() {
+// 	var svcs *services
+// 	var deferFn func()
+// 	var goods []gleak.Goroutine
+
+// 	g.BeforeEach(func() {
+// 		goods = gleak.Goroutines()
+// 		svcs, deferFn = setUp()
+// 		gomega.Eventually(func() bool {
+// 			_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+// 			return ok
+// 		}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+// 	})
+
+// 	g.AfterEach(func() {
+// 		deferFn()
+// 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+// 	})
+
+// 	g.Context("Manage group", func() {
+// 		g.It("should close the group", func() {
+// 			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
+// 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+// 			gomega.Expect(deleted).Should(gomega.BeTrue())
+// 			gomega.Eventually(func() bool {
+// 				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+// 				return ok
+// 			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeFalse())
+// 		})
+
+// 		g.It("should add shards", func() {
+// 			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "default")
+// 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+// 			gomega.Expect(groupSchema).ShouldNot(gomega.BeNil())
+// 			groupSchema.ResourceOpts.ShardNum = 4
+
+// 			gomega.Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(gomega.Succeed())
+
+// 			gomega.Eventually(func() bool {
+// 				group, ok := svcs.stream.schemaRepo.LoadGroup("default")
+// 				if !ok {
+// 					return false
+// 				}
+// 				return group.GetSchema().GetResourceOpts().GetShardNum() == 4
+// 			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+// 		})
+// 	})
+
+// 	g.Context("Manage stream", func() {
+// 		g.It("should pass smoke test", func() {
+// 			gomega.Eventually(func() bool {
+// 				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+// 					Name:  "sw",
+// 					Group: "default",
+// 				})
+// 				return ok
+// 			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+// 		})
+// 		g.It("should close the stream", func() {
+// 			deleted, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
+// 				Name:  "sw",
+// 				Group: "default",
+// 			})
+// 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+// 			gomega.Expect(deleted).Should(gomega.BeTrue())
+// 			gomega.Eventually(func() bool {
+// 				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+// 					Name:  "sw",
+// 					Group: "default",
+// 				})
+// 				return ok
+// 			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeFalse())
+// 		})
+
+// 		g.Context("Update a stream", func() {
+// 			var streamSchema *databasev1.Stream
+
+// 			g.BeforeEach(func() {
+// 				var err error
+// 				streamSchema, err = svcs.metadataService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
+// 					Name:  "sw",
+// 					Group: "default",
+// 				})
+
+// 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+// 				gomega.Expect(streamSchema).ShouldNot(gomega.BeNil())
+// 			})
+
+// 			g.It("should update a new stream", func() {
+// 				// Remove the first tag from the entg.Ity
+// 				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
+// 				entitySize := len(streamSchema.Entity.TagNames)
+
+// 				modRevision, err := svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)
+// 				gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
+// 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+// 				gomega.Eventually(func() bool {
+// 					val, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
+// 						Name:  "sw",
+// 						Group: "default",
+// 					})
+// 					if !ok {
+// 						return false
+// 					}
+
+// 					return len(val.schema.GetEntity().TagNames) == entitySize
+// 				}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+// 			})
+// 		})
+// 	})
+// })
+
 package stream
 
 import (
 	"context"
 
-	g "github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = g.Describe("Metadata", func() {
+var _ = Describe("Metadata", func() {
 	var svcs *services
 	var deferFn func()
 	var goods []gleak.Goroutine
-
-	g.BeforeEach(func() {
-		goods = gleak.Goroutines()
+	BeforeEach(func() {
 		svcs, deferFn = setUp()
-		gomega.Eventually(func() bool {
-			_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+		goods = gleak.Goroutines()
+		Eventually(func() bool {
+			_, ok := svcs.measure.LoadGroup("sw_metric")
 			return ok
-		}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+		}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	})
 
-	g.AfterEach(func() {
+	AfterEach(func() {
 		deferFn()
-		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 
-	g.Context("Manage group", func() {
-		g.It("should close the group", func() {
-			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(deleted).Should(gomega.BeTrue())
-			gomega.Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.LoadGroup("default")
+	Context("Manage group", func() {
+		It("should close the group", func() {
+			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(deleted).Should(BeTrue())
+			Eventually(func() bool {
+				_, ok := svcs.measure.LoadGroup("sw_metric")
 				return ok
-			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeFalse())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeFalse())
 		})
 
-		g.It("should add shards", func() {
-			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "default")
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(groupSchema).ShouldNot(gomega.BeNil())
+		It("should add shards", func() {
+			groupSchema, err := svcs.metadataService.GroupRegistry().GetGroup(context.TODO(), "sw_metric")
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
 
-			gomega.Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(gomega.Succeed())
+			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
 
-			gomega.Eventually(func() bool {
-				group, ok := svcs.stream.schemaRepo.LoadGroup("default")
+			Eventually(func() bool {
+				group, ok := svcs.measure.LoadGroup("sw_metric")
 				if !ok {
 					return false
 				}
 				return group.GetSchema().GetResourceOpts().GetShardNum() == 4
-			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 	})
 
-	g.Context("Manage stream", func() {
-		g.It("should pass smoke test", func() {
-			gomega.Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-					Name:  "sw",
-					Group: "default",
+	Context("Manage measure", func() {
+		It("should pass smoke test", func() {
+			Eventually(func() bool {
+				_, err := svcs.measure.Measure(&commonv1.Metadata{
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
-				return ok
-			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+				return err == nil
+			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
-		g.It("should close the stream", func() {
-			deleted, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
-				Name:  "sw",
-				Group: "default",
+		It("should close the measure", func() {
+			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
+				Name:  "service_cpm_minute",
+				Group: "sw_metric",
 			})
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(deleted).Should(gomega.BeTrue())
-			gomega.Eventually(func() bool {
-				_, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-					Name:  "sw",
-					Group: "default",
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(deleted).Should(BeTrue())
+			Eventually(func() error {
+				_, err := svcs.measure.Measure(&commonv1.Metadata{
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
-				return ok
-			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeFalse())
+				return err
+			}).WithTimeout(flags.EventuallyTimeout).Should(MatchError(measure.ErrMeasureNotExist))
 		})
 
-		g.Context("Update a stream", func() {
-			var streamSchema *databasev1.Stream
+		Context("Update a measure", func() {
+			var measureSchema *databasev1.Measure
 
-			g.BeforeEach(func() {
+			BeforeEach(func() {
 				var err error
-				streamSchema, err = svcs.metadataService.StreamRegistry().GetStream(context.TODO(), &commonv1.Metadata{
-					Name:  "sw",
-					Group: "default",
+				measureSchema, err = svcs.metadataService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
+					Name:  "service_cpm_minute",
+					Group: "sw_metric",
 				})
 
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-				gomega.Expect(streamSchema).ShouldNot(gomega.BeNil())
+				Expect(err).ShouldNot(HaveOccurred())
+				Expect(measureSchema).ShouldNot(BeNil())
 			})
 
-			g.It("should update a new stream", func() {
-				// Remove the first tag from the entg.Ity
-				streamSchema.Entity.TagNames = streamSchema.Entity.TagNames[1:]
-				entitySize := len(streamSchema.Entity.TagNames)
+			It("should update a new measure", func() {
+				// Remove the first tag from the entity
+				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
+				entitySize := len(measureSchema.Entity.TagNames)
 
-				modRevision, err := svcs.metadataService.StreamRegistry().UpdateStream(context.TODO(), streamSchema)
-				gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				modRevision, err := svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)
+				Expect(modRevision).ShouldNot(BeZero())
+				Expect(err).ShouldNot(HaveOccurred())
 
-				gomega.Eventually(func() bool {
-					val, ok := svcs.stream.schemaRepo.loadStream(&commonv1.Metadata{
-						Name:  "sw",
-						Group: "default",
+				Eventually(func() bool {
+					val, err := svcs.measure.Measure(&commonv1.Metadata{
+						Name:  "service_cpm_minute",
+						Group: "sw_metric",
 					})
-					if !ok {
+					if err != nil {
 						return false
 					}
 
-					return len(val.schema.GetEntity().TagNames) == entitySize
-				}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+					return len(val.GetSchema().GetEntity().TagNames) == entitySize
+				}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 			})
 		})
 	})
