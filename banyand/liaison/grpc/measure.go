@@ -113,10 +113,11 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			}
 		}
 		iwr := &measurev1.InternalWriteRequest{
-			Request:      writeRequest,
-			ShardId:      uint32(shardID),
-			SeriesHash:   tsdb.HashEntity(entity),
-			EntityValues: tagValues.Encode(),
+			Request:    writeRequest,
+			ShardId:    uint32(shardID),
+			SeriesHash: tsdb.HashEntity(entity),
+			// TODO: remove the first value (measure name) of tagValues
+			EntityValues: tagValues[1:].Encode(),
 		}
 		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))
 		if errPickNode != nil {
@@ -124,7 +125,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")

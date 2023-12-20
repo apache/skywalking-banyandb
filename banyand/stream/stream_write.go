@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -147,20 +148,41 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) *writeCallback
 }
 
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
-	writeEvent, ok := message.Data().(*streamv1.InternalWriteRequest)
+	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
 		return
 	}
-	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
-	if !ok {
-		w.l.Warn().Msg("cannot find stream definition")
+	if len(events) < 1 {
+		w.l.Warn().Msg("empty event")
 		return
 	}
-	err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
-		tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())
-	if err != nil {
-		w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
+	for _, event := range events {
+		var writeEvent *streamv1.InternalWriteRequest
+		switch e := event.(type) {
+		case *streamv1.InternalWriteRequest:
+			writeEvent = e
+		case *anypb.Any:
+			writeEvent = &streamv1.InternalWriteRequest{}
+			if err := e.UnmarshalTo(writeEvent); err != nil {
+				w.l.Error().Err(err).RawJSON("written", logger.Proto(e)).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
+			w.l.Warn().Msg("invalid event data type")
+			continue
+		}
+		stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
+		if !ok {
+			w.l.Warn().Msg("cannot find stream definition")
+			continue
+		}
+		err := stm.write(common.ShardID(writeEvent.GetShardId()), writeEvent.SeriesHash,
+			tsdb.DecodeEntityValues(writeEvent.GetEntityValues()), writeEvent.GetRequest().GetElement())
+		if err != nil {
+			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("fail to write entity")
+		}
 	}
+
 	return
 }

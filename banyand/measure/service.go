@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -53,16 +52,13 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo             schemaRepo
-	writeListener          bus.MessageListener
-	metadata               metadata.Repo
-	pipeline               queue.Server
-	localPipeline          queue.Queue
-	l                      *logger.Logger
-	root                   string
-	dbOpts                 tsdb.DatabaseOpts
-	BlockEncoderBufferSize run.Bytes
-	BlockBufferSize        run.Bytes
+	schemaRepo    schemaRepo
+	writeListener bus.MessageListener
+	metadata      metadata.Repo
+	pipeline      queue.Server
+	localPipeline queue.Queue
+	l             *logger.Logger
+	root          string
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -80,14 +76,6 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
-	s.BlockEncoderBufferSize = 12 << 20
-	s.BlockBufferSize = 4 << 20
-	s.dbOpts.SeriesMemSize = 1 << 20
-	flagS.Var(&s.BlockEncoderBufferSize, "measure-encoder-buffer-size", "block fields buffer size")
-	flagS.Var(&s.BlockBufferSize, "measure-buffer-size", "block buffer size")
-	flagS.Var(&s.dbOpts.SeriesMemSize, "measure-seriesmeta-mem-size", "series metadata memory size")
-	flagS.Int64Var(&s.dbOpts.BlockInvertedIndex.BatchWaitSec, "measure-idx-batch-wait-sec", 1, "index batch wait in second")
-	flagS.BoolVar(&s.dbOpts.EnableWAL, "measure-enable-wal", true, "enable write ahead log")
 	return flagS
 }
 
@@ -111,8 +99,7 @@ func (s *service) PreRun(_ context.Context) error {
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(path, s.metadata, s.dbOpts,
-		s.l, s.localPipeline, int64(s.BlockEncoderBufferSize), int64(s.BlockBufferSize))
+	s.schemaRepo = newSchemaRepo(path, s)
 	// run a serial watcher
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
@@ -137,8 +124,5 @@ func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
-		dbOpts: tsdb.DatabaseOpts{
-			IndexGranularity: tsdb.IndexGranularitySeries,
-		},
 	}, nil
 }

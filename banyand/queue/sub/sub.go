@@ -44,6 +44,8 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	}
 	ctx := stream.Context()
 	var topic *bus.Topic
+	var m bus.Message
+	var dataCollection []any
 	for {
 		select {
 		case <-ctx.Done():
@@ -52,6 +54,15 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		}
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			if len(dataCollection) < 1 {
+				return nil
+			}
+			listener := s.getListeners(*topic)
+			if listener == nil {
+				reply(writeEntity, err, "no listener found")
+				return nil
+			}
+			_ = listener.Rev(bus.NewMessage(bus.MessageID(0), dataCollection))
 			return nil
 		}
 		if err != nil {
@@ -73,24 +84,34 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			reply(writeEntity, err, "topic is empty")
 			continue
 		}
-		listener := s.getListeners(*topic)
-		if listener == nil {
-			reply(writeEntity, err, "no listener found")
-			continue
-		}
-		var m bus.Message
+
 		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
 			req := reqSupplier()
 			if errUnmarshal := writeEntity.Body.UnmarshalTo(req); errUnmarshal != nil {
 				reply(writeEntity, errUnmarshal, "failed to unmarshal message")
 				continue
 			}
-			m = listener.Rev(bus.NewMessage(bus.MessageID(writeEntity.MessageId), req))
+			m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
 		} else {
 			reply(writeEntity, err, "unknown topic")
 			continue
 		}
+		if writeEntity.BatchMod {
+			dataCollection = append(dataCollection, writeEntity.Body)
+			if errSend := stream.Send(&clusterv1.SendResponse{
+				MessageId: writeEntity.MessageId,
+			}); errSend != nil {
+				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+			}
+			continue
+		}
+		listener := s.getListeners(*topic)
+		if listener == nil {
+			reply(writeEntity, err, "no listener found")
+			continue
+		}
 
+		m = listener.Rev(m)
 		if m.Data() == nil {
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,

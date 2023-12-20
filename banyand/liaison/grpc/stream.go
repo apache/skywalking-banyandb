@@ -126,7 +126,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
-		message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(data.TopicStreamWrite, message)
 		if errWritePub != nil {
 			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")

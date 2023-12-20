@@ -229,6 +229,7 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 	r := &clusterv1.SendRequest{
 		Topic:     topic.String(),
 		MessageId: uint64(m.ID()),
+		BatchMod:  m.BatchModeEnabled(),
 	}
 	message, ok := m.Data().(proto.Message)
 	if !ok {

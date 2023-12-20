@@ -48,9 +48,6 @@ func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedP
 }
 
 func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
-	if ud.originalQuery.TagProjection == nil {
-		return nil, fmt.Errorf("tag projection is required")
-	}
 	projectionTags := logical.ToTags(ud.originalQuery.GetTagProjection())
 	if len(projectionTags) > 0 {
 		var err error

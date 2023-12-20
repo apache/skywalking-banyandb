@@ -171,7 +171,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 		},
 		{
 			matches: []string{"root"},
-			want:    roaring.NewPostingListWithInitialData(),
+			want:    roaring.NewPostingListWithInitialData(2),
 		},
 	}
 	for _, tt := range tests {

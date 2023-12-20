@@ -24,12 +24,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// LocalFileSystem implements the File System interface.
-type LocalFileSystem struct {
+// localFileSystem implements the File System interface.
+type localFileSystem struct {
 	logger *logger.Logger
 }
 
@@ -40,8 +41,15 @@ type LocalFile struct {
 
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
-	return &LocalFileSystem{
+	return &localFileSystem{
 		logger: logger.GetLogger(moduleName),
+	}
+}
+
+// NewLocalFileSystemWithLogger is used to create the Local File system with logger.
+func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
+	return &localFileSystem{
+		logger: parent.Named(moduleName),
 	}
 }
 
@@ -67,8 +75,66 @@ func readErrorHandle(operation string, err error, name string, size int) (int, e
 	}
 }
 
+func (fs *localFileSystem) MkdirIfNotExist(path string, permission Mode) {
+	if fs.pathExist(path) {
+		return
+	}
+	fs.mkdir(path, permission)
+}
+
+func (fs *localFileSystem) MkdirPanicIfExist(path string, permission Mode) {
+	if fs.pathExist(path) {
+		fs.logger.Panic().Str("path", path).Msg("directory is exist")
+	}
+	fs.mkdir(path, permission)
+}
+
+func (fs *localFileSystem) mkdir(path string, permission Mode) {
+	if err := os.MkdirAll(path, os.FileMode(permission)); err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to create directory")
+	}
+	parentDirPath := filepath.Dir(path)
+	fs.syncPath(parentDirPath)
+}
+
+func (fs *localFileSystem) pathExist(path string) bool {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to stat path")
+	}
+	return true
+}
+
+func (fs *localFileSystem) syncPath(path string) {
+	d, err := os.Open(path)
+	if err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to open directory")
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to sync directory")
+	}
+	if err := d.Close(); err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("ailed to sync directory")
+	}
+}
+
+func (fs *localFileSystem) ReadDir(dirname string) []DirEntry {
+	des, err := os.ReadDir(dirname)
+	if err != nil {
+		fs.logger.Panic().Str("dirname", dirname).Err(err).Msg("failed to read directory")
+	}
+	result := make([]DirEntry, len(des))
+	for i, de := range des {
+		result[i] = DirEntry(de)
+	}
+	return result
+}
+
 // CreateFile is used to create and open the file by specified name and mode.
-func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error) {
+func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
@@ -94,7 +160,7 @@ func (fs *LocalFileSystem) CreateFile(name string, permission Mode) (File, error
 }
 
 // Write flushes all data to one file.
-func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
+func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	if err != nil {
 		switch {
@@ -129,7 +195,7 @@ func (fs *LocalFileSystem) Write(buffer []byte, name string, permission Mode) (i
 }
 
 // DeleteFile is used to delete the file.
-func (fs *LocalFileSystem) DeleteFile(name string) error {
+func (fs *localFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)
 	switch {
 	case err == nil:
@@ -149,6 +215,12 @@ func (fs *LocalFileSystem) DeleteFile(name string) error {
 			Code:    otherError,
 			Message: fmt.Sprintf("Delete file error, file name: %s, error message: %s", name, err),
 		}
+	}
+}
+
+func (fs *localFileSystem) MustRMAll(path string) {
+	if err := os.RemoveAll(path); err != nil {
+		logger.Panicf("failed to remove all files under %s", path)
 	}
 }
 
@@ -262,10 +334,21 @@ func (file *LocalFile) Size() (int64, error) {
 	return fileInfo.Size(), nil
 }
 
+// Path returns the absolute path of the file.
+func (file *LocalFile) Path() string {
+	return file.file.Name()
+}
+
 // Close is used to close File.
 func (file *LocalFile) Close() error {
-	err := file.file.Close()
-	if err != nil {
+	if err := file.file.Sync(); err != nil {
+		return &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),
+		}
+	}
+
+	if err := file.file.Close(); err != nil {
 		return &FileSystemError{
 			Code:    closeError,
 			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),

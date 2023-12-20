@@ -78,3 +78,16 @@ type BufferWriter interface {
 	WriteByte(b byte) error
 	Bytes() []byte
 }
+
+// EncodeType indicates the encoding type of a series.
+type EncodeType byte
+
+// EncodeType constants.
+const (
+	EncodeTypeUnknown EncodeType = iota
+	EncodeTypeConst
+	EncodeTypeDeltaConst
+	EncodeTypeDelta
+	EncodeTypeDeltaOfDelta
+	EncodeTypeXOR
+)

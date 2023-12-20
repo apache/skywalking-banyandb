@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/host"
 )
 
@@ -42,6 +43,11 @@ type (
 // Marshal encodes series id to bytes.
 func (s SeriesID) Marshal() []byte {
 	return convert.Uint64ToBytes(uint64(s))
+}
+
+// AppendToBytes appends series id to bytes.
+func (s SeriesID) AppendToBytes(dest []byte) []byte {
+	return encoding.Uint64ToBytes(dest, uint64(s))
 }
 
 // positionKey is a context key to store the module position.

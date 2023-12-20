@@ -120,7 +120,7 @@ func (cs *CommonSchema) ProjTags(refs ...[]*TagRef) *CommonSchema {
 	}
 	for projFamilyIdx, refInFamily := range refs {
 		for projIdx, ref := range refInFamily {
-			newCommonSchema.TagSpecMap[ref.Tag.getTagName()] = &TagSpec{
+			newCommonSchema.TagSpecMap[ref.Tag.GetTagName()] = &TagSpec{
 				TagFamilyIdx: projFamilyIdx,
 				TagIdx:       projIdx,
 				Spec:         ref.Spec.Spec,
@@ -160,7 +160,7 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	for i, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			if ts, ok := cs.TagSpecMap[tag.getTagName()]; ok {
+			if ts, ok := cs.TagSpecMap[tag.GetTagName()]; ok {
 				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			} else {
 				return nil, errors.Wrap(errTagNotDefined, tag.GetCompoundName())

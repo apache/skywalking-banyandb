@@ -31,7 +31,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -425,8 +424,8 @@ func (g *group) GetSchema() *commonv1.Group {
 	return g.groupSchema.Load()
 }
 
-func (g *group) SupplyTSDB() tsdb.Database {
-	return g.db.Load().(tsdb.Database)
+func (g *group) SupplyTSDB() io.Closer {
+	return g.db.Load().(io.Closer)
 }
 
 func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
@@ -458,7 +457,7 @@ func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema
 	if preResource != nil && preResource.isNewThan(resource) {
 		return preResource, nil
 	}
-	var dbSupplier tsdb.Supplier
+	var dbSupplier Supplier
 	if !g.isPortable() {
 		dbSupplier = g
 	}

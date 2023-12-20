@@ -223,12 +223,20 @@ func newSupplier(path string, metadata metadata.Repo, bufferSize int64, dbOpts t
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, db tsdb.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+func (s *supplier) OpenResource(shardNum uint32, db resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
 	streamSchema := resource.Schema().(*databasev1.Stream)
-	return openStream(shardNum, db, streamSpec{
+	return openStream(shardNum, &tsdbSupplier{db: db.SupplyTSDB().(tsdb.Database)}, streamSpec{
 		schema:     streamSchema,
 		indexRules: resource.IndexRules(),
 	}, s.l), nil
+}
+
+type tsdbSupplier struct {
+	db tsdb.Database
+}
+
+func (s *tsdbSupplier) SupplyTSDB() tsdb.Database {
+	return s.db
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -237,7 +245,7 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 	return s.metadata.StreamRegistry().GetStream(ctx, md)
 }
 
-func (s *supplier) OpenDB(groupSchema *commonv1.Group) (tsdb.Database, error) {
+func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 	name := groupSchema.Metadata.Name
 	opts := s.dbOpts
 	opts.ShardNum = groupSchema.ResourceOpts.ShardNum
@@ -271,11 +279,11 @@ type portableSupplier struct {
 	l        *logger.Logger
 }
 
-func (*portableSupplier) OpenDB(_ *commonv1.Group) (tsdb.Database, error) {
+func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 	panic("do not support open db")
 }
 
-func (s *portableSupplier) OpenResource(shardNum uint32, _ tsdb.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
+func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, resource resourceSchema.Resource) (io.Closer, error) {
 	streamSchema := resource.Schema().(*databasev1.Stream)
 	return openStream(shardNum, nil, streamSpec{
 		schema:     streamSchema,

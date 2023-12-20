@@ -27,6 +27,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // ExecutionContext allows retrieving data from tsdb.
@@ -64,8 +65,7 @@ type StreamExecutable interface {
 
 // MeasureExecutionContext allows retrieving data through the measure module.
 type MeasureExecutionContext interface {
-	ExecutionContext
-	ParseField(name string, item tsdb.Item) (*measurev1.DataPoint_Field, error)
+	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
 }
 
 // MeasureExecutionContextKey is the key of measure execution context in context.Context.

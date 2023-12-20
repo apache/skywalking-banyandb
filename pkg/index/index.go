@@ -191,9 +191,20 @@ type PostingValue struct {
 	Term  []byte
 }
 
+// Document represents a document in a index.
+type Document struct {
+	Fields       []Field
+	EntityValues []byte
+	DocID        uint64
+}
+
+// Documents is a collection of documents.
+type Documents []Document
+
 // Writer allows writing fields and docID in a document to a index.
 type Writer interface {
 	Write(fields []Field, docID uint64) error
+	Batch(docs Documents) error
 }
 
 // FieldIterable allows building a FieldIterator.
@@ -216,6 +227,20 @@ type Store interface {
 	Writer
 	Searcher
 	SizeOnDisk() int64
+}
+
+// Series represents a series in a index.
+type Series struct {
+	EntityValues []byte
+	ID           common.SeriesID
+}
+
+// SeriesStore is an abstract of a series repository.
+type SeriesStore interface {
+	Store
+	Search([]byte) (common.SeriesID, error)
+	SearchPrefix([]byte) ([]Series, error)
+	SearchWildcard([]byte) ([]Series, error)
 }
 
 // GetSearcher returns a searcher associated with input index rule type.

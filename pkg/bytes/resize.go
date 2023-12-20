@@ -15,26 +15,29 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package measure
+package bytes
 
-import (
-	"testing"
-	"time"
+import "math/bits"
 
-	"github.com/stretchr/testify/assert"
+// ResizeOver resizes the byte slice to the nearest power of 2.
+func ResizeOver(b []byte, n int) []byte {
+	if n <= cap(b) {
+		return b[:n]
+	}
+	nNew := roundToNearestPow2(n)
+	bNew := make([]byte, nNew)
+	return bNew[:n]
+}
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-)
+// ResizeExact resizes the byte slice to the exact size.
+func ResizeExact(b []byte, n int) []byte {
+	if n <= cap(b) {
+		return b[:n]
+	}
+	return make([]byte, n)
+}
 
-func TestEncodeFieldFlag(t *testing.T) {
-	flag := pbv1.EncoderFieldFlag(&databasev1.FieldSpec{
-		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
-		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-	}, time.Minute)
-	fieldSpec, interval, err := pbv1.DecodeFieldFlag(flag)
-	assert.NoError(t, err)
-	assert.Equal(t, databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, fieldSpec.EncodingMethod)
-	assert.Equal(t, databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD, fieldSpec.CompressionMethod)
-	assert.Equal(t, time.Minute, interval)
+func roundToNearestPow2(n int) int {
+	pow2 := uint8(bits.Len(uint(n - 1)))
+	return 1 << pow2
 }

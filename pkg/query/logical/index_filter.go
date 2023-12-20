@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var errInvalidLogicalExpression = errors.New("invalid logical expression")
@@ -45,9 +46,9 @@ type GlobalIndexError struct {
 
 func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
 
-// BuildLocalFilter returns a new index.Filter for local indices.
+// BuildLocalFilterDeprecated returns a new index.Filter for local indices.
 // It could parse series Path at the same time.
-func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
+func BuildLocalFilterDeprecated(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
 	entity tsdb.Entity, mandatoryIndexRule bool,
 ) (index.Filter, []tsdb.Entity, error) {
 	if criteria == nil {
@@ -56,7 +57,7 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
-		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
+		expr, parsedEntity, err := parseExprOrEntityDeprecated(entityDict, entity, cond)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -75,7 +76,7 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 					return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "gobal index conf:%s", cond)
 				}
 			}
-			return parseCondition(cond, indexRule, expr, entity)
+			return parseConditionDeprecated(cond, indexRule, expr, entity)
 		} else if mandatoryIndexRule {
 			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 		}
@@ -86,20 +87,20 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
+			return BuildLocalFilterDeprecated(le.Right, schema, entityDict, entity, mandatoryIndexRule)
 		}
 		if le.GetRight() == nil {
-			return BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
+			return BuildLocalFilterDeprecated(le.Left, schema, entityDict, entity, mandatoryIndexRule)
 		}
-		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
+		left, leftEntities, err := BuildLocalFilterDeprecated(le.Left, schema, entityDict, entity, mandatoryIndexRule)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
+		right, rightEntities, err := BuildLocalFilterDeprecated(le.Right, schema, entityDict, entity, mandatoryIndexRule)
 		if err != nil {
 			return nil, nil, err
 		}
-		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
+		entities := parseEntitiesDeprecated(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
 			return nil, nil, nil
 		}
@@ -120,7 +121,7 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 	return nil, nil, errInvalidCriteriaType
 }
 
-func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, expr LiteralExpr, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
+func parseConditionDeprecated(cond *modelv1.Condition, indexRule *databasev1.IndexRule, expr LiteralExpr, entity tsdb.Entity) (index.Filter, []tsdb.Entity, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
 		return newRange(indexRule, index.RangeOpts{
@@ -178,7 +179,7 @@ func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, ex
 	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
-func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *modelv1.Condition) (LiteralExpr, []tsdb.Entity, error) {
+func parseExprOrEntityDeprecated(entityDict map[string]int, entity tsdb.Entity, cond *modelv1.Condition) (LiteralExpr, []tsdb.Entity, error) {
 	entityIdx, ok := entityDict[cond.Name]
 	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
 		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
@@ -236,7 +237,7 @@ func parseExprOrEntity(entityDict map[string]int, entity tsdb.Entity, cond *mode
 	return nil, nil, errors.WithMessagef(errUnsupportedConditionValue, "index filter parses %v", cond)
 }
 
-func parseEntities(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
+func parseEntitiesDeprecated(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, left, right []tsdb.Entity) []tsdb.Entity {
 	count := len(input)
 	result := make(tsdb.Entity, count)
 	anyEntity := func(entities []tsdb.Entity) bool {
@@ -302,6 +303,276 @@ func parseEntities(op modelv1.LogicalExpression_LogicalOp, input tsdb.Entity, le
 		}
 	}
 	return []tsdb.Entity{result}
+}
+
+// BuildLocalFilter returns a new index.Filter for local indices.
+func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
+	entity []*modelv1.TagValue, mandatoryIndexRule bool,
+) (index.Filter, [][]*modelv1.TagValue, error) {
+	if criteria == nil {
+		return nil, [][]*modelv1.TagValue{entity}, nil
+	}
+	switch criteria.GetExp().(type) {
+	case *modelv1.Criteria_Condition:
+		cond := criteria.GetCondition()
+		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
+		if err != nil {
+			return nil, nil, err
+		}
+		if parsedEntity != nil {
+			return nil, parsedEntity, nil
+		}
+		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
+			if indexRule.Location == databasev1.IndexRule_LOCATION_GLOBAL {
+				switch cond.Op {
+				case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN:
+					return nil, nil, GlobalIndexError{
+						IndexRule: indexRule,
+						Expr:      expr,
+					}
+				default:
+					return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "gobal index conf:%s", cond)
+				}
+			}
+			return parseCondition(cond, indexRule, expr, entity)
+		} else if mandatoryIndexRule {
+			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
+		}
+		return eNode, [][]*modelv1.TagValue{entity}, nil
+	case *modelv1.Criteria_Le:
+		le := criteria.GetLe()
+		if le.GetLeft() == nil && le.GetRight() == nil {
+			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+		}
+		if le.GetLeft() == nil {
+			return BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
+		}
+		if le.GetRight() == nil {
+			return BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
+		}
+		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity, mandatoryIndexRule)
+		if err != nil {
+			return nil, nil, err
+		}
+		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity, mandatoryIndexRule)
+		if err != nil {
+			return nil, nil, err
+		}
+		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
+		if entities == nil {
+			return nil, nil, nil
+		}
+		if left == nil && right == nil {
+			return nil, entities, nil
+		}
+		switch le.Op {
+		case modelv1.LogicalExpression_LOGICAL_OP_AND:
+			and := newAnd(2)
+			and.append(left).append(right)
+			return and, entities, nil
+		case modelv1.LogicalExpression_LOGICAL_OP_OR:
+			or := newOr(2)
+			or.append(left).append(right)
+			return or, entities, nil
+		}
+	}
+	return nil, nil, errInvalidCriteriaType
+}
+
+func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, expr LiteralExpr, entity []*modelv1.TagValue) (index.Filter, [][]*modelv1.TagValue, error) {
+	switch cond.Op {
+	case modelv1.Condition_BINARY_OP_GT:
+		return newRange(indexRule, index.RangeOpts{
+			Lower: bytes.Join(expr.Bytes(), nil),
+		}), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_GE:
+		return newRange(indexRule, index.RangeOpts{
+			IncludesLower: true,
+			Lower:         bytes.Join(expr.Bytes(), nil),
+		}), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_LT:
+		return newRange(indexRule, index.RangeOpts{
+			Upper: bytes.Join(expr.Bytes(), nil),
+		}), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_LE:
+		return newRange(indexRule, index.RangeOpts{
+			IncludesUpper: true,
+			Upper:         bytes.Join(expr.Bytes(), nil),
+		}), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_EQ:
+		return newEq(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_MATCH:
+		return newMatch(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_NE:
+		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_HAVING:
+		bb := expr.Bytes()
+		and := newAnd(len(bb))
+		for _, b := range bb {
+			and.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return and, [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_NOT_HAVING:
+		bb := expr.Bytes()
+		and := newAnd(len(bb))
+		for _, b := range bb {
+			and.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return newNot(indexRule, and), [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_IN:
+		bb := expr.Bytes()
+		or := newOr(len(bb))
+		for _, b := range bb {
+			or.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return or, [][]*modelv1.TagValue{entity}, nil
+	case modelv1.Condition_BINARY_OP_NOT_IN:
+		bb := expr.Bytes()
+		or := newOr(len(bb))
+		for _, b := range bb {
+			or.append(newEq(indexRule, newBytesLiteral(b)))
+		}
+		return newNot(indexRule, or), [][]*modelv1.TagValue{entity}, nil
+	}
+	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
+}
+
+func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, cond *modelv1.Condition) (LiteralExpr, [][]*modelv1.TagValue, error) {
+	entityIdx, ok := entityDict[cond.Name]
+	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
+		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
+	}
+	switch v := cond.Value.Value.(type) {
+	case *modelv1.TagValue_Str:
+		if ok {
+			parsedEntity := make([]*modelv1.TagValue, len(entity))
+			copy(parsedEntity, entity)
+			parsedEntity[entityIdx] = cond.Value
+			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
+		}
+		return str(v.Str.GetValue()), nil, nil
+	case *modelv1.TagValue_StrArray:
+		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
+			entities := make([][]*modelv1.TagValue, len(v.StrArray.Value))
+			for i, va := range v.StrArray.Value {
+				parsedEntity := make([]*modelv1.TagValue, len(entity))
+				copy(parsedEntity, entity)
+				parsedEntity[entityIdx] = &modelv1.TagValue{
+					Value: &modelv1.TagValue_Str{
+						Str: &modelv1.Str{
+							Value: va,
+						},
+					},
+				}
+				entities[i] = parsedEntity
+			}
+			return nil, entities, nil
+		}
+		return &strArrLiteral{
+			arr: v.StrArray.GetValue(),
+		}, nil, nil
+	case *modelv1.TagValue_Int:
+		if ok {
+			parsedEntity := make([]*modelv1.TagValue, len(entity))
+			copy(parsedEntity, entity)
+			parsedEntity[entityIdx] = cond.Value
+			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
+		}
+		return &int64Literal{
+			int64: v.Int.GetValue(),
+		}, nil, nil
+	case *modelv1.TagValue_IntArray:
+		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
+			entities := make([][]*modelv1.TagValue, len(v.IntArray.Value))
+			for i, va := range v.IntArray.Value {
+				parsedEntity := make([]*modelv1.TagValue, len(entity))
+				copy(parsedEntity, entity)
+				parsedEntity[entityIdx] = &modelv1.TagValue{
+					Value: &modelv1.TagValue_Int{
+						Int: &modelv1.Int{
+							Value: va,
+						},
+					},
+				}
+				entities[i] = parsedEntity
+			}
+			return nil, entities, nil
+		}
+		return &int64ArrLiteral{
+			arr: v.IntArray.GetValue(),
+		}, nil, nil
+	case *modelv1.TagValue_Null:
+		return nullLiteralExpr, nil, nil
+	}
+	return nil, nil, errors.WithMessagef(errUnsupportedConditionValue, "index filter parses %v", cond)
+}
+
+func parseEntities(op modelv1.LogicalExpression_LogicalOp, input []*modelv1.TagValue, left, right [][]*modelv1.TagValue) [][]*modelv1.TagValue {
+	count := len(input)
+	result := make([]*modelv1.TagValue, count)
+	anyEntity := func(entities [][]*modelv1.TagValue) bool {
+		for _, entity := range entities {
+			for _, entry := range entity {
+				if entry != pbv1.AnyTagValue {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	leftAny := anyEntity(left)
+	rightAny := anyEntity(right)
+
+	mergedEntities := make([][]*modelv1.TagValue, 0, len(left)+len(right))
+
+	switch op {
+	case modelv1.LogicalExpression_LOGICAL_OP_AND:
+		if leftAny && !rightAny {
+			return right
+		}
+		if !leftAny && rightAny {
+			return left
+		}
+		mergedEntities = append(mergedEntities, left...)
+		mergedEntities = append(mergedEntities, right...)
+		for i := 0; i < count; i++ {
+			entry := pbv1.AnyTagValue
+			for j := 0; j < len(mergedEntities); j++ {
+				e := mergedEntities[j][i]
+				if e == pbv1.AnyTagValue {
+					continue
+				}
+				if entry == pbv1.AnyTagValue {
+					entry = e
+				} else if pbv1.MustCompareTagValue(entry, e) != 0 {
+					return nil
+				}
+			}
+			result[i] = entry
+		}
+	case modelv1.LogicalExpression_LOGICAL_OP_OR:
+		if leftAny {
+			return left
+		}
+		if rightAny {
+			return right
+		}
+		mergedEntities = append(mergedEntities, left...)
+		mergedEntities = append(mergedEntities, right...)
+		for i := 0; i < count; i++ {
+			entry := pbv1.AnyTagValue
+			for j := 0; j < len(mergedEntities); j++ {
+				e := mergedEntities[j][i]
+				if entry == pbv1.AnyTagValue {
+					entry = e
+				} else if pbv1.MustCompareTagValue(entry, e) != 0 {
+					return mergedEntities
+				}
+			}
+			result[i] = entry
+		}
+	}
+	return [][]*modelv1.TagValue{result}
 }
 
 type fieldKey struct {

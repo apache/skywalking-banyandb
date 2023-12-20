@@ -33,25 +33,7 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "10"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
         value: "2"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "9"
 - fields:
   - name: total
     value:
@@ -69,25 +51,7 @@ dataPoints:
   - name: value
     value:
       int:
-        value: "8"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
         value: "5"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "100"
-  - name: value
-    value:
-      int:
-        value: "11"
 - fields:
   - name: total
     value:
@@ -97,27 +61,6 @@ dataPoints:
     value:
       int:
         value: "4"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: id
-      value:
-        str:
-          value: "2"
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-  timestamp: "2022-10-17T12:53:45.912Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "50"
-  - name: value
-    value:
-      int:
-        value: "12"
 - fields:
   - name: total
     value:
@@ -127,12 +70,3 @@ dataPoints:
     value:
       int:
         value: "6"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "300"
-  - name: value
-    value:
-      int:
-        value: "7"
