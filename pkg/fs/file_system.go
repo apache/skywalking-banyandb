@@ -94,12 +94,20 @@ type FileSystem interface {
 	ReadDir(dirname string) []DirEntry
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
+	// Create and open lock file by specified name and mode.
+	CreateLockFile(name string, permission Mode) (File, error)
+	// Open the file by specified name and mode.
+	OpenFile(name string) (File, error)
 	// Flush mode, which flushes all data to one file.
 	Write(buffer []byte, name string, permission Mode) (int, error)
+	// Read the entire file using streaming read.
+	Read(name string) ([]byte, error)
 	// Delete the file.
 	DeleteFile(name string) error
 	// Delete the directory.
 	MustRMAll(path string)
+	// SyncPath the directory of file.
+	SyncPath(path string)
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.

@@ -19,30 +19,192 @@ package measure
 
 import (
 	"container/heap"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-func newTSTable(_ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
-	return &tsTable{}, nil
+const (
+	snapshotSuffix = ".snp"
+	filePermission = 0o600
+	dirPermission  = 0o700
+)
+
+func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
+	var tsTable tsTable
+	tsTable.fileSystem = fileSystem
+	tsTable.root = rootPath
+	tsTable.l = l
+	tsTable.gc.parent = &tsTable
+	ee := fileSystem.ReadDir(rootPath)
+	if len(ee) == 0 {
+		t := &tsTable
+		t.startLoop(uint64(time.Now().UnixNano()))
+		return t, nil
+	}
+	var loadedParts []uint64
+	var loadedSnapshots []uint64
+	var needToDelete []string
+	for i := range ee {
+		if ee[i].IsDir() {
+			p, err := parseEpoch(ee[i].Name())
+			if err != nil {
+				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
+				needToDelete = append(needToDelete, ee[i].Name())
+				continue
+			}
+			loadedParts = append(loadedParts, p)
+			continue
+		}
+		if filepath.Ext(ee[i].Name()) != snapshotSuffix {
+			continue
+		}
+		snapshot, err := parseSnapshot(ee[i].Name())
+		if err != nil {
+			l.Info().Err(err).Msg("cannot parse snapshot file name. skip and delete it")
+			needToDelete = append(needToDelete, ee[i].Name())
+			continue
+		}
+		loadedSnapshots = append(loadedSnapshots, snapshot)
+		tsTable.gc.registerSnapshot(snapshot)
+	}
+	for i := range needToDelete {
+		if err := fileSystem.DeleteFile(filepath.Join(rootPath, needToDelete[i])); err != nil {
+			l.Warn().Err(err).Str("path", filepath.Join(rootPath, needToDelete[i])).Msg("failed to delete part. Please check manually")
+		}
+	}
+	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		t := &tsTable
+		t.startLoop(uint64(time.Now().UnixNano()))
+		return t, nil
+	}
+	sort.Slice(loadedSnapshots, func(i, j int) bool {
+		return loadedSnapshots[i] > loadedSnapshots[j]
+	})
+	epoch := loadedSnapshots[0]
+	t := &tsTable
+	t.loadSnapshot(epoch, loadedParts)
+	t.startLoop(epoch)
+	return t, nil
 }
 
 type tsTable struct {
-	memParts []*partWrapper
+	l          *logger.Logger
+	fileSystem fs.FileSystem
+	gc         garbageCleaner
+	root       string
+	snapshot   *snapshot
 	sync.RWMutex
+	introductions chan *introduction
+	loopCloser    *run.Closer
+}
+
+func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
+	parts := tst.mustReadSnapshot(epoch)
+	var snp snapshot
+	for _, partName := range loadedParts {
+		var find bool
+		for j := range parts {
+			if partName == parts[j] {
+				find = true
+				break
+			}
+		}
+		if !find {
+			tst.gc.submitParts(partName)
+		}
+		p := mustOpenFilePart(partPath(tst.root, partName), tst.fileSystem)
+		snp.parts = append(snp.parts, newPartWrapper(nil, p, tst.fileSystem))
+	}
+	tst.gc.clean()
+	if len(snp.parts) < 1 {
+		return
+	}
+	snp.incRef()
+	tst.snapshot = &snp
+}
+
+func (tst *tsTable) startLoop(cur uint64) {
+	next := cur + 1
+	tst.loopCloser = run.NewCloser(3)
+	tst.introductions = make(chan *introduction)
+	flushCh := make(chan *flusherIntroduction)
+	introducerWatcher := make(watcher.Channel, 1)
+	go tst.introducerLoop(flushCh, introducerWatcher, next)
+	go tst.flusherLoop(flushCh, introducerWatcher, cur)
+}
+
+func parseEpoch(epochStr string) (uint64, error) {
+	p, err := strconv.ParseUint(epochStr, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse path %s: %w", epochStr, err)
+	}
+	return p, nil
+}
+
+func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
+	data, err := json.Marshal(partNames)
+	if err != nil {
+		logger.Panicf("cannot marshal partNames to JSON: %s", err)
+	}
+	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
+	lf, err := tst.fileSystem.CreateLockFile(snapshotPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write snapshot %s: %s", snapshotPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
+	}
+}
+
+func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
+	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
+	data, err := tst.fileSystem.Read(snapshotPath)
+	if err != nil {
+		logger.Panicf("cannot read %s: %s", snapshotPath, err)
+	}
+	var partNames []string
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		logger.Panicf("cannot parse %s: %s", snapshotPath, err)
+	}
+	var result []uint64
+	for i := range partNames {
+		e, err := parseEpoch(partNames[i])
+		if err != nil {
+			logger.Panicf("cannot parse %s: %s", partNames[i], err)
+		}
+		result = append(result, e)
+	}
+	return result
 }
 
 func (tst *tsTable) Close() error {
 	tst.Lock()
 	defer tst.Unlock()
-	for _, p := range tst.memParts {
-		p.decRef()
+	if tst.loopCloser != nil {
+
+		tst.loopCloser.Done()
+		tst.loopCloser.CloseThenWait()
+	}
+	if tst.snapshot != nil {
+		tst.snapshot.decRef()
 	}
 	return nil
 }
@@ -56,26 +218,19 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	mp.mustInitFromDataPoints(dps)
 	p := openMemPart(mp)
 
-	pw := newMemPartWrapper(mp, p)
+	ind := generateIntroduction()
+	ind.applied = make(chan struct{})
+	ind.memPart = newPartWrapper(mp, p, tst.fileSystem)
 
-	tst.Lock()
-	defer tst.Unlock()
-	tst.memParts = append(tst.memParts, pw)
-}
-
-func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts queryOptions) ([]*partWrapper, []*part) {
-	tst.RLock()
-	defer tst.RUnlock()
-	for _, p := range tst.memParts {
-		pm := p.mp.partMetadata
-		if opts.maxTimestamp < pm.MinTimestamp || opts.minTimestamp > pm.MaxTimestamp {
-			continue
-		}
-		p.incRef()
-		dst = append(dst, p)
-		dstPart = append(dstPart, p.p)
+	select {
+	case tst.introductions <- ind:
+	case <-tst.loopCloser.CloseNotify():
+		return
 	}
-	return dst, dstPart
+	select {
+	case <-ind.applied:
+	case <-tst.loopCloser.CloseNotify():
+	}
 }
 
 type tstIter struct {

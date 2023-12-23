@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -374,12 +375,11 @@ func TestQueryResult(t *testing.T) {
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
 			}
-			pws, pp := tst.getParts(nil, nil, queryOpts)
-			defer func() {
-				for _, pw := range pws {
-					pw.decRef()
-				}
-			}()
+			s := tst.currentSnapshot()
+			require.NotNil(t, s)
+			defer s.decRef()
+			pp, n := s.getParts(nil, queryOpts)
+			require.Equal(t, len(tt.dpsList), n)
 			sids := make([]common.SeriesID, len(tt.sids))
 			copy(sids, tt.sids)
 			sort.Slice(sids, func(i, j int) bool {

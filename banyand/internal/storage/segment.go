@@ -293,7 +293,7 @@ func (sc *segmentController[T]) sortLst() {
 
 func (sc *segmentController[T]) load(start, end time.Time, root string) (seg *segment[T], err error) {
 	var tsTable T
-	if tsTable, err = sc.tsTableCreator(sc.location, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
+	if tsTable, err = sc.tsTableCreator(lfs, sc.location, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
 		return nil, err
 	}
 	suffix := sc.Format(start)

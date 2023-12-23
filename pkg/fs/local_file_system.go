@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -159,6 +160,31 @@ func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error
 	}
 }
 
+func (fs *localFileSystem) OpenFile(name string) (File, error) {
+	file, err := os.Open(name)
+	switch {
+	case err == nil:
+		return &LocalFile{
+			file: file,
+		}, nil
+	case os.IsNotExist(err):
+		return nil, &FileSystemError{
+			Code:    isNotExistError,
+			Message: fmt.Sprintf("File is not exist, file name: %s,error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return nil, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
+		}
+	default:
+		return nil, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
+		}
+	}
+}
+
 // Write flushes all data to one file.
 func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (int, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
@@ -194,6 +220,30 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 	return size, nil
 }
 
+// Read is used to read the entire file using streaming read.
+func (fs *localFileSystem) Read(name string) ([]byte, error) {
+	data, err := os.ReadFile(name)
+	switch {
+	case err == nil:
+		return data, nil
+	case os.IsNotExist(err):
+		return data, &FileSystemError{
+			Code:    isNotExistError,
+			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return data, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, error message: %s", name, err),
+		}
+	default:
+		return data, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Read file error, file name: %s, error message: %s", name, err),
+		}
+	}
+}
+
 // DeleteFile is used to delete the file.
 func (fs *localFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)
@@ -219,9 +269,16 @@ func (fs *localFileSystem) DeleteFile(name string) error {
 }
 
 func (fs *localFileSystem) MustRMAll(path string) {
-	if err := os.RemoveAll(path); err != nil {
-		logger.Panicf("failed to remove all files under %s", path)
+	if err := os.RemoveAll(path); err == nil {
+		return
 	}
+	for i := 0; i < 5; i++ {
+		time.Sleep(time.Second)
+		if err := os.RemoveAll(path); err == nil {
+			return
+		}
+	}
+	fs.logger.Panic().Str("path", path).Msg("failed to remove all files under path")
 }
 
 // Write adds new data to the end of a file.

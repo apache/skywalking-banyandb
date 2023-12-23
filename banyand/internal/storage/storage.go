@@ -92,7 +92,7 @@ type TSTableWrapper[T TSTable] interface {
 }
 
 // TSTableCreator creates a TSTable.
-type TSTableCreator[T TSTable] func(root string, position common.Position,
+type TSTableCreator[T TSTable] func(fileSystem fs.FileSystem, root string, position common.Position,
 	l *logger.Logger, timeRange timestamp.TimeRange) (T, error)
 
 // IntervalUnit denotes the unit of a time point.

@@ -94,13 +94,18 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			assert.Equal(t, tt.want, len(tst.memParts))
-			var lastVersion int64
-			for _, pw := range tst.memParts {
+			s := tst.currentSnapshot()
+			if s == nil {
+				s = new(snapshot)
+			}
+			defer s.decRef()
+			assert.Equal(t, tt.want, len(s.parts))
+			var lastVersion uint64
+			for _, pw := range s.parts {
 				if lastVersion == 0 {
-					lastVersion = pw.p.partMetadata.Version
+					lastVersion = pw.p.partMetadata.ID
 				} else {
-					require.Less(t, lastVersion, pw.p.partMetadata.Version)
+					require.Less(t, lastVersion, pw.p.partMetadata.ID)
 				}
 			}
 		})
@@ -175,15 +180,16 @@ func Test_tstIter(t *testing.T) {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			pws, pp := tst.getParts(nil, nil, queryOptions{
+			s := tst.currentSnapshot()
+			if s == nil {
+				s = new(snapshot)
+			}
+			defer s.decRef()
+			pp, n := s.getParts(nil, queryOptions{
 				minTimestamp: tt.minTimestamp,
 				maxTimestamp: tt.maxTimestamp,
 			})
-			defer func() {
-				for _, pw := range pws {
-					pw.decRef()
-				}
-			}()
+			require.Equal(t, len(s.parts), n)
 			ti := &tstIter{}
 			ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
 			var got []blockMetadata
