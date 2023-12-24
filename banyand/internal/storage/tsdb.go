@@ -73,7 +73,7 @@ func (d *database[T]) Close() error {
 	d.Lock()
 	defer d.Unlock()
 	for _, s := range d.sLst {
-		s.closer()
+		s.close()
 	}
 	return d.index.Close()
 }

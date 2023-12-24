@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"path"
 	"sort"
 
@@ -63,11 +64,10 @@ func (g *garbageCleaner) cleanSnapshots() {
 	for i := 0; i < len(g.snapshots)-1; i++ {
 		filePath := path.Join(g.parent.root, snapshotName(g.snapshots[i]))
 		if err := g.parent.fileSystem.DeleteFile(filePath); err != nil {
-			if fse, ok := err.(*fs.FileSystemError); ok {
-				if fse.Code != fs.IsNotExistError {
-					g.parent.l.Warn().Err(err).Str("path", filePath).Msg("failed to delete snapshot, will retry in next round. Please check manually")
-					remainingSnapshots = append(remainingSnapshots, g.snapshots[i])
-				}
+			var notExistErr *fs.FileSystemError
+			if errors.As(err, &notExistErr) && notExistErr.Code != fs.IsNotExistError {
+				g.parent.l.Warn().Err(err).Str("path", filePath).Msg("failed to delete snapshot, will retry in next round. Please check manually")
+				remainingSnapshots = append(remainingSnapshots, g.snapshots[i])
 			}
 		}
 	}

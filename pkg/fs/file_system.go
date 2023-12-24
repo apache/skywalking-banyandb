@@ -119,6 +119,16 @@ type DirEntry interface {
 	IsDir() bool
 }
 
+func MustFlush(fs FileSystem, buffer []byte, name string, permission Mode) {
+	n, err := fs.Write(buffer, name, permission)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", name).Msg("cannot write data")
+	}
+	if n != len(buffer) {
+		logger.GetLogger().Panic().Int("written", n).Int("expected", len(buffer)).Str("path", name).Msg("BUG: writer wrote wrong number of bytes")
+	}
+}
+
 // MustWriteData writes data to w and panics if it cannot write all data.
 func MustWriteData(w Writer, data []byte) {
 	if len(data) == 0 {

@@ -174,15 +174,15 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fileSystem.MkdirPanicIfExist(path, dirPermission)
 
-	fileSystem.Write(mp.meta.Buf, filepath.Join(path, metaFilename), filePermission)
-	fileSystem.Write(mp.primary.Buf, filepath.Join(path, primaryFilename), filePermission)
-	fileSystem.Write(mp.timestamps.Buf, filepath.Join(path, timestampsFilename), filePermission)
-	fileSystem.Write(mp.fieldValues.Buf, filepath.Join(path, fieldValuesFilename), filePermission)
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), filePermission)
+	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), filePermission)
+	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), filePermission)
+	fs.MustFlush(fileSystem, mp.fieldValues.Buf, filepath.Join(path, fieldValuesFilename), filePermission)
 	for name, tf := range mp.tagFamilies {
-		fileSystem.Write(tf.Buf, filepath.Join(path, name+tagFamiliesFilenameExt), filePermission)
+		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(path, name+tagFamiliesFilenameExt), filePermission)
 	}
 	for name, tfh := range mp.tagFamilyMetadata {
-		fileSystem.Write(tfh.Buf, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), filePermission)
+		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), filePermission)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
@@ -288,7 +288,6 @@ func mustOpenFilePart(partPath string, fileSystem fs.FileSystem) *part {
 			}
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
-
 	}
 	return &p
 }
