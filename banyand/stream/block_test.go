@@ -87,6 +87,7 @@ func toTagProjection(b block) map[string][]string {
 
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
+	elementIDs: []string{"0", "1"},
 	tagFamilies: []columnFamily{
 		{
 			name: "arrTag",
@@ -330,7 +331,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalBlock(t *testing.T) {
-	timestampBuffer, fieldBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	timestampBuffer, elementIDsBuffer, fieldBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
 		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
@@ -338,10 +339,12 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
 		timestampsWriter:         writer{w: timestampBuffer},
+		elementIDsWriter:         writer{w: elementIDsBuffer},
 		fieldValuesWriter:        writer{w: fieldBuffer},
 	}
 	p := &part{
 		timestamps:  timestampBuffer,
+		elementIDs:  elementIDsBuffer,
 		fieldValues: fieldBuffer,
 	}
 	b := &conventionalBlock
