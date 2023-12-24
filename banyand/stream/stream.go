@@ -17,78 +17,6 @@
 
 // // Package stream implements a time-series-based storage which is consists of a sequence of element.
 // // Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
-// package stream
-
-// import (
-// 	"context"
-
-// 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-// 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-// 	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
-// 	"github.com/apache/skywalking-banyandb/pkg/logger"
-// )
-
-// // a chunk is 1MB.
-// const chunkSize = 1 << 20
-
-// type stream struct {
-// 	db          tsdb.Supplier
-// 	l           *logger.Logger
-// 	schema      *databasev1.Stream
-// 	indexWriter *index.Writer
-// 	name        string
-// 	group       string
-// 	indexRules  []*databasev1.IndexRule
-// 	shardNum    uint32
-// }
-
-// func (s *stream) GetSchema() *databasev1.Stream {
-// 	return s.schema
-// }
-
-// func (s *stream) GetIndexRules() []*databasev1.IndexRule {
-// 	return s.indexRules
-// }
-
-// func (s *stream) Close() error {
-// 	return nil
-// }
-
-// func (s *stream) parseSpec() {
-// 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-// }
-
-// type streamSpec struct {
-// 	schema     *databasev1.Stream
-// 	indexRules []*databasev1.IndexRule
-// }
-
-// func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) *stream {
-// 	sm := &stream{
-// 		shardNum:   shardNum,
-// 		schema:     spec.schema,
-// 		indexRules: spec.indexRules,
-// 		l:          l,
-// 	}
-// 	sm.parseSpec()
-// 	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
-
-// 	if db == nil {
-// 		return sm
-// 	}
-// 	sm.db = db
-// 	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
-// 		DB:                db,
-// 		ShardNum:          shardNum,
-// 		Families:          spec.schema.TagFamilies,
-// 		IndexRules:        spec.indexRules,
-// 		EnableGlobalIndex: true,
-// 	})
-// 	return sm
-// }
-
-// // Package stream implements a time-series-based storage which is consists of a sequence of element.
-// // Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
 package stream
 
 import (
@@ -105,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 
-	// "github.com/apache/skywalking-banyandb/pkg/index/posting"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -124,8 +51,6 @@ const (
 	maxBlockLength = 8 * 1024
 )
 
-// var errTagFamilyNotExist = errors.New("tag family doesn't exist")
-
 // Query allow to retrieve elements in a series of streams.
 type Query interface {
 	Stream(stream *commonv1.Metadata) (Stream, error)
@@ -134,10 +59,6 @@ type Query interface {
 // Stream allows inspecting elements' details.
 type Stream interface {
 	io.Closer
-	// Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
-	// Shard(id common.ShardID) (tsdb.Shard, error)
-	// ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
-	ParseElementIDDeprecated(item tsdb.Item) (string, error)
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
@@ -146,10 +67,8 @@ type Stream interface {
 var _ Stream = (*stream)(nil)
 
 type stream struct {
-	// db                tsdb.Supplier
 	l      *logger.Logger
 	schema *databasev1.Stream
-	// indexWriter       *index.Writer
 	name              string
 	group             string
 	indexRules        []*databasev1.IndexRule
@@ -157,17 +76,6 @@ type stream struct {
 	indexRuleLocators []*partition.IndexRuleLocator
 	databaseSupplier  schema.Supplier
 }
-
-// type stream struct {
-// 	databaseSupplier  schema.Supplier
-// 	l                 *logger.Logger
-// 	schema            *databasev1.Stream
-// 	name              string
-// 	group             string
-// 	indexRules        []*databasev1.IndexRule
-// 	indexRuleLocators []*partition.IndexRuleLocator
-// 	shardNum          uint32
-// }
 
 func (s *stream) GetSchema() *databasev1.Stream {
 	return s.schema

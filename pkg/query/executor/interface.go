@@ -24,22 +24,12 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// ExecutionContext allows retrieving data from tsdb.
-// type ExecutionContext interface {
-// 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
-// 	Shard(id common.ShardID) (tsdb.Shard, error)
-// 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
-// }
-
 // StreamExecutionContext allows retrieving data through the stream module.
 type StreamExecutionContext interface {
-	// ExecutionContext
-	ParseElementIDDeprecated(item tsdb.Item) (string, error)
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
 }
 

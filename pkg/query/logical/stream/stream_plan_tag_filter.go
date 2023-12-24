@@ -25,7 +25,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	// "github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -36,7 +35,6 @@ import (
 
 var (
 	_ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
-	// errMultipleGlobalIndexes                        = errors.New("multiple global indexes are not supported")
 )
 
 type unresolvedTagFilter struct {
@@ -64,24 +62,13 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	}
 
 	projTags := make([]pbv1.TagProjection, len(uis.projectionTags))
-	// ElementIDTagIncluded := false
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
 				projTags[i].Family = tag.GetFamilyName()
 				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
-				// if tag.GetFamilyName() == stream.DefaultTagFamily {
-				// 	projTags[i].Names = append(projTags[i].Names, stream.ElementIDTag)
-				// 	ElementIDTagIncluded = true
-				// }
 			}
 		}
-		// if !ElementIDTagIncluded {
-		// 	projTags = append(projTags, pbv1.TagProjection{
-		// 		Family: stream.DefaultTagFamily,
-		// 		Names:  []string{stream.ElementIDTag},
-		// 	})
-		// }
 		var errProject error
 		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
 		if errProject != nil {
@@ -107,18 +94,6 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 }
 
 func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical.Plan, error) {
-	// if len(ctx.globalConditions) > 0 {
-	// 	if len(ctx.globalConditions) > 2 {
-	// 		return nil, errMultipleGlobalIndexes
-	// 	}
-	// 	return &globalIndexScan{
-	// 		schema:            ctx.s,
-	// 		projectionTagRefs: ctx.projTagsRefs,
-	// 		metadata:          uis.metadata,
-	// 		globalIndexRule:   ctx.globalConditions[0].(*databasev1.IndexRule),
-	// 		expr:              ctx.globalConditions[1].(logical.LiteralExpr),
-	// 	}, nil
-	// }
 	return &localIndexScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
@@ -126,7 +101,6 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
 		filter:            ctx.filter,
-		// entitiesDeprecated: ctx.entities,
 		entities: ctx.entities,
 		l:        logger.GetLogger("query", "stream", "local-index"),
 	}, nil
@@ -146,7 +120,6 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 type analyzeContext struct {
 	s      logical.Schema
 	filter index.Filter
-	// entities         []tsdb.Entity
 	entities         [][]*modelv1.TagValue
 	projectionTags   []pbv1.TagProjection
 	globalConditions []interface{}

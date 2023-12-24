@@ -30,8 +30,6 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
-
-	// nullTag = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 )
 
 type (
@@ -39,102 +37,6 @@ type (
 	// TODO:// we could have a chance to remove this wrapper.
 	SeekerBuilder func(builder tsdb.SeekerBuilder)
 )
-
-// ProjectItem parses the item within the StreamExecutionContext.
-// projectionFieldRefs must be prepared before calling this method, projectionFieldRefs should be a list of
-// tag list where the inner list must exist in the same tag family.
-// Strict order can be guaranteed in the result.
-// func ProjectItem(ec executor.ExecutionContext, item tsdb.Item, projectionFieldRefs [][]*TagRef) ([]*modelv1.TagFamily, error) {
-// 	tagFamily := make([]*modelv1.TagFamily, len(projectionFieldRefs))
-// 	for i, refs := range projectionFieldRefs {
-// 		if len(refs) == 0 {
-// 			continue
-// 		}
-// 		familyName := refs[0].Tag.GetFamilyName()
-// 		parsedTagFamily, err := ec.ParseTagFamily(familyName, item)
-// 		if err != nil {
-// 			return nil, errors.WithMessage(err, "parse projection")
-// 		}
-
-// 		parsedTagSize := len(parsedTagFamily.GetTags())
-// 		tagRefSize := len(refs)
-
-// 		// Determine maximum size for creating the tags slice
-// 		maxSize := tagRefSize
-// 		if parsedTagSize < tagRefSize {
-// 			maxSize = parsedTagSize
-// 		}
-
-// 		tags := make([]*modelv1.Tag, maxSize)
-
-// 		for j, ref := range refs {
-// 			if parsedTagSize > ref.Spec.TagIdx {
-// 				tags[j] = parsedTagFamily.GetTags()[ref.Spec.TagIdx]
-// 			} else if j < parsedTagSize {
-// 				tags[j] = &modelv1.Tag{Key: ref.Tag.name, Value: nullTag}
-// 			} else {
-// 				break
-// 			}
-// 		}
-
-// 		tagFamily[i] = &modelv1.TagFamily{
-// 			Name: familyName,
-// 			Tags: tags,
-// 		}
-// 	}
-
-// 	return tagFamily, nil
-// }
-
-// ExecuteForShard fetches elements from series within a single shard. A list of series must be prepared in advanced
-// with the help of Entity. The result is a list of element set, where the order of inner list is kept
-// as what the users specify in the seekerBuilder.
-// This method is used by the underlying tableScan and localIndexScan plans.
-// func ExecuteForShard(ctx context.Context, l *logger.Logger, series tsdb.SeriesList, timeRange timestamp.TimeRange,
-// 	builders ...SeekerBuilder,
-// ) ([]tsdb.Iterator, []io.Closer, error) {
-// 	var itersInShard []tsdb.Iterator
-// 	var closers []io.Closer
-// 	for _, seriesFound := range series {
-// 		itersInSeries, err := func() ([]tsdb.Iterator, error) {
-// 			ctxSeries, cancel := context.WithTimeout(ctx, 5*time.Second)
-// 			defer cancel()
-// 			sp, errInner := seriesFound.Span(context.WithValue(ctxSeries, logger.ContextKey, l), timeRange)
-// 			if errInner != nil {
-// 				if errors.Is(errInner, tsdb.ErrEmptySeriesSpan) {
-// 					return nil, nil
-// 				}
-// 				return nil, errInner
-// 			}
-// 			closers = append(closers, sp)
-// 			b := sp.SeekerBuilder()
-// 			for _, builder := range builders {
-// 				builder(b)
-// 			}
-// 			seeker, errInner := b.Build()
-// 			if errInner != nil {
-// 				return nil, errInner
-// 			}
-// 			iters, errInner := seeker.Seek()
-// 			if errInner != nil {
-// 				return nil, errInner
-// 			}
-// 			return iters, nil
-// 		}()
-// 		if err != nil {
-// 			if len(closers) > 0 {
-// 				for _, closer := range closers {
-// 					err = multierr.Append(err, closer.Close())
-// 				}
-// 			}
-// 			return nil, nil, err
-// 		}
-// 		if len(itersInSeries) > 0 {
-// 			itersInShard = append(itersInShard, itersInSeries...)
-// 		}
-// 	}
-// 	return itersInShard, closers, nil
-// }
 
 // Tag represents the combination of  tag family and tag name.
 // It's a tag's identity.
@@ -210,15 +112,3 @@ func StringSlicesEqual(a, b []string) bool {
 	}
 	return true
 }
-
-// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
-// func NewItemIter(iters []tsdb.Iterator, s modelv1.Sort) sort.Iterator[tsdb.Item] {
-// 	var ii []sort.Iterator[tsdb.Item]
-// 	for _, iter := range iters {
-// 		ii = append(ii, iter)
-// 	}
-// 	if s == modelv1.Sort_SORT_DESC {
-// 		return sort.NewItemIter[tsdb.Item](ii, true)
-// 	}
-// 	return sort.NewItemIter[tsdb.Item](ii, false)
-// }

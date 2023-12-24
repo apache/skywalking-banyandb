@@ -48,10 +48,9 @@ type localIndexScan struct {
 	l                 *logger.Logger
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
-	// entitiesDeprecated []tsdb.Entity
-	projectionTags []pbv1.TagProjection
-	entities       [][]*modelv1.TagValue
-	maxElementSize int
+	projectionTags    []pbv1.TagProjection
+	entities          [][]*modelv1.TagValue
+	maxElementSize    int
 }
 
 func (i *localIndexScan) Limit(max int) {
@@ -103,14 +102,8 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 				tagFamily := &modelv1.TagFamily{
 					Name: tf.Name,
 				}
-				// if tf.Name != stream.DefaultTagFamily {
 				e.TagFamilies = append(e.TagFamilies, tagFamily)
-				// }
 				for _, t := range tf.Tags {
-					// if tf.Name == stream.DefaultTagFamily && t.Name == stream.ElementIDTag {
-					// 	e.ElementId = t.Values[i].GetStr().GetValue()
-					// 	continue
-					// }
 					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
 						Key:   t.Name,
 						Value: t.Values[i],
@@ -122,88 +115,6 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	}
 	return elements, nil
 }
-
-// func (i *localIndexScan) ExecuteDeprecated(ctx context.Context) (elements []*streamv1.Element, err error) {
-// 	var seriesList tsdb.SeriesList
-// 	ec := executor.FromStreamExecutionContext(ctx)
-// 	for _, e := range i.entitiesDeprecated {
-// 		shards, errInternal := ec.Shards(e)
-// 		if errInternal != nil {
-// 			return nil, errInternal
-// 		}
-// 		for _, shard := range shards {
-// 			sl, errInternal := shard.Series().List(context.WithValue(
-// 				ctx,
-// 				logger.ContextKey,
-// 				i.l,
-// 			), tsdb.NewPath(e))
-// 			if errInternal != nil {
-// 				return nil, errInternal
-// 			}
-// 			seriesList = seriesList.Merge(sl)
-// 		}
-// 	}
-// 	if len(seriesList) == 0 {
-// 		return nil, nil
-// 	}
-// 	var builders []logical.SeekerBuilder
-// 	if i.order.Index != nil {
-// 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-// 			builder.OrderByIndex(i.order.Index, i.order.Sort)
-// 		})
-// 	} else {
-// 		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-// 			builder.OrderByTime(i.order.Sort)
-// 		})
-// 	}
-// 	if i.filter != nil {
-// 		builders = append(builders, func(b tsdb.SeekerBuilder) {
-// 			b.Filter(i.filter)
-// 		})
-// 	}
-// 	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	if len(closers) > 0 {
-// 		defer func(closers []io.Closer) {
-// 			for _, c := range closers {
-// 				err = multierr.Append(err, c.Close())
-// 			}
-// 		}(closers)
-// 	}
-
-// 	var elems []*streamv1.Element
-
-// 	if len(iters) == 0 {
-// 		return elems, nil
-// 	}
-
-// 	it := logical.NewItemIter(iters, i.order.Sort)
-// 	defer func() {
-// 		err = multierr.Append(err, it.Close())
-// 	}()
-// 	for it.Next() {
-// 		nextItem := it.Val()
-// 		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
-// 		if innerErr != nil {
-// 			return nil, innerErr
-// 		}
-// 		elementID, innerErr := ec.ParseElementIDDeprecated(nextItem)
-// 		if innerErr != nil {
-// 			return nil, innerErr
-// 		}
-// 		elems = append(elems, &streamv1.Element{
-// 			ElementId:   elementID,
-// 			Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
-// 			TagFamilies: tagFamilies,
-// 		})
-// 		if len(elems) > i.maxElementSize {
-// 			break
-// 		}
-// 	}
-// 	return elems, nil
-// }
 
 func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; orderBy=%s; limit=%d",

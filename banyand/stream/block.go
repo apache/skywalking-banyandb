@@ -24,7 +24,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 
-	// "github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -329,11 +328,6 @@ func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementI
 		elementIDsByteSlice[i] = []byte(elementID)
 	}
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, elementIDsByteSlice)
-	// var err error
-	// bb.Buf, err = encoding.EncodeElementIDs(elementIDs)
-	// if err != nil {
-	// 	logger.Panicf("encode ElementIds error")
-	// }
 	if len(bb.Buf) > maxElementIDsBlockSize {
 		logger.Panicf("too big block with elementIDs: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxElementIDsBlockSize)
 	}
@@ -358,7 +352,6 @@ func mustReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, rea
 	for i, elementID := range elementIDsByteSlice {
 		dst[i] = string(elementID)
 	}
-	// dst, err := encoding.DecodeElementIDs(bb.Buf)
 	return dst
 }
 
