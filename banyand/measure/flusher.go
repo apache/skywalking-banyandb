@@ -24,6 +24,9 @@ import (
 func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, introducerWatcher watcher.Channel, epoch uint64) {
 	defer tst.loopCloser.Done()
 	epochWatcher := introducerWatcher.Add(0, tst.loopCloser.CloseNotify())
+	if epochWatcher == nil {
+		return
+	}
 
 	for {
 		select {
@@ -43,11 +46,15 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, introducerWat
 					return
 				}
 				tst.persistSnapshot(curSnapshot)
+				curSnapshot.decRef()
 				if tst.currentEpoch() != epoch {
 					continue
 				}
 			}
 			epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
+			if epochWatcher == nil {
+				return
+			}
 			tst.gc.clean()
 		}
 	}
@@ -55,6 +62,7 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, introducerWat
 
 func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) uint64 {
 	ind := generateFlusherIntroduction()
+	defer releaseFlusherIntroduction(ind)
 	for _, pw := range snapshot.parts {
 		if pw.mp == nil || pw.mp.partMetadata.TotalCount < 1 {
 			continue
@@ -62,7 +70,11 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		partPath := partPath(tst.root, pw.ID())
 		pw.mp.mustFlush(tst.fileSystem, partPath)
 		newPW := newPartWrapper(nil, mustOpenFilePart(partPath, tst.fileSystem), tst.fileSystem)
+		newPW.p.partMetadata.ID = pw.ID()
 		ind.flushed[newPW.ID()] = newPW
+	}
+	if len(ind.flushed) < 1 {
+		return snapshot.epoch
 	}
 	ind.applied = make(chan struct{})
 	select {
@@ -81,7 +93,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	var partNames []string
 	for i := range snapshot.parts {
-		partNames = append(partNames, snapshotName(snapshot.parts[i].ID()))
+		partNames = append(partNames, partName(snapshot.parts[i].ID()))
 	}
 	tst.mustWriteSnapshot(snapshot.epoch, partNames)
 	tst.gc.registerSnapshot(snapshot.epoch)

@@ -42,7 +42,7 @@ func (e *Epochs) Add(epoch *Epoch) {
 func (e *Epochs) Notify(epoch uint64) {
 	var remained Epochs
 	for _, ep := range *e {
-		if ep.epoch <= epoch {
+		if ep.epoch < epoch {
 			close(ep.ch)
 			continue
 		}

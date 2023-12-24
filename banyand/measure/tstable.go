@@ -114,7 +114,9 @@ type tsTable struct {
 
 func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	parts := tst.mustReadSnapshot(epoch)
-	var snp snapshot
+	snp := snapshot{
+		epoch: epoch,
+	}
 	for _, partName := range loadedParts {
 		var find bool
 		for j := range parts {
@@ -127,6 +129,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			tst.gc.submitParts(partName)
 		}
 		p := mustOpenFilePart(partPath(tst.root, partName), tst.fileSystem)
+		p.partMetadata.ID = partName
 		snp.parts = append(snp.parts, newPartWrapper(nil, p, tst.fileSystem))
 	}
 	tst.gc.clean()
@@ -196,13 +199,12 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 }
 
 func (tst *tsTable) Close() error {
-	tst.Lock()
-	defer tst.Unlock()
 	if tst.loopCloser != nil {
-
 		tst.loopCloser.Done()
 		tst.loopCloser.CloseThenWait()
 	}
+	tst.RLock()
+	defer tst.RUnlock()
 	if tst.snapshot != nil {
 		tst.snapshot.decRef()
 	}
@@ -219,6 +221,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
+	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p, tst.fileSystem)
 

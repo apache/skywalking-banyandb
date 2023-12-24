@@ -66,6 +66,10 @@ func (p *part) close() {
 	}
 }
 
+func (p *part) String() string {
+	return fmt.Sprintf("part %d", p.partMetadata.ID)
+}
+
 func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
@@ -302,5 +306,9 @@ func removeExt(nameWithExt, ext string) string {
 }
 
 func partPath(root string, epoch uint64) string {
-	return filepath.Join(root, fmt.Sprintf("%016x", epoch))
+	return filepath.Join(root, partName(epoch))
+}
+
+func partName(epoch uint64) string {
+	return fmt.Sprintf("%016x", epoch)
 }

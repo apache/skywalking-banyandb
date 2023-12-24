@@ -24,12 +24,19 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
 func TestQueryResult(t *testing.T) {
@@ -364,70 +371,101 @@ func TestQueryResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Initialize a tstIter object.
-			tst := &tsTable{}
-			defer tst.Close()
-			for _, dps := range tt.dpsList {
-				tst.mustAddDataPoints(dps)
-				time.Sleep(100 * time.Millisecond)
-			}
-			queryOpts := queryOptions{
-				minTimestamp: tt.minTimestamp,
-				maxTimestamp: tt.maxTimestamp,
-			}
-			s := tst.currentSnapshot()
-			require.NotNil(t, s)
-			defer s.decRef()
-			pp, n := s.getParts(nil, queryOpts)
-			require.Equal(t, len(tt.dpsList), n)
-			sids := make([]common.SeriesID, len(tt.sids))
-			copy(sids, tt.sids)
-			sort.Slice(sids, func(i, j int) bool {
-				return sids[i] < tt.sids[j]
-			})
-			ti := &tstIter{}
-			ti.init(pp, sids, tt.minTimestamp, tt.maxTimestamp)
-
-			var result queryResult
-			for ti.nextBlock() {
-				bc := generateBlockCursor()
-				p := ti.piHeap[0]
-				opts := queryOpts
-				opts.TagProjection = tagProjections[int(p.curBlock.seriesID)]
-				opts.FieldProjection = fieldProjections[int(p.curBlock.seriesID)]
-				bc.init(p.p, p.curBlock, opts)
-				result.data = append(result.data, bc)
-			}
-			defer result.Release()
-			if tt.orderBySeries {
-				result.sidToIndex = make(map[common.SeriesID]int)
-				for i, si := range tt.sids {
-					result.sidToIndex[si] = i
+			verify := func(tst *tsTable) uint64 {
+				defer tst.Close()
+				queryOpts := queryOptions{
+					minTimestamp: tt.minTimestamp,
+					maxTimestamp: tt.maxTimestamp,
 				}
-			} else {
-				result.orderByTS = true
-				result.ascTS = tt.ascTS
-			}
-			var got []pbv1.Result
-			for {
-				r := result.Pull()
-				if r == nil {
-					break
-				}
-				sort.Slice(r.TagFamilies, func(i, j int) bool {
-					return r.TagFamilies[i].Name < r.TagFamilies[j].Name
+				s := tst.currentSnapshot()
+				require.NotNil(t, s)
+				defer s.decRef()
+				pp, n := s.getParts(nil, queryOpts)
+				require.Equal(t, len(tt.dpsList), n, "parts: %+v", pp)
+				sids := make([]common.SeriesID, len(tt.sids))
+				copy(sids, tt.sids)
+				sort.Slice(sids, func(i, j int) bool {
+					return sids[i] < tt.sids[j]
 				})
-				got = append(got, *r)
+				ti := &tstIter{}
+				ti.init(pp, sids, tt.minTimestamp, tt.maxTimestamp)
+
+				var result queryResult
+				for ti.nextBlock() {
+					bc := generateBlockCursor()
+					p := ti.piHeap[0]
+					opts := queryOpts
+					opts.TagProjection = tagProjections[int(p.curBlock.seriesID)]
+					opts.FieldProjection = fieldProjections[int(p.curBlock.seriesID)]
+					bc.init(p.p, p.curBlock, opts)
+					result.data = append(result.data, bc)
+				}
+				defer result.Release()
+				if tt.orderBySeries {
+					result.sidToIndex = make(map[common.SeriesID]int)
+					for i, si := range tt.sids {
+						result.sidToIndex[si] = i
+					}
+				} else {
+					result.orderByTS = true
+					result.ascTS = tt.ascTS
+				}
+				var got []pbv1.Result
+				for {
+					r := result.Pull()
+					if r == nil {
+						break
+					}
+					sort.Slice(r.TagFamilies, func(i, j int) bool {
+						return r.TagFamilies[i].Name < r.TagFamilies[j].Name
+					})
+					got = append(got, *r)
+				}
+
+				if !errors.Is(ti.Error(), tt.wantErr) {
+					t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
+				}
+
+				if diff := cmp.Diff(got, tt.want,
+					protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
+					t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
+				}
+				return s.epoch
 			}
 
-			if !errors.Is(ti.Error(), tt.wantErr) {
-				t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
-			}
+			t.Run("memory snapshot", func(t *testing.T) {
+				tst := &tsTable{
+					loopCloser:    run.NewCloser(2),
+					introductions: make(chan *introduction),
+				}
+				flushCh := make(chan *flusherIntroduction)
+				introducerWatcher := make(watcher.Channel, 1)
+				go tst.introducerLoop(flushCh, introducerWatcher, 1)
+				for _, dps := range tt.dpsList {
+					tst.mustAddDataPoints(dps)
+					time.Sleep(100 * time.Millisecond)
+				}
+				_ = verify(tst)
+			})
 
-			if diff := cmp.Diff(got, tt.want,
-				protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
-				t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
-			}
+			t.Run("file snapshot", func(t *testing.T) {
+				// Initialize a tstIter object.
+				tmpPath, defFn := test.Space(require.New(t))
+				fileSystem := fs.NewLocalFileSystem()
+				defer defFn()
+				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				for _, dps := range tt.dpsList {
+					tst.mustAddDataPoints(dps)
+					time.Sleep(100 * time.Millisecond)
+				}
+				epoch := verify(tst)
+
+				// reopen the table
+				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				assert.Equal(t, epoch, verify(tst))
+			})
 		})
 	}
 }

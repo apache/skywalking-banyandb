@@ -105,7 +105,6 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 	} else {
 		cur = new(snapshot)
 	}
-	defer releaseIntroduction(nextIntroduction)
 
 	next := nextIntroduction.memPart
 	nextSnp := cur.copyAllTo(epoch)
@@ -122,10 +121,7 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")
 	}
-	defer func() {
-		cur.decRef()
-		releaseFlusherIntroduction(nextIntroduction)
-	}()
+	defer cur.decRef()
 	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
 	tst.replaceSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {

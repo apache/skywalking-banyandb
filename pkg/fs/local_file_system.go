@@ -60,7 +60,7 @@ func readErrorHandle(operation string, err error, name string, size int) (int, e
 		return size, err
 	case os.IsNotExist(err):
 		return size, &FileSystemError{
-			Code:    isNotExistError,
+			Code:    IsNotExistError,
 			Message: fmt.Sprintf("%s failed, file is not exist, file name: %s, error message: %s", operation, name, err),
 		}
 	case os.IsPermission(err):
@@ -169,7 +169,7 @@ func (fs *localFileSystem) OpenFile(name string) (File, error) {
 		}, nil
 	case os.IsNotExist(err):
 		return nil, &FileSystemError{
-			Code:    isNotExistError,
+			Code:    IsNotExistError,
 			Message: fmt.Sprintf("File is not exist, file name: %s,error message: %s", name, err),
 		}
 	case os.IsPermission(err):
@@ -228,7 +228,7 @@ func (fs *localFileSystem) Read(name string) ([]byte, error) {
 		return data, nil
 	case os.IsNotExist(err):
 		return data, &FileSystemError{
-			Code:    isNotExistError,
+			Code:    IsNotExistError,
 			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
 		}
 	case os.IsPermission(err):
@@ -252,7 +252,7 @@ func (fs *localFileSystem) DeleteFile(name string) error {
 		return nil
 	case os.IsNotExist(err):
 		return &FileSystemError{
-			Code:    isNotExistError,
+			Code:    IsNotExistError,
 			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", name, err),
 		}
 	case os.IsPermission(err):
@@ -289,7 +289,7 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 		return size, nil
 	case os.IsNotExist(err):
 		return size, &FileSystemError{
-			Code:    isNotExistError,
+			Code:    IsNotExistError,
 			Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
 		}
 	case os.IsPermission(err):
@@ -317,7 +317,7 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 			size += wsize
 		case os.IsNotExist(err):
 			return size, &FileSystemError{
-				Code:    isNotExistError,
+				Code:    IsNotExistError,
 				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
 			}
 		case os.IsPermission(err):
@@ -374,7 +374,7 @@ func (file *LocalFile) Size() (int64, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return -1, &FileSystemError{
-				Code:    isNotExistError,
+				Code:    IsNotExistError,
 				Message: fmt.Sprintf("File is not exist, file name: %s, error message: %s", file.file.Name(), err),
 			}
 		} else if os.IsPermission(err) {

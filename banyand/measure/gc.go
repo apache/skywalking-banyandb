@@ -20,6 +20,8 @@ package measure
 import (
 	"path"
 	"sort"
+
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
 type garbageCleaner struct {
@@ -49,17 +51,34 @@ func (g *garbageCleaner) cleanSnapshots() {
 	if len(g.snapshots) < 2 {
 		return
 	}
-	sort.Slice(g.snapshots, func(i, j int) bool {
+	if !sort.SliceIsSorted(g.snapshots, func(i, j int) bool {
 		return g.snapshots[i] < g.snapshots[j]
-	})
+	}) {
+		sort.Slice(g.snapshots, func(i, j int) bool {
+			return g.snapshots[i] < g.snapshots[j]
+		})
+	}
 	// keep the latest snapshot
+	var remainingSnapshots []uint64
 	for i := 0; i < len(g.snapshots)-1; i++ {
 		filePath := path.Join(g.parent.root, snapshotName(g.snapshots[i]))
 		if err := g.parent.fileSystem.DeleteFile(filePath); err != nil {
-			g.parent.l.Warn().Err(err).Str("path", filePath).Msg("failed to delete snapshot. Please check manually")
+			if fse, ok := err.(*fs.FileSystemError); ok {
+				if fse.Code != fs.IsNotExistError {
+					g.parent.l.Warn().Err(err).Str("path", filePath).Msg("failed to delete snapshot, will retry in next round. Please check manually")
+					remainingSnapshots = append(remainingSnapshots, g.snapshots[i])
+				}
+			}
 		}
 	}
-	g.snapshots = g.snapshots[len(g.snapshots)-1:]
+	if remainingSnapshots == nil {
+		g.snapshots = g.snapshots[len(g.snapshots)-1:]
+		return
+	}
+	remained := g.snapshots[len(g.snapshots)-1]
+	g.snapshots = g.snapshots[:0]
+	g.snapshots = append(g.snapshots, remainingSnapshots...)
+	g.snapshots = append(g.snapshots, remained)
 }
 
 func (g garbageCleaner) cleanParts() {

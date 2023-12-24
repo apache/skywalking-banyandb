@@ -22,7 +22,7 @@ import "fmt"
 
 const (
 	isExistError = iota
-	isNotExistError
+	IsNotExistError
 	permissionError
 	openError
 	deleteError
