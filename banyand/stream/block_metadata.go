@@ -69,6 +69,7 @@ type blockMetadata struct {
 	field                 columnFamilyMetadata
 	tagProjection         []pbv1.TagProjection
 	timestamps            timestampsMetadata
+	elementIDs            elementIDsMetadata
 	seriesID              common.SeriesID
 	uncompressedSizeBytes uint64
 	count                 uint64
@@ -91,6 +92,7 @@ func (bh *blockMetadata) reset() {
 	bh.uncompressedSizeBytes = 0
 	bh.count = 0
 	bh.timestamps.reset()
+	bh.elementIDs.reset()
 	bh.field.reset()
 	for k := range bh.tagFamilies {
 		bh.tagFamilies[k].reset()
@@ -104,6 +106,7 @@ func (bh *blockMetadata) marshal(dst []byte) []byte {
 	dst = encoding.VarUint64ToBytes(dst, bh.uncompressedSizeBytes)
 	dst = encoding.VarUint64ToBytes(dst, bh.count)
 	dst = bh.timestamps.marshal(dst)
+	dst = bh.elementIDs.marshal(dst)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bh.tagFamilies)))
 	for name, cf := range bh.tagFamilies {
 		dst = encoding.EncodeBytes(dst, convert.StringToBytes(name))
@@ -132,6 +135,10 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 	src, err = bh.timestamps.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal timestampsMetadata: %w", err)
+	}
+	src, err = bh.elementIDs.unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal elementIDsMetadata: %w", err)
 	}
 	src, n, err = encoding.BytesToVarUint64(src)
 	if err != nil {
@@ -223,6 +230,37 @@ func (th *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
 	src = src[8:]
 	th.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
+	th.encodeType = encoding.EncodeType(src[0])
+	return src[1:], nil
+}
+
+type elementIDsMetadata struct {
+	dataBlock
+	encodeType encoding.EncodeType
+}
+
+func (th *elementIDsMetadata) reset() {
+	th.dataBlock.reset()
+	th.encodeType = 0
+}
+
+func (th *elementIDsMetadata) copyFrom(src *elementIDsMetadata) {
+	th.dataBlock.copyFrom(&src.dataBlock)
+	th.encodeType = src.encodeType
+}
+
+func (th *elementIDsMetadata) marshal(dst []byte) []byte {
+	dst = th.dataBlock.marshal(dst)
+	dst = append(dst, byte(th.encodeType))
+	return dst
+}
+
+func (th *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, err := th.dataBlock.unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
+	}
+	// src = src[8:]
 	th.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }

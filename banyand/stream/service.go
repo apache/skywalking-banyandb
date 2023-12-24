@@ -148,11 +148,11 @@ import (
 
 var (
 	errEmptyRootPath = errors.New("root path is empty")
-	// ErrMeasureNotExist denotes a measure doesn't exist in the metadata repo.
-	ErrMeasureNotExist = errors.New("measure doesn't exist")
+	// ErrStreamNotExist denotes a stream doesn't exist in the metadata repo.
+	ErrStreamNotExist = errors.New("stream doesn't exist")
 )
 
-// Service allows inspecting the measure data points.
+// Service allows inspecting the stream elements.
 type Service interface {
 	run.PreRunner
 	run.Config
@@ -172,10 +172,10 @@ type service struct {
 	root          string
 }
 
-func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
-	sm, ok := s.schemaRepo.loadMeasure(metadata)
+func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
+	sm, ok := s.schemaRepo.loadStream(metadata)
 	if !ok {
-		return nil, errors.WithStack(ErrMeasureNotExist)
+		return nil, errors.WithStack(ErrStreamNotExist)
 	}
 	return sm, nil
 }
@@ -186,7 +186,7 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
-	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
 	return flagS
 }
 
@@ -198,7 +198,7 @@ func (s *service) Validate() error {
 }
 
 func (s *service) Name() string {
-	return "measure"
+	return "stream"
 }
 
 func (s *service) Role() databasev1.Role {
@@ -214,11 +214,11 @@ func (s *service) PreRun(_ context.Context) error {
 	// run a serial watcher
 
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
-	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	err := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 	if err != nil {
 		return err
 	}
-	return s.localPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	return s.localPipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 }
 
 func (s *service) Serve() run.StopNotify {

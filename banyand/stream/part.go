@@ -32,6 +32,7 @@ type part struct {
 	meta                 fs.Reader
 	primary              fs.Reader
 	timestamps           fs.Reader
+	elementIDs           fs.Reader
 	fieldValues          fs.Reader
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
@@ -49,6 +50,7 @@ func openMemPart(mp *memPart) *part {
 	p.meta = &mp.meta
 	p.primary = &mp.primary
 	p.timestamps = &mp.timestamps
+	p.elementIDs = &mp.elementIDs
 	p.fieldValues = &mp.fieldValues
 	if mp.tagFamilies != nil {
 		p.tagFamilies = make(map[string]fs.Reader)
@@ -67,6 +69,7 @@ type memPart struct {
 	meta              bytes.Buffer
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
+	elementIDs        bytes.Buffer
 	fieldValues       bytes.Buffer
 	partMetadata      partMetadata
 }
@@ -128,14 +131,14 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
-			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
+			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.elementIDs[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
 		uncompressedBlockSizeBytes += uncompressedDataPointSizeBytes(i, dps)
 	}
-	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
+	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.elementIDs[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }

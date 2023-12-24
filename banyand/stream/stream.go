@@ -92,21 +92,31 @@
 package stream
 
 import (
-	"time"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sort"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+
+	// "github.com/apache/skywalking-banyandb/pkg/index/posting"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
 	maxValuesBlockSize              = 8 * 1024 * 1024
 	maxTimestampsBlockSize          = 8 * 1024 * 1024
+	maxElementIDsBlockSize          = 8 * 1024 * 1024
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
@@ -114,90 +124,168 @@ const (
 	maxBlockLength = 8 * 1024
 )
 
-type measure struct {
-	databaseSupplier  schema.Supplier
-	l                 *logger.Logger
-	schema            *databasev1.Measure
-	processorManager  *topNProcessorManager
+// var errTagFamilyNotExist = errors.New("tag family doesn't exist")
+
+// Query allow to retrieve elements in a series of streams.
+type Query interface {
+	Stream(stream *commonv1.Metadata) (Stream, error)
+}
+
+// Stream allows inspecting elements' details.
+type Stream interface {
+	io.Closer
+	// Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+	// Shard(id common.ShardID) (tsdb.Shard, error)
+	// ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
+	ParseElementIDDeprecated(item tsdb.Item) (string, error)
+	GetSchema() *databasev1.Stream
+	GetIndexRules() []*databasev1.IndexRule
+	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+}
+
+var _ Stream = (*stream)(nil)
+
+type stream struct {
+	// db                tsdb.Supplier
+	l      *logger.Logger
+	schema *databasev1.Stream
+	// indexWriter       *index.Writer
 	name              string
 	group             string
 	indexRules        []*databasev1.IndexRule
-	indexRuleLocators []*partition.IndexRuleLocator
-	topNAggregations  []*databasev1.TopNAggregation
-	interval          time.Duration
 	shardNum          uint32
+	indexRuleLocators []*partition.IndexRuleLocator
+	databaseSupplier  schema.Supplier
 }
 
-func (s *measure) startSteamingManager(pipeline queue.Queue) error {
-	if len(s.topNAggregations) == 0 {
-		return nil
-	}
-	tagMapSpec := logical.TagSpecMap{}
-	tagMapSpec.RegisterTagFamilies(s.schema.GetTagFamilies())
+// type stream struct {
+// 	databaseSupplier  schema.Supplier
+// 	l                 *logger.Logger
+// 	schema            *databasev1.Stream
+// 	name              string
+// 	group             string
+// 	indexRules        []*databasev1.IndexRule
+// 	indexRuleLocators []*partition.IndexRuleLocator
+// 	shardNum          uint32
+// }
 
-	s.processorManager = &topNProcessorManager{
-		l:            s.l,
-		pipeline:     pipeline,
-		m:            s,
-		s:            tagMapSpec,
-		topNSchemas:  s.topNAggregations,
-		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
-	}
-
-	return s.processorManager.start()
-}
-
-func (s *measure) GetSchema() *databasev1.Measure {
+func (s *stream) GetSchema() *databasev1.Stream {
 	return s.schema
 }
 
-func (s *measure) GetIndexRules() []*databasev1.IndexRule {
+func (s *stream) GetIndexRules() []*databasev1.IndexRule {
 	return s.indexRules
 }
 
-func (s *measure) Close() error {
-	if s.processorManager == nil {
-		return nil
-	}
-	return s.processorManager.Close()
+func (s *stream) Close() error {
+	return nil
 }
 
-func (s *measure) parseSpec() (err error) {
+func (s *stream) parseSpec() (err error) {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	if s.schema.Interval != "" {
-		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
-	}
 	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
 
 	return err
 }
 
-type measureSpec struct {
-	schema           *databasev1.Measure
-	indexRules       []*databasev1.IndexRule
-	topNAggregations []*databasev1.TopNAggregation
+func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
+	rawBytes, err := item.Val()
+	if err != nil {
+		return "", err
+	}
+	return string(rawBytes), nil
 }
 
-func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
-) (*measure, error) {
-	m := &measure{
-		shardNum:         shardNum,
-		schema:           spec.schema,
-		indexRules:       spec.indexRules,
-		topNAggregations: spec.topNAggregations,
-		l:                l,
+func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
+	if sqo.TimeRange == nil || sqo.Entity == nil {
+		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
-	if err := m.parseSpec(); err != nil {
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
+	}
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
+	if err != nil {
+		return nil, err
+	}
+
+	var result queryResult
+	if len(sl) < 1 {
+		return &result, nil
+	}
+	var sids []common.SeriesID
+	for i := range sl {
+		sids = append(sids, sl[i].ID)
+	}
+	var pws []*partWrapper
+	var parts []*part
+	qo := queryOptions{
+		StreamQueryOptions: sqo,
+		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
+		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
+	}
+	for _, tw := range tabWrappers {
+		pws, parts = tw.Table().getParts(pws, parts, qo)
+	}
+	// TODO: cache tstIter
+	var tstIter tstIter
+	originalSids := make([]common.SeriesID, len(sids))
+	copy(originalSids, sids)
+	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
+	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if tstIter.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
+	}
+	for tstIter.nextBlock() {
+		bc := generateBlockCursor()
+		p := tstIter.piHeap[0]
+		bc.init(p.p, p.curBlock, qo)
+		result.data = append(result.data, bc)
+	}
+	if tstIter.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+	}
+	if sqo.Order == nil {
+		result.orderByTS = true
+		result.ascTS = true
+		return &result, nil
+	}
+	if sqo.Order.Index == nil {
+		result.orderByTS = true
+		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+			result.ascTS = true
+		}
+		return &result, nil
+	}
+
+	result.sidToIndex = make(map[common.SeriesID]int)
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
+	return &result, nil
+}
+
+type streamSpec struct {
+	schema     *databasev1.Stream
+	indexRules []*databasev1.IndexRule
+}
+
+func openStream(shardNum uint32, db schema.Supplier, spec streamSpec, l *logger.Logger, pipeline queue.Queue,
+) (*stream, error) {
+	s := &stream{
+		shardNum:   shardNum,
+		schema:     spec.schema,
+		indexRules: spec.indexRules,
+		l:          l,
+	}
+	if err := s.parseSpec(); err != nil {
 		return nil, err
 	}
 	if db == nil {
-		return m, nil
+		return s, nil
 	}
 
-	m.databaseSupplier = db
-	if startErr := m.startSteamingManager(pipeline); startErr != nil {
-		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
-			Msg("fail to start streaming manager")
-	}
-	return m, nil
+	s.databaseSupplier = db
+	return s, nil
 }

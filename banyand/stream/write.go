@@ -20,13 +20,12 @@ package stream
 import (
 	"bytes"
 	"fmt"
-	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -36,6 +35,9 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// const DefaultTagFamily = "default"
+// const ElementIDTag = "_element_id"
 
 type writeCallback struct {
 	l          *logger.Logger
@@ -49,9 +51,9 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 	}
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *streamv1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
-	t := req.DataPoint.Timestamp.AsTime().Local()
+	t := req.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
@@ -91,11 +93,12 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.tables = append(dpg.tables, dpt)
 	}
 	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, int64(ts))
-	stm, ok := w.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
+	dpt.dataPoints.elementIDs = append(dpt.dataPoints.elementIDs, writeEvent.Request.Element.GetElementId())
+	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", writeEvent.GetRequest().GetMetadata())
+		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
 	}
-	fLen := len(req.DataPoint.GetTagFamilies())
+	fLen := len(req.Element.GetTagFamilies())
 	if fLen < 1 {
 		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
 	}
@@ -111,28 +114,24 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
 	field := nameValues{}
-	for i := range stm.GetSchema().GetFields() {
-		var v *modelv1.FieldValue
-		if len(req.DataPoint.Fields) <= i {
-			v = pbv1.NullFieldValue
-		} else {
-			v = req.DataPoint.Fields[i]
-		}
-		field.values = append(field.values, encodeFieldValue(
-			stm.GetSchema().GetFields()[i].GetName(),
-			stm.GetSchema().GetFields()[i].FieldType,
-			v,
-		))
-	}
+
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
+	// ElementIdWritten := false
+	// elementID := writeEvent.GetRequest().GetElement().GetElementId()
+	// elementIDTagValue := &modelv1.TagValue{
+	// 	Value: &modelv1.TagValue_Str{
+	// 		Str: &modelv1.Str{
+	// 			Value: elementID,
+	// 		},
+	// 	},
+	// }
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.DataPoint.TagFamilies) <= i {
+		if len(req.Element.TagFamilies) <= i {
 			tagFamily = pbv1.NullTagFamily
 		} else {
-			tagFamily = req.DataPoint.TagFamilies[i]
+			tagFamily = req.Element.TagFamilies[i]
 		}
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tagFamilies[i].name = tagFamilySpec.Name
@@ -149,18 +148,29 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				tagValue,
 			))
 		}
+		// if tagFamilies[i].name == DefaultTagFamily {
+		// 	tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
+		// 		ElementIDTag,
+		// 		databasev1.TagType_TAG_TYPE_STRING,
+		// 		elementIDTagValue,
+		// 	))
+		// 	ElementIdWritten = true
+		// }
 	}
+	// if !ElementIdWritten {
+	// 	tagFamilies = append(tagFamilies, nameValues{
+	// 		name: DefaultTagFamily,
+	// 		values: []*nameValue{
+	// 			encodeTagValue(
+	// 				ElementIDTag,
+	// 				databasev1.TagType_TAG_TYPE_STRING,
+	// 				elementIDTagValue,
+	// 			),
+	// 		},
+	// 	})
+	// }
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 
-	if stm.processorManager != nil {
-		stm.processorManager.onMeasureWrite(&measurev1.InternalWriteRequest{
-			Request: &measurev1.WriteRequest{
-				Metadata:  stm.GetSchema().Metadata,
-				DataPoint: req.DataPoint,
-				MessageId: uint64(time.Now().UnixNano()),
-			},
-			EntityValues: writeEvent.EntityValues,
-		})
-	}
 	var fields []index.Field
 	for _, ruleIndex := range stm.indexRuleLocators {
 		nv := getIndexValue(ruleIndex, tagFamilies)
@@ -209,12 +219,12 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	groups := make(map[string]*dataPointsInGroup)
 	for i := range events {
-		var writeEvent *measurev1.InternalWriteRequest
+		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
-		case *measurev1.InternalWriteRequest:
+		case *streamv1.InternalWriteRequest:
 			writeEvent = e
 		case *anypb.Any:
-			writeEvent = &measurev1.InternalWriteRequest{}
+			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := e.UnmarshalTo(writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", logger.Proto(e)).Msg("fail to unmarshal event")
 				continue
@@ -241,35 +251,6 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}
 	return
-}
-
-func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *modelv1.FieldValue) *nameValue {
-	nv := &nameValue{name: name}
-	switch fieldType {
-	case databasev1.FieldType_FIELD_TYPE_INT:
-		nv.valueType = pbv1.ValueTypeInt64
-		if fieldValue.GetInt() != nil {
-			nv.value = convert.Int64ToBytes(fieldValue.GetInt().GetValue())
-		}
-	case databasev1.FieldType_FIELD_TYPE_FLOAT:
-		nv.valueType = pbv1.ValueTypeFloat64
-		if fieldValue.GetFloat() != nil {
-			nv.value = convert.Float64ToBytes(fieldValue.GetFloat().GetValue())
-		}
-	case databasev1.FieldType_FIELD_TYPE_STRING:
-		nv.valueType = pbv1.ValueTypeStr
-		if fieldValue.GetStr() != nil {
-			nv.value = []byte(fieldValue.GetStr().GetValue())
-		}
-	case databasev1.FieldType_FIELD_TYPE_DATA_BINARY:
-		nv.valueType = pbv1.ValueTypeBinaryData
-		if fieldValue.GetBinaryData() != nil {
-			nv.value = bytes.Clone(fieldValue.GetBinaryData())
-		}
-	default:
-		logger.Panicf("unsupported field value type: %T", fieldValue.GetValue())
-	}
-	return nv
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {

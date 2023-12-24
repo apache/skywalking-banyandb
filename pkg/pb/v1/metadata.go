@@ -104,6 +104,7 @@ type Field struct {
 // Result is the result of a query.
 type Result struct {
 	Timestamps  []int64
+	ElementIDs  []string
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID
@@ -113,6 +114,21 @@ type Result struct {
 type TagProjection struct {
 	Family string
 	Names  []string
+}
+
+// StreamQueryOptions is the options of a measure query.
+type StreamQueryOptions struct {
+	Name          string
+	TimeRange     *timestamp.TimeRange
+	Entity        []*modelv1.TagValue
+	Filter        index.Filter
+	Order         *OrderBy
+	TagProjection []TagProjection
+}
+
+type StreamQueryResult interface {
+	Pull() *Result
+	Release()
 }
 
 // MeasureQueryOptions is the options of a measure query.

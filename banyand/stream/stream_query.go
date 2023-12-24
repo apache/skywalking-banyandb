@@ -18,22 +18,18 @@
 package stream
 
 // import (
+// 	"context"
 // 	"io"
 
-// 	"github.com/pkg/errors"
-// 	"google.golang.org/protobuf/proto"
-
-// 	"github.com/apache/skywalking-banyandb/api/common"
 // 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 // 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-// 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 // 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-// 	"github.com/apache/skywalking-banyandb/pkg/partition"
+// 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 // )
 
 // var errTagFamilyNotExist = errors.New("tag family doesn't exist")
 
-// // Query allow to retrieve elements in a series of streams.
+// Query allow to retrieve elements in a series of streams.
 // type Query interface {
 // 	Stream(stream *commonv1.Metadata) (Stream, error)
 // }
@@ -41,12 +37,13 @@ package stream
 // // Stream allows inspecting elements' details.
 // type Stream interface {
 // 	io.Closer
-// 	Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
-// 	Shard(id common.ShardID) (tsdb.Shard, error)
-// 	ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
-// 	ParseElementID(item tsdb.Item) (string, error)
+// 	// Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+// 	// Shard(id common.ShardID) (tsdb.Shard, error)
+// 	// ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
+// 	ParseElementIDDeprecated(item tsdb.Item) (string, error)
 // 	GetSchema() *databasev1.Stream
 // 	GetIndexRules() []*databasev1.IndexRule
+// 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
 // }
 
 // var _ Stream = (*stream)(nil)
@@ -124,7 +121,7 @@ package stream
 // 	}, err
 // }
 
-// func (s *stream) ParseElementID(item tsdb.Item) (string, error) {
+// func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
 // 	rawBytes, err := item.Val()
 // 	if err != nil {
 // 		return "", err

@@ -330,9 +330,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -388,14 +386,14 @@ func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaServi
 func (sr *schemaRepo) start() {
 	sr.Watcher()
 	sr.metadata.
-		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
+		RegisterHandler("stream", schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
 			sr)
 }
 
-func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
-	sm, ok := sr.loadMeasure(metadata)
+func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
+	sm, ok := sr.loadStream(metadata)
 	if !ok {
-		return nil, errors.WithStack(ErrMeasureNotExist)
+		return nil, errors.WithStack(ErrStreamNotExist)
 	}
 	return sm, nil
 }
@@ -404,7 +402,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
 		g := metadata.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -412,11 +410,11 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g.GetMetadata(),
 		})
-	case schema.KindMeasure:
+	case schema.KindStream:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Stream).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
 		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
@@ -424,9 +422,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
 			return
 		}
-		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
 				Name:  irb.GetSubject().GetName(),
 				Group: metadata.Group,
 			})
@@ -443,7 +441,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	case schema.KindIndexRule:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
+		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
 		if err != nil {
 			return
 		}
@@ -451,101 +449,18 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Measure).GetMetadata(),
+				Metadata: sub.(*databasev1.Stream).GetMetadata(),
 			})
 		}
-	case schema.KindTopNAggregation:
-		// createOrUpdate TopN schemas in advance
-		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
-		if err != nil {
-			return
-		}
-		// reload source measure
-		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
-		})
 	default:
 	}
-}
-
-func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
-	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
-	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return nil, err
-	}
-
-	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
-	if err != nil {
-		return nil, err
-	}
-
-	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
-	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
-
-	for _, tagName := range tagNames {
-		var found bool
-		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
-			for _, tSpec := range fSpec.GetTags() {
-				if tSpec.GetName() == tagName {
-					seriesSpecs = append(seriesSpecs, tSpec)
-					found = true
-					goto CHECK
-				}
-			}
-		}
-
-	CHECK:
-		if !found {
-			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
-		}
-	}
-
-	// create a new "derived" measure for TopN result
-	newTopNMeasure := &databasev1.Measure{
-		Metadata: topNSchema.GetMetadata(),
-		Interval: sourceMeasureSchema.GetInterval(),
-		TagFamilies: []*databasev1.TagFamilySpec{
-			{
-				Name: topNTagFamily,
-				Tags: append([]*databasev1.TagSpec{
-					{
-						Name: "measure_id",
-						Type: databasev1.TagType_TAG_TYPE_STRING,
-					},
-				}, seriesSpecs...),
-			},
-		},
-		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
-		Entity: sourceMeasureSchema.GetEntity(),
-	}
-	if oldTopNSchema == nil {
-		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
-			return nil, innerErr
-		}
-		return newTopNMeasure, nil
-	}
-	// compare with the old one
-	if cmp.Diff(newTopNMeasure, oldTopNSchema,
-		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
-		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-		protocmp.Transform()) == "" {
-		return oldTopNSchema, nil
-	}
-	// update
-	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
-		return nil, err
-	}
-	return newTopNMeasure, nil
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
 		g := metadata.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -553,17 +468,17 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g.GetMetadata(),
 		})
-	case schema.KindMeasure:
+	case schema.KindStream:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Stream).GetMetadata(),
 		})
 	case schema.KindIndexRuleBinding:
-		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			m, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+			m, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
 				Name:  metadata.Name,
 				Group: metadata.Group,
 			})
@@ -578,32 +493,16 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindIndexRule:
-	case schema.KindTopNAggregation:
-		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
-		if err != nil {
-			return
-		}
-		// we should update instead of delete
-		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
-		})
 	default:
 	}
 }
 
-func (sr *schemaRepo) removeTopNMeasure(metadata *commonv1.Metadata) error {
-	_, err := sr.metadata.MeasureRegistry().DeleteMeasure(context.Background(), metadata)
-	return err
-}
-
-func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
+func (sr *schemaRepo) loadStream(metadata *commonv1.Metadata) (*stream, bool) {
 	r, ok := sr.LoadResource(metadata)
 	if !ok {
 		return nil, false
 	}
-	s, ok := r.Delegated().(*measure)
+	s, ok := r.Delegated().(*stream)
 	return s, ok
 }
 
@@ -634,18 +533,17 @@ func newSupplier(path string, svc *service) *supplier {
 }
 
 func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
-	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(shardNum, supplier, measureSpec{
-		schema:           measureSchema,
+	streamSchema := spec.Schema().(*databasev1.Stream)
+	return openStream(shardNum, supplier, streamSpec{
+		schema:           streamSchema,
 		indexRules:       spec.IndexRules(),
-		topNAggregations: spec.TopN(),
 	}, s.l, s.pipeline)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
+	return s.metadata.StreamRegistry().GetStream(ctx, md)
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
@@ -659,7 +557,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
-			p.Module = "measure"
+			p.Module = "stream"
 			p.Database = name
 			return p
 		}),
@@ -681,7 +579,7 @@ func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupp
 func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
+	return s.metadata.StreamRegistry().GetStream(ctx, md)
 }
 
 func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
@@ -689,10 +587,9 @@ func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 }
 
 func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
-	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(shardNum, nil, measureSpec{
-		schema:           measureSchema,
+	streamSchema := spec.Schema().(*databasev1.Stream)
+	return openStream(shardNum, nil, streamSpec{
+		schema:           streamSchema,
 		indexRules:       spec.IndexRules(),
-		topNAggregations: spec.TopN(),
 	}, s.l, nil)
 }

@@ -62,6 +62,7 @@ type writers struct {
 	tagFamilyMetadataWriters   map[string]*writer
 	tagFamilyWriters           map[string]*writer
 	timestampsWriter           writer
+	elementIDsWriter           writer
 	fieldValuesWriter          writer
 }
 
@@ -70,6 +71,7 @@ func (sw *writers) reset() {
 	sw.metaWriter.reset()
 	sw.primaryWriter.reset()
 	sw.timestampsWriter.reset()
+	sw.elementIDsWriter.reset()
 	sw.fieldValuesWriter.reset()
 
 	for i, w := range sw.tagFamilyMetadataWriters {
@@ -84,7 +86,7 @@ func (sw *writers) reset() {
 
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
-		sw.timestampsWriter.bytesWritten + sw.fieldValuesWriter.bytesWritten
+		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten + sw.fieldValuesWriter.bytesWritten
 	for _, w := range sw.tagFamilyMetadataWriters {
 		n += w.bytesWritten
 	}
@@ -98,6 +100,7 @@ func (sw *writers) MustClose() {
 	sw.metaWriter.MustClose()
 	sw.primaryWriter.MustClose()
 	sw.timestampsWriter.MustClose()
+	sw.elementIDsWriter.MustClose()
 	sw.fieldValuesWriter.MustClose()
 
 	for _, w := range sw.tagFamilyMetadataWriters {
@@ -168,17 +171,18 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.metaWriter.init(&mp.meta)
 	bw.writers.primaryWriter.init(&mp.primary)
 	bw.writers.timestampsWriter.init(&mp.timestamps)
+	bw.writers.elementIDsWriter.init(&mp.elementIDs)
 	bw.writers.fieldValuesWriter.init(&mp.fieldValues)
 }
 
-func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]nameValues, fields []nameValues) {
 	if len(timestamps) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.mustInitFromDataPoints(timestamps, tagFamilies, fields)
+	b.mustInitFromDataPoints(timestamps, elementIDs, tagFamilies, fields)
 	if b.Len() == 0 {
 		return
 	}

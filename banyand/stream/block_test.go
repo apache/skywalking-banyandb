@@ -131,6 +131,7 @@ var conventionalBlock = block{
 func Test_block_mustInitFromDataPoints(t *testing.T) {
 	type args struct {
 		timestamps  []int64
+		elementIDs  []string
 		tagFamilies [][]nameValues
 		fields      []nameValues
 	}
@@ -143,6 +144,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			name: "Test mustInitFromDataPoints",
 			args: args{
 				timestamps: []int64{1, 2},
+				elementIDs: []string{"0", "1"},
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -208,7 +210,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.tagFamilies, tt.args.fields)
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies, tt.args.fields)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
 			}

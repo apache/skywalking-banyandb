@@ -117,6 +117,7 @@ type nameValues struct {
 type dataPoints struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
+	elementIDs  []string
 	tagFamilies [][]nameValues
 	fields      []nameValues
 }

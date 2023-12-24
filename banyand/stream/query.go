@@ -9,7 +9,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
+// software distributed under the License is distributed on ae
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
@@ -19,119 +19,125 @@ package stream
 
 import (
 	"container/heap"
-	"context"
-	"fmt"
-	"io"
-	"sort"
-
-	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// Query allow to retrieve measure data points.
-type Query interface {
-	LoadGroup(name string) (resourceSchema.Group, bool)
-	Measure(measure *commonv1.Metadata) (Measure, error)
-}
+// Query allow to retrieve stream elements.
+// type Query interface {
+// 	LoadGroup(name string) (resourceSchema.Group, bool)
+// 	Stream(stream *commonv1.Metadata) (Stream, error)
+// }
 
-// Measure allows inspecting measure data points' details.
-type Measure interface {
-	io.Closer
-	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
-	GetSchema() *databasev1.Measure
-	GetIndexRules() []*databasev1.IndexRule
-	SetSchema(schema *databasev1.Measure)
-}
+// // Stream allows inspecting stream elements' details.
+// type Stream interface {
+// 	io.Closer
+// 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) ([]*streamv1.Element, error)
+// 	GetSchema() *databasev1.Stream
+// 	GetIndexRules() []*databasev1.IndexRule
+// 	SetSchema(schema *databasev1.Stream)
 
-var _ Measure = (*measure)(nil)
+// 	// Shards(entity tsdb.Entity) ([]tsdb.Shard, error)
+// 	// Shard(id common.ShardID) (tsdb.Shard, error)
+// 	// ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error)
+// 	ParseElementID(item tsdb.Item) (string, error)
+// }
 
-func (s *measure) SetSchema(schema *databasev1.Measure) {
-	s.schema = schema
-}
+// func (s *stream) Shards(entity tsdb.Entity) ([]tsdb.Shard, error) {
+// 	wrap := func(shards []tsdb.Shard) []tsdb.Shard {
+// 		result := make([]tsdb.Shard, len(shards))
+// 		for i := 0; i < len(shards); i++ {
+// 			result[i] = tsdb.NewScopedShard(tsdb.Entry(s.name), shards[i])
+// 		}
+// 		return result
+// 	}
+// 	db := s.db.SupplyTSDB()
+// 	if len(entity) < 1 {
+// 		return wrap(db.Shards()), nil
+// 	}
+// 	for _, e := range entity {
+// 		if e == nil {
+// 			return wrap(db.Shards()), nil
+// 		}
+// 	}
+// 	shardID, err := partition.ShardID(entity.Prepend(tsdb.Entry(s.name)).Marshal(), s.shardNum)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	shard, err := db.Shard(common.ShardID(shardID))
+// 	if err != nil {
+// 		if errors.Is(err, tsdb.ErrUnknownShard) {
+// 			return []tsdb.Shard{}, nil
+// 		}
+// 		return nil, err
+// 	}
+// 	return []tsdb.Shard{tsdb.NewScopedShard(tsdb.Entry(s.name), shard)}, nil
+// }
+
+// func (s *stream) Shard(id common.ShardID) (tsdb.Shard, error) {
+// 	shard, err := s.db.SupplyTSDB().Shard(id)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return tsdb.NewScopedShard(tsdb.Entry(s.name), shard), nil
+// }
+
+// func (s *stream) ParseTagFamily(family string, item tsdb.Item) (*modelv1.TagFamily, error) {
+// 	familyRawBytes, err := item.Family(tsdb.Hash([]byte(family)))
+// 	if err != nil {
+// 		return nil, errors.Wrapf(err, "stream %s.%s parse family %s", s.name, s.group, family)
+// 	}
+// 	tagFamily := &modelv1.TagFamilyForWrite{}
+// 	err = proto.Unmarshal(familyRawBytes, tagFamily)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	tags := make([]*modelv1.Tag, len(tagFamily.GetTags()))
+// 	var tagSpec []*databasev1.TagSpec
+// 	for _, tf := range s.schema.GetTagFamilies() {
+// 		if tf.GetName() == family {
+// 			tagSpec = tf.GetTags()
+// 		}
+// 	}
+// 	if tagSpec == nil {
+// 		return nil, errTagFamilyNotExist
+// 	}
+// 	for i, tag := range tagFamily.GetTags() {
+// 		tags[i] = &modelv1.Tag{
+// 			Key: tagSpec[i].GetName(),
+// 			Value: &modelv1.TagValue{
+// 				Value: tag.GetValue(),
+// 			},
+// 		}
+// 	}
+// 	return &modelv1.TagFamily{
+// 		Name: family,
+// 		Tags: tags,
+// 	}, err
+// }
+
+// func (s *stream) ParseElementID(item tsdb.Item) (string, error) {
+// 	rawBytes, err := item.Val()
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	return string(rawBytes), nil
+// }
+
+// var _ Stream = (*stream)(nil)
+
+// func (s *stream) SetSchema(schema *databasev1.Stream) {
+// 	s.schema = schema
+// }
 
 type queryOptions struct {
-	pbv1.MeasureQueryOptions
+	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
-}
-
-func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error) {
-	if mqo.TimeRange == nil || mqo.Entity == nil {
-		return nil, errors.New("invalid query options: timeRange and series are required")
-	}
-	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
-	}
-	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
-	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
-	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order)
-	if err != nil {
-		return nil, err
-	}
-
-	var result queryResult
-	if len(sl) < 1 {
-		return &result, nil
-	}
-	var sids []common.SeriesID
-	for i := range sl {
-		sids = append(sids, sl[i].ID)
-	}
-	var pws []*partWrapper
-	var parts []*part
-	qo := queryOptions{
-		MeasureQueryOptions: mqo,
-		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
-		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
-	}
-	for _, tw := range tabWrappers {
-		pws, parts = tw.Table().getParts(pws, parts, qo)
-	}
-	// TODO: cache tstIter
-	var tstIter tstIter
-	originalSids := make([]common.SeriesID, len(sids))
-	copy(originalSids, sids)
-	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
-	}
-	for tstIter.nextBlock() {
-		bc := generateBlockCursor()
-		p := tstIter.piHeap[0]
-		bc.init(p.p, p.curBlock, qo)
-		result.data = append(result.data, bc)
-	}
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
-	}
-	if mqo.Order == nil {
-		result.orderByTS = true
-		result.ascTS = true
-		return &result, nil
-	}
-	if mqo.Order.Index == nil {
-		result.orderByTS = true
-		if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
-		}
-		return &result, nil
-	}
-
-	result.sidToIndex = make(map[common.SeriesID]int)
-	for i, si := range originalSids {
-		result.sidToIndex[si] = i
-	}
-	return &result, nil
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
