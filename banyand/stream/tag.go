@@ -117,4 +117,3 @@ func (cf *columnFamily) resizeColumns(columnsLen int) []column {
 	cf.columns = columns
 	return columns
 }
-

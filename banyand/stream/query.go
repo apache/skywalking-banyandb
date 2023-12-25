@@ -6,10 +6,10 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on ae
+// software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
@@ -131,6 +131,7 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 	}
 }
 
+// nolint: unused
 func mustDecodeFieldValue(valueType pbv1.ValueType, value []byte) *modelv1.FieldValue {
 	if value == nil {
 		switch valueType {
@@ -159,6 +160,7 @@ func mustDecodeFieldValue(valueType pbv1.ValueType, value []byte) *modelv1.Field
 	}
 }
 
+// nolint: unused
 func int64FieldValue(value int64) *modelv1.FieldValue {
 	return &modelv1.FieldValue{
 		Value: &modelv1.FieldValue_Int{
@@ -169,6 +171,7 @@ func int64FieldValue(value int64) *modelv1.FieldValue {
 	}
 }
 
+// nolint: unused
 func float64FieldValue(value float64) *modelv1.FieldValue {
 	return &modelv1.FieldValue{
 		Value: &modelv1.FieldValue_Float{
@@ -179,6 +182,7 @@ func float64FieldValue(value float64) *modelv1.FieldValue {
 	}
 }
 
+// nolint: unused
 func strFieldValue(value string) *modelv1.FieldValue {
 	return &modelv1.FieldValue{
 		Value: &modelv1.FieldValue_Str{
@@ -189,6 +193,7 @@ func strFieldValue(value string) *modelv1.FieldValue {
 	}
 }
 
+// nolint: unused
 func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 	data := make([]byte, len(value))
 	copy(data, value)

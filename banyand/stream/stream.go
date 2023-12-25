@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// // Package stream implements a time-series-based storage which is consists of a sequence of element.
-// // Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
+// Package stream implements a time-series-based storage which is consists of a sequence of element.
+// Each element drops in a arbitrary interval. They are immutable, can not be updated or overwritten.
 package stream
 
 import (
@@ -29,15 +29,14 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
@@ -53,6 +52,7 @@ const (
 
 // Query allow to retrieve elements in a series of streams.
 type Query interface {
+	LoadGroup(name string) (resourceSchema.Group, bool)
 	Stream(stream *commonv1.Metadata) (Stream, error)
 }
 
@@ -67,14 +67,14 @@ type Stream interface {
 var _ Stream = (*stream)(nil)
 
 type stream struct {
-	l      *logger.Logger
-	schema *databasev1.Stream
+	databaseSupplier  schema.Supplier
+	l                 *logger.Logger
+	schema            *databasev1.Stream
 	name              string
 	group             string
 	indexRules        []*databasev1.IndexRule
-	shardNum          uint32
 	indexRuleLocators []*partition.IndexRuleLocator
-	databaseSupplier  schema.Supplier
+	shardNum          uint32
 }
 
 func (s *stream) GetSchema() *databasev1.Stream {
@@ -89,11 +89,9 @@ func (s *stream) Close() error {
 	return nil
 }
 
-func (s *stream) parseSpec() (err error) {
+func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
-
-	return err
 }
 
 func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
@@ -179,17 +177,15 @@ type streamSpec struct {
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(shardNum uint32, db schema.Supplier, spec streamSpec, l *logger.Logger, pipeline queue.Queue,
-) (*stream, error) {
+// nolint: unparam
+func openStream(shardNum uint32, db schema.Supplier, spec streamSpec, l *logger.Logger) (*stream, error) {
 	s := &stream{
 		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
 	}
-	if err := s.parseSpec(); err != nil {
-		return nil, err
-	}
+	s.parseSpec()
 	if db == nil {
 		return s, nil
 	}

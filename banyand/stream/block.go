@@ -23,7 +23,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -306,9 +305,8 @@ func mustReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, rea
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
 	}
-	dst = make([]string, count)
-	for i, elementID := range elementIDsByteSlice {
-		dst[i] = string(elementID)
+	for _, elementID := range elementIDsByteSlice {
+		dst = append(dst, string(elementID))
 	}
 	return dst
 }

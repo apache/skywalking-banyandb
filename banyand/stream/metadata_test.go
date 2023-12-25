@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package stream_test
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 )
 
 var _ = Describe("Metadata", func() {
@@ -99,7 +100,7 @@ var _ = Describe("Metadata", func() {
 					Group: "default",
 				})
 				return err
-			}).WithTimeout(flags.EventuallyTimeout).Should(MatchError(ErrStreamNotExist))
+			}).WithTimeout(flags.EventuallyTimeout).Should(MatchError(stream.ErrStreamNotExist))
 		})
 
 		Context("Update a stream", func() {

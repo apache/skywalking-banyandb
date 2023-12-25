@@ -229,9 +229,9 @@ func newSupplier(path string, svc *service) *supplier {
 func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(shardNum, supplier, streamSpec{
-		schema:           streamSchema,
-		indexRules:       spec.IndexRules(),
-	}, s.l, s.pipeline)
+		schema:     streamSchema,
+		indexRules: spec.IndexRules(),
+	}, s.l)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -283,7 +283,7 @@ func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(shardNum, nil, streamSpec{
-		schema:           streamSchema,
-		indexRules:       spec.IndexRules(),
-	}, s.l, nil)
+		schema:     streamSchema,
+		indexRules: spec.IndexRules(),
+	}, s.l)
 }

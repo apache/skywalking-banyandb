@@ -311,8 +311,8 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		elementIDsWriter:         writer{w: elementIDsBuffer},
 	}
 	p := &part{
-		timestamps:  timestampBuffer,
-		elementIDs:  elementIDsBuffer,
+		timestamps: timestampBuffer,
+		elementIDs: elementIDsBuffer,
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)

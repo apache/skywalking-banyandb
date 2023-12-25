@@ -84,7 +84,7 @@ func (sw *writers) reset() {
 
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
-		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten 
+		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten
 	for _, w := range sw.tagFamilyMetadataWriters {
 		n += w.bytesWritten
 	}

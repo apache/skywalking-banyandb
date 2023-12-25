@@ -27,8 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-
-	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 func newTSTable(_ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
@@ -36,8 +34,8 @@ func newTSTable(_ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeR
 }
 
 type tsTable struct {
-	memParts []*partWrapper
 	index    *elementIndex
+	memParts []*partWrapper
 	sync.RWMutex
 }
 
@@ -91,7 +89,7 @@ type tstIter struct {
 	piPool        []partIter
 	piHeap        partIterHeap
 	nextBlockNoop bool
-	fieldIter     index.FieldIterator
+	// fieldIter     index.FieldIterator
 }
 
 func (ti *tstIter) reset() {

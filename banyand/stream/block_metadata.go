@@ -241,6 +241,7 @@ func (th *elementIDsMetadata) reset() {
 	th.encodeType = 0
 }
 
+// nolint: unused
 func (th *elementIDsMetadata) copyFrom(src *elementIDsMetadata) {
 	th.dataBlock.copyFrom(&src.dataBlock)
 	th.encodeType = src.encodeType
