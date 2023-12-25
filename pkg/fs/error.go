@@ -20,17 +20,19 @@ package fs
 
 import "fmt"
 
+// FileSystemError code.
 const (
-	isExistError    = 0
-	isNotExistError = 1
-	permissionError = 2
-	openError       = 3
-	deleteError     = 4
-	writeError      = 5
-	readError       = 6
-	flushError      = 7
-	closeError      = 8
-	otherError      = 9
+	isExistError = iota
+	IsNotExistError
+	permissionError
+	openError
+	deleteError
+	writeError
+	readError
+	flushError
+	closeError
+	lockError
+	otherError
 )
 
 // FileSystemError implements the Error interface.

@@ -29,7 +29,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
 func Test_tsTable_mustAddDataPoints(t *testing.T) {
@@ -88,19 +94,31 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tst := &tsTable{}
+			tst := &tsTable{
+				loopCloser:    run.NewCloser(2),
+				introductions: make(chan *introduction),
+			}
+			flushCh := make(chan *flusherIntroduction)
+			introducerWatcher := make(watcher.Channel, 1)
+			go tst.introducerLoop(flushCh, introducerWatcher, 1)
 			defer tst.Close()
 			for _, dps := range tt.dpsList {
 				tst.mustAddDataPoints(dps)
 				time.Sleep(100 * time.Millisecond)
 			}
-			assert.Equal(t, tt.want, len(tst.memParts))
-			var lastVersion int64
-			for _, pw := range tst.memParts {
+			s := tst.currentSnapshot()
+			if s == nil {
+				s = new(snapshot)
+			}
+			defer s.decRef()
+			assert.Equal(t, tt.want, len(s.parts))
+			var lastVersion uint64
+			for _, pw := range s.parts {
+				require.Greater(t, pw.ID(), uint64(0))
 				if lastVersion == 0 {
-					lastVersion = pw.p.partMetadata.Version
+					lastVersion = pw.ID()
 				} else {
-					require.Less(t, lastVersion, pw.p.partMetadata.Version)
+					require.Less(t, lastVersion, pw.ID())
 				}
 			}
 		})
@@ -169,43 +187,76 @@ func Test_tstIter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tst := &tsTable{}
-			defer tst.Close()
-			for _, dps := range tt.dpsList {
-				tst.mustAddDataPoints(dps)
-				time.Sleep(100 * time.Millisecond)
+			verify := func(tst *tsTable) uint64 {
+				defer tst.Close()
+				s := tst.currentSnapshot()
+				if s == nil {
+					s = new(snapshot)
+				}
+				defer s.decRef()
+				pp, n := s.getParts(nil, queryOptions{
+					minTimestamp: tt.minTimestamp,
+					maxTimestamp: tt.maxTimestamp,
+				})
+				require.Equal(t, len(s.parts), n)
+				ti := &tstIter{}
+				ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+				var got []blockMetadata
+				for ti.nextBlock() {
+					if ti.piHeap[0].curBlock.seriesID == 0 {
+						t.Errorf("Expected curBlock to be initialized, but it was nil")
+					}
+					got = append(got, ti.piHeap[0].curBlock)
+				}
+
+				if !errors.Is(ti.Error(), tt.wantErr) {
+					t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
+				}
+
+				if diff := cmp.Diff(got, tt.want,
+					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+					cmpopts.IgnoreFields(blockMetadata{}, "field"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmp.AllowUnexported(blockMetadata{}),
+				); diff != "" {
+					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+				return s.epoch
 			}
-			pws, pp := tst.getParts(nil, nil, queryOptions{
-				minTimestamp: tt.minTimestamp,
-				maxTimestamp: tt.maxTimestamp,
+
+			t.Run("memory snapshot", func(t *testing.T) {
+				tst := &tsTable{
+					loopCloser:    run.NewCloser(2),
+					introductions: make(chan *introduction),
+				}
+				flushCh := make(chan *flusherIntroduction)
+				introducerWatcher := make(watcher.Channel, 1)
+				go tst.introducerLoop(flushCh, introducerWatcher, 1)
+				for _, dps := range tt.dpsList {
+					tst.mustAddDataPoints(dps)
+					time.Sleep(100 * time.Millisecond)
+				}
+				verify(tst)
 			})
-			defer func() {
-				for _, pw := range pws {
-					pw.decRef()
-				}
-			}()
-			ti := &tstIter{}
-			ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
-			var got []blockMetadata
-			for ti.nextBlock() {
-				if ti.piHeap[0].curBlock.seriesID == 0 {
-					t.Errorf("Expected curBlock to be initialized, but it was nil")
-				}
-				got = append(got, ti.piHeap[0].curBlock)
-			}
 
-			if !errors.Is(ti.Error(), tt.wantErr) {
-				t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
-			}
+			t.Run("file snapshot", func(t *testing.T) {
+				tmpPath, defFn := test.Space(require.New(t))
+				fileSystem := fs.NewLocalFileSystem()
+				defer defFn()
 
-			if diff := cmp.Diff(got, tt.want,
-				cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
-				cmpopts.IgnoreFields(blockMetadata{}, "field"),
-				cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
-				cmp.AllowUnexported(blockMetadata{}),
-			); diff != "" {
-				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
-			}
+				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				for _, dps := range tt.dpsList {
+					tst.mustAddDataPoints(dps)
+					time.Sleep(100 * time.Millisecond)
+				}
+				epoch := verify(tst)
+
+				// reopen the table
+				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				assert.Equal(t, epoch, verify(tst))
+			})
 		})
 	}
 }
