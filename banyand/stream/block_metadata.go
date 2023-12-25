@@ -66,7 +66,6 @@ func (h *dataBlock) unmarshal(src []byte) ([]byte, error) {
 
 type blockMetadata struct {
 	tagFamilies           map[string]*dataBlock
-	field                 columnFamilyMetadata
 	tagProjection         []pbv1.TagProjection
 	timestamps            timestampsMetadata
 	elementIDs            elementIDsMetadata
@@ -93,7 +92,6 @@ func (bh *blockMetadata) reset() {
 	bh.count = 0
 	bh.timestamps.reset()
 	bh.elementIDs.reset()
-	bh.field.reset()
 	for k := range bh.tagFamilies {
 		bh.tagFamilies[k].reset()
 		delete(bh.tagFamilies, k)
@@ -112,7 +110,7 @@ func (bh *blockMetadata) marshal(dst []byte) []byte {
 		dst = encoding.EncodeBytes(dst, convert.StringToBytes(name))
 		dst = cf.marshal(dst)
 	}
-	return bh.field.marshal(dst)
+	return dst
 }
 
 func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
@@ -163,7 +161,6 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 			bh.tagFamilies[convert.BytesToString(nameBytes)] = tf
 		}
 	}
-	src, err = bh.field.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnFamilyMetadata: %w", err)
 	}

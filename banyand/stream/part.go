@@ -33,7 +33,6 @@ type part struct {
 	primary              fs.Reader
 	timestamps           fs.Reader
 	elementIDs           fs.Reader
-	fieldValues          fs.Reader
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
 	primaryBlockMetadata []primaryBlockMetadata
@@ -51,7 +50,6 @@ func openMemPart(mp *memPart) *part {
 	p.primary = &mp.primary
 	p.timestamps = &mp.timestamps
 	p.elementIDs = &mp.elementIDs
-	p.fieldValues = &mp.fieldValues
 	if mp.tagFamilies != nil {
 		p.tagFamilies = make(map[string]fs.Reader)
 		p.tagFamilyMetadata = make(map[string]fs.Reader)
@@ -70,7 +68,6 @@ type memPart struct {
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
 	elementIDs        bytes.Buffer
-	fieldValues       bytes.Buffer
 	partMetadata      partMetadata
 }
 
@@ -96,7 +93,6 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
-	mp.fieldValues.Reset()
 	if mp.tagFamilies != nil {
 		for _, tf := range mp.tagFamilies {
 			tf.Reset()
@@ -131,24 +127,20 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
-			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.elementIDs[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
+			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.elementIDs[indexPrev:i], dps.tagFamilies[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
 		uncompressedBlockSizeBytes += uncompressedDataPointSizeBytes(i, dps)
 	}
-	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.elementIDs[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
+	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.elementIDs[indexPrev:], dps.tagFamilies[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
 	n := uint64(len(time.RFC3339Nano))
-	n += uint64(len(dps.fields[index].name))
-	for i := range dps.fields[index].values {
-		n += uint64(dps.fields[index].values[i].size())
-	}
 	for i := range dps.tagFamilies[index] {
 		n += uint64(len(dps.tagFamilies[index][i].name))
 		for j := range dps.tagFamilies[index][i].values {

@@ -133,7 +133,6 @@ func Test_partIter_nextBlock(t *testing.T) {
 				cmpopts.IgnoreFields(blockMetadata{}, "uncompressedSizeBytes"),
 				cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
 				cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
-				cmpopts.IgnoreFields(blockMetadata{}, "field"),
 				cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
 				cmp.AllowUnexported(blockMetadata{}),
 			); diff != "" {

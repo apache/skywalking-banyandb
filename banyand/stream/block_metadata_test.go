@@ -25,7 +25,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func Test_dataBlock_reset(t *testing.T) {
@@ -162,7 +161,6 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				count:                 0,
 				timestamps:            timestampsMetadata{},
 				tagFamilies:           make(map[string]*dataBlock),
-				field:                 columnFamilyMetadata{},
 			},
 		},
 		{
@@ -184,18 +182,6 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 					"tag1": {
 						offset: 1,
 						size:   1,
-					},
-				},
-				field: columnFamilyMetadata{
-					columnMetadata: []columnMetadata{
-						{
-							dataBlock: dataBlock{
-								offset: 1,
-								size:   1,
-							},
-							name:      "field1",
-							valueType: pbv1.ValueTypeInt64,
-						},
 					},
 				},
 			},
@@ -225,26 +211,6 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 						size:   3,
 					},
 				},
-				field: columnFamilyMetadata{
-					columnMetadata: []columnMetadata{
-						{
-							dataBlock: dataBlock{
-								offset: 2,
-								size:   2,
-							},
-							name:      "field1",
-							valueType: pbv1.ValueTypeInt64,
-						},
-						{
-							dataBlock: dataBlock{
-								offset: 3,
-								size:   3,
-							},
-							name:      "field2",
-							valueType: pbv1.ValueTypeInt64,
-						},
-					},
-				},
 			},
 		},
 	}
@@ -265,7 +231,6 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 			assert.Equal(t, tc.original.count, unmarshaled.count)
 			assert.Equal(t, tc.original.timestamps, unmarshaled.timestamps)
 			assert.Equal(t, tc.original.tagFamilies, unmarshaled.tagFamilies)
-			assert.Equal(t, tc.original.field, unmarshaled.field)
 		})
 	}
 }

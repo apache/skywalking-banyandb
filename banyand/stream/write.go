@@ -36,9 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// const DefaultTagFamily = "default"
-// const ElementIDTag = "_element_id"
-
 type writeCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
@@ -113,19 +110,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
 	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
-	field := nameValues{}
 
-	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
-	// ElementIdWritten := false
-	// elementID := writeEvent.GetRequest().GetElement().GetElementId()
-	// elementIDTagValue := &modelv1.TagValue{
-	// 	Value: &modelv1.TagValue_Str{
-	// 		Str: &modelv1.Str{
-	// 			Value: elementID,
-	// 		},
-	// 	},
-	// }
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -148,27 +134,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 				tagValue,
 			))
 		}
-		// if tagFamilies[i].name == DefaultTagFamily {
-		// 	tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
-		// 		ElementIDTag,
-		// 		databasev1.TagType_TAG_TYPE_STRING,
-		// 		elementIDTagValue,
-		// 	))
-		// 	ElementIdWritten = true
-		// }
 	}
-	// if !ElementIdWritten {
-	// 	tagFamilies = append(tagFamilies, nameValues{
-	// 		name: DefaultTagFamily,
-	// 		values: []*nameValue{
-	// 			encodeTagValue(
-	// 				ElementIDTag,
-	// 				databasev1.TagType_TAG_TYPE_STRING,
-	// 				elementIDTagValue,
-	// 			),
-	// 		},
-	// 	})
-	// }
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 
 	var fields []index.Field

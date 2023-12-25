@@ -63,7 +63,6 @@ type writers struct {
 	tagFamilyWriters           map[string]*writer
 	timestampsWriter           writer
 	elementIDsWriter           writer
-	fieldValuesWriter          writer
 }
 
 func (sw *writers) reset() {
@@ -72,7 +71,6 @@ func (sw *writers) reset() {
 	sw.primaryWriter.reset()
 	sw.timestampsWriter.reset()
 	sw.elementIDsWriter.reset()
-	sw.fieldValuesWriter.reset()
 
 	for i, w := range sw.tagFamilyMetadataWriters {
 		w.reset()
@@ -86,7 +84,7 @@ func (sw *writers) reset() {
 
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
-		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten + sw.fieldValuesWriter.bytesWritten
+		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten 
 	for _, w := range sw.tagFamilyMetadataWriters {
 		n += w.bytesWritten
 	}
@@ -101,7 +99,6 @@ func (sw *writers) MustClose() {
 	sw.primaryWriter.MustClose()
 	sw.timestampsWriter.MustClose()
 	sw.elementIDsWriter.MustClose()
-	sw.fieldValuesWriter.MustClose()
 
 	for _, w := range sw.tagFamilyMetadataWriters {
 		w.MustClose()
@@ -172,17 +169,16 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.primaryWriter.init(&mp.primary)
 	bw.writers.timestampsWriter.init(&mp.timestamps)
 	bw.writers.elementIDsWriter.init(&mp.elementIDs)
-	bw.writers.fieldValuesWriter.init(&mp.fieldValues)
 }
 
-func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]nameValues, fields []nameValues) {
+func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]nameValues) {
 	if len(timestamps) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.mustInitFromDataPoints(timestamps, elementIDs, tagFamilies, fields)
+	b.mustInitFromDataPoints(timestamps, elementIDs, tagFamilies)
 	if b.Len() == 0 {
 		return
 	}

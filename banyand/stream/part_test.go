@@ -40,7 +40,6 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 				elementIDs:  []string{},
 				seriesIDs:   []common.SeriesID{},
 				tagFamilies: make([][]nameValues, 0),
-				fields:      make([]nameValues, 0),
 			},
 			want: partMetadata{},
 		},
@@ -57,13 +56,6 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
 								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 							},
-						},
-					},
-				},
-				fields: []nameValues{
-					{
-						"skipped", []*nameValue{
-							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 						},
 					},
 				},
@@ -159,35 +151,5 @@ var dps = &dataPoints{
 		},
 		{},
 		{}, // empty tagFamilies for seriesID 3
-	},
-	fields: []nameValues{
-		{
-			name: "skipped", values: []*nameValue{
-				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
-				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-			},
-		},
-		{
-			name: "skipped", values: []*nameValue{
-				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
-				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-			},
-		},
-		{},
-		{}, // empty fields for seriesID 2
-		{
-			name: "onlyFields", values: []*nameValue{
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
-			},
-		},
-		{
-			name: "onlyFields", values: []*nameValue{
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
-			},
-		},
 	},
 }

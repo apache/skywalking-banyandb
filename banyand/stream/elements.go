@@ -119,7 +119,6 @@ type dataPoints struct {
 	timestamps  []int64
 	elementIDs  []string
 	tagFamilies [][]nameValues
-	fields      []nameValues
 }
 
 func (d *dataPoints) Len() int {
@@ -137,7 +136,6 @@ func (d *dataPoints) Swap(i, j int) {
 	d.seriesIDs[i], d.seriesIDs[j] = d.seriesIDs[j], d.seriesIDs[i]
 	d.timestamps[i], d.timestamps[j] = d.timestamps[j], d.timestamps[i]
 	d.tagFamilies[i], d.tagFamilies[j] = d.tagFamilies[j], d.tagFamilies[i]
-	d.fields[i], d.fields[j] = d.fields[j], d.fields[i]
 }
 
 type dataPointsInTable struct {

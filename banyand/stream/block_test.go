@@ -37,7 +37,6 @@ func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
 		tagFamilies []columnFamily
-		field       columnFamily
 	}
 	tests := []struct {
 		name   string
@@ -49,12 +48,10 @@ func Test_block_reset(t *testing.T) {
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
 				tagFamilies: []columnFamily{{}, {}, {}},
-				field:       columnFamily{columns: []column{{}, {}}},
 			},
 			want: block{
 				timestamps:  []int64{},
 				tagFamilies: []columnFamily{},
-				field:       columnFamily{columns: []column{}},
 			},
 		},
 	}
@@ -63,7 +60,6 @@ func Test_block_reset(t *testing.T) {
 			b := &block{
 				timestamps:  tt.fields.timestamps,
 				tagFamilies: tt.fields.tagFamilies,
-				field:       tt.fields.field,
 			}
 			b.reset()
 			if !reflect.DeepEqual(*b, tt.want) {
@@ -119,14 +115,6 @@ var conventionalBlock = block{
 			},
 		},
 	},
-	field: columnFamily{
-		columns: []column{
-			{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2")}},
-			{name: "intField", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(1110), convert.Int64ToBytes(2220)}},
-			{name: "floatField", valueType: pbv1.ValueTypeFloat64, values: [][]byte{convert.Float64ToBytes(1221233.343), convert.Float64ToBytes(2442466.686)}},
-			{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{longText, longText}},
-		},
-	},
 }
 
 func Test_block_mustInitFromDataPoints(t *testing.T) {
@@ -134,7 +122,6 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 		timestamps  []int64
 		elementIDs  []string
 		tagFamilies [][]nameValues
-		fields      []nameValues
 	}
 	tests := []struct {
 		name string
@@ -186,24 +173,6 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 						},
 					},
 				},
-				fields: []nameValues{
-					{
-						"skipped", []*nameValue{
-							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
-							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
-							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-						},
-					},
-					{
-						"skipped", []*nameValue{
-							{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
-							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(2220), valueArr: nil},
-							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2442466.686), valueArr: nil},
-							{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-						},
-					},
-				},
 			},
 			want: conventionalBlock,
 		},
@@ -211,7 +180,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies, tt.args.fields)
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
 			}
@@ -331,7 +300,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalBlock(t *testing.T) {
-	timestampBuffer, elementIDsBuffer, fieldBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
+	timestampBuffer, elementIDsBuffer := &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
 		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
@@ -340,12 +309,10 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		tagFamilyWriters:         make(map[string]*writer),
 		timestampsWriter:         writer{w: timestampBuffer},
 		elementIDsWriter:         writer{w: elementIDsBuffer},
-		fieldValuesWriter:        writer{w: fieldBuffer},
 	}
 	p := &part{
 		timestamps:  timestampBuffer,
 		elementIDs:  elementIDsBuffer,
-		fieldValues: fieldBuffer,
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)

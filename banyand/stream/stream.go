@@ -109,7 +109,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
+		return nil, errors.New("invalid query options: tagProjection is required")
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
