@@ -44,14 +44,14 @@ const (
 )
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
-	var tsTable tsTable
-	tsTable.fileSystem = fileSystem
-	tsTable.root = rootPath
-	tsTable.l = l
-	tsTable.gc.parent = &tsTable
+	var tst tsTable
+	tst.fileSystem = fileSystem
+	tst.root = rootPath
+	tst.l = l
+	tst.gc.parent = &tst
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
-		t := &tsTable
+		t := &tst
 		t.startLoop(uint64(time.Now().UnixNano()))
 		return t, nil
 	}
@@ -79,7 +79,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l 
 			continue
 		}
 		loadedSnapshots = append(loadedSnapshots, snapshot)
-		tsTable.gc.registerSnapshot(snapshot)
+		tst.gc.registerSnapshot(snapshot)
 	}
 	for i := range needToDelete {
 		if err := fileSystem.DeleteFile(filepath.Join(rootPath, needToDelete[i])); err != nil {
@@ -87,7 +87,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l 
 		}
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
-		t := &tsTable
+		t := &tst
 		t.startLoop(uint64(time.Now().UnixNano()))
 		return t, nil
 	}
@@ -95,21 +95,21 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l 
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
 	epoch := loadedSnapshots[0]
-	t := &tsTable
+	t := &tst
 	t.loadSnapshot(epoch, loadedParts)
 	t.startLoop(epoch)
 	return t, nil
 }
 
 type tsTable struct {
-	l          *logger.Logger
-	fileSystem fs.FileSystem
-	gc         garbageCleaner
-	root       string
-	snapshot   *snapshot
-	sync.RWMutex
+	fileSystem    fs.FileSystem
+	l             *logger.Logger
+	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
+	root          string
+	gc            garbageCleaner
+	sync.RWMutex
 }
 
 func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
@@ -141,12 +141,11 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 }
 
 func (tst *tsTable) startLoop(cur uint64) {
-	next := cur + 1
 	tst.loopCloser = run.NewCloser(3)
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoop(flushCh, introducerWatcher, next)
+	go tst.introducerLoop(flushCh, introducerWatcher, cur+1)
 	go tst.flusherLoop(flushCh, introducerWatcher, cur)
 }
 

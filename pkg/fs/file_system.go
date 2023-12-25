@@ -119,6 +119,7 @@ type DirEntry interface {
 	IsDir() bool
 }
 
+// MustFlush flushes all data to one file and panics if it cannot write all data.
 func MustFlush(fs FileSystem, buffer []byte, name string, permission Mode) {
 	n, err := fs.Write(buffer, name, permission)
 	if err != nil {

@@ -70,13 +70,15 @@ func (s *snapshot) decRef() {
 	s.parts = s.parts[:0]
 }
 
-func (s snapshot) copyAllTo(nextEpoch uint64) snapshot {
-	s.epoch = nextEpoch
-	s.ref = 1
+func (s *snapshot) copyAllTo(nextEpoch uint64) snapshot {
+	var result snapshot
+	result.epoch = nextEpoch
+	result.ref = 1
 	for i := range s.parts {
 		s.parts[i].incRef()
+		result.parts = append(result.parts, s.parts[i])
 	}
-	return s
+	return result
 }
 
 func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) snapshot {

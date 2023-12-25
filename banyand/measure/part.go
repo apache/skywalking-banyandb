@@ -221,11 +221,11 @@ func releaseMemPart(mp *memPart) {
 var memPartPool sync.Pool
 
 type partWrapper struct {
+	fileSystem    fs.FileSystem
 	mp            *memPart
 	p             *part
 	ref           int32
 	mustBeDeleted uint32
-	fileSystem    fs.FileSystem
 }
 
 func newPartWrapper(mp *memPart, p *part, fileSystem fs.FileSystem) *partWrapper {

@@ -32,7 +32,7 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
-		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),

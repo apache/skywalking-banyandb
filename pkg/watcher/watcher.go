@@ -21,8 +21,8 @@ package watcher
 // Epoch is a epoch watcher.
 // It will be notified when the epoch is reached.
 type Epoch struct {
-	epoch uint64
 	ch    chan struct{}
+	epoch uint64
 }
 
 // Watch returns a channel that will be notified when the epoch is reached.

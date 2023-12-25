@@ -42,7 +42,6 @@ import (
 )
 
 func TestIntegrationQueryOnDisk(t *testing.T) {
-	t.Skip("skip on-disk integration test until measure parts flushing is supported")
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Integration Query OnDisk Suite", Label(integration_standalone.Labels...))
 }

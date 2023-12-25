@@ -25,11 +25,11 @@ import (
 
 func TestSnapshotGetParts(t *testing.T) {
 	tests := []struct {
-		name     string
 		snapshot *snapshot
+		name     string
 		dst      []*part
-		opts     queryOptions
 		expected []*part
+		opts     queryOptions
 		count    int
 	}{
 		{
@@ -121,9 +121,9 @@ func TestSnapshotCopyAllTo(t *testing.T) {
 	tests := []struct {
 		name      string
 		snapshot  snapshot
+		expected  snapshot
 		nextEpoch uint64
 		closePrev bool
-		expected  snapshot
 	}{
 		{
 			name: "Test with empty snapshot",
@@ -134,7 +134,7 @@ func TestSnapshotCopyAllTo(t *testing.T) {
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
-				parts: []*partWrapper{},
+				parts: nil,
 			},
 		},
 		{
@@ -189,12 +189,12 @@ func TestSnapshotCopyAllTo(t *testing.T) {
 
 func TestSnapshotMerge(t *testing.T) {
 	tests := []struct {
-		name      string
 		snapshot  *snapshot
-		closePrev bool
-		nextEpoch uint64
 		nextParts map[uint64]*partWrapper
+		name      string
 		expected  snapshot
+		nextEpoch uint64
+		closePrev bool
 	}{
 		{
 			name: "Test with empty snapshot and empty next parts",

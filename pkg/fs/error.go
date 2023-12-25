@@ -20,6 +20,7 @@ package fs
 
 import "fmt"
 
+// FileSystemError code.
 const (
 	isExistError = iota
 	IsNotExistError

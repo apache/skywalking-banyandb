@@ -34,12 +34,12 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, introducerWat
 			return
 		case <-epochWatcher.Watch():
 			var curSnapshot *snapshot
-			tst.Lock()
+			tst.RLock()
 			if tst.snapshot != nil && tst.snapshot.epoch > epoch {
 				curSnapshot = tst.snapshot
 				curSnapshot.incRef()
 			}
-			tst.Unlock()
+			tst.RUnlock()
 			if curSnapshot != nil {
 				epoch = tst.flush(curSnapshot, flushCh)
 				if epoch == 0 {
