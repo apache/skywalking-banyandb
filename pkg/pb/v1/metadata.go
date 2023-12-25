@@ -126,6 +126,7 @@ type StreamQueryOptions struct {
 	TagProjection []TagProjection
 }
 
+// StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
 	Pull() *Result
 	Release()

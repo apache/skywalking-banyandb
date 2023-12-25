@@ -33,9 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	_ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
-)
+var _ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
 
 type unresolvedTagFilter struct {
 	startTime      time.Time
@@ -76,10 +74,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		}
 	}
 	ctx.projectionTags = projTags
-	plan, err := uis.selectIndexScanner(ctx)
-	if err != nil {
-		return nil, err
-	}
+	plan := uis.selectIndexScanner(ctx)
 	if uis.criteria != nil {
 		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
 		if errFilter != nil {
@@ -93,7 +88,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	return plan, err
 }
 
-func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical.Plan, error) {
+func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) logical.Plan {
 	return &localIndexScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
@@ -101,9 +96,9 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) (logical
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
 		filter:            ctx.filter,
-		entities: ctx.entities,
-		l:        logger.GetLogger("query", "stream", "local-index"),
-	}, nil
+		entities:          ctx.entities,
+		l:                 logger.GetLogger("query", "stream", "local-index"),
+	}
 }
 
 func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria, projection [][]*logical.Tag,
@@ -118,8 +113,8 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 }
 
 type analyzeContext struct {
-	s      logical.Schema
-	filter index.Filter
+	s                logical.Schema
+	filter           index.Filter
 	entities         [][]*modelv1.TagValue
 	projectionTags   []pbv1.TagProjection
 	globalConditions []interface{}

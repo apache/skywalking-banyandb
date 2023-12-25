@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
-	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
@@ -52,7 +51,7 @@ const (
 
 // Query allow to retrieve elements in a series of streams.
 type Query interface {
-	LoadGroup(name string) (resourceSchema.Group, bool)
+	LoadGroup(name string) (schema.Group, bool)
 	Stream(stream *commonv1.Metadata) (Stream, error)
 }
 
