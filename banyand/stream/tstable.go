@@ -52,13 +52,13 @@ func (tst *tsTable) Close() error {
 	return nil
 }
 
-func (tst *tsTable) mustAddDataPoints(dps *elements) {
-	if len(dps.seriesIDs) == 0 {
+func (tst *tsTable) mustAddElements(es *elements) {
+	if len(es.seriesIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
-	mp.mustInitFromDataPoints(dps)
+	mp.mustInitFromElements(es)
 	p := openMemPart(mp)
 
 	pw := newMemPartWrapper(mp, p)

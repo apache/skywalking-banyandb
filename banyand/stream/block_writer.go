@@ -108,22 +108,22 @@ func (sw *writers) MustClose() {
 	}
 }
 
-func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*writer, *writer) {
-	chw, ok := sw.tagFamilyMetadataWriters[columnName]
-	cw := sw.tagFamilyWriters[columnName]
+func (sw *writers) getTagMetadataWriterAndTagWriter(tagName string) (*writer, *writer) {
+	thw, ok := sw.tagFamilyMetadataWriters[tagName]
+	tw := sw.tagFamilyWriters[tagName]
 	if ok {
-		return chw, cw
+		return thw, tw
 	}
-	hw, w := sw.mustCreateTagFamilyWriters(columnName)
-	chw = &writer{
+	hw, w := sw.mustCreateTagFamilyWriters(tagName)
+	thw = &writer{
 		w: hw,
 	}
-	cw = &writer{
+	tw = &writer{
 		w: w,
 	}
-	sw.tagFamilyMetadataWriters[columnName] = chw
-	sw.tagFamilyWriters[columnName] = cw
-	return chw, cw
+	sw.tagFamilyMetadataWriters[tagName] = thw
+	sw.tagFamilyWriters[tagName] = tw
+	return thw, tw
 }
 
 type blockWriter struct {
@@ -171,14 +171,14 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.elementIDsWriter.init(&mp.elementIDs)
 }
 
-func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
 	if len(timestamps) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.mustInitFromDataPoints(timestamps, elementIDs, tagFamilies)
+	b.mustInitFromElements(timestamps, elementIDs, tagFamilies)
 	if b.Len() == 0 {
 		return
 	}

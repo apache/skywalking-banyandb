@@ -187,7 +187,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 			},
 		},
 		{
-			name: "Multiple tagFamilies and columnMetadata",
+			name: "Multiple tagFamilies and tagMetadata",
 			original: &blockMetadata{
 				seriesID:              common.SeriesID(2),
 				uncompressedSizeBytes: 2,

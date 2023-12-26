@@ -162,7 +162,7 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal columnFamilyMetadata: %w", err)
+		return nil, fmt.Errorf("cannot unmarshal tagFamilyMetadata: %w", err)
 	}
 	return src, nil
 }

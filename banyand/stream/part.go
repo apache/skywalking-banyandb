@@ -105,46 +105,46 @@ func (mp *memPart) reset() {
 	}
 }
 
-func (mp *memPart) mustInitFromDataPoints(dps *elements) {
+func (mp *memPart) mustInitFromElements(es *elements) {
 	mp.reset()
 
-	if len(dps.timestamps) == 0 {
+	if len(es.timestamps) == 0 {
 		return
 	}
 
-	sort.Sort(dps)
+	sort.Sort(es)
 
 	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
 	var sidPrev common.SeriesID
 	uncompressedBlockSizeBytes := uint64(0)
 	var indexPrev int
-	for i := range dps.timestamps {
-		sid := dps.seriesIDs[i]
+	for i := range es.timestamps {
+		sid := es.seriesIDs[i]
 		if sidPrev == 0 {
 			sidPrev = sid
 		}
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
-			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.elementIDs[indexPrev:i], dps.tagFamilies[indexPrev:i])
+			bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:i], es.elementIDs[indexPrev:i], es.tagFamilies[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
-		uncompressedBlockSizeBytes += uncompressedDataPointSizeBytes(i, dps)
+		uncompressedBlockSizeBytes += uncompressedElementSizeBytes(i, es)
 	}
-	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.elementIDs[indexPrev:], dps.tagFamilies[indexPrev:])
+	bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:], es.elementIDs[indexPrev:], es.tagFamilies[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }
 
-func uncompressedDataPointSizeBytes(index int, dps *elements) uint64 {
+func uncompressedElementSizeBytes(index int, es *elements) uint64 {
 	n := uint64(len(time.RFC3339Nano))
-	for i := range dps.tagFamilies[index] {
-		n += uint64(len(dps.tagFamilies[index][i].tag))
-		for j := range dps.tagFamilies[index][i].values {
-			n += uint64(dps.tagFamilies[index][i].values[j].size())
+	for i := range es.tagFamilies[index] {
+		n += uint64(len(es.tagFamilies[index][i].tag))
+		for j := range es.tagFamilies[index][i].values {
+			n += uint64(es.tagFamilies[index][i].values[j].size())
 		}
 	}
 	return n

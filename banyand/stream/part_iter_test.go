@@ -110,7 +110,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mp := generateMemPart()
 			releaseMemPart(mp)
-			mp.mustInitFromDataPoints(dps)
+			mp.mustInitFromElements(es)
 
 			p := openMemPart(mp)
 

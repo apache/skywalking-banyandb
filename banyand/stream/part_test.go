@@ -27,15 +27,15 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func Test_memPart_mustInitFromDataPoints(t *testing.T) {
+func Test_memPart_mustInitFromElements(t *testing.T) {
 	tests := []struct {
-		dps  *elements
+		es   *elements
 		name string
 		want partMetadata
 	}{
 		{
-			name: "Test with empty dataPoints",
-			dps: &elements{
+			name: "Test with empty elements",
+			es: &elements{
 				timestamps:  []int64{},
 				elementIDs:  []string{},
 				seriesIDs:   []common.SeriesID{},
@@ -44,8 +44,8 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 			want: partMetadata{},
 		},
 		{
-			name: "Test with one item in dataPoints",
-			dps: &elements{
+			name: "Test with one item in elements",
+			es: &elements{
 				timestamps: []int64{1},
 				elementIDs: []string{"0"},
 				seriesIDs:  []common.SeriesID{1},
@@ -68,8 +68,8 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 			},
 		},
 		{
-			name: "Test with multiple items in dataPoints",
-			dps:  dps,
+			name: "Test with multiple items in elements",
+			es:   es,
 			want: partMetadata{
 				BlocksCount:  3,
 				MinTimestamp: 1,
@@ -81,7 +81,7 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mp := &memPart{}
-			mp.mustInitFromDataPoints(tt.dps)
+			mp.mustInitFromElements(tt.es)
 			assert.Equal(t, tt.want.BlocksCount, mp.partMetadata.BlocksCount)
 			assert.Equal(t, tt.want.MinTimestamp, mp.partMetadata.MinTimestamp)
 			assert.Equal(t, tt.want.MaxTimestamp, mp.partMetadata.MaxTimestamp)
@@ -90,7 +90,7 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 	}
 }
 
-var dps = &elements{
+var es = &elements{
 	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
 	timestamps: []int64{1, 2, 8, 10, 100, 220},
 	elementIDs: []string{"0", "1", "2", "3", "4", "5"},

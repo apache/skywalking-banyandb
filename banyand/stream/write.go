@@ -61,36 +61,36 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
 	}
-	dpg, ok := dst[gn]
+	eg, ok := dst[gn]
 	if !ok {
-		dpg = &elementsInGroup{
+		eg = &elementsInGroup{
 			tsdb:   tsdb,
 			tables: make([]*elementsInTable, 0),
 		}
-		dst[gn] = dpg
+		dst[gn] = eg
 	}
 
-	var dpt *elementsInTable
-	for i := range dpg.tables {
-		if dpg.tables[i].timeRange.Contains(ts) {
-			dpt = dpg.tables[i]
+	var et *elementsInTable
+	for i := range eg.tables {
+		if eg.tables[i].timeRange.Contains(ts) {
+			et = eg.tables[i]
 			break
 		}
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
-	if dpt == nil {
+	if et == nil {
 		tstb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
-		dpt = &elementsInTable{
+		et = &elementsInTable{
 			timeRange: tstb.GetTimeRange(),
 			tsTable:   tstb,
 		}
-		dpg.tables = append(dpg.tables, dpt)
+		eg.tables = append(eg.tables, et)
 	}
-	dpt.elements.timestamps = append(dpt.elements.timestamps, int64(ts))
-	dpt.elements.elementIDs = append(dpt.elements.elementIDs, writeEvent.Request.Element.GetElementId())
+	et.elements.timestamps = append(et.elements.timestamps, int64(ts))
+	et.elements.elementIDs = append(et.elements.elementIDs, writeEvent.Request.Element.GetElementId())
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -109,7 +109,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err := series.Marshal(); err != nil {
 		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
-	dpt.elements.seriesIDs = append(dpt.elements.seriesIDs, series.ID)
+	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
 	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
 	for i := range stm.GetSchema().GetTagFamilies() {
@@ -135,7 +135,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			))
 		}
 	}
-	dpt.elements.tagFamilies = append(dpt.elements.tagFamilies, tagFamilies)
+	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	var fields []index.Field
 	for _, ruleIndex := range stm.indexRuleLocators {
@@ -165,7 +165,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 	}
 
-	dpg.docs = append(dpg.docs, index.Document{
+	eg.docs = append(eg.docs, index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
 		Fields:       fields,
@@ -208,9 +208,9 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	for i := range groups {
 		g := groups[i]
 		for j := range g.tables {
-			dps := g.tables[j]
-			dps.tsTable.Table().mustAddDataPoints(&dps.elements)
-			dps.tsTable.DecRef()
+			es := g.tables[j]
+			es.tsTable.Table().mustAddElements(&es.elements)
+			es.tsTable.DecRef()
 		}
 		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
 			w.l.Error().Err(err).Msg("cannot write index")
