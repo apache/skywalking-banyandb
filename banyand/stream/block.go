@@ -32,7 +32,7 @@ import (
 type block struct {
 	timestamps  []int64
 	elementIDs  []string
-	tagFamilies []columnFamily
+	tagFamilies []tagFamily
 }
 
 func (b *block) reset() {
@@ -46,7 +46,7 @@ func (b *block) reset() {
 	b.tagFamilies = tff[:0]
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, elementIDs []string, tagFamilies [][]nameValues) {
+func (b *block) mustInitFromDataPoints(timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -71,7 +71,7 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTags(tagFamilies [][]nameValues) {
+func (b *block) mustInitFromTags(tagFamilies [][]tagValues) {
 	dataPointsLen := len(tagFamilies)
 	if dataPointsLen == 0 {
 		return
@@ -81,28 +81,28 @@ func (b *block) mustInitFromTags(tagFamilies [][]nameValues) {
 	}
 }
 
-func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
+func (b *block) processTagFamilies(tff []tagValues, i int, dataPointsLen int) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {
-		tagFamilies[j].name = tf.name
+		tagFamilies[j].name = tf.tag
 		b.processTags(tf, j, i, dataPointsLen)
 	}
 }
 
-func (b *block) processTags(tf nameValues, columnFamilyIdx, i int, dataPointsLen int) {
-	columns := b.tagFamilies[columnFamilyIdx].resizeColumns(len(tf.values))
+func (b *block) processTags(tf tagValues, columnFamilyIdx, i int, dataPointsLen int) {
+	columns := b.tagFamilies[columnFamilyIdx].resizeTags(len(tf.values))
 	for j, t := range tf.values {
-		columns[j].name = t.name
+		columns[j].name = t.tag
 		columns[j].resizeValues(dataPointsLen)
 		columns[j].valueType = t.valueType
 		columns[j].values[i] = t.marshal()
 	}
 }
 
-func (b *block) resizeTagFamilies(tagFamiliesLen int) []columnFamily {
+func (b *block) resizeTagFamilies(tagFamiliesLen int) []tagFamily {
 	tff := b.tagFamilies[:0]
 	if n := tagFamiliesLen - cap(tff); n > 0 {
-		tff = append(tff[:cap(tff)], make([]columnFamily, n)...)
+		tff = append(tff[:cap(tff)], make([]tagFamily, n)...)
 	}
 	tff = tff[:tagFamiliesLen]
 	b.tagFamilies = tff
@@ -144,7 +144,7 @@ func (b *block) validate() {
 	}
 	tff := b.tagFamilies
 	for _, tf := range tff {
-		for _, c := range tf.columns {
+		for _, c := range tf.tags {
 			if len(c.values) != itemsCount {
 				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", c.name, len(c.values), itemsCount)
 			}
@@ -152,18 +152,18 @@ func (b *block) validate() {
 	}
 }
 
-func (b *block) marshalTagFamily(tf columnFamily, bm *blockMetadata, ww *writers) {
+func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
 	hw, w := ww.getColumnMetadataWriterAndColumnWriter(tf.name)
-	cc := tf.columns
-	cfm := generateColumnFamilyMetadata()
-	cmm := cfm.resizeColumnMetadata(len(cc))
+	cc := tf.tags
+	cfm := generateTagFamilyMetadata()
+	cmm := cfm.resizeTagMetadata(len(cc))
 	for i := range cc {
 		cc[i].mustWriteTo(&cmm[i], w)
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = cfm.marshal(bb.Buf)
-	releaseColumnFamilyMetadata(cfm)
+	releaseTagFamilyMetadata(cfm)
 	tfm := bm.getTagFamilyMetadata(tf.name)
 	tfm.offset = hw.bytesWritten
 	tfm.size = uint64(len(bb.Buf))
@@ -182,20 +182,20 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	bb := bigValuePool.Generate()
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(columnFamilyMetadataBlock.offset), bb.Buf)
-	cfm := generateColumnFamilyMetadata()
-	defer releaseColumnFamilyMetadata(cfm)
+	cfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(cfm)
 	_, err := cfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
-	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
+	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
 
 	for j := range tagProjection {
-		for i := range cfm.columnMetadata {
-			if tagProjection[j] == cfm.columnMetadata[i].name {
-				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+		for i := range cfm.tagMetadata {
+			if tagProjection[j] == cfm.tagMetadata[i].name {
+				cc[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
 				break
 			}
 		}
@@ -211,7 +211,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	for i := range tff {
 		tf := tff[i]
 		nameLen := uint64(len(tf.name))
-		for _, c := range tf.columns {
+		for _, c := range tf.tags {
 			nameLen += uint64(len(c.name))
 			for _, v := range c.values {
 				if len(v) > 0 {
@@ -330,7 +330,7 @@ type blockCursor struct {
 	p                   *part
 	timestamps          []int64
 	elementIDs          []string
-	tagFamilies         []columnFamily
+	tagFamilies         []tagFamily
 	columnValuesDecoder encoding.BytesBlockDecoder
 	tagProjection       []pbv1.TagProjection
 	bm                  blockMetadata
@@ -374,7 +374,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 		tf := pbv1.TagFamily{
 			Name: cf.name,
 		}
-		for _, c := range cf.columns {
+		for _, c := range cf.tags {
 			t := pbv1.Tag{
 				Name: c.name,
 			}
@@ -409,10 +409,10 @@ func (bc *blockCursor) copyTo(r *pbv1.Result) {
 		logger.Panicf("unexpected number of tag families: got %d; want %d", len(bc.tagFamilies), len(r.TagFamilies))
 	}
 	for i, cf := range bc.tagFamilies {
-		if len(r.TagFamilies[i].Tags) != len(cf.columns) {
+		if len(r.TagFamilies[i].Tags) != len(cf.tags) {
 			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
 		}
-		for i2, c := range cf.columns {
+		for i2, c := range cf.tags {
 			r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
 		}
 	}
@@ -440,22 +440,22 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[start:end]...)
 
 	for _, cf := range tmpBlock.tagFamilies {
-		tf := columnFamily{
+		tf := tagFamily{
 			name: cf.name,
 		}
-		for i := range cf.columns {
-			column := column{
-				name:      cf.columns[i].name,
-				valueType: cf.columns[i].valueType,
+		for i := range cf.tags {
+			column := tag{
+				name:      cf.tags[i].name,
+				valueType: cf.tags[i].valueType,
 			}
-			if len(cf.columns[i].values) == 0 {
+			if len(cf.tags[i].values) == 0 {
 				continue
 			}
-			if len(cf.columns[i].values) != len(tmpBlock.timestamps) {
-				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.columns[i].name, len(cf.columns[i].values), len(tmpBlock.timestamps))
+			if len(cf.tags[i].values) != len(tmpBlock.timestamps) {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.tags[i].name, len(cf.tags[i].values), len(tmpBlock.timestamps))
 			}
-			column.values = append(column.values, cf.columns[i].values[start:end]...)
-			tf.columns = append(tf.columns, column)
+			column.values = append(column.values, cf.tags[i].values[start:end]...)
+			tf.tags = append(tf.tags, column)
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}

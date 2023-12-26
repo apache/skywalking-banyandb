@@ -171,7 +171,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.elementIDsWriter.init(&mp.elementIDs)
 }
 
-func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]nameValues) {
+func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
 	if len(timestamps) == 0 {
 		return
 	}

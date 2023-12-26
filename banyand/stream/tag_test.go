@@ -27,55 +27,55 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func TestColumn_reset(t *testing.T) {
-	c := &column{
+func TestTag_reset(t *testing.T) {
+	tt := &tag{
 		name:      "test",
 		valueType: pbv1.ValueTypeStr,
 		values:    [][]byte{[]byte("value1"), []byte("value2")},
 	}
 
-	c.reset()
+	tt.reset()
 
-	assert.Equal(t, "", c.name)
-	assert.Equal(t, 0, len(c.values))
+	assert.Equal(t, "", tt.name)
+	assert.Equal(t, 0, len(tt.values))
 }
 
-func TestColumn_resizeValues(t *testing.T) {
-	c := &column{
+func TestTag_resizeValues(t *testing.T) {
+	tt := &tag{
 		values: make([][]byte, 2, 5),
 	}
 
-	values := c.resizeValues(3)
+	values := tt.resizeValues(3)
 	assert.Equal(t, 3, len(values))
 	assert.Equal(t, 5, cap(values))
 
-	values = c.resizeValues(6)
+	values = tt.resizeValues(6)
 	assert.Equal(t, 6, len(values))
 	assert.True(t, cap(values) >= 6) // The capacity is at least 6, but could be more
 }
 
-func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
-	original := &column{
+func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
+	original := &tag{
 		name:      "test",
 		valueType: pbv1.ValueTypeStr,
 		values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
 	}
 
-	cm := &columnMetadata{}
+	tm := &tagMetadata{}
 
 	buf := &bytes.Buffer{}
 	w := &writer{w: buf}
-	original.mustWriteTo(cm, w)
-	assert.Equal(t, w.bytesWritten, cm.size)
-	assert.Equal(t, uint64(len(buf.Buf)), cm.size)
-	assert.Equal(t, uint64(0), cm.offset)
-	assert.Equal(t, original.name, cm.name)
-	assert.Equal(t, original.valueType, cm.valueType)
+	original.mustWriteTo(tm, w)
+	assert.Equal(t, w.bytesWritten, tm.size)
+	assert.Equal(t, uint64(len(buf.Buf)), tm.size)
+	assert.Equal(t, uint64(0), tm.offset)
+	assert.Equal(t, original.name, tm.name)
+	assert.Equal(t, original.valueType, tm.valueType)
 
 	decoder := &encoding.BytesBlockDecoder{}
 
-	unmarshaled := &column{}
-	unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.values)))
+	unmarshaled := &tag{}
+	unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(original.values)))
 
 	// Check that the original and new instances are equal
 	assert.Equal(t, original.name, unmarshaled.name)
@@ -83,10 +83,10 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 	assert.Equal(t, original.values, unmarshaled.values)
 }
 
-func TestColumnFamily_reset(t *testing.T) {
-	cf := &columnFamily{
+func TestTagFamily_reset(t *testing.T) {
+	tf := &tagFamily{
 		name: "test",
-		columns: []column{
+		tags: []tag{
 			{
 				name:      "test1",
 				valueType: pbv1.ValueTypeStr,
@@ -100,22 +100,22 @@ func TestColumnFamily_reset(t *testing.T) {
 		},
 	}
 
-	cf.reset()
+	tf.reset()
 
-	assert.Equal(t, "", cf.name)
-	assert.Equal(t, 0, len(cf.columns))
+	assert.Equal(t, "", tf.name)
+	assert.Equal(t, 0, len(tf.tags))
 }
 
-func TestColumnFamily_resizeColumns(t *testing.T) {
-	cf := &columnFamily{
-		columns: make([]column, 2, 5),
+func TestTagFamily_resizeTags(t *testing.T) {
+	tf := &tagFamily{
+		tags: make([]tag, 2, 5),
 	}
 
-	columns := cf.resizeColumns(3)
-	assert.Equal(t, 3, len(columns))
-	assert.Equal(t, 5, cap(columns))
+	tags := tf.resizeTags(3)
+	assert.Equal(t, 3, len(tags))
+	assert.Equal(t, 5, cap(tags))
 
-	columns = cf.resizeColumns(6)
-	assert.Equal(t, 6, len(columns))
-	assert.True(t, cap(columns) >= 6) // The capacity is at least 6, but could be more
+	tags = tf.resizeTags(6)
+	assert.Equal(t, 6, len(tags))
+	assert.True(t, cap(tags) >= 6) // The capacity is at least 6, but could be more
 }

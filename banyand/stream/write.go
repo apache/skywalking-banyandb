@@ -48,7 +48,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 	}
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *streamv1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInGroup, error) {
 	req := writeEvent.Request
 	t := req.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -63,14 +63,14 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 	}
 	dpg, ok := dst[gn]
 	if !ok {
-		dpg = &dataPointsInGroup{
+		dpg = &elementsInGroup{
 			tsdb:   tsdb,
-			tables: make([]*dataPointsInTable, 0),
+			tables: make([]*elementsInTable, 0),
 		}
 		dst[gn] = dpg
 	}
 
-	var dpt *dataPointsInTable
+	var dpt *elementsInTable
 	for i := range dpg.tables {
 		if dpg.tables[i].timeRange.Contains(ts) {
 			dpt = dpg.tables[i]
@@ -83,14 +83,14 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
-		dpt = &dataPointsInTable{
+		dpt = &elementsInTable{
 			timeRange: tstb.GetTimeRange(),
 			tsTable:   tstb,
 		}
 		dpg.tables = append(dpg.tables, dpt)
 	}
-	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, int64(ts))
-	dpt.dataPoints.elementIDs = append(dpt.dataPoints.elementIDs, writeEvent.Request.Element.GetElementId())
+	dpt.elements.timestamps = append(dpt.elements.timestamps, int64(ts))
+	dpt.elements.elementIDs = append(dpt.elements.elementIDs, writeEvent.Request.Element.GetElementId())
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -109,9 +109,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 	if err := series.Marshal(); err != nil {
 		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
-	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
+	dpt.elements.seriesIDs = append(dpt.elements.seriesIDs, series.ID)
 
-	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
+	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -120,7 +120,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 			tagFamily = req.Element.TagFamilies[i]
 		}
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tagFamilies[i].name = tagFamilySpec.Name
+		tagFamilies[i].tag = tagFamilySpec.Name
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
 			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
@@ -135,25 +135,25 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *st
 			))
 		}
 	}
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
+	dpt.elements.tagFamilies = append(dpt.elements.tagFamilies, tagFamilies)
 
 	var fields []index.Field
 	for _, ruleIndex := range stm.indexRuleLocators {
-		nv := getIndexValue(ruleIndex, tagFamilies)
-		if nv == nil {
+		tv := getIndexValue(ruleIndex, tagFamilies)
+		if tv == nil {
 			continue
 		}
-		if nv.value != nil {
+		if tv.value != nil {
 			fields = append(fields, index.Field{
 				Key: index.FieldKey{
 					IndexRuleID: ruleIndex.Rule.GetMetadata().GetId(),
 					Analyzer:    ruleIndex.Rule.Analyzer,
 				},
-				Term: nv.value,
+				Term: tv.value,
 			})
 			continue
 		}
-		for _, val := range nv.valueArr {
+		for _, val := range tv.valueArr {
 			rule := ruleIndex.Rule
 			fields = append(fields, index.Field{
 				Key: index.FieldKey{
@@ -183,7 +183,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		w.l.Warn().Msg("empty event")
 		return
 	}
-	groups := make(map[string]*dataPointsInGroup)
+	groups := make(map[string]*elementsInGroup)
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -209,7 +209,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)
+			dps.tsTable.Table().mustAddDataPoints(&dps.elements)
 			dps.tsTable.DecRef()
 		}
 		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
@@ -219,49 +219,49 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	return
 }
 
-func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {
-	nv := &nameValue{name: name}
+func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.TagValue) *tagValue {
+	tv := &tagValue{tag: name}
 	switch tagType {
 	case databasev1.TagType_TAG_TYPE_INT:
-		nv.valueType = pbv1.ValueTypeInt64
-		if tagValue.GetInt() != nil {
-			nv.value = convert.Int64ToBytes(tagValue.GetInt().GetValue())
+		tv.valueType = pbv1.ValueTypeInt64
+		if tagVal.GetInt() != nil {
+			tv.value = convert.Int64ToBytes(tagVal.GetInt().GetValue())
 		}
 	case databasev1.TagType_TAG_TYPE_STRING:
-		nv.valueType = pbv1.ValueTypeStr
-		if tagValue.GetStr() != nil {
-			nv.value = []byte(tagValue.GetStr().GetValue())
+		tv.valueType = pbv1.ValueTypeStr
+		if tagVal.GetStr() != nil {
+			tv.value = []byte(tagVal.GetStr().GetValue())
 		}
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
-		nv.valueType = pbv1.ValueTypeBinaryData
-		if tagValue.GetBinaryData() != nil {
-			nv.value = bytes.Clone(tagValue.GetBinaryData())
+		tv.valueType = pbv1.ValueTypeBinaryData
+		if tagVal.GetBinaryData() != nil {
+			tv.value = bytes.Clone(tagVal.GetBinaryData())
 		}
 	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
-		nv.valueType = pbv1.ValueTypeInt64Arr
-		if tagValue.GetIntArray() == nil {
-			return nv
+		tv.valueType = pbv1.ValueTypeInt64Arr
+		if tagVal.GetIntArray() == nil {
+			return tv
 		}
-		nv.valueArr = make([][]byte, len(tagValue.GetIntArray().Value))
-		for i := range tagValue.GetIntArray().Value {
-			nv.valueArr[i] = convert.Int64ToBytes(tagValue.GetIntArray().Value[i])
+		tv.valueArr = make([][]byte, len(tagVal.GetIntArray().Value))
+		for i := range tagVal.GetIntArray().Value {
+			tv.valueArr[i] = convert.Int64ToBytes(tagVal.GetIntArray().Value[i])
 		}
 	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
-		nv.valueType = pbv1.ValueTypeStrArr
-		if tagValue.GetStrArray() == nil {
-			return nv
+		tv.valueType = pbv1.ValueTypeStrArr
+		if tagVal.GetStrArray() == nil {
+			return tv
 		}
-		nv.valueArr = make([][]byte, len(tagValue.GetStrArray().Value))
-		for i := range tagValue.GetStrArray().Value {
-			nv.valueArr[i] = []byte(tagValue.GetStrArray().Value[i])
+		tv.valueArr = make([][]byte, len(tagVal.GetStrArray().Value))
+		for i := range tagVal.GetStrArray().Value {
+			tv.valueArr[i] = []byte(tagVal.GetStrArray().Value[i])
 		}
 	default:
-		logger.Panicf("unsupported tag value type: %T", tagValue.GetValue())
+		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
-	return nv
+	return tv
 }
 
-func getIndexValue(ruleIndex *partition.IndexRuleLocator, tagFamilies []nameValues) *nameValue {
+func getIndexValue(ruleIndex *partition.IndexRuleLocator, tagFamilies []tagValues) *tagValue {
 	if len(ruleIndex.TagIndices) != 1 {
 		logger.Panicf("the index rule %s(%v) didn't support composited tags",
 			ruleIndex.Rule.Metadata.Name, ruleIndex.Rule.Tags)

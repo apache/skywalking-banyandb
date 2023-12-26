@@ -29,39 +29,39 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type nameValue struct {
-	name      string
+type tagValue struct {
+	tag       string
 	value     []byte
 	valueArr  [][]byte
 	valueType pbv1.ValueType
 }
 
-func (n *nameValue) size() int {
-	s := len(n.name)
-	if n.value != nil {
-		s += len(n.value)
+func (t *tagValue) size() int {
+	s := len(t.tag)
+	if t.value != nil {
+		s += len(t.value)
 	}
-	if n.valueArr != nil {
-		for i := range n.valueArr {
-			s += len(n.valueArr[i])
+	if t.valueArr != nil {
+		for i := range t.valueArr {
+			s += len(t.valueArr[i])
 		}
 	}
 	return s
 }
 
-func (n *nameValue) marshal() []byte {
-	if n.valueArr != nil {
+func (t *tagValue) marshal() []byte {
+	if t.valueArr != nil {
 		var dst []byte
-		for i := range n.valueArr {
-			if n.valueType == pbv1.ValueTypeInt64Arr {
-				dst = append(dst, n.valueArr[i]...)
+		for i := range t.valueArr {
+			if t.valueType == pbv1.ValueTypeInt64Arr {
+				dst = append(dst, t.valueArr[i]...)
 				continue
 			}
-			dst = marshalVarArray(dst, n.valueArr[i])
+			dst = marshalVarArray(dst, t.valueArr[i])
 		}
 		return dst
 	}
-	return n.value
+	return t.value
 }
 
 const (
@@ -109,45 +109,45 @@ func unmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
 	return nil, nil, errors.New("invalid variable array")
 }
 
-type nameValues struct {
-	name   string
-	values []*nameValue
+type tagValues struct {
+	tag    string
+	values []*tagValue
 }
 
-type dataPoints struct {
+type elements struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
 	elementIDs  []string
-	tagFamilies [][]nameValues
+	tagFamilies [][]tagValues
 }
 
-func (d *dataPoints) Len() int {
-	return len(d.seriesIDs)
+func (e *elements) Len() int {
+	return len(e.seriesIDs)
 }
 
-func (d *dataPoints) Less(i, j int) bool {
-	if d.seriesIDs[i] != d.seriesIDs[j] {
-		return d.seriesIDs[i] < d.seriesIDs[j]
+func (e *elements) Less(i, j int) bool {
+	if e.seriesIDs[i] != e.seriesIDs[j] {
+		return e.seriesIDs[i] < e.seriesIDs[j]
 	}
-	return d.timestamps[i] < d.timestamps[j]
+	return e.timestamps[i] < e.timestamps[j]
 }
 
-func (d *dataPoints) Swap(i, j int) {
-	d.seriesIDs[i], d.seriesIDs[j] = d.seriesIDs[j], d.seriesIDs[i]
-	d.timestamps[i], d.timestamps[j] = d.timestamps[j], d.timestamps[i]
-	d.tagFamilies[i], d.tagFamilies[j] = d.tagFamilies[j], d.tagFamilies[i]
+func (e *elements) Swap(i, j int) {
+	e.seriesIDs[i], e.seriesIDs[j] = e.seriesIDs[j], e.seriesIDs[i]
+	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
+	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
 }
 
-type dataPointsInTable struct {
+type elementsInTable struct {
 	timeRange timestamp.TimeRange
 	tsTable   storage.TSTableWrapper[*tsTable]
 
-	dataPoints dataPoints
+	elements elements
 }
 
-type dataPointsInGroup struct {
+type elementsInGroup struct {
 	tsdb storage.TSDB[*tsTable]
 
 	docs   index.Documents
-	tables []*dataPointsInTable
+	tables []*elementsInTable
 }

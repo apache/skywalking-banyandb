@@ -52,7 +52,7 @@ func (tst *tsTable) Close() error {
 	return nil
 }
 
-func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
+func (tst *tsTable) mustAddDataPoints(dps *elements) {
 	if len(dps.seriesIDs) == 0 {
 		return
 	}

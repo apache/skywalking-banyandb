@@ -29,32 +29,32 @@ import (
 
 func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 	tests := []struct {
-		dps  *dataPoints
+		dps  *elements
 		name string
 		want partMetadata
 	}{
 		{
 			name: "Test with empty dataPoints",
-			dps: &dataPoints{
+			dps: &elements{
 				timestamps:  []int64{},
 				elementIDs:  []string{},
 				seriesIDs:   []common.SeriesID{},
-				tagFamilies: make([][]nameValues, 0),
+				tagFamilies: make([][]tagValues, 0),
 			},
 			want: partMetadata{},
 		},
 		{
 			name: "Test with one item in dataPoints",
-			dps: &dataPoints{
+			dps: &elements{
 				timestamps: []int64{1},
 				elementIDs: []string{"0"},
 				seriesIDs:  []common.SeriesID{1},
-				tagFamilies: [][]nameValues{
+				tagFamilies: [][]tagValues{
 					{
 						{
-							"arrTag", []*nameValue{
-								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
-								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+							"arrTag", []*tagValue{
+								{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 							},
 						},
 					},
@@ -90,62 +90,62 @@ func Test_memPart_mustInitFromDataPoints(t *testing.T) {
 	}
 }
 
-var dps = &dataPoints{
+var dps = &elements{
 	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
 	timestamps: []int64{1, 2, 8, 10, 100, 220},
 	elementIDs: []string{"0", "1", "2", "3", "4", "5"},
-	tagFamilies: [][]nameValues{
+	tagFamilies: [][]tagValues{
 		{
 			{
-				name: "arrTag", values: []*nameValue{
-					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
-					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 				},
 			},
 			{
-				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
-					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				name: "arrTag", values: []*nameValue{
-					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
-					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
 				},
 			},
 			{
-				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
-					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
-				},
-			},
-		},
-		{
-			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
-					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag2"), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag11"), valueArr: nil},
-					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag22"), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{tag: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag2"), valueArr: nil},
+				},
+			},
+		},
+		{
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag11"), valueArr: nil},
+					{tag: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag22"), valueArr: nil},
 				},
 			},
 		},

@@ -36,7 +36,7 @@ import (
 func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
-		tagFamilies []columnFamily
+		tagFamilies []tagFamily
 	}
 	tests := []struct {
 		name   string
@@ -47,11 +47,11 @@ func Test_block_reset(t *testing.T) {
 			name: "Test reset",
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
-				tagFamilies: []columnFamily{{}, {}, {}},
+				tagFamilies: []tagFamily{{}, {}, {}},
 			},
 			want: block{
 				timestamps:  []int64{},
-				tagFamilies: []columnFamily{},
+				tagFamilies: []tagFamily{},
 			},
 		},
 	}
@@ -72,9 +72,9 @@ func Test_block_reset(t *testing.T) {
 func toTagProjection(b block) map[string][]string {
 	result := make(map[string][]string, len(b.tagFamilies))
 	for i := range b.tagFamilies {
-		names := make([]string, len(b.tagFamilies[i].columns))
-		for i2 := range b.tagFamilies[i].columns {
-			names[i2] = b.tagFamilies[i].columns[i2].name
+		names := make([]string, len(b.tagFamilies[i].tags))
+		for i2 := range b.tagFamilies[i].tags {
+			names[i2] = b.tagFamilies[i].tags[i2].name
 		}
 		result[b.tagFamilies[i].name] = names
 	}
@@ -84,10 +84,10 @@ func toTagProjection(b block) map[string][]string {
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
 	elementIDs: []string{"0", "1"},
-	tagFamilies: []columnFamily{
+	tagFamilies: []tagFamily{
 		{
 			name: "arrTag",
-			columns: []column{
+			tags: []tag{
 				{
 					name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
 					values: [][]byte{marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")})},
@@ -103,13 +103,13 @@ var conventionalBlock = block{
 		},
 		{
 			name: "binaryTag",
-			columns: []column{
+			tags: []tag{
 				{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{longText, longText}},
 			},
 		},
 		{
 			name: "singleTag",
-			columns: []column{
+			tags: []tag{
 				{name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2")}},
 				{name: "intTag", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
 			},
@@ -121,7 +121,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	type args struct {
 		timestamps  []int64
 		elementIDs  []string
-		tagFamilies [][]nameValues
+		tagFamilies [][]tagValues
 	}
 	tests := []struct {
 		name string
@@ -133,42 +133,42 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				elementIDs: []string{"0", "1"},
-				tagFamilies: [][]nameValues{
+				tagFamilies: [][]tagValues{
 					{
 						{
-							"arrTag", []*nameValue{
-								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
-								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+							"arrTag", []*tagValue{
+								{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 							},
 						},
 						{
-							"binaryTag", []*nameValue{
-								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+							"binaryTag", []*tagValue{
+								{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 							},
 						},
 						{
-							"singleTag", []*nameValue{
-								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
-								{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+							"singleTag", []*tagValue{
+								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
 							},
 						},
 					},
 					{
 						{
-							"arrTag", []*nameValue{
-								{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
-								{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
+							"arrTag", []*tagValue{
+								{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+								{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(50), convert.Int64ToBytes(60)}},
 							},
 						},
 						{
-							"binaryTag", []*nameValue{
-								{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+							"binaryTag", []*tagValue{
+								{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 							},
 						},
 						{
-							"singleTag", []*nameValue{
-								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
-								{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
+							"singleTag", []*tagValue{
+								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
+								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
 							},
 						},
 					},
@@ -199,12 +199,12 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec a diam lectus. Se
 `)
 
 func marshalStrArr(arr [][]byte) []byte {
-	nv := &nameValue{valueType: pbv1.ValueTypeStrArr, valueArr: arr}
+	nv := &tagValue{valueType: pbv1.ValueTypeStrArr, valueArr: arr}
 	return nv.marshal()
 }
 
 func marshalIntArr(arr [][]byte) []byte {
-	nv := &nameValue{valueType: pbv1.ValueTypeInt64Arr, valueArr: arr}
+	nv := &tagValue{valueType: pbv1.ValueTypeInt64Arr, valueArr: arr}
 	return nv.marshal()
 }
 
@@ -293,7 +293,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(columnFamily{}, column{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}

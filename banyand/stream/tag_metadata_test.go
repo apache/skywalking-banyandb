@@ -25,36 +25,36 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func Test_columnMetadata_reset(t *testing.T) {
-	cm := &columnMetadata{
+func Test_tagMetadata_reset(t *testing.T) {
+	tm := &tagMetadata{
 		name:      "test",
 		valueType: pbv1.ValueTypeStr,
 		dataBlock: dataBlock{offset: 1, size: 10},
 	}
 
-	cm.reset()
+	tm.reset()
 
-	assert.Equal(t, "", cm.name)
-	assert.Equal(t, pbv1.ValueType(0), cm.valueType)
-	assert.Equal(t, dataBlock{}, cm.dataBlock)
+	assert.Equal(t, "", tm.name)
+	assert.Equal(t, pbv1.ValueType(0), tm.valueType)
+	assert.Equal(t, dataBlock{}, tm.dataBlock)
 }
 
-func Test_columnMetadata_copyFrom(t *testing.T) {
-	src := &columnMetadata{
+func Test_tagMetadata_copyFrom(t *testing.T) {
+	src := &tagMetadata{
 		name:      "test",
 		valueType: pbv1.ValueTypeStr,
 		dataBlock: dataBlock{offset: 1, size: 10},
 	}
 
-	dest := &columnMetadata{}
+	dest := &tagMetadata{}
 	assert.NotEqual(t, src, dest)
 
 	dest.copyFrom(src)
 	assert.Equal(t, src, dest)
 }
 
-func Test_columnMetadata_marshal(t *testing.T) {
-	original := &columnMetadata{
+func Test_tagMetadata_marshal(t *testing.T) {
+	original := &tagMetadata{
 		name:      "test",
 		valueType: pbv1.ValueTypeStr,
 		dataBlock: dataBlock{offset: 1, size: 10},
@@ -63,16 +63,16 @@ func Test_columnMetadata_marshal(t *testing.T) {
 	marshaled := original.marshal(nil)
 	assert.NotNil(t, marshaled)
 
-	unmarshaled := &columnMetadata{}
+	unmarshaled := &tagMetadata{}
 	_, err := unmarshaled.unmarshal(marshaled)
 	assert.Nil(t, err)
 
 	assert.Equal(t, original, unmarshaled)
 }
 
-func Test_columnFamilyMetadata_reset(t *testing.T) {
-	cfm := &columnFamilyMetadata{
-		columnMetadata: []columnMetadata{
+func Test_tagFamilyMetadata_reset(t *testing.T) {
+	tfm := &tagFamilyMetadata{
+		tagMetadata: []tagMetadata{
 			{
 				name:      "test1",
 				valueType: pbv1.ValueTypeStr,
@@ -86,14 +86,14 @@ func Test_columnFamilyMetadata_reset(t *testing.T) {
 		},
 	}
 
-	cfm.reset()
+	tfm.reset()
 
-	assert.Equal(t, 0, len(cfm.columnMetadata))
+	assert.Equal(t, 0, len(tfm.tagMetadata))
 }
 
-func Test_columnFamilyMetadata_copyFrom(t *testing.T) {
-	src := &columnFamilyMetadata{
-		columnMetadata: []columnMetadata{
+func Test_tagFamilyMetadata_copyFrom(t *testing.T) {
+	src := &tagFamilyMetadata{
+		tagMetadata: []tagMetadata{
 			{
 				name:      "test1",
 				valueType: pbv1.ValueTypeStr,
@@ -107,7 +107,7 @@ func Test_columnFamilyMetadata_copyFrom(t *testing.T) {
 		},
 	}
 
-	dest := &columnFamilyMetadata{}
+	dest := &tagFamilyMetadata{}
 	assert.NotEqual(t, src, dest)
 
 	dest.copyFrom(src)
@@ -115,29 +115,29 @@ func Test_columnFamilyMetadata_copyFrom(t *testing.T) {
 	assert.Equal(t, src, dest)
 }
 
-func Test_columnFamilyMetadata_resizeColumnMetadata(t *testing.T) {
-	cfm := &columnFamilyMetadata{
-		columnMetadata: make([]columnMetadata, 2, 5),
+func Test_tagFamilyMetadata_resizeTagMetadata(t *testing.T) {
+	tfm := &tagFamilyMetadata{
+		tagMetadata: make([]tagMetadata, 2, 5),
 	}
 
-	cms := cfm.resizeColumnMetadata(3)
-	assert.Equal(t, 3, len(cms))
-	assert.Equal(t, 5, cap(cms))
+	tms := tfm.resizeTagMetadata(3)
+	assert.Equal(t, 3, len(tms))
+	assert.Equal(t, 5, cap(tms))
 
-	cms = cfm.resizeColumnMetadata(6)
-	assert.Equal(t, 6, len(cms))
-	assert.True(t, cap(cms) >= 6) // The capacity is at least 6, but could be more
+	tms = tfm.resizeTagMetadata(6)
+	assert.Equal(t, 6, len(tms))
+	assert.True(t, cap(tms) >= 6) // The capacity is at least 6, but could be more
 }
 
-func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
+func Test_tagFamilyMetadata_marshalUnmarshal(t *testing.T) {
 	tests := []struct {
-		original *columnFamilyMetadata
+		original *tagFamilyMetadata
 		name     string
 	}{
 		{
-			name: "Non-empty columnMetadata",
-			original: &columnFamilyMetadata{
-				columnMetadata: []columnMetadata{
+			name: "Non-empty tagMetadata",
+			original: &tagFamilyMetadata{
+				tagMetadata: []tagMetadata{
 					{
 						name:      "test1",
 						valueType: pbv1.ValueTypeStr,
@@ -152,8 +152,8 @@ func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
 			},
 		},
 		{
-			name:     "Empty columnMetadata",
-			original: &columnFamilyMetadata{},
+			name:     "Empty tagMetadata",
+			original: &tagFamilyMetadata{},
 		},
 	}
 
@@ -162,7 +162,7 @@ func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
 			marshaled := tt.original.marshal(nil)
 			assert.NotNil(t, marshaled)
 
-			unmarshaled := &columnFamilyMetadata{}
+			unmarshaled := &tagFamilyMetadata{}
 			_, err := unmarshaled.unmarshal(marshaled)
 			assert.Nil(t, err)
 

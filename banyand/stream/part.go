@@ -105,7 +105,7 @@ func (mp *memPart) reset() {
 	}
 }
 
-func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
+func (mp *memPart) mustInitFromDataPoints(dps *elements) {
 	mp.reset()
 
 	if len(dps.timestamps) == 0 {
@@ -139,10 +139,10 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 	releaseBlockWriter(bsw)
 }
 
-func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
+func uncompressedDataPointSizeBytes(index int, dps *elements) uint64 {
 	n := uint64(len(time.RFC3339Nano))
 	for i := range dps.tagFamilies[index] {
-		n += uint64(len(dps.tagFamilies[index][i].name))
+		n += uint64(len(dps.tagFamilies[index][i].tag))
 		for j := range dps.tagFamilies[index][i].values {
 			n += uint64(dps.tagFamilies[index][i].values[j].size())
 		}
