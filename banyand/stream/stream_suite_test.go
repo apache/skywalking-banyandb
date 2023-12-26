@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package stream_test
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -58,7 +59,7 @@ func (p *preloadStreamService) PreRun(ctx context.Context) error {
 }
 
 type services struct {
-	stream          *service
+	stream          stream.Service
 	metadataService metadata.Service
 }
 
@@ -74,7 +75,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Stream Service
-	streamService, err := NewService(context.TODO(), metadataService, pipeline)
+	streamService, err := stream.NewService(context.TODO(), metadataService, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
 	var flags []string
@@ -95,7 +96,7 @@ func setUp() (*services, func()) {
 		streamService,
 	)
 	return &services{
-			stream:          streamService.(*service),
+			stream:          streamService,
 			metadataService: metadataService,
 		}, func() {
 			moduleDeferFunc()
