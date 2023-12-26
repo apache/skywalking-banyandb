@@ -115,6 +115,15 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, err
 	}
 
+	if sqo.Filter != nil {
+		for _, tw := range tabWrappers {
+			_, err := tw.Table().Index().Search(ctx, sl, sqo.Filter)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	var result queryResult
 	if len(sl) < 1 {
 		return &result, nil

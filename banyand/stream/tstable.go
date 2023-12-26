@@ -39,7 +39,7 @@ type tsTable struct {
 	sync.RWMutex
 }
 
-func (tst *tsTable) Index() IndexDB {
+func (tst *tsTable) Index() *elementIndex {
 	return tst.index
 }
 

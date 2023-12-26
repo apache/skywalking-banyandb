@@ -26,29 +26,29 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// IndexDB is the interface of index database.
-type IndexDB interface {
-	Write(docs index.Documents) error
-	Search(ctx context.Context, seriesList *pbv1.SeriesList, filter index.Filter) (posting.List, error)
-}
-
 type elementIndex struct {
 	store index.SeriesStore
-	// l     *logger.Logger
 }
 
 func (s *elementIndex) Write(docs index.Documents) error {
 	return s.store.Batch(docs)
 }
 
-func (s *elementIndex) Search(_ context.Context, _ *pbv1.SeriesList, filter index.Filter) (posting.List, error) {
-	plFilter, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
-		return s.store, nil
-	}, 0)
-	if err != nil {
-		return nil, err
+func (s *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
+	var pls posting.List
+	for _, series := range seriesList {
+		pl, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+			return s.store, nil
+		}, series.ID)
+		if err != nil {
+			return nil, err
+		}
+		err = pls.Union(pl)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return plFilter, nil
+	return pls, nil
 }
 
 func (s *elementIndex) Close() error {

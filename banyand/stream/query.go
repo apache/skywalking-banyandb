@@ -131,79 +131,6 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 	}
 }
 
-// nolint: unused
-func mustDecodeFieldValue(valueType pbv1.ValueType, value []byte) *modelv1.FieldValue {
-	if value == nil {
-		switch valueType {
-		case pbv1.ValueTypeInt64, pbv1.ValueTypeFloat64:
-			logger.Panicf("int64 and float64 can't be nil")
-		case pbv1.ValueTypeStr:
-			return pbv1.EmptyStrFieldValue
-		case pbv1.ValueTypeBinaryData:
-			return pbv1.EmptyBinaryFieldValue
-		default:
-			return pbv1.NullFieldValue
-		}
-	}
-	switch valueType {
-	case pbv1.ValueTypeInt64:
-		return int64FieldValue(convert.BytesToInt64(value))
-	case pbv1.ValueTypeFloat64:
-		return float64FieldValue(convert.BytesToFloat64(value))
-	case pbv1.ValueTypeStr:
-		return strFieldValue(string(value))
-	case pbv1.ValueTypeBinaryData:
-		return binaryDataFieldValue(value)
-	default:
-		logger.Panicf("unsupported value type: %v", valueType)
-		return nil
-	}
-}
-
-// nolint: unused
-func int64FieldValue(value int64) *modelv1.FieldValue {
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_Int{
-			Int: &modelv1.Int{
-				Value: value,
-			},
-		},
-	}
-}
-
-// nolint: unused
-func float64FieldValue(value float64) *modelv1.FieldValue {
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_Float{
-			Float: &modelv1.Float{
-				Value: value,
-			},
-		},
-	}
-}
-
-// nolint: unused
-func strFieldValue(value string) *modelv1.FieldValue {
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_Str{
-			Str: &modelv1.Str{
-				Value: value,
-			},
-		},
-	}
-}
-
-// nolint: unused
-func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
-	data := make([]byte, len(value))
-	copy(data, value)
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_BinaryData{
-			BinaryData: data,
-		},
-	}
-}
-
 type queryResult struct {
 	sidToIndex map[common.SeriesID]int
 	data       []*blockCursor
@@ -265,17 +192,7 @@ func (qr queryResult) Len() int {
 func (qr queryResult) Less(i, j int) bool {
 	leftTS := qr.data[i].timestamps[qr.data[i].idx]
 	rightTS := qr.data[j].timestamps[qr.data[j].idx]
-	leftVersion := qr.data[i].p.partMetadata.Version
-	rightVersion := qr.data[j].p.partMetadata.Version
 	if qr.orderByTS {
-		if leftTS == rightTS {
-			if qr.data[i].bm.seriesID == qr.data[j].bm.seriesID {
-				// sort version in descending order if timestamps and seriesID are equal
-				return leftVersion > rightVersion
-			}
-			// sort seriesID in ascending order if timestamps are equal
-			return qr.data[i].bm.seriesID < qr.data[j].bm.seriesID
-		}
 		if qr.ascTS {
 			return leftTS < rightTS
 		}
@@ -283,14 +200,6 @@ func (qr queryResult) Less(i, j int) bool {
 	}
 	leftSIDIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
 	rightSIDIndex := qr.sidToIndex[qr.data[j].bm.seriesID]
-	if leftSIDIndex == rightSIDIndex {
-		if leftTS == rightTS {
-			// sort version in descending order if timestamps and seriesID are equal
-			return leftVersion > rightVersion
-		}
-		// sort timestamps in ascending order if seriesID are equal
-		return leftTS < rightTS
-	}
 	return leftSIDIndex < rightSIDIndex
 }
 
@@ -320,7 +229,6 @@ func (qr *queryResult) merge() *pbv1.Result {
 		step = -1
 	}
 	result := &pbv1.Result{}
-	var lastPartVersion int64
 	var lastSid common.SeriesID
 
 	for qr.Len() > 0 {
@@ -330,16 +238,7 @@ func (qr *queryResult) merge() *pbv1.Result {
 		}
 		lastSid = topBC.bm.seriesID
 
-		if len(result.Timestamps) > 0 &&
-			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topBC.p.partMetadata.Version > lastPartVersion {
-				logger.Panicf("following parts version should be less or equal to the previous one")
-			}
-		} else {
-			topBC.copyTo(result)
-			lastPartVersion = topBC.p.partMetadata.Version
-		}
-
+		topBC.copyTo(result)
 		topBC.idx += step
 
 		if qr.orderByTimestampDesc() {
