@@ -20,17 +20,16 @@ package stream
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
-	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -50,7 +49,8 @@ type localIndexScan struct {
 	l                 *logger.Logger
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
-	entities          []tsdb.Entity
+	projectionTags    []pbv1.TagProjection
+	entities          [][]*modelv1.TagValue
 	maxElementSize    int
 }
 
@@ -63,85 +63,58 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Element, err error) {
-	var seriesList tsdb.SeriesList
+	var orderBy *pbv1.OrderBy
+	if i.order != nil {
+		orderBy = &pbv1.OrderBy{
+			Index: i.order.Index,
+			Sort:  i.order.Sort,
+		}
+	}
 	ec := executor.FromStreamExecutionContext(ctx)
+	var results []pbv1.StreamQueryResult
 	for _, e := range i.entities {
-		shards, errInternal := ec.Shards(e)
-		if errInternal != nil {
-			return nil, errInternal
+		result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
+			Name:          i.metadata.GetName(),
+			TimeRange:     &i.timeRange,
+			Entity:        e,
+			Filter:        i.filter,
+			Order:         orderBy,
+			TagProjection: i.projectionTags,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to query measure: %w", err)
 		}
-		for _, shard := range shards {
-			sl, errInternal := shard.Series().List(context.WithValue(
-				ctx,
-				logger.ContextKey,
-				i.l,
-			), tsdb.NewPath(e))
-			if errInternal != nil {
-				return nil, errInternal
+
+		results = append(results, result)
+	}
+
+	for _, result := range results {
+		r := result.Pull()
+		if r == nil {
+			continue
+		}
+		for i := range r.Timestamps {
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
 			}
-			seriesList = seriesList.Merge(sl)
-		}
-	}
-	if len(seriesList) == 0 {
-		return nil, nil
-	}
-	var builders []logical.SeekerBuilder
-	if i.order.Index != nil {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByIndex(i.order.Index, i.order.Sort)
-		})
-	} else {
-		builders = append(builders, func(builder tsdb.SeekerBuilder) {
-			builder.OrderByTime(i.order.Sort)
-		})
-	}
-	if i.filter != nil {
-		builders = append(builders, func(b tsdb.SeekerBuilder) {
-			b.Filter(i.filter)
-		})
-	}
-	iters, closers, err := logical.ExecuteForShard(ctx, i.l, seriesList, i.timeRange, builders...)
-	if err != nil {
-		return nil, err
-	}
-	if len(closers) > 0 {
-		defer func(closers []io.Closer) {
-			for _, c := range closers {
-				err = multierr.Append(err, c.Close())
+
+			for _, tf := range r.TagFamilies {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
+				}
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[i],
+					})
+				}
 			}
-		}(closers)
-	}
-
-	var elems []*streamv1.Element
-
-	if len(iters) == 0 {
-		return elems, nil
-	}
-
-	it := logical.NewItemIter(iters, i.order.Sort)
-	defer func() {
-		err = multierr.Append(err, it.Close())
-	}()
-	for it.Next() {
-		nextItem := it.Val()
-		tagFamilies, innerErr := logical.ProjectItem(ec, nextItem, i.projectionTagRefs)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		elementID, innerErr := ec.ParseElementID(nextItem)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		elems = append(elems, &streamv1.Element{
-			ElementId:   elementID,
-			Timestamp:   timestamppb.New(time.Unix(0, int64(nextItem.Time()))),
-			TagFamilies: tagFamilies,
-		})
-		if len(elems) > i.maxElementSize {
-			break
+			elements = append(elements, e)
 		}
 	}
-	return elems, nil
+	return elements, nil
 }
 
 func (i *localIndexScan) String() string {
