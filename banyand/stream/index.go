@@ -21,24 +21,33 @@ import (
 	"context"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type elementIndex struct {
-	store index.SeriesStore
+	store index.ElementStore
 }
 
-func (s *elementIndex) Write(docs index.Documents) error {
-	return s.store.Batch(docs)
+func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
+	iter, err := e.store.Iterator(fieldKey, termRange, order)
+	if err != nil {
+		return nil, err
+	}
+	return iter, nil
 }
 
-func (s *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
+func (e *elementIndex) Write(docs index.Documents) error {
+	return e.store.Batch(docs)
+}
+
+func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
 	var pls posting.List
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
-			return s.store, nil
+			return e.store, nil
 		}, series.ID)
 		if err != nil {
 			return nil, err
@@ -51,6 +60,6 @@ func (s *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 	return pls, nil
 }
 
-func (s *elementIndex) Close() error {
-	return s.store.Close()
+func (e *elementIndex) Close() error {
+	return e.store.Close()
 }

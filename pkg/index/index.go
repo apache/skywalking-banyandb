@@ -243,6 +243,10 @@ type SeriesStore interface {
 	SearchWildcard([]byte) ([]Series, error)
 }
 
+type ElementStore interface {
+	Store
+}
+
 // GetSearcher returns a searcher associated with input index rule type.
 type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 

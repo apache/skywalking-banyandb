@@ -25,17 +25,21 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
+	"go.uber.org/multierr"
 )
 
 const (
@@ -101,7 +105,31 @@ func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
 	return string(rawBytes), nil
 }
 
-func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
+// String outputs the string represent of an series.
+func stringLiteral(tvs []*modelv1.TagValue) string {
+	var strBuilder strings.Builder
+	for i := 0; i < len(tvs); i++ {
+		strBuilder.WriteString(tvs[i].String())
+		if i < len(tvs)-1 {
+			strBuilder.WriteString(".")
+		}
+	}
+	return strBuilder.String()
+}
+
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[item] {
+	var ii []itersort.Iterator[item]
+	for _, iter := range iters {
+		ii = append(ii, iter)
+	}
+	if s == modelv1.Sort_SORT_DESC {
+		return itersort.NewItemIter[item](ii, true)
+	}
+	return itersort.NewItemIter[item](ii, false)
+}
+
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) ([]*streamv1.Element, error) {
 	if sqo.TimeRange == nil || sqo.Entity == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -115,13 +143,49 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, err
 	}
 
-	if sqo.Filter != nil {
-		for _, tw := range tabWrappers {
-			_, err := tw.Table().Index().Search(ctx, sl, sqo.Filter)
-			if err != nil {
-				return nil, err
-			}
+	var iters []*searcherIterator
+	for _, series := range sl {
+		seriesLiteral := stringLiteral(series.EntityValues)
+		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID, seriesLiteral)
+		seekerBuilder := newSeekerBuilder(sqo.Filter, seriesSpan, sqo.Order.Index, s.l, sqo.Order.Sort)
+		seriesIters, err := seekerBuilder.buildSeriesByIndex()
+		if err != nil {
+			return nil, err
 		}
+		if len(seriesIters) > 0 {
+			iters = append(iters, seriesIters...)
+		}
+	}
+
+	var elems []*streamv1.Element
+	if len(iters) == 0 {
+		return elems, nil
+	}
+
+	it := NewItemIter(iters, sqo.Order.Sort)
+	defer func() {
+		err = multierr.Append(err, it.Close())
+	}()
+	for it.Next() {
+		nextItem := it.Val()
+		elems = append(elems, nextItem.Element())
+		// TODO: break if reach limit
+	}
+	return elems, nil
+}
+
+func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
+	if sqo.TimeRange == nil || sqo.Entity == nil {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
+	if err != nil {
+		return nil, err
 	}
 
 	var result queryResult

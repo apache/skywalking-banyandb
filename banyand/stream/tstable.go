@@ -89,7 +89,6 @@ type tstIter struct {
 	piPool        []partIter
 	piHeap        partIterHeap
 	nextBlockNoop bool
-	// fieldIter     index.FieldIterator
 }
 
 func (ti *tstIter) reset() {
