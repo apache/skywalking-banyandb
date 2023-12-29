@@ -97,8 +97,8 @@ type item struct {
 	seriesID    common.SeriesID
 }
 
-func (i *item) Element() *streamv1.Element {
-	panic("not implemented")
+func (i *item) Element() (*streamv1.Element, error) {
+	return i.table.getElement(i.seriesID, i.itemID)
 }
 
 func (i *item) Time() uint64 {

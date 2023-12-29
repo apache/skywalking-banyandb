@@ -19,16 +19,34 @@ package stream
 
 import (
 	"context"
+	"path"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type elementIndex struct {
 	store index.ElementStore
+	l     *logger.Logger
+}
+
+func newElementIndex(ctx context.Context, root string) (*elementIndex, error) {
+	ei := &elementIndex{
+		l: logger.Fetch(ctx, "element_index"),
+	}
+	var err error
+	if ei.store, err = inverted.NewStore(inverted.StoreOpts{
+		Path:   path.Join(root, "element_idx"),
+		Logger: ei.l,
+	}); err != nil {
+		return nil, err
+	}
+	return ei, nil
 }
 
 func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {

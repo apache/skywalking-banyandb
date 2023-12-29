@@ -34,6 +34,10 @@ type primaryBlockMetadata struct {
 	dataBlock
 }
 
+func (ph *primaryBlockMetadata) mightContainElement(seriesID common.SeriesID, timestamp common.ItemID) bool {
+	return seriesID == ph.seriesID && timestamp >= common.ItemID(ph.minTimestamp) && timestamp <= common.ItemID(ph.maxTimestamp)
+}
+
 // reset resets ih for subsequent re-use.
 func (ph *primaryBlockMetadata) reset() {
 	ph.seriesID = 0

@@ -19,6 +19,7 @@ package stream
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -148,6 +149,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				Key: index.FieldKey{
 					IndexRuleID: ruleIndex.Rule.GetMetadata().GetId(),
 					Analyzer:    ruleIndex.Rule.Analyzer,
+					SeriesID:    series.ID,
 				},
 				Term: tv.value,
 			})
@@ -159,16 +161,23 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				Key: index.FieldKey{
 					IndexRuleID: rule.GetMetadata().GetId(),
 					Analyzer:    rule.Analyzer,
+					SeriesID:    series.ID,
 				},
 				Term: val,
 			})
 		}
 	}
 
+	for _, ts := range et.elements.timestamps {
+		et.docs = append(et.docs, index.Document{
+			DocID:  uint64(ts),
+			Fields: fields,
+		})
+	}
+
 	eg.docs = append(eg.docs, index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
-		Fields:       fields,
 	})
 	return dst, nil
 }
@@ -210,10 +219,25 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)
+			index := es.tsTable.Table().Index()
+			if index == nil {
+				// TODO: change path
+				elementIndex, err := newElementIndex(context.TODO(), "")
+				es.tsTable.Table().index = index
+				if err != nil {
+					w.l.Error().Err(err).Msg("cannot create element index")
+				}
+				index = elementIndex
+				defer elementIndex.Close()
+			}
+			if err := index.Write(es.docs); err != nil {
+				w.l.Error().Err(err).Msg("cannot write element index")
+			}
 			es.tsTable.DecRef()
+			es.tsTable.Table().index.Close()
 		}
 		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-			w.l.Error().Err(err).Msg("cannot write index")
+			w.l.Error().Err(err).Msg("cannot write series index")
 		}
 	}
 	return

@@ -126,6 +126,15 @@ type StreamQueryOptions struct {
 	TagProjection []TagProjection
 }
 
+type StreamSortOptions struct {
+	Name          string
+	TimeRange     *timestamp.TimeRange
+	Entities        [][]*modelv1.TagValue
+	Filter        index.Filter
+	Order         *OrderBy
+	TagProjection []TagProjection
+}
+
 // StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
 	Pull() *Result

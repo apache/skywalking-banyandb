@@ -65,6 +65,7 @@ type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+	Sort(ctx context.Context, opts pbv1.StreamSortOptions) ([]*streamv1.Element, error)
 }
 
 var _ Stream = (*stream)(nil)
@@ -129,8 +130,9 @@ func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 	return itersort.NewItemIter[item](ii, false)
 }
 
-func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) ([]*streamv1.Element, error) {
-	if sqo.TimeRange == nil || sqo.Entity == nil {
+// TODO: refactor to column-based query
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []*streamv1.Element, err error) {
+	if sqo.TimeRange == nil || sqo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
@@ -138,13 +140,18 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) ([]*stre
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
-	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
-	if err != nil {
-		return nil, err
+
+	var seriesList pbv1.SeriesList
+	for _, entity := range sqo.Entities {
+		sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: entity})
+		if err != nil {
+			return nil, err
+		}
+		seriesList.Merge(sl)
 	}
 
 	var iters []*searcherIterator
-	for _, series := range sl {
+	for _, series := range seriesList {
 		seriesLiteral := stringLiteral(series.EntityValues)
 		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID, seriesLiteral)
 		seekerBuilder := newSeekerBuilder(sqo.Filter, seriesSpan, sqo.Order.Index, s.l, sqo.Order.Sort)
@@ -157,7 +164,6 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) ([]*stre
 		}
 	}
 
-	var elems []*streamv1.Element
 	if len(iters) == 0 {
 		return elems, nil
 	}
@@ -168,7 +174,11 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) ([]*stre
 	}()
 	for it.Next() {
 		nextItem := it.Val()
-		elems = append(elems, nextItem.Element())
+		elem, err := nextItem.Element()
+		if err != nil {
+			return nil, err
+		}
+		elems= append(elems, elem)
 		// TODO: break if reach limit
 	}
 	return elems, nil

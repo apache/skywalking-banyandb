@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -49,7 +50,7 @@ func (tst *tsTable) Close() error {
 	for _, p := range tst.memParts {
 		p.decRef()
 	}
-	return nil
+	return tst.index.Close()
 }
 
 func (tst *tsTable) mustAddElements(es *elements) {
@@ -81,6 +82,21 @@ func (tst *tsTable) getParts(dst []*partWrapper, dstPart []*part, opts queryOpti
 		dstPart = append(dstPart, p.p)
 	}
 	return dst, dstPart
+}
+
+func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID) (*streamv1.Element, error) {
+	tst.RLock()
+	defer tst.RUnlock()
+	for _, p := range tst.memParts {
+		if !p.p.containTimestamp(timestamp) {
+			continue
+		}
+		elem, err := p.p.getElement(seriesID, timestamp)
+		if err == nil {
+			return elem, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
 }
 
 type tstIter struct {

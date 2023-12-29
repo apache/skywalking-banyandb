@@ -18,13 +18,17 @@
 package stream
 
 import (
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
@@ -37,6 +41,61 @@ type part struct {
 	tagFamilies          map[string]fs.Reader
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
+}
+
+func (p *part) containTimestamp(timestamp common.ItemID) bool {
+	return timestamp >= common.ItemID(p.partMetadata.MinTimestamp) && timestamp <= common.ItemID(p.partMetadata.MaxTimestamp)
+}
+
+func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID) (*streamv1.Element, error) {
+	// TODO: refactor to column-based query
+	// TODO: cache blocks
+	for _, primary := range p.primaryBlockMetadata {
+		if !primary.mightContainElement(seriesID, timestamp) {
+			continue
+		}
+		var metaBuf []byte
+		p.meta.Read(int64(primary.offset), metaBuf)
+		var meta blockMetadata
+		meta.unmarshal(metaBuf)
+		// TODO: column prunning
+		var block block
+		var tagValuesDecoder *encoding.BytesBlockDecoder
+		block.mustReadFrom(tagValuesDecoder, p, meta)
+		for i, ts := range block.timestamps {
+			if common.ItemID(ts) == timestamp {
+				var tfs []*modelv1.TagFamily
+				// for _, cf := range block.tagFamilies {
+				// 	tf := tagFamily{
+				// 		name: cf.name,
+				// 	}
+				// 	for i := range cf.tags {
+				// 		tag := tag{
+				// 			name:      cf.tags[i].name,
+				// 			valueType: cf.tags[i].valueType,
+				// 		}
+				// 		if len(cf.tags[i].values) == 0 {
+				// 			continue
+				// 		}
+				// 		if len(cf.tags[i].values) != len(block.timestamps) {
+				// 			logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.tags[i].name, len(cf.tags[i].values), len(block.timestamps))
+				// 		}
+				// 		tag.values = append(tag.values, cf.tags[i].values[start:end]...)
+				// 		tf.tags = append(tf.tags, tag)
+				// 	}
+				// }
+				// for _, tagFamily := range block.tagFamilies {
+				// 	tfs = append(tfs, tagFamily)
+				// }
+				return &streamv1.Element{
+					// Timestamp:   common.ItemID(ts),
+					ElementId:   block.elementIDs[i],
+					TagFamilies: tfs,
+				}, nil
+			}
+		}
+	}
+	return nil, errors.New("element not found")
 }
 
 func openMemPart(mp *memPart) *part {

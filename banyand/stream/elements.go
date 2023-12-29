@@ -143,6 +143,7 @@ type elementsInTable struct {
 	tsTable   storage.TSTableWrapper[*tsTable]
 
 	elements elements
+	docs     index.Documents
 }
 
 type elementsInGroup struct {
