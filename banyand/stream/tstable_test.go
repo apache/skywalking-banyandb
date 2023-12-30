@@ -1,0 +1,346 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package stream
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/watcher"
+)
+
+func Test_tsTable_mustAddElements(t *testing.T) {
+	tests := []struct {
+		name   string
+		esList []*elements
+		want   int
+	}{
+		{
+			name: "Test with empty elements",
+			esList: []*elements{
+				{
+					timestamps:  []int64{},
+					elementIDs:  []string{},
+					seriesIDs:   []common.SeriesID{},
+					tagFamilies: make([][]tagValues, 0),
+				},
+			},
+			want: 0,
+		},
+		{
+			name: "Test with one item in elements",
+			esList: []*elements{
+				{
+					timestamps: []int64{1},
+					elementIDs: []string{"1"},
+					seriesIDs:  []common.SeriesID{1},
+					tagFamilies: [][]tagValues{
+						{
+							{
+								tag: "arrTag", values: []*tagValue{
+									{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+									{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: 1,
+		},
+		{
+			name: "Test with multiple calls to mustAddElements",
+			esList: []*elements{
+				esTS1,
+				esTS2,
+			},
+			want: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpPath, _ := test.Space(require.New(t))
+			index, _ := newElementIndex(context.TODO(), tmpPath)
+			tst := &tsTable{
+				loopCloser:    run.NewCloser(2),
+				introductions: make(chan *introduction),
+				index:         index,
+			}
+			flushCh := make(chan *flusherIntroduction)
+			introducerWatcher := make(watcher.Channel, 1)
+			go tst.introducerLoop(flushCh, introducerWatcher, 1)
+			defer tst.Close()
+			for _, es := range tt.esList {
+				tst.mustAddElements(es)
+				time.Sleep(100 * time.Millisecond)
+			}
+			s := tst.currentSnapshot()
+			if s == nil {
+				s = new(snapshot)
+			}
+			defer s.decRef()
+			assert.Equal(t, tt.want, len(s.parts))
+			var lastVersion uint64
+			for _, pw := range s.parts {
+				require.Greater(t, pw.ID(), uint64(0))
+				if lastVersion == 0 {
+					lastVersion = pw.ID()
+				} else {
+					require.Less(t, lastVersion, pw.ID())
+				}
+			}
+		})
+	}
+}
+
+func Test_tstIter(t *testing.T) {
+	tests := []struct {
+		wantErr      error
+		name         string
+		esList       []*elements
+		sids         []common.SeriesID
+		want         []blockMetadata
+		minTimestamp int64
+		maxTimestamp int64
+	}{
+		{
+			name:         "Test with no elements",
+			esList:       []*elements{},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 1,
+		},
+		{
+			name:         "Test with single part",
+			esList:       []*elements{esTS1},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 1,
+			want: []blockMetadata{
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+			},
+		},
+		{
+			name:         "Test with multiple parts with different ts",
+			esList:       []*elements{esTS1, esTS2},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 2,
+			want: []blockMetadata{
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+			},
+		},
+		{
+			name:         "Test with multiple parts with same ts",
+			esList:       []*elements{esTS1, esTS1},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 2,
+			want: []blockMetadata{
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verify := func(tst *tsTable) uint64 {
+				defer tst.Close()
+				s := tst.currentSnapshot()
+				if s == nil {
+					s = new(snapshot)
+				}
+				defer s.decRef()
+				pp, n := s.getParts(nil, queryOptions{
+					minTimestamp: tt.minTimestamp,
+					maxTimestamp: tt.maxTimestamp,
+				})
+				require.Equal(t, len(s.parts), n)
+				ti := &tstIter{}
+				ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+				var got []blockMetadata
+				for ti.nextBlock() {
+					if ti.piHeap[0].curBlock.seriesID == 0 {
+						t.Errorf("Expected curBlock to be initialized, but it was nil")
+					}
+					got = append(got, ti.piHeap[0].curBlock)
+				}
+
+				if !errors.Is(ti.Error(), tt.wantErr) {
+					t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
+				}
+
+				if diff := cmp.Diff(got, tt.want,
+					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmp.AllowUnexported(blockMetadata{}),
+				); diff != "" {
+					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+				return s.epoch
+			}
+
+			t.Run("memory snapshot", func(t *testing.T) {
+				tst := &tsTable{
+					loopCloser:    run.NewCloser(2),
+					introductions: make(chan *introduction),
+				}
+				tmpPath, _ := test.Space(require.New(t))
+				index, _ := newElementIndex(context.TODO(), tmpPath)
+				tst.index = index
+				flushCh := make(chan *flusherIntroduction)
+				introducerWatcher := make(watcher.Channel, 1)
+				go tst.introducerLoop(flushCh, introducerWatcher, 1)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
+					time.Sleep(100 * time.Millisecond)
+				}
+				verify(tst)
+			})
+
+			t.Run("file snapshot", func(t *testing.T) {
+				tmpPath, defFn := test.Space(require.New(t))
+				fileSystem := fs.NewLocalFileSystem()
+				defer defFn()
+
+				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
+					time.Sleep(100 * time.Millisecond)
+				}
+				epoch := verify(tst)
+
+				// reopen the table
+				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				require.NoError(t, err)
+				assert.Equal(t, epoch, verify(tst))
+			})
+		})
+	}
+}
+
+var tagProjections = map[int][]pbv1.TagProjection{
+	1: {
+		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
+		{Family: "binaryTag", Names: []string{"binaryTag"}},
+		{Family: "singleTag", Names: []string{"strTag", "intTag"}},
+	},
+	2: {
+		{Family: "singleTag", Names: []string{"strTag1", "strTag2"}},
+	},
+}
+
+var esTS1 = &elements{
+	seriesIDs:  []common.SeriesID{1, 2, 3},
+	timestamps: []int64{1, 1, 1},
+	elementIDs: []string{"11", "21", "31"},
+	tagFamilies: [][]tagValues{
+		{
+			{
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+			{
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+				},
+			},
+		},
+		{
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
+				},
+			},
+		},
+		{}, // empty tagFamilies for seriesID 3
+	},
+}
+
+var esTS2 = &elements{
+	seriesIDs:  []common.SeriesID{1, 2, 3},
+	timestamps: []int64{2, 2, 2},
+	elementIDs: []string{"12", "22", "32"},
+	tagFamilies: [][]tagValues{
+		{
+			{
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				},
+			},
+			{
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
+				},
+			},
+		},
+		{
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+					{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
+				},
+			},
+		},
+		{}, // empty tagFamilies for seriesID 6
+	},
+}

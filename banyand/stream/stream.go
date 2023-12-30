@@ -140,6 +140,11 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
 
 	var seriesList pbv1.SeriesList
 	for _, entity := range sqo.Entities {
@@ -178,7 +183,7 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 		if err != nil {
 			return nil, err
 		}
-		elems= append(elems, elem)
+		elems = append(elems, elem)
 		// TODO: break if reach limit
 	}
 	return elems, nil
@@ -193,6 +198,11 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
 	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
 	if err != nil {
 		return nil, err
@@ -206,15 +216,24 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	for i := range sl {
 		sids = append(sids, sl[i].ID)
 	}
-	var pws []*partWrapper
 	var parts []*part
 	qo := queryOptions{
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
-	for _, tw := range tabWrappers {
-		pws, parts = tw.Table().getParts(pws, parts, qo)
+	var n int
+	for i := range tabWrappers {
+		s := tabWrappers[i].Table().currentSnapshot()
+		if s == nil {
+			continue
+		}
+		parts, n = s.getParts(parts, qo)
+		if n < 1 {
+			s.decRef()
+			continue
+		}
+		result.snapshots = append(result.snapshots, s)
 	}
 	// TODO: cache tstIter
 	var tstIter tstIter

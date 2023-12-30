@@ -98,7 +98,8 @@ type item struct {
 }
 
 func (i *item) Element() (*streamv1.Element, error) {
-	return i.table.getElement(i.seriesID, i.itemID)
+	// return i.table.getElement(i.seriesID, i.itemID)
+	panic("not implemented")
 }
 
 func (i *item) Time() uint64 {
