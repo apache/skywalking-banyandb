@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -232,4 +234,127 @@ func (pi *partIter) findBlock() bool {
 	}
 	pi.bms = nil
 	return false
+}
+
+type partMergeIter struct {
+	err                error
+	p                  *part
+	primaryMetadataIdx int
+
+	compressedPrimaryBuf []byte
+	primaryBuf           []byte
+	block                blockPointer
+	columnValuesDecoder  encoding.BytesBlockDecoder
+}
+
+func (pmi *partMergeIter) reset() {
+	pmi.err = nil
+	pmi.p = nil
+	pmi.primaryMetadataIdx = 0
+	pmi.primaryBuf = pmi.primaryBuf[:0]
+	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
+	pmi.block.reset()
+	pmi.columnValuesDecoder.Reset()
+}
+
+func (pmi *partMergeIter) mustInitFromPart(p *part) {
+	pmi.reset()
+	pmi.p = p
+}
+
+func (pmi *partMergeIter) error() error {
+	if pmi.err == nil || pmi.err == io.EOF {
+		return nil
+	}
+	return pmi.err
+}
+
+func (pmi *partMergeIter) nextBlock() bool {
+	if pmi.err != nil {
+		return false
+	}
+	pmi.block.reset()
+	if len(pmi.primaryBuf) == 0 {
+		if err := pmi.loadPrimaryBuf(); err != nil {
+			pmi.err = err
+			return false
+		}
+	}
+	if err := pmi.loadBlock(); err != nil {
+		pmi.err = err
+		return false
+	}
+	return true
+}
+
+func (pmi *partMergeIter) loadPrimaryBuf() error {
+	if pmi.primaryMetadataIdx >= len(pmi.p.primaryBlockMetadata) {
+		return io.EOF
+	}
+	pm := pmi.p.primaryBlockMetadata[pmi.primaryMetadataIdx]
+	pmi.compressedPrimaryBuf = bytes.ResizeOver(pmi.compressedPrimaryBuf, int(pm.size))
+	fs.MustReadData(pmi.p.primary, int64(pm.offset), pmi.compressedPrimaryBuf)
+	var err error
+	pmi.primaryBuf, err = zstd.Decompress(pmi.primaryBuf[:0], pmi.compressedPrimaryBuf)
+	if err != nil {
+		return fmt.Errorf("cannot decompress primary block: %w", err)
+	}
+	pmi.primaryMetadataIdx++
+	return nil
+}
+
+func (pmi *partMergeIter) loadBlock() error {
+	pmi.block.reset()
+	var err error
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf)
+	if err != nil {
+		pm := pmi.p.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
+		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
+	}
+
+	pmi.block.block.mustReadFrom(&pmi.columnValuesDecoder, pmi.p, pmi.block.bm, false)
+	pmi.block.partID = pmi.p.partMetadata.ID
+	return nil
+}
+
+func generatePartMergeIter() *partMergeIter {
+	v := pmiPool.Get()
+	if v == nil {
+		return &partMergeIter{}
+	}
+	return v.(*partMergeIter)
+}
+
+func releasePartMergeIter(pmi *partMergeIter) {
+	pmi.reset()
+	pmiPool.Put(pmi)
+}
+
+var pmiPool sync.Pool
+
+type partMergeIterHeap []*partMergeIter
+
+func (pih *partMergeIterHeap) Len() int {
+	return len(*pih)
+}
+
+func (pih *partMergeIterHeap) Less(i, j int) bool {
+	x := *pih
+	return x[i].block.bm.less(x[j].block.bm)
+}
+
+func (pih *partMergeIterHeap) Swap(i, j int) {
+	x := *pih
+	x[i], x[j] = x[j], x[i]
+}
+
+func (pih *partMergeIterHeap) Push(x interface{}) {
+	*pih = append(*pih, x.(*partMergeIter))
+}
+
+func (pih *partMergeIterHeap) Pop() interface{} {
+	a := *pih
+	v := a[len(a)-1]
+	*pih = a[:len(a)-1]
+	return v
 }

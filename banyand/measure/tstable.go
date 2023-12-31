@@ -44,11 +44,12 @@ const (
 )
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
-	var tst tsTable
-	tst.fileSystem = fileSystem
-	tst.root = rootPath
-	tst.l = l
-	tst.gc.parent = &tst
+	tst := tsTable{
+		fileSystem: fileSystem,
+		root:       rootPath,
+		l:          l,
+	}
+	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
 		t := &tst
@@ -79,7 +80,6 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l 
 			continue
 		}
 		loadedSnapshots = append(loadedSnapshots, snapshot)
-		tst.gc.registerSnapshot(snapshot)
 	}
 	for i := range needToDelete {
 		if err := fileSystem.DeleteFile(filepath.Join(rootPath, needToDelete[i])); err != nil {
@@ -109,6 +109,7 @@ type tsTable struct {
 	loopCloser    *run.Closer
 	root          string
 	gc            garbageCleaner
+	curPartID     uint64
 	sync.RWMutex
 }
 
@@ -117,21 +118,25 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	snp := snapshot{
 		epoch: epoch,
 	}
-	for _, partName := range loadedParts {
+	for _, id := range loadedParts {
 		var find bool
 		for j := range parts {
-			if partName == parts[j] {
+			if id == parts[j] {
 				find = true
 				break
 			}
 		}
 		if !find {
-			tst.gc.submitParts(partName)
+			tst.gc.submitParts(id)
 		}
-		p := mustOpenFilePart(partPath(tst.root, partName), tst.fileSystem)
-		p.partMetadata.ID = partName
-		snp.parts = append(snp.parts, newPartWrapper(nil, p, tst.fileSystem))
+		p := mustOpenFilePart(id, tst.root, tst.fileSystem)
+		p.partMetadata.ID = id
+		snp.parts = append(snp.parts, newPartWrapper(nil, p))
+		if tst.curPartID < id {
+			tst.curPartID = id
+		}
 	}
+	tst.gc.registerSnapshot(&snp)
 	tst.gc.clean()
 	if len(snp.parts) < 1 {
 		return
@@ -141,12 +146,15 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 }
 
 func (tst *tsTable) startLoop(cur uint64) {
-	tst.loopCloser = run.NewCloser(3)
+	tst.loopCloser = run.NewCloser(1 + 3)
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
+	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoop(flushCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, introducerWatcher, cur)
+	flusherWatcher := make(watcher.Channel, 1)
+	go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	go tst.mergeLoop(mergeCh, flusherWatcher)
 }
 
 func parseEpoch(epochStr string) (uint64, error) {
@@ -206,6 +214,7 @@ func (tst *tsTable) Close() error {
 	defer tst.RUnlock()
 	if tst.snapshot != nil {
 		tst.snapshot.decRef()
+		tst.snapshot = nil
 	}
 	return nil
 }
@@ -222,7 +231,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	ind := generateIntroduction()
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
-	ind.memPart = newPartWrapper(mp, p, tst.fileSystem)
+	ind.memPart = newPartWrapper(mp, p)
 
 	select {
 	case tst.introductions <- ind:

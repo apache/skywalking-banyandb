@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/shirou/gopsutil/v3/disk"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -281,8 +283,17 @@ func (fs *localFileSystem) MustRMAll(path string) {
 	fs.logger.Panic().Str("path", path).Msg("failed to remove all files under path")
 }
 
+func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
+	usage, err := disk.Usage(path)
+	if err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to get disk usage")
+	}
+	return usage.Free
+}
+
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
+	// TODO: use bufio.Writer to optimize performance.
 	size, err := file.file.Write(buffer)
 	switch {
 	case err == nil:

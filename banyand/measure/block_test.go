@@ -264,7 +264,7 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			}()
 			tm := &timestampsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteTimestampsTo(tm, tt.args, writer{w: b})
+			mustWriteTimestampsTo(tm, tt.args, &writer{w: b})
 			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
 			if !reflect.DeepEqual(timestamps, tt.args) {
 				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
@@ -318,7 +318,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, true)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(columnFamily{}, column{}),
@@ -371,7 +371,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		})
 	}
 	bm.tagProjection = tp
-	unmarshaled.mustReadFrom(decoder, p, bm)
+	unmarshaled.mustReadFrom(decoder, p, bm, true)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
 
@@ -460,6 +460,358 @@ func Test_findRange(t *testing.T) {
 			}
 			if gotExist != tt.wantExist {
 				t.Errorf("findRange() gotExist = %v, want %v", gotExist, tt.wantExist)
+			}
+		})
+	}
+}
+
+func Test_blockPointer_append(t *testing.T) {
+	type fields struct {
+		timestamps  []int64
+		tagFamilies []columnFamily
+		field       columnFamily
+		partID      uint64
+	}
+	type args struct {
+		b      *blockPointer
+		offset int
+	}
+	tests := []struct {
+		name      string
+		fields    fields
+		args      args
+		want      *blockPointer
+		wantPanic bool
+	}{
+		{
+			name: "Test append with empty block",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				tagFamilies: []columnFamily{
+					{
+						name: "arrTag",
+						columns: []column{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{},
+						tagFamilies: []columnFamily{},
+						field:       columnFamily{},
+					},
+					idx: 0,
+				},
+				offset: 0,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append to a empty block",
+			fields: fields{
+				timestamps:  nil,
+				tagFamilies: nil,
+				field: columnFamily{
+					columns: nil,
+				},
+				partID: 0,
+			},
+			args: args{
+				b: &blockPointer{
+					partID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						tagFamilies: []columnFamily{
+							{
+								name: "arrTag",
+								columns: []column{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				partID: 2,
+				block: block{
+					timestamps: []int64{4, 5},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with offset equals to the data size. All data",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				tagFamilies: []columnFamily{
+					{
+						name: "arrTag",
+						columns: []column{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					partID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						tagFamilies: []columnFamily{
+							{
+								name: "arrTag",
+								columns: []column{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				partID: 2,
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with non-empty block and offset less than timestamps",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				tagFamilies: []columnFamily{
+					{
+						name: "arrTag",
+						columns: []column{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 3,
+			},
+			args: args{
+				b: &blockPointer{
+					partID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						tagFamilies: []columnFamily{
+							{
+								name: "arrTag",
+								columns: []column{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 1,
+			},
+			want: &blockPointer{
+				partID: 3,
+				block: block{
+					timestamps: []int64{1, 2, 4},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")})},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if (r != nil) != tt.wantPanic {
+					t.Errorf("blockPointer.append() recover = %v, wantPanic = %v", r, tt.wantPanic)
+				}
+			}()
+			bi := &blockPointer{
+				block: block{
+					timestamps:  tt.fields.timestamps,
+					tagFamilies: tt.fields.tagFamilies,
+					field:       tt.fields.field,
+				},
+				partID: tt.fields.partID,
+			}
+			bi.append(tt.args.b, tt.args.offset)
+			if !reflect.DeepEqual(bi, tt.want) {
+				t.Errorf("blockPointer.append() = %+v, want %+v", bi, tt.want)
+			}
+		})
+	}
+}
+
+func Test_blockPointer_copyFrom(t *testing.T) {
+	type fields struct {
+		bm  blockMetadata
+		idx int
+	}
+	type args struct {
+		src *blockPointer
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   *blockPointer
+	}{
+		{
+			name: "Test copyFrom",
+			fields: fields{
+				bm:  blockMetadata{},
+				idx: 0,
+			},
+			args: args{
+				src: &blockPointer{
+					bm:     blockMetadata{count: 1},
+					idx:    0,
+					block:  conventionalBlock,
+					partID: 2,
+				},
+			},
+			want: &blockPointer{
+				bm:     blockMetadata{count: 1},
+				idx:    0,
+				block:  conventionalBlock,
+				partID: 2,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bi := &blockPointer{
+				bm:  tt.fields.bm,
+				idx: tt.fields.idx,
+			}
+			bi.copyFrom(tt.args.src)
+			if !reflect.DeepEqual(bi, tt.want) {
+				t.Errorf("blockPointer.copyFrom() = %+v, want %+v", bi, tt.want)
 			}
 		})
 	}

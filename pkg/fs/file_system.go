@@ -108,6 +108,8 @@ type FileSystem interface {
 	MustRMAll(path string)
 	// SyncPath the directory of file.
 	SyncPath(path string)
+	// MustGetFreeSpace returns the free space of the file system.
+	MustGetFreeSpace(path string) uint64
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
@@ -117,6 +119,15 @@ type DirEntry interface {
 
 	// IsDir reports whether the entry describes a directory.
 	IsDir() bool
+}
+
+// MustCreateFile creates a new file with the specified name and permission.
+func MustCreateFile(fs FileSystem, path string, permission Mode) File {
+	f, err := fs.CreateFile(path, permission)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
+	}
+	return f
 }
 
 // MustFlush flushes all data to one file and panics if it cannot write all data.

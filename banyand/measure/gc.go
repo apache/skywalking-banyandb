@@ -18,69 +18,73 @@
 package measure
 
 import (
-	"errors"
-	"path"
-	"sort"
-
-	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"path/filepath"
 )
 
 type garbageCleaner struct {
-	parent    *tsTable
-	snapshots []uint64
-	parts     []uint64
+	parent          *tsTable
+	liveEpoch       uint64
+	deletableEpochs []uint64
+	liveParts       map[uint64]map[uint64]struct{}
+	knownPartFiles  map[uint64]struct{}
 }
 
-func (g *garbageCleaner) registerSnapshot(snapshot uint64) {
-	g.snapshots = append(g.snapshots, snapshot)
+func (g *garbageCleaner) init(parent *tsTable) {
+	g.parent = parent
+	g.liveParts = make(map[uint64]map[uint64]struct{})
+	g.knownPartFiles = make(map[uint64]struct{})
 }
 
-func (g *garbageCleaner) submitParts(parts ...uint64) {
-	g.parts = append(g.parts, parts...)
+func (g *garbageCleaner) registerSnapshot(snapshot *snapshot) {
+	parts := make(map[uint64]struct{})
+	for _, part := range snapshot.parts {
+		parts[part.ID()] = struct{}{}
+		g.knownPartFiles[part.ID()] = struct{}{}
+	}
+	g.liveParts[snapshot.epoch] = parts
+
+	if g.liveEpoch > 0 {
+		g.deletableEpochs = append(g.deletableEpochs, g.liveEpoch)
+	}
+	g.liveEpoch = snapshot.epoch
+}
+
+func (g *garbageCleaner) submitParts(partID uint64) {
+	g.knownPartFiles[partID] = struct{}{}
 }
 
 func (g garbageCleaner) clean() {
-	if len(g.snapshots) > 1 {
-		g.cleanSnapshots()
-	}
-	if len(g.parts) > 0 {
-		g.cleanParts()
-	}
+	g.cleanSnapshots()
+	g.cleanParts()
 }
 
 func (g *garbageCleaner) cleanSnapshots() {
-	if len(g.snapshots) < 2 {
-		return
-	}
-	if !sort.SliceIsSorted(g.snapshots, func(i, j int) bool {
-		return g.snapshots[i] < g.snapshots[j]
-	}) {
-		sort.Slice(g.snapshots, func(i, j int) bool {
-			return g.snapshots[i] < g.snapshots[j]
-		})
-	}
-	// keep the latest snapshot
-	var remainingSnapshots []uint64
-	for i := 0; i < len(g.snapshots)-1; i++ {
-		filePath := path.Join(g.parent.root, snapshotName(g.snapshots[i]))
-		if err := g.parent.fileSystem.DeleteFile(filePath); err != nil {
-			var notExistErr *fs.FileSystemError
-			if errors.As(err, &notExistErr) && notExistErr.Code != fs.IsNotExistError {
-				g.parent.l.Warn().Err(err).Str("path", filePath).Msg("failed to delete snapshot, will retry in next round. Please check manually")
-				remainingSnapshots = append(remainingSnapshots, g.snapshots[i])
-			}
+	var remainingEpochs []uint64
+	for _, deletableEpoch := range g.deletableEpochs {
+		path := filepath.Join(g.parent.root, snapshotName(deletableEpoch))
+		err := g.parent.fileSystem.DeleteFile(path)
+		if err == nil {
+			delete(g.liveParts, deletableEpoch)
+			continue
 		}
+		g.parent.l.Warn().Err(err).Msgf("cannot delete snapshot file: %s", path)
+		remainingEpochs = append(remainingEpochs, deletableEpoch)
 	}
-	if remainingSnapshots == nil {
-		g.snapshots = g.snapshots[len(g.snapshots)-1:]
-		return
-	}
-	remained := g.snapshots[len(g.snapshots)-1]
-	g.snapshots = g.snapshots[:0]
-	g.snapshots = append(g.snapshots, remainingSnapshots...)
-	g.snapshots = append(g.snapshots, remained)
+	g.deletableEpochs = remainingEpochs
 }
 
 func (g garbageCleaner) cleanParts() {
-	panic("implement me")
+OUTER:
+	for partID := range g.knownPartFiles {
+		for _, partInSnapshot := range g.liveParts {
+			if _, ok := partInSnapshot[partID]; ok {
+				continue OUTER
+			}
+		}
+		err := g.parent.fileSystem.DeleteFile(partPath(g.parent.root, partID))
+		if err != nil {
+			continue
+		}
+		delete(g.knownPartFiles, partID)
+	}
 }
