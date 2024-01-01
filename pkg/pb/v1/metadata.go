@@ -116,7 +116,7 @@ type TagProjection struct {
 	Names  []string
 }
 
-// StreamQueryOptions is the options of a measure query.
+// StreamQueryOptions is the options of a stream query.
 type StreamQueryOptions struct {
 	Name          string
 	TimeRange     *timestamp.TimeRange
@@ -126,10 +126,11 @@ type StreamQueryOptions struct {
 	TagProjection []TagProjection
 }
 
+// StreamSortOptions is the options of a stream sort.
 type StreamSortOptions struct {
 	Name          string
 	TimeRange     *timestamp.TimeRange
-	Entities        [][]*modelv1.TagValue
+	Entities      [][]*modelv1.TagValue
 	Filter        index.Filter
 	Order         *OrderBy
 	TagProjection []TagProjection

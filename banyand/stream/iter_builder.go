@@ -20,12 +20,13 @@ package stream
 import (
 	"time"
 
+	"github.com/pkg/errors"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -37,10 +38,10 @@ type filterFn func(item item) bool
 
 type seekerBuilder struct {
 	indexFilter         index.Filter
-	tagProjection       []pbv1.TagProjection
 	seriesSpan          *seriesSpan
 	indexRuleForSorting *databasev1.IndexRule
 	l                   *logger.Logger
+	tagProjection       []pbv1.TagProjection
 	order               modelv1.Sort
 }
 
@@ -50,10 +51,10 @@ func newSeekerBuilder(indexFilter index.Filter, seriesSpan *seriesSpan,
 ) *seekerBuilder {
 	return &seekerBuilder{
 		indexFilter:         indexFilter,
-		tagProjection:       tagProjection,
 		seriesSpan:          seriesSpan,
 		indexRuleForSorting: indexRuleForSorting,
 		l:                   l,
+		tagProjection:       tagProjection,
 		order:               order,
 	}
 }

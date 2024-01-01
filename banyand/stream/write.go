@@ -168,7 +168,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 
 	et.docs = append(et.docs, index.Document{
-		DocID:  uint64(ts),
+		DocID:  ts,
 		Fields: fields,
 	})
 

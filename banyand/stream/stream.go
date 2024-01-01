@@ -27,6 +27,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -39,7 +41,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
-	"go.uber.org/multierr"
 )
 
 const (

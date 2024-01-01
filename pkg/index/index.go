@@ -243,6 +243,7 @@ type SeriesStore interface {
 	SearchWildcard([]byte) ([]Series, error)
 }
 
+// ElementStore is an abstract of a element repository.
 type ElementStore interface {
 	Store
 }

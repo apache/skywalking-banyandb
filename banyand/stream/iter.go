@@ -26,22 +26,16 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type Iterator interface {
-	Next() bool
-	Val() *item
-	Close() error
-}
-
 type searcherIterator struct {
+	indexFilter   index.Filter
+	timeFilter    filterFn
 	fieldIterator index.FieldIterator
 	cur           posting.Iterator
+	tagProjection []pbv1.TagProjection
 	table         *tsTable
 	l             *logger.Logger
 	curKey        []byte
-	timeFilter    filterFn
-	indexFilter   index.Filter
 	seriesID      common.SeriesID
-	tagProjection []pbv1.TagProjection
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, table *tsTable,
@@ -113,10 +107,6 @@ func (i *item) Time() uint64 {
 
 func (i item) SortedField() []byte {
 	return i.sortedField
-}
-
-func (i *item) Family(family []byte) ([]byte, error) {
-	panic("not implemented")
 }
 
 func (i item) ID() common.ItemID {
