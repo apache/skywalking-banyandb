@@ -167,12 +167,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 	}
 
-	for _, ts := range et.elements.timestamps {
-		et.docs = append(et.docs, index.Document{
-			DocID:  uint64(ts),
-			Fields: fields,
-		})
-	}
+	et.docs = append(et.docs, index.Document{
+		DocID:  uint64(ts),
+		Fields: fields,
+	})
 
 	eg.docs = append(eg.docs, index.Document{
 		DocID:        uint64(series.ID),
@@ -219,21 +217,10 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)
 			index := es.tsTable.Table().Index()
-			// if index == nil {
-			// 	// TODO: change path
-			// 	elementIndex, err := newElementIndex(context.TODO(), "")
-			// 	// es.tsTable.Table().index = index
-			// 	if err != nil {
-			// 		w.l.Error().Err(err).Msg("cannot create element index")
-			// 	}
-			// 	index = elementIndex
-			// 	// defer elementIndex.Close()
-			// }
 			if err := index.Write(es.docs); err != nil {
 				w.l.Error().Err(err).Msg("cannot write element index")
 			}
 			es.tsTable.DecRef()
-			// es.tsTable.Table().index.Close()
 		}
 		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
 			w.l.Error().Err(err).Msg("cannot write series index")

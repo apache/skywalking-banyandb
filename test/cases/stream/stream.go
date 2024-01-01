@@ -19,10 +19,12 @@
 package stream_test
 
 import (
+	"math"
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -45,15 +47,15 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
-	// g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
-	// g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
-	// g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
-	// g.Entry("invalid time range", helpers.Args{
-	// 	Input: "all",
-	// 	Begin: timestamppb.New(time.Unix(0, int64(math.MinInt64+time.Millisecond)).Truncate(time.Millisecond)),
-	// 	End:   timestamppb.New(time.Unix(0, math.MaxInt64).Truncate(time.Millisecond)),
-	// }),
-	// g.Entry("sort desc", helpers.Args{Input: "sort_desc", Duration: 1 * time.Hour}),
+	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
+	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
+	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
+	g.Entry("invalid time range", helpers.Args{
+		Input: "all",
+		Begin: timestamppb.New(time.Unix(0, int64(math.MinInt64+time.Millisecond)).Truncate(time.Millisecond)),
+		End:   timestamppb.New(time.Unix(0, math.MaxInt64).Truncate(time.Millisecond)),
+	}),
+	g.Entry("sort desc", helpers.Args{Input: "sort_desc", Duration: 1 * time.Hour}),
 	// g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
 	// g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	// g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),

@@ -33,7 +33,7 @@ type partMetadata struct {
 	MinTimestamp          int64
 	MaxTimestamp          int64
 	// TODO: remove this?
-	ID                    uint64
+	ID uint64
 }
 
 func (pm *partMetadata) reset() {

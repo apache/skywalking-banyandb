@@ -23,6 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type Iterator interface {
@@ -40,10 +41,12 @@ type searcherIterator struct {
 	timeFilter    filterFn
 	indexFilter   index.Filter
 	seriesID      common.SeriesID
+	tagProjection []pbv1.TagProjection
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, table *tsTable,
-	seriesID common.SeriesID, indexFilter index.Filter, timeFilter filterFn) *searcherIterator {
+	seriesID common.SeriesID, indexFilter index.Filter, timeFilter filterFn, tagProjection []pbv1.TagProjection,
+) *searcherIterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
 		table:         table,
@@ -51,6 +54,7 @@ func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, ta
 		indexFilter:   indexFilter,
 		timeFilter:    timeFilter,
 		l:             l,
+		tagProjection: tagProjection,
 	}
 }
 
@@ -79,10 +83,11 @@ func (s *searcherIterator) Next() bool {
 
 func (s *searcherIterator) Val() item {
 	return item{
-		sortedField: s.curKey,
-		itemID:      common.ItemID(s.cur.Current()),
-		table:       s.table,
-		seriesID:    s.seriesID,
+		sortedField:   s.curKey,
+		itemID:        common.ItemID(s.cur.Current()),
+		table:         s.table,
+		seriesID:      s.seriesID,
+		tagProjection: s.tagProjection,
 	}
 }
 
@@ -91,15 +96,15 @@ func (s *searcherIterator) Close() error {
 }
 
 type item struct {
-	table       *tsTable
-	sortedField []byte
-	itemID      common.ItemID
-	seriesID    common.SeriesID
+	tagProjection []pbv1.TagProjection
+	table         *tsTable
+	sortedField   []byte
+	itemID        common.ItemID
+	seriesID      common.SeriesID
 }
 
 func (i *item) Element() (*streamv1.Element, error) {
-	// return i.table.getElement(i.seriesID, i.itemID)
-	panic("not implemented")
+	return i.table.getElement(i.seriesID, i.itemID, i.tagProjection)
 }
 
 func (i *item) Time() uint64 {

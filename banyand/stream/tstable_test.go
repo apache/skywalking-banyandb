@@ -23,11 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -37,6 +32,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_tsTable_mustAddElements(t *testing.T) {
@@ -262,6 +261,7 @@ func Test_tstIter(t *testing.T) {
 	}
 }
 
+// nolint: unused
 var tagProjections = map[int][]pbv1.TagProjection{
 	1: {
 		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},

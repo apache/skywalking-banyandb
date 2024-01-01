@@ -31,9 +31,10 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	// streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -246,20 +247,20 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	}
 }
 
-// func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID) (*streamv1.Element, error) {
-// 	tst.RLock()
-// 	defer tst.RUnlock()
-// 	for _, p := range tst.memParts {
-// 		if !p.p.containTimestamp(timestamp) {
-// 			continue
-// 		}
-// 		elem, err := p.p.getElement(seriesID, timestamp)
-// 		if err == nil {
-// 			return elem, nil
-// 		}
-// 	}
-// 	return nil, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
-// }
+func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*streamv1.Element, error) {
+	tst.RLock()
+	defer tst.RUnlock()
+	for _, p := range tst.currentSnapshot().parts {
+		if !p.p.containTimestamp(timestamp) {
+			continue
+		}
+		elem, err := p.p.getElement(seriesID, timestamp, tagProjection)
+		if err == nil {
+			return elem, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
+}
 
 type tstIter struct {
 	err           error

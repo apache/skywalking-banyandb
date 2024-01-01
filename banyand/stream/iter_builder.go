@@ -24,12 +24,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/pkg/errors"
 )
 
 var (
 	errUnspecifiedIndexType = errors.New("Unspecified index type")
-	emptyFilters            = make([]filterFn, 0)
 	rangeOpts               = index.RangeOpts{}
 )
 
@@ -37,15 +37,20 @@ type filterFn func(item item) bool
 
 type seekerBuilder struct {
 	indexFilter         index.Filter
+	tagProjection       []pbv1.TagProjection
 	seriesSpan          *seriesSpan
 	indexRuleForSorting *databasev1.IndexRule
 	l                   *logger.Logger
 	order               modelv1.Sort
 }
 
-func newSeekerBuilder(indexFilter index.Filter, seriesSpan *seriesSpan, indexRuleForSorting *databasev1.IndexRule, l *logger.Logger, order modelv1.Sort) *seekerBuilder {
+func newSeekerBuilder(indexFilter index.Filter, seriesSpan *seriesSpan,
+	indexRuleForSorting *databasev1.IndexRule, l *logger.Logger,
+	order modelv1.Sort, tagProjection []pbv1.TagProjection,
+) *seekerBuilder {
 	return &seekerBuilder{
 		indexFilter:         indexFilter,
+		tagProjection:       tagProjection,
 		seriesSpan:          seriesSpan,
 		indexRuleForSorting: indexRuleForSorting,
 		l:                   l,
@@ -68,6 +73,7 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err er
 		fieldKey := index.FieldKey{
 			SeriesID:    s.seriesSpan.seriesID,
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
+			Analyzer:    s.indexRuleForSorting.GetAnalyzer(),
 		}
 		switch s.indexRuleForSorting.GetType() {
 		case databasev1.IndexRule_TYPE_TREE:
@@ -82,7 +88,7 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err er
 		}
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, tw.Table(),
-				s.seriesSpan.seriesID, s.indexFilter, timeFilter))
+				s.seriesSpan.seriesID, s.indexFilter, timeFilter, s.tagProjection))
 		}
 	}
 	return

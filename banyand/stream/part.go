@@ -31,9 +31,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -79,55 +82,101 @@ func (p *part) String() string {
 	return fmt.Sprintf("part %d", p.partMetadata.ID)
 }
 
-func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID) (*streamv1.Element, error) {
+func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*streamv1.Element, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
-	for _, primary := range p.primaryBlockMetadata {
-		if !primary.mightContainElement(seriesID, timestamp) {
+	for _, primaryMeta := range p.primaryBlockMetadata {
+		if !primaryMeta.mightContainElement(seriesID, timestamp) {
 			continue
 		}
-		var metaBuf []byte
-		p.meta.Read(int64(primary.offset), metaBuf)
-		var meta blockMetadata
-		meta.unmarshal(metaBuf)
-		// TODO: column prunning
-		var block block
-		var tagValuesDecoder *encoding.BytesBlockDecoder
-		block.mustReadFrom(tagValuesDecoder, p, meta)
-		for i, ts := range block.timestamps {
-			if common.ItemID(ts) == timestamp {
-				var tfs []*modelv1.TagFamily
-				// for _, cf := range block.tagFamilies {
-				// 	tf := tagFamily{
-				// 		name: cf.name,
-				// 	}
-				// 	for i := range cf.tags {
-				// 		tag := tag{
-				// 			name:      cf.tags[i].name,
-				// 			valueType: cf.tags[i].valueType,
-				// 		}
-				// 		if len(cf.tags[i].values) == 0 {
-				// 			continue
-				// 		}
-				// 		if len(cf.tags[i].values) != len(block.timestamps) {
-				// 			logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.tags[i].name, len(cf.tags[i].values), len(block.timestamps))
-				// 		}
-				// 		tag.values = append(tag.values, cf.tags[i].values[start:end]...)
-				// 		tf.tags = append(tf.tags, tag)
-				// 	}
-				// }
-				// for _, tagFamily := range block.tagFamilies {
-				// 	tfs = append(tfs, tagFamily)
-				// }
-				return &streamv1.Element{
-					// Timestamp:   common.ItemID(ts),
-					ElementId:   block.elementIDs[i],
-					TagFamilies: tfs,
-				}, nil
+
+		compressedPrimaryBuf := make([]byte, primaryMeta.size)
+		fs.MustReadData(p.primary, int64(primaryMeta.offset), compressedPrimaryBuf)
+		var err error
+		primaryBuf := make([]byte, 0)
+		primaryBuf, err = zstd.Decompress(primaryBuf[:0], compressedPrimaryBuf)
+		if err != nil {
+			return nil, fmt.Errorf("cannot decompress index block: %w", err)
+		}
+		bm := make([]blockMetadata, 0)
+		bm, err = unmarshalBlockMetadata(bm, primaryBuf)
+		if err != nil {
+			return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
+		}
+
+		timestamps := make([]int64, 0)
+		timestamps = mustReadTimestampsFrom(timestamps, &bm[0].timestamps, int(bm[0].count), p.timestamps)
+		for i, ts := range timestamps {
+			if timestamp == common.ItemID(ts) {
+				elementIDs := make([]string, 0)
+				elementIDs = mustReadElementIDsFrom(elementIDs, &bm[0].elementIDs, int(bm[0].count), p.elementIDs)
+				tfs := make([]*tagFamily, 0)
+				for j := range tagProjection {
+					name := tagProjection[j].Family
+					block, ok := bm[0].tagFamilies[name]
+					if !ok {
+						continue
+					}
+					decoder := &encoding.BytesBlockDecoder{}
+					tf := unmarshalTagFamily(decoder, name, block, tagProjection[j].Names, p.tagFamilyMetadata[name], p.tagFamilies[name], len(timestamps))
+					tfs = append(tfs, tf)
+				}
+
+				e := &streamv1.Element{
+					Timestamp: timestamppb.New(time.Unix(0, timestamps[i])),
+					ElementId: elementIDs[i],
+				}
+				for _, tf := range tfs {
+					tagFamily := &modelv1.TagFamily{
+						Name: tf.name,
+					}
+					e.TagFamilies = append(e.TagFamilies, tagFamily)
+					for _, t := range tf.tags {
+						tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+							Key:   t.name,
+							Value: mustDecodeTagValue(t.valueType, t.values[i]),
+						})
+					}
+				}
+				return e, nil
+			}
+			if common.ItemID(ts) > timestamp {
+				break
 			}
 		}
 	}
 	return nil, errors.New("element not found")
+}
+
+func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
+	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
+) *tagFamily {
+	if len(tagProjection) < 1 {
+		return &tagFamily{}
+	}
+	bb := bigValuePool.Generate()
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
+	cfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(cfm)
+	_, err := cfm.unmarshal(bb.Buf)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
+	}
+	bigValuePool.Release(bb)
+	tf := tagFamily{}
+	tf.name = name
+	tf.tags = tf.resizeTags(len(tagProjection))
+
+	for j := range tagProjection {
+		for i := range cfm.tagMetadata {
+			if tagProjection[j] == cfm.tagMetadata[i].name {
+				tf.tags[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(count))
+				break
+			}
+		}
+	}
+	return &tf
 }
 
 func openMemPart(mp *memPart) *part {

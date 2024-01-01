@@ -130,7 +130,7 @@ func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 	return itersort.NewItemIter[item](ii, false)
 }
 
-// TODO: refactor to column-based query
+// TODO: refactor to column-based query.
 func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []*streamv1.Element, err error) {
 	if sqo.TimeRange == nil || sqo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -148,21 +148,21 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 
 	var seriesList pbv1.SeriesList
 	for _, entity := range sqo.Entities {
-		sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: entity})
-		if err != nil {
-			return nil, err
+		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: entity})
+		if lookupErr != nil {
+			return nil, lookupErr
 		}
-		seriesList.Merge(sl)
+		seriesList = seriesList.Merge(sl)
 	}
 
 	var iters []*searcherIterator
 	for _, series := range seriesList {
 		seriesLiteral := stringLiteral(series.EntityValues)
 		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID, seriesLiteral)
-		seekerBuilder := newSeekerBuilder(sqo.Filter, seriesSpan, sqo.Order.Index, s.l, sqo.Order.Sort)
-		seriesIters, err := seekerBuilder.buildSeriesByIndex()
+		seekerBuilder := newSeekerBuilder(sqo.Filter, seriesSpan, sqo.Order.Index, s.l, sqo.Order.Sort, sqo.TagProjection)
+		seriesIters, buildErr := seekerBuilder.buildSeriesByIndex()
 		if err != nil {
-			return nil, err
+			return nil, buildErr
 		}
 		if len(seriesIters) > 0 {
 			iters = append(iters, seriesIters...)
