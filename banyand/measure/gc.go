@@ -53,7 +53,7 @@ func (g *garbageCleaner) submitParts(partID uint64) {
 	g.knownPartFiles[partID] = struct{}{}
 }
 
-func (g garbageCleaner) clean() {
+func (g *garbageCleaner) clean() {
 	g.cleanSnapshots()
 	g.cleanParts()
 }

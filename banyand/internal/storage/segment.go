@@ -115,24 +115,25 @@ func (s *segment[T]) String() string {
 	return "SegID-" + s.suffix
 }
 
-type segmentController[T TSTable] struct {
+type segmentController[T TSTable, O any] struct {
 	clock          timestamp.Clock
 	scheduler      *timestamp.Scheduler
 	l              *logger.Logger
-	tsTableCreator TSTableCreator[T]
+	tsTableCreator TSTableCreator[T, O]
 	position       common.Position
 	location       string
 	lst            []*segment[T]
 	segmentSize    IntervalRule
+	option         O
 	sync.RWMutex
 }
 
-func newSegmentController[T TSTable](ctx context.Context, location string,
+func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	segmentSize IntervalRule, l *logger.Logger, scheduler *timestamp.Scheduler,
-	tsTableCreator TSTableCreator[T],
-) *segmentController[T] {
+	tsTableCreator TSTableCreator[T, O], option O,
+) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
-	return &segmentController[T]{
+	return &segmentController[T, O]{
 		location:       location,
 		segmentSize:    segmentSize,
 		l:              l,
@@ -140,10 +141,11 @@ func newSegmentController[T TSTable](ctx context.Context, location string,
 		scheduler:      scheduler,
 		position:       common.GetPosition(ctx),
 		tsTableCreator: tsTableCreator,
+		option:         option,
 	}
 }
 
-func (sc *segmentController[T]) selectTSTables(timeRange timestamp.TimeRange) (tt []TSTableWrapper[T]) {
+func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange) (tt []TSTableWrapper[T]) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
@@ -157,7 +159,7 @@ func (sc *segmentController[T]) selectTSTables(timeRange timestamp.TimeRange) (t
 	return tt
 }
 
-func (sc *segmentController[T]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
+func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -166,7 +168,7 @@ func (sc *segmentController[T]) createTSTable(ts time.Time) (TSTableWrapper[T], 
 	return s, nil
 }
 
-func (sc *segmentController[T]) segments() (ss []*segment[T]) {
+func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T], len(sc.lst))
@@ -177,7 +179,7 @@ func (sc *segmentController[T]) segments() (ss []*segment[T]) {
 	return r
 }
 
-func (sc *segmentController[T]) Current() (bucket.Reporter, error) {
+func (sc *segmentController[T, O]) Current() (bucket.Reporter, error) {
 	now := sc.Standard(sc.clock.Now())
 	ns := uint64(now.UnixNano())
 	if b := func() bucket.Reporter {
@@ -195,7 +197,7 @@ func (sc *segmentController[T]) Current() (bucket.Reporter, error) {
 	return sc.create(now)
 }
 
-func (sc *segmentController[T]) Next() (bucket.Reporter, error) {
+func (sc *segmentController[T, O]) Next() (bucket.Reporter, error) {
 	c, err := sc.Current()
 	if err != nil {
 		return nil, err
@@ -208,7 +210,7 @@ func (sc *segmentController[T]) Next() (bucket.Reporter, error) {
 	return reporter, err
 }
 
-func (sc *segmentController[T]) OnMove(prev bucket.Reporter, next bucket.Reporter) {
+func (sc *segmentController[T, O]) OnMove(prev bucket.Reporter, next bucket.Reporter) {
 	event := sc.l.Info()
 	if prev != nil {
 		event.Stringer("prev", prev)
@@ -219,7 +221,7 @@ func (sc *segmentController[T]) OnMove(prev bucket.Reporter, next bucket.Reporte
 	event.Msg("move to the next segment")
 }
 
-func (sc *segmentController[T]) Standard(t time.Time) time.Time {
+func (sc *segmentController[T, O]) Standard(t time.Time) time.Time {
 	switch sc.segmentSize.Unit {
 	case HOUR:
 		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
@@ -229,7 +231,7 @@ func (sc *segmentController[T]) Standard(t time.Time) time.Time {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T]) Format(tm time.Time) string {
+func (sc *segmentController[T, O]) Format(tm time.Time) string {
 	switch sc.segmentSize.Unit {
 	case HOUR:
 		return tm.Format(hourFormat)
@@ -239,7 +241,7 @@ func (sc *segmentController[T]) Format(tm time.Time) string {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T]) Parse(value string) (time.Time, error) {
+func (sc *segmentController[T, O]) Parse(value string) (time.Time, error) {
 	switch sc.segmentSize.Unit {
 	case HOUR:
 		return time.ParseInLocation(hourFormat, value, time.Local)
@@ -249,7 +251,7 @@ func (sc *segmentController[T]) Parse(value string) (time.Time, error) {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T]) open() error {
+func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	return loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
@@ -261,7 +263,7 @@ func (sc *segmentController[T]) open() error {
 	})
 }
 
-func (sc *segmentController[T]) create(start time.Time) (*segment[T], error) {
+func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) {
 	sc.Lock()
 	defer sc.Unlock()
 	start = sc.Standard(start)
@@ -285,17 +287,17 @@ func (sc *segmentController[T]) create(start time.Time) (*segment[T], error) {
 	return sc.load(start, end, sc.location)
 }
 
-func (sc *segmentController[T]) sortLst() {
+func (sc *segmentController[T, O]) sortLst() {
 	sort.Slice(sc.lst, func(i, j int) bool {
 		return sc.lst[i].id < sc.lst[j].id
 	})
 }
 
-func (sc *segmentController[T]) load(start, end time.Time, root string) (seg *segment[T], err error) {
+func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T], err error) {
 	suffix := sc.Format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
 	var tsTable T
-	if tsTable, err = sc.tsTableCreator(lfs, segPath, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
+	if tsTable, err = sc.tsTableCreator(lfs, segPath, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
 		return nil, err
 	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
@@ -311,7 +313,7 @@ func (sc *segmentController[T]) load(start, end time.Time, root string) (seg *se
 	return seg, nil
 }
 
-func (sc *segmentController[T]) remove(deadline time.Time) (err error) {
+func (sc *segmentController[T, O]) remove(deadline time.Time) (err error) {
 	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
 		if s.End.Before(deadline) || s.Contains(uint64(deadline.UnixNano())) {
@@ -330,7 +332,7 @@ func (sc *segmentController[T]) remove(deadline time.Time) (err error) {
 	return err
 }
 
-func (sc *segmentController[T]) removeSeg(segID segmentID) {
+func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
@@ -339,7 +341,7 @@ func (sc *segmentController[T]) removeSeg(segID segmentID) {
 	}
 }
 
-func (sc *segmentController[T]) close() {
+func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()
 	for _, s := range sc.lst {

@@ -273,7 +273,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with different ts, the block will be merged",
-				dpsList:      []*dataPoints{dpsTS1, dpsTS2},
+				dpsList:      []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -298,37 +298,88 @@ func Test_tstIter(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				tmpPath, defFn := test.Space(require.New(t))
-				fileSystem := fs.NewLocalFileSystem()
-				defer defFn()
+				t.Run("merging on the fly", func(t *testing.T) {
+					tmpPath, defFn := test.Space(require.New(t))
+					fileSystem := fs.NewLocalFileSystem()
+					defer defFn()
 
-				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
-				require.NoError(t, err)
-				for _, dps := range tt.dpsList {
-					tst.mustAddDataPoints(dps)
-					time.Sleep(100 * time.Millisecond)
-				}
-				// wait until the introducer is done
-				if len(tt.dpsList) > 0 {
-					for {
-						snp := tst.currentSnapshot()
-						if snp == nil {
-							time.Sleep(100 * time.Millisecond)
-							continue
-						}
-						if len(snp.parts) == len(tt.dpsList) {
+					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0})
+					require.NoError(t, err)
+					for i, dps := range tt.dpsList {
+						tst.mustAddDataPoints(dps)
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								t.Logf("waiting for snapshot %d to be introduced", i)
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if snp.creator != snapshotCreatorMemPart {
+								snp.decRef()
+								break
+							}
+							t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
+								i, snp.creator, snp.parts)
 							snp.decRef()
-							tst.Close()
-							break
+							time.Sleep(100 * time.Millisecond)
 						}
-						snp.decRef()
+					}
+					// wait until some parts are merged
+					if len(tt.dpsList) > 0 {
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if len(snp.parts) == 1 || len(snp.parts) < len(tt.dpsList) {
+								snp.decRef()
+								break
+							}
+							t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
+							snp.decRef()
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+					verify(t, tt, tst)
+				})
+
+				t.Run("merging on close", func(t *testing.T) {
+					tmpPath, defFn := test.Space(require.New(t))
+					fileSystem := fs.NewLocalFileSystem()
+					defer defFn()
+
+					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
+					require.NoError(t, err)
+					for _, dps := range tt.dpsList {
+						tst.mustAddDataPoints(dps)
 						time.Sleep(100 * time.Millisecond)
 					}
-				}
-				// reopen the table
-				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
-				require.NoError(t, err)
-				verify(t, tt, tst)
+					// wait until the introducer is done
+					if len(tt.dpsList) > 0 {
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if len(snp.parts) == len(tt.dpsList) {
+								snp.decRef()
+								tst.Close()
+								break
+							}
+							snp.decRef()
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+					// reopen the table
+					tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
+					require.NoError(t, err)
+					verify(t, tt, tst)
+				})
 			})
 		}
 	})

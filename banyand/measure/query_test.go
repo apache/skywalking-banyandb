@@ -456,7 +456,8 @@ func TestQueryResult(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
-				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
 				require.NoError(t, err)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
@@ -481,7 +482,8 @@ func TestQueryResult(t *testing.T) {
 				}
 
 				// reopen the table
-				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
 				require.NoError(t, err)
 
 				verify(t, tst)

@@ -42,6 +42,9 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 			return
 		case <-ew.Watch():
 			curSnapshot := tst.currentSnapshot()
+			if curSnapshot == nil {
+				continue
+			}
 			if curSnapshot.epoch != epoch {
 				if err := tst.mergeSnapshot(curSnapshot, epoch, merges); err != nil {
 					if errors.Is(err, errClosed) {
@@ -57,7 +60,7 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 			curSnapshot.decRef()
 			ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
 			if ew == nil {
-				break
+				return
 			}
 		}
 	}
@@ -263,6 +266,8 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		}
 		return false
 	}
+
+	defer target.updateMetadata()
 
 	if left.bm.timestamps.max < right.bm.timestamps.min {
 		target.appendAll(left)

@@ -173,6 +173,7 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp := cur.remove(epoch, nextIntroduction.remaining)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = snapshotCreatorMerger
+	tst.replaceSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

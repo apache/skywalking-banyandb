@@ -27,12 +27,10 @@ type Epoch struct {
 
 // Watch returns a channel that will be notified when the epoch is reached.
 func (e *Epoch) Watch() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
 	return e.ch
-}
-
-// Val returns the epoch value.
-func (e *Epoch) Val() uint64 {
-	return e.epoch
 }
 
 // Epochs is a list of epoch watchers.

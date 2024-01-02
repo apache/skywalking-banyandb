@@ -43,10 +43,13 @@ const (
 	dirPermission  = 0o700
 )
 
-func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position, l *logger.Logger, _ timestamp.TimeRange) (*tsTable, error) {
+func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position,
+	l *logger.Logger, _ timestamp.TimeRange, option option,
+) (*tsTable, error) {
 	tst := tsTable{
 		fileSystem: fileSystem,
 		root:       rootPath,
+		option:     option,
 		l:          l,
 	}
 	tst.gc.init(&tst)
@@ -110,6 +113,7 @@ type tsTable struct {
 	root          string
 	gc            garbageCleaner
 	curPartID     uint64
+	option        option
 	sync.RWMutex
 }
 

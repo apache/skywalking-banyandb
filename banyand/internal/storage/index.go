@@ -33,11 +33,11 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func (d *database[T]) IndexDB() IndexDB {
+func (d *database[T, O]) IndexDB() IndexDB {
 	return d.index
 }
 
-func (d *database[T]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (d *database[T, O]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
 	return d.index.searchPrimary(ctx, series)
 }
 

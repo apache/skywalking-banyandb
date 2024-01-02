@@ -48,6 +48,7 @@ type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
 	metadata metadata.Repo
+	option   option
 }
 
 func newSchemaRepo(path string, svc *service) schemaRepo {
@@ -301,12 +302,12 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 	return s, ok
 }
 
-func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable], error) {
+func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option], error) {
 	g, ok := sr.LoadGroup(groupName)
 	if !ok {
 		return nil, fmt.Errorf("group %s not found", groupName)
 	}
-	return g.SupplyTSDB().(storage.TSDB[*tsTable]), nil
+	return g.SupplyTSDB().(storage.TSDB[*tsTable, option]), nil
 }
 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
@@ -343,7 +344,7 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
-	opts := storage.TSDBOpts[*tsTable]{
+	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:        groupSchema.ResourceOpts.ShardNum,
 		Location:        path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:  newTSTable,

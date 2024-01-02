@@ -597,6 +597,16 @@ type blockPointer struct {
 	partID uint64
 }
 
+func (bi *blockPointer) updateMetadata() {
+	if len(bi.block.timestamps) == 0 {
+		return
+	}
+	// only update timestamps since they are used for merging
+	// blockWriter will recompute all fields
+	bi.bm.timestamps.min = bi.block.timestamps[0]
+	bi.bm.timestamps.max = bi.block.timestamps[len(bi.timestamps)-1]
+}
+
 func (bi *blockPointer) copyFrom(src *blockPointer) {
 	bi.idx = 0
 	bi.bm.copyFrom(&src.bm)

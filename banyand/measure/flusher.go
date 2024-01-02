@@ -25,11 +25,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-const flusherWaitTimeout = 5 * time.Second
-
 func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
 	defer tst.loopCloser.Done()
-	epochWatcher := introducerWatcher.Add(0, tst.loopCloser.CloseNotify())
+	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
 	if epochWatcher == nil {
 		return
 	}
@@ -44,7 +42,7 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 		case <-epochWatcher.Watch():
 			curSnapshot := tst.currentSnapshot()
 			if curSnapshot != nil {
-				epoch, flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, introducerWatcher, flusherWatchers)
+				flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, introducerWatcher, flusherWatchers)
 				curSnapshot.decRef()
 				curSnapshot = nil
 			}
@@ -61,20 +59,18 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 					curSnapshot.decRef()
 					continue
 				}
-				if newSnapshot != nil {
-					epoch = tst.persistSnapshot(newSnapshot)
+				var toBePersistedSnapshot *snapshot
+				if newSnapshot == nil {
+					tst.flush(curSnapshot, flushCh)
+					toBePersistedSnapshot = curSnapshot
 				} else {
-					epoch = tst.flush(curSnapshot, flushCh)
-					if epoch == 0 {
-						curSnapshot.decRef()
-						return
-					}
-					tst.persistSnapshot(curSnapshot)
+					toBePersistedSnapshot = newSnapshot
 				}
+				epoch = tst.persistSnapshot(toBePersistedSnapshot)
 				// Notify merger to start a new round of merge.
 				// This round might have be triggered in pauseFlusherToPileupMemParts.
 				flusherWatchers.Notify(math.MaxUint64)
-				flusherWatcher = nil
+				flusherWatchers = nil
 				curSnapshot.decRef()
 				if tst.currentEpoch() != epoch {
 					continue
@@ -92,25 +88,24 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 // pauseFlusherToPileupMemParts takes a pause to wait for in-memory parts to pile up.
 // If there is no in-memory part, we can skip the pause.
 // When a merging is finished, we can skip the pause.
-func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher, introducerWatcher watcher.Channel, flusherWatchers watcher.Epochs) (uint64, watcher.Epochs) {
+func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher, introducerWatcher watcher.Channel, flusherWatchers watcher.Epochs) watcher.Epochs {
 	curSnapshot := tst.currentSnapshot()
 	if curSnapshot == nil {
-		return epoch, flusherWatchers
+		return flusherWatchers
 	}
 	if curSnapshot.creator != snapshotCreatorMemPart {
 		curSnapshot.decRef()
-		return epoch, flusherWatchers
+		return flusherWatchers
 	}
 	curSnapshot.decRef()
 	select {
 	case <-tst.loopCloser.CloseNotify():
-	case <-time.After(flusherWaitTimeout):
+	case <-time.After(tst.option.flushTimeout):
 	case e := <-flushWatcher:
 		flusherWatchers.Add(e)
-		epoch = e.Val()
 		flusherWatchers.Notify(epoch)
 	}
-	return epoch, flusherWatchers
+	return flusherWatchers
 }
 
 func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (*snapshot, error) {
@@ -154,7 +149,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	}, nil
 }
 
-func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) uint64 {
+func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) {
 	ind := generateFlusherIntroduction()
 	defer releaseFlusherIntroduction(ind)
 	for _, pw := range snapshot.parts {
@@ -168,19 +163,17 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		ind.flushed[newPW.ID()] = newPW
 	}
 	if len(ind.flushed) < 1 {
-		return 0
+		return
 	}
 	ind.applied = make(chan struct{})
 	select {
 	case flushCh <- ind:
 	case <-tst.loopCloser.CloseNotify():
-		return snapshot.epoch
+		return
 	}
 	select {
 	case <-ind.applied:
-		return snapshot.epoch
 	case <-tst.loopCloser.CloseNotify():
-		return snapshot.epoch
 	}
 }
 

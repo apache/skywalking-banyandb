@@ -48,13 +48,13 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			name:  "Merge left is non-empty right is empty",
 			left:  &blockPointer{block: conventionalBlock},
 			right: &blockPointer{},
-			want:  &blockPointer{block: conventionalBlock},
+			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 2}}},
 		},
 		{
 			name:  "Merge left is empty right is non-empty",
 			left:  &blockPointer{},
 			right: &blockPointer{block: conventionalBlock},
-			want:  &blockPointer{block: conventionalBlock},
+			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 2}}},
 		},
 		{
 			name: "Merge two non-empty blocks without overlap",
@@ -100,7 +100,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock},
+			want: &blockPointer{block: mergedBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 		{
 			name: "Merge two non-empty blocks without duplicated timestamps",
@@ -146,7 +146,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock},
+			want: &blockPointer{block: mergedBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 		{
 			name: "Merge two non-empty blocks with duplicated timestamps",
@@ -201,7 +201,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, partID: 2},
+			want: &blockPointer{block: mergedBlock, partID: 2, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 	}
 
@@ -262,7 +262,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with different ts",
-			dpsList: []*dataPoints{dpsTS1, dpsTS2},
+			dpsList: []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
 			want: []blockMetadata{
 				{seriesID: 1, count: 2, uncompressedSizeBytes: 3352},
 				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
@@ -271,7 +271,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with same ts",
-			dpsList: []*dataPoints{dpsTS1, dpsTS1},
+			dpsList: []*dataPoints{dpsTS1, dpsTS1, dpsTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
