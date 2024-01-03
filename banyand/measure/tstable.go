@@ -112,11 +112,11 @@ type tsTable struct {
 	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
+	p             common.Position
 	root          string
 	gc            garbageCleaner
 	curPartID     uint64
 	option        option
-	p             common.Position
 	sync.RWMutex
 }
 

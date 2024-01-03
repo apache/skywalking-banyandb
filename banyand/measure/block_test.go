@@ -477,10 +477,10 @@ func Test_blockPointer_append(t *testing.T) {
 		offset int
 	}
 	tests := []struct {
-		name      string
-		fields    fields
-		args      args
 		want      *blockPointer
+		name      string
+		args      args
+		fields    fields
 		wantPanic bool
 	}{
 		{
@@ -783,10 +783,10 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 		src *blockPointer
 	}
 	tests := []struct {
-		name   string
-		fields fields
 		args   args
 		want   *blockPointer
+		name   string
+		fields fields
 	}{
 		{
 			name: "Test copyFrom",

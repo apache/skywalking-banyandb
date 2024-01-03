@@ -28,9 +28,9 @@ import (
 func TestDeletableEpochs(t *testing.T) {
 	tests := []struct {
 		name            string
-		n               int
 		knownEpochs     []uint64
 		deletableEpochs []uint64
+		n               int
 	}{
 		{
 			name:            "empty",

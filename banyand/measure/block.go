@@ -602,10 +602,8 @@ func releaseBlockCursor(bc *blockCursor) {
 
 type blockPointer struct {
 	block
-
-	idx int
-	bm  blockMetadata
-	// the part where the last value is from
+	bm         blockMetadata
+	idx        int
 	lastPartID uint64
 }
 

@@ -237,14 +237,13 @@ func (pi *partIter) findBlock() bool {
 }
 
 type partMergeIter struct {
-	err                error
-	p                  *part
-	primaryMetadataIdx int
-
+	err                  error
+	p                    *part
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
-	block                blockPointer
 	columnValuesDecoder  encoding.BytesBlockDecoder
+	block                blockPointer
+	primaryMetadataIdx   int
 }
 
 func (pmi *partMergeIter) reset() {

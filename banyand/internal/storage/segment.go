@@ -117,6 +117,7 @@ func (s *segment[T]) String() string {
 
 type segmentController[T TSTable, O any] struct {
 	clock          timestamp.Clock
+	option         O
 	scheduler      *timestamp.Scheduler
 	l              *logger.Logger
 	tsTableCreator TSTableCreator[T, O]
@@ -125,7 +126,6 @@ type segmentController[T TSTable, O any] struct {
 	lst            []*segment[T]
 	segmentSize    IntervalRule
 	sync.RWMutex
-	option O
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,

@@ -33,10 +33,10 @@ import (
 
 func Test_mergeTwoBlocks(t *testing.T) {
 	tests := []struct {
-		name  string
 		left  *blockPointer
 		right *blockPointer
 		want  *blockPointer
+		name  string
 	}{
 		{
 			name:  "Merge two empty blocks",

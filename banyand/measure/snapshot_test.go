@@ -290,11 +290,11 @@ func TestSnapshotMerge(t *testing.T) {
 
 func TestSnapshotRemove(t *testing.T) {
 	tests := []struct {
-		name        string
 		snapshot    *snapshot
-		nextEpoch   uint64
 		mergedParts map[uint64]struct{}
+		name        string
 		expected    snapshot
+		nextEpoch   uint64
 		closePrev   bool
 	}{
 		{

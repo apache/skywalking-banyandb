@@ -23,10 +23,10 @@ import (
 
 type garbageCleaner struct {
 	parent          *tsTable
-	liveEpoch       uint64
-	deletableEpochs []uint64
 	liveParts       map[uint64]map[uint64]struct{}
 	knownPartFiles  map[uint64]struct{}
+	deletableEpochs []uint64
+	liveEpoch       uint64
 }
 
 func (g *garbageCleaner) init(parent *tsTable) {

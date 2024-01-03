@@ -46,10 +46,10 @@ func (r *reader) Read(p []byte) (int, error) {
 }
 
 type blockReader struct {
+	err           error
 	block         *blockPointer
 	pih           partMergeIterHeap
 	nextBlockNoop bool
-	err           error
 }
 
 func (br *blockReader) reset() {

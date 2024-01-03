@@ -44,12 +44,12 @@ const (
 
 // TSDBOpts wraps options to create a tsdb.
 type TSDBOpts[T TSTable, O any] struct {
+	Option          O
 	TSTableCreator  TSTableCreator[T, O]
 	Location        string
 	SegmentInterval IntervalRule
 	TTL             IntervalRule
 	ShardNum        uint32
-	Option          O
 }
 
 type (
