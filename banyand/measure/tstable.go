@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -43,7 +44,7 @@ const (
 	dirPermission  = 0o700
 )
 
-func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position,
+func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option,
 ) (*tsTable, error) {
 	tst := tsTable{
@@ -51,6 +52,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, _ common.Position,
 		root:       rootPath,
 		option:     option,
 		l:          l,
+		p:          p,
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -114,6 +116,7 @@ type tsTable struct {
 	gc            garbageCleaner
 	curPartID     uint64
 	option        option
+	p             common.Position
 	sync.RWMutex
 }
 
@@ -236,6 +239,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
+	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 
 	select {
 	case tst.introductions <- ind:

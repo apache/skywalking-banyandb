@@ -48,7 +48,6 @@ type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
 	metadata metadata.Repo
-	option   option
 }
 
 func newSchemaRepo(path string, svc *service) schemaRepo {
@@ -317,6 +316,7 @@ type supplier struct {
 	pipeline queue.Queue
 	l        *logger.Logger
 	path     string
+	option   option
 }
 
 func newSupplier(path string, svc *service) *supplier {
@@ -325,6 +325,7 @@ func newSupplier(path string, svc *service) *supplier {
 		metadata: svc.metadata,
 		l:        svc.l,
 		pipeline: svc.localPipeline,
+		option:   svc.option,
 	}
 }
 
@@ -350,6 +351,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 		TSTableCreator:  newTSTable,
 		SegmentInterval: storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:             storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+		Option:          s.option,
 	}
 	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(

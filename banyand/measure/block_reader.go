@@ -19,6 +19,7 @@ package measure
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"io"
 
@@ -92,15 +93,14 @@ func (br *blockReader) nextBlock() bool {
 	}
 
 	br.err = br.next()
-	switch br.err {
-	case nil:
-		return true
-	case io.EOF:
-		return false
-	default:
+	if br.err != nil {
+		if errors.Is(br.err, io.EOF) {
+			return false
+		}
 		br.err = fmt.Errorf("can't get the block to merge: %w", br.err)
 		return false
 	}
+	return true
 }
 
 func (br *blockReader) next() error {
@@ -128,7 +128,7 @@ func (br *blockReader) next() error {
 }
 
 func (br *blockReader) error() error {
-	if br.err == io.EOF {
+	if errors.Is(br.err, io.EOF) {
 		return nil
 	}
 	return br.err

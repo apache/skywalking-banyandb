@@ -379,7 +379,7 @@ func TestQueryResult(t *testing.T) {
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts)
+				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 				sids := make([]common.SeriesID, len(tt.sids))
 				copy(sids, tt.sids)
 				sort.Slice(sids, func(i, j int) bool {

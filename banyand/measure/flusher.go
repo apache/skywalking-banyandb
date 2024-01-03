@@ -42,7 +42,7 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 		case <-epochWatcher.Watch():
 			curSnapshot := tst.currentSnapshot()
 			if curSnapshot != nil {
-				flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, introducerWatcher, flusherWatchers)
+				flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
 				curSnapshot.decRef()
 				curSnapshot = nil
 			}
@@ -88,7 +88,7 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 // pauseFlusherToPileupMemParts takes a pause to wait for in-memory parts to pile up.
 // If there is no in-memory part, we can skip the pause.
 // When a merging is finished, we can skip the pause.
-func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher, introducerWatcher watcher.Channel, flusherWatchers watcher.Epochs) watcher.Epochs {
+func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watcher.Channel, flusherWatchers watcher.Epochs) watcher.Epochs {
 	curSnapshot := tst.currentSnapshot()
 	if curSnapshot == nil {
 		return flusherWatchers
@@ -111,21 +111,21 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher, int
 func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (*snapshot, error) {
 	var memParts []*partWrapper
 	var remainingParts []*partWrapper
-	remainingIDs := make(map[uint64]struct{})
+	mergedIDs := make(map[uint64]struct{})
 	for i := range snp.parts {
 		if snp.parts[i].mp != nil {
 			memParts = append(memParts, snp.parts[i])
+			mergedIDs[snp.parts[i].ID()] = struct{}{}
 			continue
 		}
 		remainingParts = append(remainingParts, snp.parts[i])
-		remainingIDs[snp.parts[i].ID()] = struct{}{}
 	}
 	if len(memParts) < 2 {
 		return nil, nil
 	}
 	// merge memory must not be closed by the tsTable.close
 	closeCh := make(chan struct{})
-	newPart, err := tst.mergePartsThenSendIntroduction(memParts, remainingIDs, mergeCh, closeCh)
+	newPart, err := tst.mergePartsThenSendIntroduction(memParts, mergedIDs, mergeCh, closeCh)
 	close(closeCh)
 	if err != nil {
 		if errors.Is(err, errClosed) {

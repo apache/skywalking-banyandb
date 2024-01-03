@@ -112,7 +112,7 @@ func TestSnapshotGetParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts)
+			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp)
 			assert.Equal(t, tt.expected, result)
 			assert.Equal(t, tt.count, count)
 		})
@@ -290,20 +290,20 @@ func TestSnapshotMerge(t *testing.T) {
 
 func TestSnapshotRemove(t *testing.T) {
 	tests := []struct {
-		name           string
-		snapshot       *snapshot
-		nextEpoch      uint64
-		remainingParts map[uint64]struct{}
-		expected       snapshot
-		closePrev      bool
+		name        string
+		snapshot    *snapshot
+		nextEpoch   uint64
+		mergedParts map[uint64]struct{}
+		expected    snapshot
+		closePrev   bool
 	}{
 		{
 			name: "Test with empty snapshot and no parts to remove",
 			snapshot: &snapshot{
 				parts: []*partWrapper{},
 			},
-			nextEpoch:      1,
-			remainingParts: map[uint64]struct{}{},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -318,11 +318,8 @@ func TestSnapshotRemove(t *testing.T) {
 					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
 				},
 			},
-			nextEpoch: 1,
-			remainingParts: map[uint64]struct{}{
-				1: {},
-				2: {},
-			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -341,8 +338,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			remainingParts: map[uint64]struct{}{
-				2: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -357,8 +354,8 @@ func TestSnapshotRemove(t *testing.T) {
 			snapshot: &snapshot{
 				parts: []*partWrapper{},
 			},
-			nextEpoch:      1,
-			remainingParts: map[uint64]struct{}{},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -374,11 +371,8 @@ func TestSnapshotRemove(t *testing.T) {
 					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
 				},
 			},
-			nextEpoch: 1,
-			remainingParts: map[uint64]struct{}{
-				1: {},
-				2: {},
-			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -403,8 +397,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			remainingParts: map[uint64]struct{}{
-				2: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -419,7 +413,7 @@ func TestSnapshotRemove(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.snapshot.remove(tt.nextEpoch, tt.remainingParts)
+			result := tt.snapshot.remove(tt.nextEpoch, tt.mergedParts)
 			if tt.closePrev {
 				tt.snapshot.decRef()
 			}

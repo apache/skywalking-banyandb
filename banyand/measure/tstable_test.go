@@ -144,10 +144,7 @@ func Test_tstIter(t *testing.T) {
 			s = new(snapshot)
 		}
 		defer s.decRef()
-		pp, n := s.getParts(nil, queryOptions{
-			minTimestamp: tt.minTimestamp,
-			maxTimestamp: tt.maxTimestamp,
-		})
+		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
 		ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)

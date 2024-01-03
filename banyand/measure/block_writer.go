@@ -210,9 +210,9 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	isSeenSid := sid == bw.sidLast
 	bw.sidLast = sid
 
-	bh := generateBlockMetadata()
-	b.mustWriteTo(sid, bh, &bw.writers)
-	th := &bh.timestamps
+	bm := generateBlockMetadata()
+	b.mustWriteTo(sid, bm, &bw.writers)
+	th := &bm.timestamps
 	if bw.totalCount == 0 || th.min < bw.totalMinTimestamp {
 		bw.totalMinTimestamp = th.min
 	}
@@ -230,12 +230,12 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	}
 	bw.minTimestampLast = th.min
 
-	bw.totalUncompressedSizeBytes += bh.uncompressedSizeBytes
-	bw.totalCount += bh.count
+	bw.totalUncompressedSizeBytes += bm.uncompressedSizeBytes
+	bw.totalCount += bm.count
 	bw.totalBlocksCount++
 
-	bw.primaryBlockData = bh.marshal(bw.primaryBlockData)
-	releaseBlockMetadata(bh)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
+	releaseBlockMetadata(bm)
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
 		bw.primaryBlockData = bw.primaryBlockData[:0]

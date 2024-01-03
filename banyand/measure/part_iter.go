@@ -263,7 +263,7 @@ func (pmi *partMergeIter) mustInitFromPart(p *part) {
 }
 
 func (pmi *partMergeIter) error() error {
-	if pmi.err == nil || pmi.err == io.EOF {
+	if pmi.err == nil || errors.Is(pmi.err, io.EOF) {
 		return nil
 	}
 	return pmi.err
@@ -313,7 +313,7 @@ func (pmi *partMergeIter) loadBlock() error {
 	}
 
 	pmi.block.block.mustReadFrom(&pmi.columnValuesDecoder, pmi.p, pmi.block.bm, false)
-	pmi.block.partID = pmi.p.partMetadata.ID
+	pmi.block.lastPartID = pmi.p.partMetadata.ID
 	return nil
 }
 

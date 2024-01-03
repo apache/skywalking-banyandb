@@ -151,7 +151,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		{
 			name: "Merge two non-empty blocks with duplicated timestamps",
 			left: &blockPointer{
-				partID: 1, // the less partID will be skipped
+				lastPartID: 1, // the less partID will be skipped
 				block: block{
 					timestamps: []int64{1, 2, 3},
 					tagFamilies: []columnFamily{
@@ -177,7 +177,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 				},
 			},
 			right: &blockPointer{
-				partID: 2, // the greater partID will be appended
+				lastPartID: 2, // the greater partID will be appended
 				block: block{
 					timestamps: []int64{2, 3, 4},
 					tagFamilies: []columnFamily{
@@ -201,7 +201,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, partID: 2, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
+			want: &blockPointer{block: mergedBlock, lastPartID: 2, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 	}
 

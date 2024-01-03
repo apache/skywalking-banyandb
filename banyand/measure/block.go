@@ -541,6 +541,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			name:      tmpBlock.field.columns[i].name,
 			valueType: tmpBlock.field.columns[i].valueType,
 		}
+
 		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end]...)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
@@ -566,10 +567,21 @@ func findRange(timestamps []int64, min int64, max int64) (int, int, bool) {
 		}
 	}
 
-	if start == -1 || end == -1 || start >= end {
+	if start == -1 && end == -1 {
 		return 0, 0, false
 	}
 
+	if start == -1 {
+		start = 0
+	}
+
+	if end == -1 {
+		end = l
+	}
+
+	if start >= end {
+		return 0, 0, false
+	}
 	return start, end, true
 }
 
@@ -593,8 +605,8 @@ type blockPointer struct {
 
 	idx int
 	bm  blockMetadata
-	// from partMetadata.ID
-	partID uint64
+	// the part where the last value is from
+	lastPartID uint64
 }
 
 func (bi *blockPointer) updateMetadata() {
@@ -676,9 +688,7 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
 	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
 
-	if bi.partID < b.partID {
-		bi.partID = b.partID
-	}
+	bi.lastPartID = b.lastPartID
 }
 
 func assertIdxAndOffset(name string, length int, idx int, offset int) {
@@ -696,7 +706,7 @@ func (bi *blockPointer) isFull() bool {
 
 func (bi *blockPointer) reset() {
 	bi.idx = 0
-	bi.partID = 0
+	bi.lastPartID = 0
 	bi.block.reset()
 	bi.bm = blockMetadata{}
 }

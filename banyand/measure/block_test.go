@@ -550,7 +550,7 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					partID: 2,
+					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						tagFamilies: []columnFamily{
@@ -575,7 +575,7 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				partID: 2,
+				lastPartID: 2,
 				block: block{
 					timestamps: []int64{4, 5},
 					tagFamilies: []columnFamily{
@@ -622,7 +622,7 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					partID: 2,
+					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						tagFamilies: []columnFamily{
@@ -647,7 +647,7 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				partID: 2,
+				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4, 5},
 					tagFamilies: []columnFamily{
@@ -656,7 +656,11 @@ func Test_blockPointer_append(t *testing.T) {
 							columns: []column{
 								{
 									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
-									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}),
+										marshalStrArr([][]byte{[]byte("value11"), []byte("value12")}),
+									},
 								},
 							},
 						},
@@ -694,7 +698,7 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					partID: 2,
+					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						tagFamilies: []columnFamily{
@@ -719,7 +723,7 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 1,
 			},
 			want: &blockPointer{
-				partID: 3,
+				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4},
 					tagFamilies: []columnFamily{
@@ -728,7 +732,10 @@ func Test_blockPointer_append(t *testing.T) {
 							columns: []column{
 								{
 									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
-									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")})},
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{
+										[]byte("value7"),
+										[]byte("value8"),
+									}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")})},
 								},
 							},
 						},
@@ -757,7 +764,7 @@ func Test_blockPointer_append(t *testing.T) {
 					tagFamilies: tt.fields.tagFamilies,
 					field:       tt.fields.field,
 				},
-				partID: tt.fields.partID,
+				lastPartID: tt.fields.partID,
 			}
 			bi.append(tt.args.b, tt.args.offset)
 			if !reflect.DeepEqual(bi, tt.want) {
@@ -789,17 +796,17 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 			},
 			args: args{
 				src: &blockPointer{
-					bm:     blockMetadata{count: 1},
-					idx:    0,
-					block:  conventionalBlock,
-					partID: 2,
+					bm:         blockMetadata{count: 1},
+					idx:        0,
+					block:      conventionalBlock,
+					lastPartID: 2,
 				},
 			},
 			want: &blockPointer{
-				bm:     blockMetadata{count: 1},
-				idx:    0,
-				block:  conventionalBlock,
-				partID: 2,
+				bm:         blockMetadata{count: 1},
+				idx:        0,
+				block:      conventionalBlock,
+				lastPartID: 2,
 			},
 		},
 	}

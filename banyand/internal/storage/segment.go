@@ -124,8 +124,8 @@ type segmentController[T TSTable, O any] struct {
 	location       string
 	lst            []*segment[T]
 	segmentSize    IntervalRule
-	option         O
 	sync.RWMutex
+	option O
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
@@ -297,14 +297,12 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	suffix := sc.Format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
 	var tsTable T
-	if tsTable, err = sc.tsTableCreator(lfs, segPath, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
+	p := sc.position
+	p.Segment = suffix
+	if tsTable, err = sc.tsTableCreator(lfs, segPath, p, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
 		return nil, err
 	}
-	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
-	seg, err = openSegment[T](common.SetPosition(ctx, func(p common.Position) common.Position {
-		p.Segment = suffix
-		return p
-	}), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable)
+	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable)
 	if err != nil {
 		return nil, err
 	}

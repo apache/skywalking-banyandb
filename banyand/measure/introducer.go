@@ -19,7 +19,6 @@ package measure
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -79,14 +78,14 @@ func releaseFlusherIntroduction(i *flusherIntroduction) {
 }
 
 type mergerIntroduction struct {
-	remaining map[uint64]struct{}
-	newPart   *partWrapper
-	applied   chan struct{}
+	merged  map[uint64]struct{}
+	newPart *partWrapper
+	applied chan struct{}
 }
 
 func (i *mergerIntroduction) reset() {
-	for k := range i.remaining {
-		delete(i.remaining, k)
+	for k := range i.merged {
+		delete(i.merged, k)
 	}
 	i.newPart = nil
 	i.applied = nil
@@ -141,7 +140,6 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 
 	next := nextIntroduction.memPart
 	nextSnp := cur.copyAllTo(epoch)
-	next.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
 	tst.replaceSnapshot(&nextSnp)
@@ -170,7 +168,7 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 		tst.l.Panic().Msg("current snapshot is nil")
 	}
 	defer cur.decRef()
-	nextSnp := cur.remove(epoch, nextIntroduction.remaining)
+	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = snapshotCreatorMerger
 	tst.replaceSnapshot(&nextSnp)

@@ -103,7 +103,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, qo)
+		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
