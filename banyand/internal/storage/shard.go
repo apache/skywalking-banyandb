@@ -30,9 +30,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type shard[T TSTable] struct {
+type shard[T TSTable, O any] struct {
 	l                     *logger.Logger
-	segmentController     *segmentController[T]
+	segmentController     *segmentController[T, O]
 	segmentManageStrategy *bucket.Strategy
 	scheduler             *timestamp.Scheduler
 	position              common.Position
@@ -40,7 +40,7 @@ type shard[T TSTable] struct {
 	id                    common.ShardID
 }
 
-func (d *database[T]) openShard(ctx context.Context, id common.ShardID) (*shard[T], error) {
+func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T, O], error) {
 	location := path.Join(d.location, fmt.Sprintf(shardTemplate, int(id)))
 	lfs.MkdirIfNotExist(location, dirPerm)
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
@@ -53,12 +53,13 @@ func (d *database[T]) openShard(ctx context.Context, id common.ShardID) (*shard[
 	clock, _ := timestamp.GetClock(shardCtx)
 
 	scheduler := timestamp.NewScheduler(l, clock)
-	s := &shard[T]{
-		id:                id,
-		l:                 l,
-		scheduler:         scheduler,
-		position:          common.GetPosition(shardCtx),
-		segmentController: newSegmentController[T](shardCtx, location, d.opts.SegmentInterval, l, scheduler, d.opts.TSTableCreator),
+	s := &shard[T, O]{
+		id:        id,
+		l:         l,
+		scheduler: scheduler,
+		position:  common.GetPosition(shardCtx),
+		segmentController: newSegmentController[T](shardCtx, location,
+			d.opts.SegmentInterval, l, scheduler, d.opts.TSTableCreator, d.opts.Option),
 	}
 	var err error
 	if err = s.segmentController.open(); err != nil {
@@ -75,7 +76,7 @@ func (d *database[T]) openShard(ctx context.Context, id common.ShardID) (*shard[
 	return s, nil
 }
 
-func (s *shard[T]) close() {
+func (s *shard[T, O]) close() {
 	s.closeOnce.Do(func() {
 		s.scheduler.Close()
 		s.segmentManageStrategy.Close()

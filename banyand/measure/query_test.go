@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
 
@@ -371,7 +370,7 @@ func TestQueryResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verify := func(tst *tsTable) uint64 {
+			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
 				queryOpts := queryOptions{
 					minTimestamp: tt.minTimestamp,
@@ -380,8 +379,7 @@ func TestQueryResult(t *testing.T) {
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, n := s.getParts(nil, queryOpts)
-				require.Equal(t, len(tt.dpsList), n, "parts: %+v", pp)
+				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 				sids := make([]common.SeriesID, len(tt.sids))
 				copy(sids, tt.sids)
 				sort.Slice(sids, func(i, j int) bool {
@@ -430,22 +428,27 @@ func TestQueryResult(t *testing.T) {
 					protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
 					t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
 				}
-				return s.epoch
 			}
 
 			t.Run("memory snapshot", func(t *testing.T) {
+				tmpPath, defFn := test.Space(require.New(t))
+				defer defFn()
 				tst := &tsTable{
 					loopCloser:    run.NewCloser(2),
 					introductions: make(chan *introduction),
+					fileSystem:    fs.NewLocalFileSystem(),
+					root:          tmpPath,
 				}
+				tst.gc.init(tst)
 				flushCh := make(chan *flusherIntroduction)
+				mergeCh := make(chan *mergerIntroduction)
 				introducerWatcher := make(watcher.Channel, 1)
-				go tst.introducerLoop(flushCh, introducerWatcher, 1)
+				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
 					time.Sleep(100 * time.Millisecond)
 				}
-				_ = verify(tst)
+				verify(t, tst)
 			})
 
 			t.Run("file snapshot", func(t *testing.T) {
@@ -453,18 +456,37 @@ func TestQueryResult(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
-				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
 				require.NoError(t, err)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
 					time.Sleep(100 * time.Millisecond)
 				}
-				epoch := verify(tst)
+				// wait until the introducer is done
+				if len(tt.dpsList) > 0 {
+					for {
+						snp := tst.currentSnapshot()
+						if snp == nil {
+							time.Sleep(100 * time.Millisecond)
+							continue
+						}
+						if len(snp.parts) == len(tt.dpsList) {
+							snp.decRef()
+							tst.Close()
+							break
+						}
+						snp.decRef()
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
 
 				// reopen the table
-				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
+				tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
 				require.NoError(t, err)
-				assert.Equal(t, epoch, verify(tst))
+
+				verify(t, tst)
 			})
 		})
 	}

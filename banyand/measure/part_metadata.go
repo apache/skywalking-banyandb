@@ -26,13 +26,13 @@ import (
 )
 
 type partMetadata struct {
-	CompressedSizeBytes   uint64
-	UncompressedSizeBytes uint64
-	TotalCount            uint64
-	BlocksCount           uint64
-	MinTimestamp          int64
-	MaxTimestamp          int64
-	ID                    uint64
+	CompressedSizeBytes   uint64 `json:"compressedSizeBytes"`
+	UncompressedSizeBytes uint64 `json:"uncompressedSizeBytes"`
+	TotalCount            uint64 `json:"totalCount"`
+	BlocksCount           uint64 `json:"blocksCount"`
+	MinTimestamp          int64  `json:"minTimestamp"`
+	MaxTimestamp          int64  `json:"maxTimestamp"`
+	ID                    uint64 `json:"-"`
 }
 
 func (pm *partMetadata) reset() {

@@ -25,14 +25,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type retentionTask[T TSTable] struct {
-	segment  *segmentController[T]
+type retentionTask[T TSTable, O any] struct {
+	segment  *segmentController[T, O]
 	expr     string
 	option   cron.ParseOption
 	duration time.Duration
 }
 
-func newRetentionTask[T TSTable](segment *segmentController[T], ttl IntervalRule) *retentionTask[T] {
+func newRetentionTask[T TSTable, O any](segment *segmentController[T, O], ttl IntervalRule) *retentionTask[T, O] {
 	var expr string
 	switch ttl.Unit {
 	case HOUR:
@@ -42,7 +42,7 @@ func newRetentionTask[T TSTable](segment *segmentController[T], ttl IntervalRule
 		// Every day on 00:05
 		expr = "5 0"
 	}
-	return &retentionTask[T]{
+	return &retentionTask[T, O]{
 		segment:  segment,
 		option:   cron.Minute | cron.Hour,
 		expr:     expr,
@@ -50,7 +50,7 @@ func newRetentionTask[T TSTable](segment *segmentController[T], ttl IntervalRule
 	}
 }
 
-func (rc *retentionTask[T]) run(now time.Time, l *logger.Logger) bool {
+func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
 	if err := rc.segment.remove(now.Add(-rc.duration)); err != nil {
 		l.Error().Err(err)
 	}

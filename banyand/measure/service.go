@@ -59,6 +59,7 @@ type service struct {
 	localPipeline queue.Queue
 	l             *logger.Logger
 	root          string
+	option        option
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -76,6 +77,7 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
+	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	return flagS
 }
 
