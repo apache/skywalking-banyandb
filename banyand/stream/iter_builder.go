@@ -45,18 +45,14 @@ type seekerBuilder struct {
 	order               modelv1.Sort
 }
 
-func newSeekerBuilder(indexFilter index.Filter, seriesSpan *seriesSpan,
-	indexRuleForSorting *databasev1.IndexRule, l *logger.Logger,
+func (s *seekerBuilder) enhance(indexFilter index.Filter,
+	indexRuleForSorting *databasev1.IndexRule,
 	order modelv1.Sort, tagProjection []pbv1.TagProjection,
-) *seekerBuilder {
-	return &seekerBuilder{
-		indexFilter:         indexFilter,
-		seriesSpan:          seriesSpan,
-		indexRuleForSorting: indexRuleForSorting,
-		l:                   l,
-		tagProjection:       tagProjection,
-		order:               order,
-	}
+) {
+	s.indexFilter = indexFilter
+	s.indexRuleForSorting = indexRuleForSorting
+	s.order = order
+	s.tagProjection = tagProjection
 }
 
 func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err error) {

@@ -27,11 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -50,6 +46,13 @@ const (
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
+
+type element struct {
+	elementID   string
+	tagFamilies []*tagFamily
+	timestamp   int64
+	index       int
+}
 
 type part struct {
 	path                 string
@@ -83,7 +86,7 @@ func (p *part) String() string {
 	return fmt.Sprintf("part %d", p.partMetadata.ID)
 }
 
-func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*streamv1.Element, error) {
+func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
 	for _, primaryMeta := range p.primaryBlockMetadata {
@@ -123,23 +126,12 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 					tfs = append(tfs, tf)
 				}
 
-				e := &streamv1.Element{
-					Timestamp: timestamppb.New(time.Unix(0, timestamps[i])),
-					ElementId: elementIDs[i],
-				}
-				for _, tf := range tfs {
-					tagFamily := &modelv1.TagFamily{
-						Name: tf.name,
-					}
-					e.TagFamilies = append(e.TagFamilies, tagFamily)
-					for _, t := range tf.tags {
-						tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-							Key:   t.name,
-							Value: mustDecodeTagValue(t.valueType, t.values[i]),
-						})
-					}
-				}
-				return e, nil
+				return &element{
+					timestamp:   timestamps[i],
+					elementID:   elementIDs[i],
+					tagFamilies: tfs,
+					index:       i,
+				}, nil
 			}
 			if common.ItemID(ts) > timestamp {
 				break

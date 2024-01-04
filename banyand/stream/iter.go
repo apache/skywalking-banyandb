@@ -19,7 +19,6 @@ package stream
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -97,7 +96,7 @@ type item struct {
 	seriesID      common.SeriesID
 }
 
-func (i *item) Element() (*streamv1.Element, error) {
+func (i *item) Element() (*element, error) {
 	return i.table.getElement(i.seriesID, i.itemID, i.tagProjection)
 }
 

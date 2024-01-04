@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -247,7 +246,7 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	}
 }
 
-func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*streamv1.Element, error) {
+func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
 	tst.RLock()
 	defer tst.RUnlock()
 	for _, p := range tst.currentSnapshot().parts {

@@ -25,9 +25,10 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
+	"time"
 
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -107,18 +108,6 @@ func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
 	return string(rawBytes), nil
 }
 
-// String outputs the string represent of an series.
-func stringLiteral(tvs []*modelv1.TagValue) string {
-	var strBuilder strings.Builder
-	for i := 0; i < len(tvs); i++ {
-		strBuilder.WriteString(tvs[i].String())
-		if i < len(tvs)-1 {
-			strBuilder.WriteString(".")
-		}
-	}
-	return strBuilder.String()
-}
-
 // NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
 func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[item] {
 	var ii []itersort.Iterator[item]
@@ -158,9 +147,9 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 
 	var iters []*searcherIterator
 	for _, series := range seriesList {
-		seriesLiteral := stringLiteral(series.EntityValues)
-		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID, seriesLiteral)
-		seekerBuilder := newSeekerBuilder(sqo.Filter, seriesSpan, sqo.Order.Index, s.l, sqo.Order.Sort, sqo.TagProjection)
+		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID)
+		seekerBuilder := seriesSpan.Build()
+		seekerBuilder.enhance(sqo.Filter, sqo.Order.Index, sqo.Order.Sort, sqo.TagProjection)
 		seriesIters, buildErr := seekerBuilder.buildSeriesByIndex()
 		if err != nil {
 			return nil, buildErr
@@ -180,9 +169,25 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 	}()
 	for it.Next() {
 		nextItem := it.Val()
-		elem, err := nextItem.Element()
+		e, err := nextItem.Element()
 		if err != nil {
 			return nil, err
+		}
+		elem := &streamv1.Element{
+			Timestamp: timestamppb.New(time.Unix(0, e.timestamp)),
+			ElementId: e.elementID,
+		}
+		for _, tf := range e.tagFamilies {
+			tagFamily := &modelv1.TagFamily{
+				Name: tf.name,
+			}
+			elem.TagFamilies = append(elem.TagFamilies, tagFamily)
+			for _, t := range tf.tags {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   t.name,
+					Value: mustDecodeTagValue(t.valueType, t.values[e.index]),
+				})
+			}
 		}
 		elems = append(elems, elem)
 		// TODO: break if reach limit

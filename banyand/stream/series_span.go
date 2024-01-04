@@ -29,9 +29,15 @@ import (
 type seriesSpan struct {
 	l             *logger.Logger
 	timeRange     *timestamp.TimeRange
-	series        string
 	tableWrappers []storage.TSTableWrapper[*tsTable]
 	seriesID      common.SeriesID
+}
+
+func (s *seriesSpan) Build() *seekerBuilder {
+	return &seekerBuilder{
+		seriesSpan: s,
+		l:          logger.GetLogger("seeker-builder"),
+	}
 }
 
 func (s *seriesSpan) Close() {
@@ -40,11 +46,10 @@ func (s *seriesSpan) Close() {
 	}
 }
 
-func newSeriesSpan(ctx context.Context, timeRange *timestamp.TimeRange, tableWrappers []storage.TSTableWrapper[*tsTable], id common.SeriesID, series string) *seriesSpan {
+func newSeriesSpan(ctx context.Context, timeRange *timestamp.TimeRange, tableWrappers []storage.TSTableWrapper[*tsTable], id common.SeriesID) *seriesSpan {
 	s := &seriesSpan{
 		tableWrappers: tableWrappers,
 		seriesID:      id,
-		series:        series,
 		timeRange:     timeRange,
 	}
 	parentLogger := ctx.Value(logger.ContextKey)
