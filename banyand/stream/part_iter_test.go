@@ -23,8 +23,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 // TODO: test more scenarios.
@@ -108,36 +111,47 @@ func Test_partIter_nextBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			verifyPart := func(p *part) {
+				defer p.close()
+				pi := partIter{}
+				pi.init(p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+
+				var got []blockMetadata
+				for pi.nextBlock() {
+					if pi.curBlock.seriesID == 0 {
+						t.Errorf("Expected currBlock to be initialized, but it was nil")
+					}
+					got = append(got, pi.curBlock)
+				}
+
+				if !errors.Is(pi.error(), tt.wantErr) {
+					t.Errorf("Unexpected error: got %v, want %v", pi.err, tt.wantErr)
+				}
+
+				if diff := cmp.Diff(got, tt.want,
+					cmpopts.IgnoreFields(blockMetadata{}, "uncompressedSizeBytes"),
+					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmp.AllowUnexported(blockMetadata{}),
+				); diff != "" {
+					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+			}
 			mp := generateMemPart()
 			releaseMemPart(mp)
 			mp.mustInitFromElements(es)
 
 			p := openMemPart(mp)
-
-			pi := partIter{}
-			pi.init(p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
-
-			var got []blockMetadata
-			for pi.nextBlock() {
-				if pi.curBlock.seriesID == 0 {
-					t.Errorf("Expected currBlock to be initialized, but it was nil")
-				}
-				got = append(got, pi.curBlock)
-			}
-
-			if !errors.Is(pi.error(), tt.wantErr) {
-				t.Errorf("Unexpected error: got %v, want %v", pi.err, tt.wantErr)
-			}
-
-			if diff := cmp.Diff(got, tt.want,
-				cmpopts.IgnoreFields(blockMetadata{}, "uncompressedSizeBytes"),
-				cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
-				cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
-				cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
-				cmp.AllowUnexported(blockMetadata{}),
-			); diff != "" {
-				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
-			}
+			verifyPart(p)
+			tmpDir, defFn := test.Space(require.New(t))
+			defer defFn()
+			epoch := uint64(1)
+			partPath := partPath(tmpDir, epoch)
+			fileSystem := fs.NewLocalFileSystem()
+			mp.mustFlush(fileSystem, partPath)
+			p = mustOpenFilePart(partPath, fileSystem)
+			verifyPart(p)
 		})
 	}
 }

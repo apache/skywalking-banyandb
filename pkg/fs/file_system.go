@@ -94,12 +94,20 @@ type FileSystem interface {
 	ReadDir(dirname string) []DirEntry
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
+	// Create and open lock file by specified name and mode.
+	CreateLockFile(name string, permission Mode) (File, error)
+	// Open the file by specified name and mode.
+	OpenFile(name string) (File, error)
 	// Flush mode, which flushes all data to one file.
 	Write(buffer []byte, name string, permission Mode) (int, error)
+	// Read the entire file using streaming read.
+	Read(name string) ([]byte, error)
 	// Delete the file.
 	DeleteFile(name string) error
 	// Delete the directory.
 	MustRMAll(path string)
+	// SyncPath the directory of file.
+	SyncPath(path string)
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
@@ -109,6 +117,17 @@ type DirEntry interface {
 
 	// IsDir reports whether the entry describes a directory.
 	IsDir() bool
+}
+
+// MustFlush flushes all data to one file and panics if it cannot write all data.
+func MustFlush(fs FileSystem, buffer []byte, name string, permission Mode) {
+	n, err := fs.Write(buffer, name, permission)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", name).Msg("cannot write data")
+	}
+	if n != len(buffer) {
+		logger.GetLogger().Panic().Int("written", n).Int("expected", len(buffer)).Str("path", name).Msg("BUG: writer wrote wrong number of bytes")
+	}
 }
 
 // MustWriteData writes data to w and panics if it cannot write all data.

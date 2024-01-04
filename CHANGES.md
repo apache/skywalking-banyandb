@@ -14,6 +14,7 @@ Release Notes.
 - Remove primary index.
 - Measure column-based storage:
   - Data ingestion and retrieval.
+  - Flush memory data to disk.
 
 ### Bugs
 

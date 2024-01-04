@@ -75,7 +75,7 @@ func (d *database[T]) openShard(ctx context.Context, id common.ShardID) (*shard[
 	return s, nil
 }
 
-func (s *shard[T]) closer() {
+func (s *shard[T]) close() {
 	s.closeOnce.Do(func() {
 		s.scheduler.Close()
 		s.segmentManageStrategy.Close()

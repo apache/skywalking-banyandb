@@ -148,6 +148,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				Key: index.FieldKey{
 					IndexRuleID: ruleIndex.Rule.GetMetadata().GetId(),
 					Analyzer:    ruleIndex.Rule.Analyzer,
+					SeriesID:    series.ID,
 				},
 				Term: tv.value,
 			})
@@ -159,16 +160,21 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				Key: index.FieldKey{
 					IndexRuleID: rule.GetMetadata().GetId(),
 					Analyzer:    rule.Analyzer,
+					SeriesID:    series.ID,
 				},
 				Term: val,
 			})
 		}
 	}
 
+	et.docs = append(et.docs, index.Document{
+		DocID:  ts,
+		Fields: fields,
+	})
+
 	eg.docs = append(eg.docs, index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
-		Fields:       fields,
 	})
 	return dst, nil
 }
@@ -210,10 +216,14 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)
+			index := es.tsTable.Table().Index()
+			if err := index.Write(es.docs); err != nil {
+				w.l.Error().Err(err).Msg("cannot write element index")
+			}
 			es.tsTable.DecRef()
 		}
 		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-			w.l.Error().Err(err).Msg("cannot write index")
+			w.l.Error().Err(err).Msg("cannot write series index")
 		}
 	}
 	return

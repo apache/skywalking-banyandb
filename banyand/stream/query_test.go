@@ -15,32 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package fs (file system) is an independent component to operate file and directory.
-package fs
+package stream
 
-import "fmt"
-
-// FileSystemError code.
-const (
-	isExistError = iota
-	IsNotExistError
-	permissionError
-	openError
-	deleteError
-	writeError
-	readError
-	flushError
-	closeError
-	lockError
-	otherError
-)
-
-// FileSystemError implements the Error interface.
-type FileSystemError struct {
-	Message string
-	Code    int
-}
-
-func (err *FileSystemError) Error() string {
-	return fmt.Sprintf("File system return error: %s, error code: %d", err.Message, err.Code)
-}
+// TODO: add unit tests for stream query.

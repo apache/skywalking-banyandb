@@ -134,7 +134,7 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 type queryResult struct {
 	sidToIndex map[common.SeriesID]int
 	data       []*blockCursor
-	pws        []*partWrapper
+	snapshots  []*snapshot
 	loaded     bool
 	orderByTS  bool
 	ascTS      bool
@@ -179,10 +179,10 @@ func (qr *queryResult) Release() {
 		qr.data[i] = nil
 	}
 	qr.data = qr.data[:0]
-	for i := range qr.pws {
-		qr.pws[i].decRef()
+	for i := range qr.snapshots {
+		qr.snapshots[i].decRef()
 	}
-	qr.pws = qr.pws[:0]
+	qr.snapshots = qr.snapshots[:0]
 }
 
 func (qr queryResult) Len() int {

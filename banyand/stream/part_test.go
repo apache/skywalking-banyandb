@@ -21,13 +21,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-func Test_memPart_mustInitFromElements(t *testing.T) {
+func TestMustInitFromElements(t *testing.T) {
 	tests := []struct {
 		es   *elements
 		name string
@@ -86,6 +89,30 @@ func Test_memPart_mustInitFromElements(t *testing.T) {
 			assert.Equal(t, tt.want.MinTimestamp, mp.partMetadata.MinTimestamp)
 			assert.Equal(t, tt.want.MaxTimestamp, mp.partMetadata.MaxTimestamp)
 			assert.Equal(t, tt.want.TotalCount, mp.partMetadata.TotalCount)
+			assert.Equal(t, len(mp.tagFamilies), len(mp.tagFamilyMetadata))
+			tmpPath, defFn := test.Space(require.New(t))
+			defer defFn()
+			epoch := uint64(1)
+			path := partPath(tmpPath, epoch)
+
+			fileSystem := fs.NewLocalFileSystem()
+			mp.mustFlush(fileSystem, path)
+			p := mustOpenFilePart(path, fileSystem)
+			defer p.close()
+			assert.Equal(t, tt.want.BlocksCount, p.partMetadata.BlocksCount)
+			assert.Equal(t, tt.want.MinTimestamp, p.partMetadata.MinTimestamp)
+			assert.Equal(t, tt.want.MaxTimestamp, p.partMetadata.MaxTimestamp)
+			assert.Equal(t, tt.want.TotalCount, p.partMetadata.TotalCount)
+			if len(mp.tagFamilies) > 0 {
+				for k := range mp.tagFamilies {
+					_, ok := mp.tagFamilyMetadata[k]
+					require.True(t, ok, "mp.tagFamilyMetadata %s not found", k)
+					_, ok = p.tagFamilies[k]
+					require.True(t, ok, "p.tagFamilies %s not found", k)
+					_, ok = p.tagFamilyMetadata[k]
+					require.True(t, ok, "p.tagFamilyMetadata %s not found", k)
+				}
+			}
 		})
 	}
 }

@@ -17,6 +17,14 @@
 
 package stream
 
+import (
+	"encoding/json"
+	"path/filepath"
+
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+)
+
 type partMetadata struct {
 	CompressedSizeBytes   uint64
 	UncompressedSizeBytes uint64
@@ -24,15 +32,52 @@ type partMetadata struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
-	Version               int64
+	// TODO: remove this?
+	ID uint64
 }
 
-func (ph *partMetadata) reset() {
-	ph.CompressedSizeBytes = 0
-	ph.UncompressedSizeBytes = 0
-	ph.TotalCount = 0
-	ph.BlocksCount = 0
-	ph.MinTimestamp = 0
-	ph.MaxTimestamp = 0
-	ph.Version = 0
+func (pm *partMetadata) reset() {
+	pm.CompressedSizeBytes = 0
+	pm.UncompressedSizeBytes = 0
+	pm.TotalCount = 0
+	pm.BlocksCount = 0
+	pm.MinTimestamp = 0
+	pm.MaxTimestamp = 0
+	pm.ID = 0
+}
+
+func (pm *partMetadata) mustReadMetadata(fileSystem fs.FileSystem, partPath string) {
+	pm.reset()
+
+	metadataPath := filepath.Join(partPath, metadataFilename)
+	metadata, err := fileSystem.Read(metadataPath)
+	if err != nil {
+		logger.Panicf("cannot read %s", err)
+		return
+	}
+	if err := json.Unmarshal(metadata, pm); err != nil {
+		logger.Panicf("cannot parse %q: %s", metadataPath, err)
+		return
+	}
+
+	if pm.MinTimestamp > pm.MaxTimestamp {
+		logger.Panicf("MinTimestamp cannot exceed MaxTimestamp; got %d vs %d", pm.MinTimestamp, pm.MaxTimestamp)
+	}
+}
+
+func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath string) {
+	metadata, err := json.Marshal(pm)
+	if err != nil {
+		logger.Panicf("cannot marshal metadata: %s", err)
+		return
+	}
+	metadataPath := filepath.Join(partPath, metadataFilename)
+	n, err := fileSystem.Write(metadata, metadataPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot write metadata: %s", err)
+		return
+	}
+	if n != len(metadata) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(metadata))
+	}
 }

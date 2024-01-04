@@ -73,6 +73,11 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
 	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order)
 	if err != nil {
 		return nil, err
@@ -86,15 +91,24 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	for i := range sl {
 		sids = append(sids, sl[i].ID)
 	}
-	var pws []*partWrapper
 	var parts []*part
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}
-	for _, tw := range tabWrappers {
-		pws, parts = tw.Table().getParts(pws, parts, qo)
+	var n int
+	for i := range tabWrappers {
+		s := tabWrappers[i].Table().currentSnapshot()
+		if s == nil {
+			continue
+		}
+		parts, n = s.getParts(parts, qo)
+		if n < 1 {
+			s.decRef()
+			continue
+		}
+		result.snapshots = append(result.snapshots, s)
 	}
 	// TODO: cache tstIter
 	var tstIter tstIter
@@ -303,7 +317,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 type queryResult struct {
 	sidToIndex map[common.SeriesID]int
 	data       []*blockCursor
-	pws        []*partWrapper
+	snapshots  []*snapshot
 	loaded     bool
 	orderByTS  bool
 	ascTS      bool
@@ -348,10 +362,10 @@ func (qr *queryResult) Release() {
 		qr.data[i] = nil
 	}
 	qr.data = qr.data[:0]
-	for i := range qr.pws {
-		qr.pws[i].decRef()
+	for i := range qr.snapshots {
+		qr.snapshots[i].decRef()
 	}
-	qr.pws = qr.pws[:0]
+	qr.snapshots = qr.snapshots[:0]
 }
 
 func (qr queryResult) Len() int {
@@ -361,8 +375,8 @@ func (qr queryResult) Len() int {
 func (qr queryResult) Less(i, j int) bool {
 	leftTS := qr.data[i].timestamps[qr.data[i].idx]
 	rightTS := qr.data[j].timestamps[qr.data[j].idx]
-	leftVersion := qr.data[i].p.partMetadata.Version
-	rightVersion := qr.data[j].p.partMetadata.Version
+	leftVersion := qr.data[i].p.partMetadata.ID
+	rightVersion := qr.data[j].p.partMetadata.ID
 	if qr.orderByTS {
 		if leftTS == rightTS {
 			if qr.data[i].bm.seriesID == qr.data[j].bm.seriesID {
@@ -416,7 +430,7 @@ func (qr *queryResult) merge() *pbv1.Result {
 		step = -1
 	}
 	result := &pbv1.Result{}
-	var lastPartVersion int64
+	var lastPartVersion uint64
 	var lastSid common.SeriesID
 
 	for qr.Len() > 0 {
@@ -428,12 +442,12 @@ func (qr *queryResult) merge() *pbv1.Result {
 
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topBC.p.partMetadata.Version > lastPartVersion {
+			if topBC.p.partMetadata.ID > lastPartVersion {
 				logger.Panicf("following parts version should be less or equal to the previous one")
 			}
 		} else {
 			topBC.copyTo(result)
-			lastPartVersion = topBC.p.partMetadata.Version
+			lastPartVersion = topBC.p.partMetadata.ID
 		}
 
 		topBC.idx += step

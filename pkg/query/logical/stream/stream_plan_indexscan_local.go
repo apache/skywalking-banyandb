@@ -71,6 +71,22 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		}
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
+	if i.order != nil && i.order.Index != nil {
+		es, err := ec.Sort(ctx, pbv1.StreamSortOptions{
+			Name:          i.metadata.GetName(),
+			TimeRange:     &i.timeRange,
+			Entities:      i.entities,
+			Filter:        i.filter,
+			Order:         orderBy,
+			TagProjection: i.projectionTags,
+		})
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, es...)
+		return elements, nil
+	}
+
 	var results []pbv1.StreamQueryResult
 	for _, e := range i.entities {
 		result, err := ec.Query(ctx, pbv1.StreamQueryOptions{

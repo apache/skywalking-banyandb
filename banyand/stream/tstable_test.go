@@ -15,9 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package measure
+package stream
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -38,44 +39,38 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-func Test_tsTable_mustAddDataPoints(t *testing.T) {
+func Test_tsTable_mustAddElements(t *testing.T) {
 	tests := []struct {
-		name    string
-		dpsList []*dataPoints
-		want    int
+		name   string
+		esList []*elements
+		want   int
 	}{
 		{
-			name: "Test with empty dataPoints",
-			dpsList: []*dataPoints{
+			name: "Test with empty elements",
+			esList: []*elements{
 				{
 					timestamps:  []int64{},
+					elementIDs:  []string{},
 					seriesIDs:   []common.SeriesID{},
-					tagFamilies: make([][]nameValues, 0),
-					fields:      make([]nameValues, 0),
+					tagFamilies: make([][]tagValues, 0),
 				},
 			},
 			want: 0,
 		},
 		{
-			name: "Test with one item in dataPoints",
-			dpsList: []*dataPoints{
+			name: "Test with one item in elements",
+			esList: []*elements{
 				{
 					timestamps: []int64{1},
+					elementIDs: []string{"1"},
 					seriesIDs:  []common.SeriesID{1},
-					tagFamilies: [][]nameValues{
+					tagFamilies: [][]tagValues{
 						{
 							{
-								name: "arrTag", values: []*nameValue{
-									{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
-									{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+								tag: "arrTag", values: []*tagValue{
+									{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+									{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 								},
-							},
-						},
-					},
-					fields: []nameValues{
-						{
-							name: "skipped", values: []*nameValue{
-								{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 							},
 						},
 					},
@@ -84,26 +79,29 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "Test with multiple calls to mustAddDataPoints",
-			dpsList: []*dataPoints{
-				dpsTS1,
-				dpsTS2,
+			name: "Test with multiple calls to mustAddElements",
+			esList: []*elements{
+				esTS1,
+				esTS2,
 			},
 			want: 2,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tmpPath, _ := test.Space(require.New(t))
+			index, _ := newElementIndex(context.TODO(), tmpPath)
 			tst := &tsTable{
 				loopCloser:    run.NewCloser(2),
 				introductions: make(chan *introduction),
+				index:         index,
 			}
 			flushCh := make(chan *flusherIntroduction)
 			introducerWatcher := make(watcher.Channel, 1)
 			go tst.introducerLoop(flushCh, introducerWatcher, 1)
 			defer tst.Close()
-			for _, dps := range tt.dpsList {
-				tst.mustAddDataPoints(dps)
+			for _, es := range tt.esList {
+				tst.mustAddElements(es)
 				time.Sleep(100 * time.Millisecond)
 			}
 			s := tst.currentSnapshot()
@@ -129,59 +127,59 @@ func Test_tstIter(t *testing.T) {
 	tests := []struct {
 		wantErr      error
 		name         string
-		dpsList      []*dataPoints
+		esList       []*elements
 		sids         []common.SeriesID
 		want         []blockMetadata
 		minTimestamp int64
 		maxTimestamp int64
 	}{
 		{
-			name:         "Test with no data points",
-			dpsList:      []*dataPoints{},
+			name:         "Test with no elements",
+			esList:       []*elements{},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
 		},
 		{
 			name:         "Test with single part",
-			dpsList:      []*dataPoints{dpsTS1},
+			esList:       []*elements{esTS1},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
 			},
 		},
 		{
 			name:         "Test with multiple parts with different ts",
-			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
+			esList:       []*elements{esTS1, esTS2},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
 			},
 		},
 		{
 			name:         "Test with multiple parts with same ts",
-			dpsList:      []*dataPoints{dpsTS1, dpsTS1},
+			esList:       []*elements{esTS1, esTS1},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
 			},
 		},
 	}
@@ -215,7 +213,7 @@ func Test_tstIter(t *testing.T) {
 
 				if diff := cmp.Diff(got, tt.want,
 					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
-					cmpopts.IgnoreFields(blockMetadata{}, "field"),
+					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
 					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
 					cmp.AllowUnexported(blockMetadata{}),
 				); diff != "" {
@@ -229,11 +227,14 @@ func Test_tstIter(t *testing.T) {
 					loopCloser:    run.NewCloser(2),
 					introductions: make(chan *introduction),
 				}
+				tmpPath, _ := test.Space(require.New(t))
+				index, _ := newElementIndex(context.TODO(), tmpPath)
+				tst.index = index
 				flushCh := make(chan *flusherIntroduction)
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, introducerWatcher, 1)
-				for _, dps := range tt.dpsList {
-					tst.mustAddDataPoints(dps)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(tst)
@@ -246,8 +247,8 @@ func Test_tstIter(t *testing.T) {
 
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
 				require.NoError(t, err)
-				for _, dps := range tt.dpsList {
-					tst.mustAddDataPoints(dps)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
 					time.Sleep(100 * time.Millisecond)
 				}
 				epoch := verify(tst)
@@ -261,6 +262,7 @@ func Test_tstIter(t *testing.T) {
 	}
 }
 
+// nolint: unused
 var tagProjections = map[int][]pbv1.TagProjection{
 	1: {
 		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
@@ -272,109 +274,74 @@ var tagProjections = map[int][]pbv1.TagProjection{
 	},
 }
 
-var fieldProjections = map[int][]string{
-	1: {"strField", "intField", "floatField", "binaryField"},
-	3: {"intField"},
-}
-
-var dpsTS1 = &dataPoints{
+var esTS1 = &elements{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
-	tagFamilies: [][]nameValues{
+	elementIDs: []string{"11", "21", "31"},
+	tagFamilies: [][]tagValues{
 		{
 			{
-				name: "arrTag", values: []*nameValue{
-					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
-					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 				},
 			},
 			{
-				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
-					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
-					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
 				},
 			},
 		},
 		{}, // empty tagFamilies for seriesID 3
 	},
-	fields: []nameValues{
-		{
-			name: "skipped", values: []*nameValue{
-				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
-				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-			},
-		},
-		{}, // empty fields for seriesID 2
-		{
-			name: "onlyFields", values: []*nameValue{
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
-			},
-		},
-	},
 }
 
-var dpsTS2 = &dataPoints{
+var esTS2 = &elements{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
-	tagFamilies: [][]nameValues{
+	elementIDs: []string{"12", "22", "32"},
+	tagFamilies: [][]tagValues{
 		{
 			{
-				name: "arrTag", values: []*nameValue{
-					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
-					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
 				},
 			},
 			{
-				name: "binaryTag", values: []*nameValue{
-					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 				},
 			},
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
-					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 				},
 			},
 		},
 		{
 			{
-				name: "singleTag", values: []*nameValue{
-					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
-					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+					{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
 				},
 			},
 		},
 		{}, // empty tagFamilies for seriesID 6
-	},
-	fields: []nameValues{
-		{
-			name: "skipped", values: []*nameValue{
-				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
-				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(3663699.029), valueArr: nil},
-				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
-			},
-		},
-		{}, // empty fields for seriesID 5
-		{
-			name: "onlyFields", values: []*nameValue{
-				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
-			},
-		},
 	},
 }

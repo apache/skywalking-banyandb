@@ -25,13 +25,19 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
+
+	"go.uber.org/multierr"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
+	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -61,6 +67,7 @@ type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+	Sort(ctx context.Context, opts pbv1.StreamSortOptions) ([]*streamv1.Element, error)
 }
 
 var _ Stream = (*stream)(nil)
@@ -101,6 +108,93 @@ func (s *stream) ParseElementIDDeprecated(item tsdb.Item) (string, error) {
 	return string(rawBytes), nil
 }
 
+// NewItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[item] {
+	var ii []itersort.Iterator[item]
+	for _, iter := range iters {
+		ii = append(ii, iter)
+	}
+	if s == modelv1.Sort_SORT_DESC {
+		return itersort.NewItemIter[item](ii, true)
+	}
+	return itersort.NewItemIter[item](ii, false)
+}
+
+// TODO: refactor to column-based query.
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []*streamv1.Element, err error) {
+	if sqo.TimeRange == nil || sqo.Entities == nil {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
+
+	var seriesList pbv1.SeriesList
+	for _, entity := range sqo.Entities {
+		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: entity})
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		seriesList = seriesList.Merge(sl)
+	}
+
+	var iters []*searcherIterator
+	for _, series := range seriesList {
+		seriesSpan := newSeriesSpan(ctx, sqo.TimeRange, tabWrappers, series.ID)
+		seekerBuilder := seriesSpan.Build()
+		seekerBuilder.enhance(sqo.Filter, sqo.Order.Index, sqo.Order.Sort, sqo.TagProjection)
+		seriesIters, buildErr := seekerBuilder.buildSeriesByIndex()
+		if err != nil {
+			return nil, buildErr
+		}
+		if len(seriesIters) > 0 {
+			iters = append(iters, seriesIters...)
+		}
+	}
+
+	if len(iters) == 0 {
+		return elems, nil
+	}
+
+	it := NewItemIter(iters, sqo.Order.Sort)
+	defer func() {
+		err = multierr.Append(err, it.Close())
+	}()
+	for it.Next() {
+		nextItem := it.Val()
+		e, err := nextItem.Element()
+		if err != nil {
+			return nil, err
+		}
+		elem := &streamv1.Element{
+			Timestamp: timestamppb.New(time.Unix(0, e.timestamp)),
+			ElementId: e.elementID,
+		}
+		for _, tf := range e.tagFamilies {
+			tagFamily := &modelv1.TagFamily{
+				Name: tf.name,
+			}
+			elem.TagFamilies = append(elem.TagFamilies, tagFamily)
+			for _, t := range tf.tags {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   t.name,
+					Value: mustDecodeTagValue(t.valueType, t.values[e.index]),
+				})
+			}
+		}
+		elems = append(elems, elem)
+		// TODO: break if reach limit
+	}
+	return elems, nil
+}
+
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
 	if sqo.TimeRange == nil || sqo.Entity == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -110,18 +204,14 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	}
 	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
 	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
 	if err != nil {
 		return nil, err
-	}
-
-	if sqo.Filter != nil {
-		for _, tw := range tabWrappers {
-			_, err := tw.Table().Index().Search(ctx, sl, sqo.Filter)
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	var result queryResult
@@ -132,15 +222,24 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	for i := range sl {
 		sids = append(sids, sl[i].ID)
 	}
-	var pws []*partWrapper
 	var parts []*part
 	qo := queryOptions{
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
-	for _, tw := range tabWrappers {
-		pws, parts = tw.Table().getParts(pws, parts, qo)
+	var n int
+	for i := range tabWrappers {
+		s := tabWrappers[i].Table().currentSnapshot()
+		if s == nil {
+			continue
+		}
+		parts, n = s.getParts(parts, qo)
+		if n < 1 {
+			s.decRef()
+			continue
+		}
+		result.snapshots = append(result.snapshots, s)
 	}
 	// TODO: cache tstIter
 	var tstIter tstIter

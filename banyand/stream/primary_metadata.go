@@ -34,6 +34,10 @@ type primaryBlockMetadata struct {
 	dataBlock
 }
 
+func (ph *primaryBlockMetadata) mightContainElement(seriesID common.SeriesID, timestamp common.ItemID) bool {
+	return seriesID == ph.seriesID && timestamp >= common.ItemID(ph.minTimestamp) && timestamp <= common.ItemID(ph.maxTimestamp)
+}
+
 // reset resets ih for subsequent re-use.
 func (ph *primaryBlockMetadata) reset() {
 	ph.seriesID = 0
@@ -100,7 +104,6 @@ func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r *reader) []prima
 	return dst
 }
 
-// unmarshalPrimaryBlockMetadata appends unmarshaled from src indexBlockHeader entries to dst and returns the result.
 func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]primaryBlockMetadata, error) {
 	dstOrig := dst
 	for len(src) > 0 {
@@ -112,7 +115,7 @@ func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]pr
 		ih := &dst[len(dst)-1]
 		tail, err := ih.unmarshal(src)
 		if err != nil {
-			return dstOrig, fmt.Errorf("cannot unmarshal indexBlockHeader %d: %w", len(dst)-len(dstOrig), err)
+			return dstOrig, fmt.Errorf("cannot unmarshal primaryBlockHeader %d: %w", len(dst)-len(dstOrig), err)
 		}
 		src = tail
 	}

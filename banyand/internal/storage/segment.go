@@ -292,16 +292,17 @@ func (sc *segmentController[T]) sortLst() {
 }
 
 func (sc *segmentController[T]) load(start, end time.Time, root string) (seg *segment[T], err error) {
+	suffix := sc.Format(start)
+	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
 	var tsTable T
-	if tsTable, err = sc.tsTableCreator(sc.location, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
+	if tsTable, err = sc.tsTableCreator(lfs, segPath, sc.position, sc.l, timestamp.NewSectionTimeRange(start, end)); err != nil {
 		return nil, err
 	}
-	suffix := sc.Format(start)
 	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
 	seg, err = openSegment[T](common.SetPosition(ctx, func(p common.Position) common.Position {
 		p.Segment = suffix
 		return p
-	}), start, end, path.Join(root, fmt.Sprintf(segTemplate, suffix)), suffix, sc.segmentSize, sc.scheduler, tsTable)
+	}), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable)
 	if err != nil {
 		return nil, err
 	}
