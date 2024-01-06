@@ -68,6 +68,7 @@ type Stream interface {
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
 	Sort(ctx context.Context, opts pbv1.StreamSortOptions) ([]*streamv1.Element, error)
+	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) ([]*streamv1.Element, error)
 }
 
 var _ Stream = (*stream)(nil)
@@ -118,6 +119,72 @@ func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 		return itersort.NewItemIter[item](ii, true)
 	}
 	return itersort.NewItemIter[item](ii, false)
+}
+
+func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (elems []*streamv1.Element, err error) {
+	if sqo.TimeRange == nil || sqo.Entities == nil {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	sort.Slice(tabWrappers, func(i, j int) bool {
+		return tabWrappers[i].GetTimeRange().Start.Before(tabWrappers[j].GetTimeRange().Start)
+	})
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
+
+	var seriesList pbv1.SeriesList
+	for _, entity := range sqo.Entities {
+		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: entity})
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		seriesList = seriesList.Merge(sl)
+	}
+
+	for _, tw := range tabWrappers {
+		if len(elems) >= sqo.MaxElementSize {
+			break
+		}
+		index := tw.Table().Index()
+		erl, err := index.Search(context.TODO(), seriesList, sqo.Filter)
+		if err != nil {
+			return nil, err
+		}
+		if len(elems)+len(erl) > sqo.MaxElementSize {
+			erl = erl[:sqo.MaxElementSize-len(elems)]
+		}
+		for _, er := range erl {
+			e, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sqo.TagProjection)
+			if err != nil {
+				return nil, err
+			}
+			elem := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, e.timestamp)),
+				ElementId: e.elementID,
+			}
+			for _, tf := range e.tagFamilies {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.name,
+				}
+				elem.TagFamilies = append(elem.TagFamilies, tagFamily)
+				for _, t := range tf.tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.name,
+						Value: mustDecodeTagValue(t.valueType, t.values[e.index]),
+					})
+				}
+			}
+			elems = append(elems, elem)
+		}
+	}
+	return
 }
 
 // TODO: refactor to column-based query.
@@ -190,7 +257,9 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 			}
 		}
 		elems = append(elems, elem)
-		// TODO: break if reach limit
+		if len(elems) >= sqo.MaxElementSize {
+			break
+		}
 	}
 	return elems, nil
 }

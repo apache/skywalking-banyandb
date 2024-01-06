@@ -73,12 +73,30 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	ec := executor.FromStreamExecutionContext(ctx)
 	if i.order != nil && i.order.Index != nil {
 		es, err := ec.Sort(ctx, pbv1.StreamSortOptions{
-			Name:          i.metadata.GetName(),
-			TimeRange:     &i.timeRange,
-			Entities:      i.entities,
-			Filter:        i.filter,
-			Order:         orderBy,
-			TagProjection: i.projectionTags,
+			Name:           i.metadata.GetName(),
+			TimeRange:      &i.timeRange,
+			Entities:       i.entities,
+			Filter:         i.filter,
+			Order:          orderBy,
+			TagProjection:  i.projectionTags,
+			MaxElementSize: i.maxElementSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, es...)
+		return elements, nil
+	}
+
+	if i.filter != nil && i.filter != logical.Enode {
+		es, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+			Name:           i.metadata.GetName(),
+			TimeRange:      &i.timeRange,
+			Entities:       i.entities,
+			Filter:         i.filter,
+			Order:          orderBy,
+			TagProjection:  i.projectionTags,
+			MaxElementSize: i.maxElementSize,
 		})
 		if err != nil {
 			return nil, err
@@ -98,7 +116,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			TagProjection: i.projectionTags,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to query measure: %w", err)
+			return nil, fmt.Errorf("failed to query stream: %w", err)
 		}
 
 		results = append(results, result)

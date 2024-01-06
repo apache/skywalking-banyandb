@@ -65,6 +65,17 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err er
 		return valid
 	}
 	for _, tw := range s.seriesSpan.tableWrappers {
+		indexFilter := func(item item) bool {
+			pl, err := s.indexFilter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+				return tw.Table().Index().store, nil
+			}, s.seriesSpan.seriesID)
+			if err != nil {
+				return false
+			}
+			valid := pl.Contains(item.Time())
+			s.seriesSpan.l.Trace().Int("valid_item_num", pl.Len()).Bool("valid", valid).Msg("filter item by index")
+			return valid
+		}
 		var inner index.FieldIterator
 		var err error
 		fieldKey := index.FieldKey{
@@ -85,7 +96,7 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err er
 		}
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.seriesSpan.l, inner, tw.Table(),
-				s.seriesSpan.seriesID, s.indexFilter, timeFilter, s.tagProjection))
+				s.seriesSpan.seriesID, indexFilter, timeFilter, s.tagProjection))
 		}
 	}
 	return

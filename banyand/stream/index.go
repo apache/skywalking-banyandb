@@ -18,14 +18,16 @@
 package stream
 
 import (
+	"container/heap"
 	"context"
 	"path"
+	"sort"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -61,8 +63,8 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	return e.store.Batch(docs)
 }
 
-func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
-	var pls posting.List
+func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
+	pm := make(map[common.SeriesID][]uint64)
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
@@ -70,14 +72,77 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 		if err != nil {
 			return nil, err
 		}
-		err = pls.Union(pl)
-		if err != nil {
-			return nil, err
-		}
+		timestamps := pl.ToSlice()
+		sort.Slice(timestamps, func(i, j int) bool {
+			return timestamps[i] < timestamps[j]
+		})
+		pm[series.ID] = timestamps
 	}
-	return pls, nil
+	return merge(pm), nil
 }
 
 func (e *elementIndex) Close() error {
 	return e.store.Close()
+}
+
+type elementRef struct {
+	seriesID  common.SeriesID
+	timestamp uint64
+}
+
+type Item struct {
+	elementRef
+	elemIdx int
+}
+
+type PriorityQueue []*Item
+
+func (pq PriorityQueue) Len() int { return len(pq) }
+
+func (pq PriorityQueue) Less(i, j int) bool {
+	return pq[i].timestamp < pq[j].timestamp
+}
+
+func (pq PriorityQueue) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+}
+
+func (pq *PriorityQueue) Push(x interface{}) {
+	item := x.(*Item)
+	*pq = append(*pq, item)
+}
+
+func (pq *PriorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	*pq = old[0 : n-1]
+	return item
+}
+
+func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
+	var result []elementRef
+	pq := make(PriorityQueue, 0)
+	heap.Init(&pq)
+
+	for seriesID, timestamps := range postingMap {
+		if len(timestamps) > 0 {
+			er := elementRef{seriesID: seriesID, timestamp: timestamps[0]}
+			item := &Item{elementRef: er, elemIdx: 0}
+			heap.Push(&pq, item)
+		}
+	}
+	for pq.Len() > 0 {
+		item := heap.Pop(&pq).(*Item)
+		result = append(result, item.elementRef)
+
+		if item.elemIdx+1 < len(postingMap[item.seriesID]) {
+			nextTs := postingMap[item.seriesID][item.elemIdx+1]
+			nextEr := elementRef{seriesID: item.seriesID, timestamp: nextTs}
+			nextItem := &Item{elementRef: nextEr, elemIdx: item.elemIdx + 1}
+			heap.Push(&pq, nextItem)
+		}
+	}
+
+	return result
 }

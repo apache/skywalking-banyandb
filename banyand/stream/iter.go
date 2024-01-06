@@ -26,7 +26,7 @@ import (
 )
 
 type searcherIterator struct {
-	indexFilter   index.Filter
+	indexFilter   filterFn
 	timeFilter    filterFn
 	fieldIterator index.FieldIterator
 	cur           posting.Iterator
@@ -38,7 +38,7 @@ type searcherIterator struct {
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, table *tsTable,
-	seriesID common.SeriesID, indexFilter index.Filter, timeFilter filterFn, tagProjection []pbv1.TagProjection,
+	seriesID common.SeriesID, indexFilter filterFn, timeFilter filterFn, tagProjection []pbv1.TagProjection,
 ) *searcherIterator {
 	return &searcherIterator{
 		fieldIterator: fieldIterator,
