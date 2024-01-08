@@ -19,7 +19,7 @@
 package fs
 
 import (
-	"bufio"
+	"io"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -28,13 +28,6 @@ const moduleName string = "filesystem"
 
 // Mode contains permission of file and directory.
 type Mode uint64
-
-// Iter is used for streaming read.
-type Iter struct {
-	fileName string
-	reader   *bufio.Reader
-	buffer   []byte
-}
 
 // Writer allows writing data to a file.
 type Writer interface {
@@ -50,6 +43,8 @@ type Writer interface {
 type Reader interface {
 	// Read the entire file using streaming read.
 	Read(offset int64, buffer []byte) (int, error)
+	// Read the entire file using streaming read.
+	StreamRead() io.Reader
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
@@ -72,8 +67,6 @@ type File interface {
 	Writev(iov *[][]byte) (int, error)
 	// Reading contiguous regions of a file and dispersing them into discontinuous buffers.
 	Readv(offset int64, iov *[][]byte) (int, error)
-	// Read the entire file using streaming read.
-	StreamRead(buffer []byte) (*Iter, error)
 	// Get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
 	Size() (int64, error)
 	// Returns the absolute path of the file.

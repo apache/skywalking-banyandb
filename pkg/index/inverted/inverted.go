@@ -106,9 +106,9 @@ func (s *store) Batch(docs index.Documents) error {
 // NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
-	indexConfig.MergePlanOptions.MaxSegmentsPerTier = 1
-	indexConfig.MergePlanOptions.MaxSegmentSize = 500000
-	indexConfig.MergePlanOptions.SegmentsPerMergeTask = 20
+	// TODO:// parameterize the following options
+	// WithUnsafeBatches().
+	// WithPersisterNapTimeMSec(60 * 1000)
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
 	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
@@ -381,7 +381,7 @@ func (s *store) run() {
 						}
 
 						size++
-						batch.Insert(doc)
+						batch.Update(doc.ID(), doc)
 					}
 					if isBatch || size >= batchSize {
 						flush()

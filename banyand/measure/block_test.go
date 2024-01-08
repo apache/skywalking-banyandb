@@ -318,12 +318,32 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, true)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(columnFamily{}, column{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
+	}
+
+	unmarshaled2 := generateBlock()
+	defer releaseBlock(unmarshaled2)
+	unmarshaled2.timestamps = make([]int64, len(b.timestamps))
+	unmarshaled2.resizeTagFamilies(1)
+
+	metaReader := generateSeqReader()
+	defer releaseSeqReader(metaReader)
+	metaReader.init(metaBuffer)
+	valueReader := generateSeqReader()
+	defer releaseSeqReader(valueReader)
+	valueReader.init(dataBuffer)
+
+	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
+
+	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
+		cmp.AllowUnexported(columnFamily{}, column{}),
+	); diff != "" {
+		t.Errorf("block.unmarshalTagFamilyFromSeqReaders() (-got +want):\n%s", diff)
 	}
 }
 
@@ -339,6 +359,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		fieldValuesWriter:        writer{w: fieldBuffer},
 	}
 	p := &part{
+		primary:     &bytes.Buffer{},
 		timestamps:  timestampBuffer,
 		fieldValues: fieldBuffer,
 	}
@@ -371,12 +392,23 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		})
 	}
 	bm.tagProjection = tp
-	unmarshaled.mustReadFrom(decoder, p, bm, true)
+	unmarshaled.mustReadFrom(decoder, p, bm)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
 
 	if !reflect.DeepEqual(b, unmarshaled) {
 		t.Errorf("block.mustReadFrom() = %+v, want %+v", unmarshaled, b)
+	}
+
+	unmarshaled2 := generateBlock()
+	defer releaseBlock(unmarshaled2)
+	var sr seqReaders
+	sr.init(p)
+	defer sr.reset()
+
+	unmarshaled2.mustSeqReadFrom(decoder, &sr, bm)
+	if !reflect.DeepEqual(b, unmarshaled2) {
+		t.Errorf("block.mustSeqReadFrom() = %+v, want %+v", unmarshaled, b)
 	}
 }
 

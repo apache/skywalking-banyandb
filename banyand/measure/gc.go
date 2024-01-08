@@ -81,10 +81,20 @@ OUTER:
 				continue OUTER
 			}
 		}
-		err := g.parent.fileSystem.DeleteFile(partPath(g.parent.root, partID))
-		if err != nil {
-			continue
-		}
+		g.parent.fileSystem.MustRMAll(partPath(g.parent.root, partID))
 		delete(g.knownPartFiles, partID)
+	}
+	ee := g.parent.fileSystem.ReadDir(g.parent.root)
+	for i := range ee {
+		if ee[i].IsDir() {
+			p, err := parseEpoch(ee[i].Name())
+			if err != nil {
+				g.parent.l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
+				continue
+			}
+			if _, ok := g.knownPartFiles[p]; !ok {
+				g.parent.l.Error().Msgf("unknown part file: %d", p)
+			}
+		}
 	}
 }

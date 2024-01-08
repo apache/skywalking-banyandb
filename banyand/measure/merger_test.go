@@ -298,7 +298,7 @@ func Test_mergeParts(t *testing.T) {
 				reader := &blockReader{}
 				reader.init([]*partMergeIter{pmi})
 				var got []blockMetadata
-				for reader.nextBlock() {
+				for reader.nextBlockMetadata() {
 					got = append(got, reader.block.bm)
 				}
 				require.NoError(t, reader.error())

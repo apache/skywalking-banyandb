@@ -24,6 +24,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -81,8 +82,8 @@ func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
 	return src[8:], nil
 }
 
-func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r *reader) []primaryBlockMetadata {
-	data, err := io.ReadAll(r)
+func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r fs.Reader) []primaryBlockMetadata {
+	data, err := io.ReadAll(r.StreamRead())
 	if err != nil {
 		logger.Panicf("cannot read primaryBlockMetadata entries from %s: %s", r.Path(), err)
 	}

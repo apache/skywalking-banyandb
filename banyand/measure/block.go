@@ -196,9 +196,9 @@ func (b *block) marshalTagFamily(tf columnFamily, bm *blockMetadata, ww *writers
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, readTagByProjection bool,
+	columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader,
 ) {
-	if readTagByProjection && len(tagProjection) < 1 {
+	if len(tagProjection) < 1 {
 		return
 	}
 	bb := bigValuePool.Generate()
@@ -213,24 +213,42 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
 
-	if readTagByProjection {
-		if len(tagProjection) < 1 {
-			return
-		}
-		cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
-		for j := range tagProjection {
-			for i := range cfm.columnMetadata {
-				if tagProjection[j] == cfm.columnMetadata[i].name {
-					cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
-					break
-				}
-			}
-		}
+	if len(tagProjection) < 1 {
 		return
 	}
+	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
+	for j := range tagProjection {
+		for i := range cfm.columnMetadata {
+			if tagProjection[j] == cfm.columnMetadata[i].name {
+				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+				break
+			}
+		}
+	}
+	return
+}
+
+func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
+	columnFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
+) {
+	if columnFamilyMetadataBlock.offset != metaReader.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
+	}
+	bb := bigValuePool.Generate()
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	metaReader.mustReadFull(bb.Buf)
+	cfm := generateColumnFamilyMetadata()
+	defer releaseColumnFamilyMetadata(cfm)
+	_, err := cfm.unmarshal(bb.Buf)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
+	}
+	bigValuePool.Release(bb)
+	b.tagFamilies[tfIndex].name = name
+
 	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
 	for i := range cfm.columnMetadata {
-		cc[i].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+		cc[i].mustSeqReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
 	}
 }
 
@@ -266,7 +284,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata, readTagByProjection bool) {
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
 	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
@@ -276,21 +294,28 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
 	}
 
-	if readTagByProjection {
-		_ = b.resizeTagFamilies(len(bm.tagProjection))
-		for i := range bm.tagProjection {
-			name := bm.tagProjection[i].Family
-			block, ok := bm.tagFamilies[name]
-			if !ok {
-				continue
-			}
-			b.unmarshalTagFamily(decoder, i, name, block,
-				bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
-				p.tagFamilies[name], readTagByProjection)
+	_ = b.resizeTagFamilies(len(bm.tagProjection))
+	for i := range bm.tagProjection {
+		name := bm.tagProjection[i].Family
+		block, ok := bm.tagFamilies[name]
+		if !ok {
+			continue
 		}
-		return
+		b.unmarshalTagFamily(decoder, i, name, block,
+			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
+			p.tagFamilies[name])
 	}
+}
 
+func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
+	b.reset()
+
+	b.timestamps = mustSeqReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
+
+	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
+	for i := range cc {
+		cc[i].mustSeqReadValues(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count)
+	}
 	_ = b.resizeTagFamilies(len(bm.tagFamilies))
 	keys := make([]string, 0, len(bm.tagFamilies))
 	for k := range bm.tagFamilies {
@@ -299,8 +324,8 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 	sort.Strings(keys)
 	for i, name := range keys {
 		block := bm.tagFamilies[name]
-		b.unmarshalTagFamily(decoder, i, name, block,
-			nil, p.tagFamilyMetadata[name], p.tagFamilies[name], readTagByProjection)
+		b.unmarshalTagFamilyFromSeqReaders(decoder, i, name, block,
+			seqReaders.tagFamilyMetadata[name], seqReaders.tagFamilies[name])
 	}
 }
 
@@ -331,6 +356,22 @@ func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, read
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
+	var err error
+	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
+	}
+	return dst
+}
+
+func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader *seqReader) []int64 {
+	if tm.offset != reader.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, reader.bytesRead)
+	}
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	reader.mustReadFull(bb.Buf)
 	var err error
 	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
 	if err != nil {
@@ -500,7 +541,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		}
 	}
 	bc.bm.tagFamilies = tf
-	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm, true)
+	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
 
 	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {

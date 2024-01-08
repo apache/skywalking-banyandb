@@ -171,7 +171,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 		},
 		{
 			matches: []string{"root"},
-			want:    roaring.NewPostingListWithInitialData(2),
+			want:    roaring.DummyPostingList,
 		},
 	}
 	for _, tt := range tests {
@@ -182,9 +182,9 @@ func TestStore_SeriesMatch(t *testing.T) {
 				tester.Error(err)
 				return
 			}
-			tester.NoError(err, name)
-			tester.NotNil(list, name)
-			tester.Equal(tt.want, list, name)
+			require.NoError(t, err)
+			require.NotNil(t, list)
+			assert.Equal(t, tt.want, list)
 		})
 	}
 }

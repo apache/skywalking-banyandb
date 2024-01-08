@@ -93,11 +93,8 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 	if curSnapshot == nil {
 		return flusherWatchers
 	}
-	if curSnapshot.creator != snapshotCreatorMemPart {
-		curSnapshot.decRef()
-		return flusherWatchers
-	}
 	curSnapshot.decRef()
+	flusherWatchers.Notify(epoch)
 	select {
 	case <-tst.loopCloser.CloseNotify():
 	case <-time.After(tst.option.flushTimeout):
@@ -125,7 +122,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	}
 	// merge memory must not be closed by the tsTable.close
 	closeCh := make(chan struct{})
-	newPart, err := tst.mergePartsThenSendIntroduction(memParts, mergedIDs, mergeCh, closeCh)
+	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts, mergedIDs, mergeCh, closeCh)
 	close(closeCh)
 	if err != nil {
 		if errors.Is(err, errClosed) {

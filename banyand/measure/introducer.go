@@ -81,6 +81,7 @@ type mergerIntroduction struct {
 	merged  map[uint64]struct{}
 	newPart *partWrapper
 	applied chan struct{}
+	creator snapshotCreator
 }
 
 func (i *mergerIntroduction) reset() {
@@ -89,6 +90,7 @@ func (i *mergerIntroduction) reset() {
 	}
 	i.newPart = nil
 	i.applied = nil
+	i.creator = 0
 }
 
 var mergerIntroductionPool = sync.Pool{}
@@ -166,11 +168,12 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	cur := tst.currentSnapshot()
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")
+		return
 	}
 	defer cur.decRef()
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
-	nextSnp.creator = snapshotCreatorMerger
+	nextSnp.creator = nextIntroduction.creator
 	tst.replaceSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)

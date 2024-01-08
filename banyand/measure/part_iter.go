@@ -238,27 +238,31 @@ func (pi *partIter) findBlock() bool {
 
 type partMergeIter struct {
 	err                  error
-	p                    *part
+	seqReaders           seqReaders
+	primaryBlockMetadata []primaryBlockMetadata
+	partID               uint64
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
-	columnValuesDecoder  encoding.BytesBlockDecoder
 	block                blockPointer
 	primaryMetadataIdx   int
 }
 
 func (pmi *partMergeIter) reset() {
 	pmi.err = nil
-	pmi.p = nil
+	pmi.seqReaders.reset()
+	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
+	pmi.partID = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
 	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
 	pmi.block.reset()
-	pmi.columnValuesDecoder.Reset()
 }
 
 func (pmi *partMergeIter) mustInitFromPart(p *part) {
 	pmi.reset()
-	pmi.p = p
+	pmi.seqReaders.init(p)
+	pmi.primaryBlockMetadata = p.primaryBlockMetadata
+	pmi.partID = p.partMetadata.ID
 }
 
 func (pmi *partMergeIter) error() error {
@@ -268,7 +272,7 @@ func (pmi *partMergeIter) error() error {
 	return pmi.err
 }
 
-func (pmi *partMergeIter) nextBlock() bool {
+func (pmi *partMergeIter) nextBlockMetadata() bool {
 	if pmi.err != nil {
 		return false
 	}
@@ -279,7 +283,7 @@ func (pmi *partMergeIter) nextBlock() bool {
 			return false
 		}
 	}
-	if err := pmi.loadBlock(); err != nil {
+	if err := pmi.loadBlockMetadata(); err != nil {
 		pmi.err = err
 		return false
 	}
@@ -287,12 +291,12 @@ func (pmi *partMergeIter) nextBlock() bool {
 }
 
 func (pmi *partMergeIter) loadPrimaryBuf() error {
-	if pmi.primaryMetadataIdx >= len(pmi.p.primaryBlockMetadata) {
+	if pmi.primaryMetadataIdx >= len(pmi.primaryBlockMetadata) {
 		return io.EOF
 	}
-	pm := pmi.p.primaryBlockMetadata[pmi.primaryMetadataIdx]
+	pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx]
 	pmi.compressedPrimaryBuf = bytes.ResizeOver(pmi.compressedPrimaryBuf, int(pm.size))
-	fs.MustReadData(pmi.p.primary, int64(pm.offset), pmi.compressedPrimaryBuf)
+	pmi.seqReaders.primary.mustReadFull(pmi.compressedPrimaryBuf)
 	var err error
 	pmi.primaryBuf, err = zstd.Decompress(pmi.primaryBuf[:0], pmi.compressedPrimaryBuf)
 	if err != nil {
@@ -302,18 +306,21 @@ func (pmi *partMergeIter) loadPrimaryBuf() error {
 	return nil
 }
 
-func (pmi *partMergeIter) loadBlock() error {
+func (pmi *partMergeIter) loadBlockMetadata() error {
 	pmi.block.reset()
 	var err error
 	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf)
 	if err != nil {
-		pm := pmi.p.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
+		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
 	}
 
-	pmi.block.block.mustReadFrom(&pmi.columnValuesDecoder, pmi.p, pmi.block.bm, false)
-	pmi.block.lastPartID = pmi.p.partMetadata.ID
+	pmi.block.lastPartID = pmi.partID
 	return nil
+}
+
+func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer) {
+	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm)
 }
 
 func generatePartMergeIter() *partMergeIter {
@@ -357,3 +364,18 @@ func (pih *partMergeIterHeap) Pop() interface{} {
 	*pih = a[:len(a)-1]
 	return v
 }
+
+func generateColumnValuesDecoder() *encoding.BytesBlockDecoder {
+	v := columnValuesDecoderPool.Get()
+	if v == nil {
+		return &encoding.BytesBlockDecoder{}
+	}
+	return v.(*encoding.BytesBlockDecoder)
+}
+
+func releaseColumnValuesDecoder(d *encoding.BytesBlockDecoder) {
+	d.Reset()
+	columnValuesDecoderPool.Put(d)
+}
+
+var columnValuesDecoderPool sync.Pool

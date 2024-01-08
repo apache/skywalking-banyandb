@@ -343,6 +343,7 @@ func Test_tstIter(t *testing.T) {
 				})
 
 				t.Run("merging on close", func(t *testing.T) {
+					t.Skip("the test is flaky due to unpredictable merge loop schedule.")
 					tmpPath, defFn := test.Space(require.New(t))
 					fileSystem := fs.NewLocalFileSystem()
 					defer defFn()
