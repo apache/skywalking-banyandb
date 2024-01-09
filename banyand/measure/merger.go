@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -103,24 +105,28 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 			Int("beforePartCount", len(parts)).
 			Dur("elapsed", elapsed).
 			Msg("background merger takes too long")
-	} else if snapshotCreatorMerger == creator && tst.l.Info().Enabled() {
-		var minCount, maxCount, totalCount uint64
+	} else if snapshotCreatorMerger == creator && tst.l.Info().Enabled() && len(parts) > 2 {
+		var minSize, maxSize, totalSize, totalCount uint64
 		for _, pw := range parts {
 			totalCount += pw.p.partMetadata.TotalCount
-			if minCount == 0 || minCount > pw.p.partMetadata.TotalCount {
-				minCount = pw.p.partMetadata.TotalCount
+			totalSize += pw.p.partMetadata.CompressedSizeBytes
+			if minSize == 0 || minSize > pw.p.partMetadata.CompressedSizeBytes {
+				minSize = pw.p.partMetadata.CompressedSizeBytes
 			}
-			if maxCount < pw.p.partMetadata.TotalCount {
-				maxCount = pw.p.partMetadata.TotalCount
+			if maxSize < pw.p.partMetadata.CompressedSizeBytes {
+				maxSize = pw.p.partMetadata.CompressedSizeBytes
 			}
 		}
-		if minCount*uint64(len(parts)) < maxCount {
+		if totalSize > 10<<20 && minSize*uint64(len(parts)) < maxSize {
+			// it's a unbalanced merge. but it's ok when the size is small.
 			tst.l.Info().
-				Uint64("beforeTotalCount", totalCount).
-				Uint64("afterTotalCount", newPart.p.partMetadata.TotalCount).
+				Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
+				Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
 				Int("beforePartCount", len(parts)).
-				Dur("elapsed", elapsed).
-				Msg("background merger merges too big difference parts")
+				Str("minSize", humanize.IBytes(minSize)).
+				Str("maxSize", humanize.IBytes(maxSize)).
+				Dur("elapsedMS", elapsed).
+				Msg("background merger merges unbalanced parts")
 		}
 	}
 	mi := generateMergerIntroduction()
