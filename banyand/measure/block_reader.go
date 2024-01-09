@@ -22,27 +22,105 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type reader struct {
+type seqReader struct {
+	sr        io.Reader
 	r         fs.Reader
 	bytesRead uint64
 }
 
-func newReader(r fs.Reader) *reader {
-	return &reader{r: r}
+func (sr *seqReader) reset() {
+	sr.r = nil
+	sr.sr = nil
+	sr.bytesRead = 0
 }
 
-func (r *reader) Path() string {
-	return r.r.Path()
+func (sr *seqReader) Path() string {
+	return sr.r.Path()
 }
 
-func (r *reader) Read(p []byte) (int, error) {
-	n, err := r.r.Read(0, p)
-	r.bytesRead += uint64(n)
-	return n, err
+func (sr *seqReader) init(r fs.Reader) {
+	sr.reset()
+	sr.sr = r.StreamRead()
+	sr.r = r
+}
+
+func (sr *seqReader) mustReadFull(data []byte) {
+	n, err := io.ReadFull(sr.sr, data)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		logger.Panicf("cannot read data: %v", err)
+	}
+	if n != len(data) {
+		logger.Panicf("cannot read full data: %d/%d", n, len(data))
+	}
+	sr.bytesRead += uint64(n)
+}
+
+func generateSeqReader() *seqReader {
+	if v := seqReaderPool.Get(); v != nil {
+		return v.(*seqReader)
+	}
+	return &seqReader{}
+}
+
+func releaseSeqReader(sr *seqReader) {
+	sr.reset()
+	seqReaderPool.Put(sr)
+}
+
+var seqReaderPool sync.Pool
+
+type seqReaders struct {
+	tagFamilyMetadata map[string]*seqReader
+	tagFamilies       map[string]*seqReader
+	primary           seqReader
+	timestamps        seqReader
+	fieldValues       seqReader
+}
+
+func (sr *seqReaders) reset() {
+	sr.primary.reset()
+	sr.timestamps.reset()
+	sr.fieldValues.reset()
+	if sr.tagFamilyMetadata != nil {
+		for k, r := range sr.tagFamilyMetadata {
+			releaseSeqReader(r)
+			delete(sr.tagFamilyMetadata, k)
+		}
+	}
+	if sr.tagFamilies != nil {
+		for k, r := range sr.tagFamilies {
+			releaseSeqReader(r)
+			delete(sr.tagFamilies, k)
+		}
+	}
+}
+
+func (sr *seqReaders) init(p *part) {
+	sr.reset()
+	sr.primary.init(p.primary)
+	sr.timestamps.init(p.timestamps)
+	sr.fieldValues.init(p.fieldValues)
+	if sr.tagFamilies == nil {
+		sr.tagFamilies = make(map[string]*seqReader)
+		sr.tagFamilyMetadata = make(map[string]*seqReader)
+	}
+
+	for k, r := range p.tagFamilies {
+		sr.tagFamilies[k] = generateSeqReader()
+		sr.tagFamilies[k].init(r)
+		sr.tagFamilyMetadata[k] = generateSeqReader()
+		sr.tagFamilyMetadata[k].init(p.tagFamilyMetadata[k])
+	}
 }
 
 type blockReader struct {
@@ -65,7 +143,7 @@ func (br *blockReader) reset() {
 func (br *blockReader) init(pii []*partMergeIter) {
 	br.reset()
 	for _, pi := range pii {
-		if pi.nextBlock() {
+		if pi.nextBlockMetadata() {
 			br.pih = append(br.pih, pi)
 			continue
 		}
@@ -83,7 +161,7 @@ func (br *blockReader) init(pii []*partMergeIter) {
 	br.nextBlockNoop = true
 }
 
-func (br *blockReader) nextBlock() bool {
+func (br *blockReader) nextBlockMetadata() bool {
 	if br.err != nil {
 		return false
 	}
@@ -92,7 +170,7 @@ func (br *blockReader) nextBlock() bool {
 		return true
 	}
 
-	br.err = br.next()
+	br.err = br.nextMetadata()
 	if br.err != nil {
 		if errors.Is(br.err, io.EOF) {
 			return false
@@ -103,9 +181,9 @@ func (br *blockReader) nextBlock() bool {
 	return true
 }
 
-func (br *blockReader) next() error {
+func (br *blockReader) nextMetadata() error {
 	head := br.pih[0]
-	if head.nextBlock() {
+	if head.nextBlockMetadata() {
 		heap.Fix(&br.pih, 0)
 		br.block = &br.pih[0].block
 		return nil
@@ -127,9 +205,27 @@ func (br *blockReader) next() error {
 	return nil
 }
 
+func (br *blockReader) loadBlockData(decoder *encoding.BytesBlockDecoder) {
+	br.pih[0].mustLoadBlockData(decoder, br.block)
+}
+
 func (br *blockReader) error() error {
 	if errors.Is(br.err, io.EOF) {
 		return nil
 	}
 	return br.err
+}
+
+var blockReaderPool sync.Pool
+
+func generateBlockReader() *blockReader {
+	if v := blockReaderPool.Get(); v != nil {
+		return v.(*blockReader)
+	}
+	return &blockReader{}
+}
+
+func releaseBlockReader(br *blockReader) {
+	br.reset()
+	blockReaderPool.Put(br)
 }

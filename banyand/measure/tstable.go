@@ -219,10 +219,11 @@ func (tst *tsTable) Close() error {
 	}
 	tst.RLock()
 	defer tst.RUnlock()
-	if tst.snapshot != nil {
-		tst.snapshot.decRef()
-		tst.snapshot = nil
+	if tst.snapshot == nil {
+		return nil
 	}
+	tst.snapshot.decRef()
+	tst.snapshot = nil
 	return nil
 }
 

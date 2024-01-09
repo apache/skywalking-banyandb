@@ -81,10 +81,7 @@ OUTER:
 				continue OUTER
 			}
 		}
-		err := g.parent.fileSystem.DeleteFile(partPath(g.parent.root, partID))
-		if err != nil {
-			continue
-		}
+		g.parent.fileSystem.MustRMAll(partPath(g.parent.root, partID))
 		delete(g.knownPartFiles, partID)
 	}
 }

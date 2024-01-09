@@ -63,6 +63,7 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 type database[T TSTable, O any] struct {
 	logger   *logger.Logger
 	index    *seriesIndex
+	p        common.Position
 	location string
 	sLst     []*shard[T, O]
 	opts     TSDBOpts[T, O]
@@ -100,6 +101,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		logger:   logger.Fetch(ctx, p.Database),
 		index:    si,
 		opts:     opts,
+		p:        p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	if err = db.loadDatabase(); err != nil {
@@ -151,6 +153,9 @@ func (d *database[T, O]) SelectTSTables(timeRange timestamp.TimeRange) []TSTable
 
 func (d *database[T, O]) registerShard(id int) error {
 	ctx := context.WithValue(context.Background(), logger.ContextKey, d.logger)
+	ctx = common.SetPosition(ctx, func(p common.Position) common.Position {
+		return d.p
+	})
 	so, err := d.openShard(ctx, common.ShardID(id))
 	if err != nil {
 		return err
