@@ -53,20 +53,16 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 			}
 			tst.RUnlock()
 			if curSnapshot != nil {
-				newSnapshot, err := tst.mergeMemParts(curSnapshot, mergeCh)
+				merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
 				if err != nil {
 					tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
 					curSnapshot.decRef()
 					continue
 				}
-				var toBePersistedSnapshot *snapshot
-				if newSnapshot == nil {
+				if !merged {
 					tst.flush(curSnapshot, flushCh)
-					toBePersistedSnapshot = curSnapshot
-				} else {
-					toBePersistedSnapshot = newSnapshot
 				}
-				epoch = tst.persistSnapshot(toBePersistedSnapshot)
+				epoch = curSnapshot.epoch
 				// Notify merger to start a new round of merge.
 				// This round might have be triggered in pauseFlusherToPileupMemParts.
 				flusherWatchers.Notify(math.MaxUint64)
@@ -80,7 +76,6 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 			if epochWatcher == nil {
 				return
 			}
-			tst.gc.clean()
 		}
 	}
 }
@@ -105,9 +100,8 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 	return flusherWatchers
 }
 
-func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (*snapshot, error) {
+func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (bool, error) {
 	var memParts []*partWrapper
-	var remainingParts []*partWrapper
 	mergedIDs := make(map[uint64]struct{})
 	for i := range snp.parts {
 		if snp.parts[i].mp != nil {
@@ -115,10 +109,9 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 			mergedIDs[snp.parts[i].ID()] = struct{}{}
 			continue
 		}
-		remainingParts = append(remainingParts, snp.parts[i])
 	}
 	if len(memParts) < 2 {
-		return nil, nil
+		return false, nil
 	}
 	// merge memory must not be closed by the tsTable.close
 	closeCh := make(chan struct{})
@@ -126,24 +119,14 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	close(closeCh)
 	if err != nil {
 		if errors.Is(err, errClosed) {
-			return &snapshot{
-				epoch:   snp.epoch,
-				parts:   append(remainingParts, newPart),
-				creator: snapshotCreatorMergedFlusher,
-				ref:     1,
-			}, nil
+			return true, nil
 		}
-		return nil, err
+		return false, err
 	}
 	if newPart == nil {
-		return nil, nil
+		return false, nil
 	}
-	return &snapshot{
-		epoch:   snp.epoch,
-		parts:   append(remainingParts, newPart),
-		creator: snapshotCreatorMergedFlusher,
-		ref:     1,
-	}, nil
+	return true, nil
 }
 
 func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) {
@@ -174,12 +157,11 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	}
 }
 
-func (tst *tsTable) persistSnapshot(snapshot *snapshot) uint64 {
+func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	var partNames []string
 	for i := range snapshot.parts {
 		partNames = append(partNames, partName(snapshot.parts[i].ID()))
 	}
 	tst.mustWriteSnapshot(snapshot.epoch, partNames)
 	tst.gc.registerSnapshot(snapshot)
-	return snapshot.epoch
 }

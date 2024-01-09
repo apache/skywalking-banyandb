@@ -63,10 +63,10 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 type database[T TSTable, O any] struct {
 	logger   *logger.Logger
 	index    *seriesIndex
+	p        common.Position
 	location string
 	sLst     []*shard[T, O]
 	opts     TSDBOpts[T, O]
-	p        common.Position
 	sync.RWMutex
 	sLen uint32
 }

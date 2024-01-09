@@ -120,9 +120,11 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 			epoch++
 		case next := <-flushCh:
 			tst.introduceFlushed(next, epoch)
+			tst.gc.cleanSnapshots()
 			epoch++
 		case next := <-mergeCh:
 			tst.introduceMerged(next, epoch)
+			tst.gc.clean()
 			epoch++
 		case epochWatcher := <-watcherCh:
 			introducerWatchers.Add(epochWatcher)
@@ -159,6 +161,7 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
 	nextSnp.creator = snapshotCreatorFlusher
 	tst.replaceSnapshot(&nextSnp)
+	tst.persistSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -175,6 +178,7 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = nextIntroduction.creator
 	tst.replaceSnapshot(&nextSnp)
+	tst.persistSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

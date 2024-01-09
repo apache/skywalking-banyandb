@@ -91,17 +91,37 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	if snapshotCreatorMerger == creator && tst.l.Info().Enabled() {
+	elapsed := time.Since(start)
+	if elapsed > 30*time.Second {
 		var totalCount uint64
 		for _, pw := range parts {
 			totalCount += pw.p.partMetadata.TotalCount
 		}
-		tst.l.Info().
+		tst.l.Warn().
 			Uint64("beforeTotalCount", totalCount).
 			Uint64("afterTotalCount", newPart.p.partMetadata.TotalCount).
 			Int("beforePartCount", len(parts)).
-			TimeDiff("duration", time.Now(), start).
-			Msg("background merger merges on-disk parts")
+			Dur("elapsed", elapsed).
+			Msg("background merger takes too long")
+	} else if snapshotCreatorMerger == creator && tst.l.Info().Enabled() {
+		var minCount, maxCount, totalCount uint64
+		for _, pw := range parts {
+			totalCount += pw.p.partMetadata.TotalCount
+			if minCount == 0 || minCount > pw.p.partMetadata.TotalCount {
+				minCount = pw.p.partMetadata.TotalCount
+			}
+			if maxCount < pw.p.partMetadata.TotalCount {
+				maxCount = pw.p.partMetadata.TotalCount
+			}
+		}
+		if minCount*uint64(len(parts)) < maxCount {
+			tst.l.Info().
+				Uint64("beforeTotalCount", totalCount).
+				Uint64("afterTotalCount", newPart.p.partMetadata.TotalCount).
+				Int("beforePartCount", len(parts)).
+				Dur("elapsed", elapsed).
+				Msg("background merger merges too big difference parts")
+		}
 	}
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)

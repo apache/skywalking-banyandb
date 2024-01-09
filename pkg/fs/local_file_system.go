@@ -376,7 +376,7 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 // StreamRead is used to read the entire file using streaming read.
 func (file *LocalFile) StreamRead() io.Reader {
 	reader := bufio.NewReader(file.file)
-	return &Iter{reader: reader, fileName: file.file.Name()}
+	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -425,15 +425,15 @@ func (file *LocalFile) Close() error {
 	return nil
 }
 
-type Iter struct {
-	fileName string
+type seqReader struct {
 	reader   *bufio.Reader
+	fileName string
 }
 
-func (iter *Iter) Read(p []byte) (int, error) {
-	rsize, err := iter.reader.Read(p)
+func (i *seqReader) Read(p []byte) (int, error) {
+	rsize, err := i.reader.Read(p)
 	if err != nil {
-		return readErrorHandle("ReadStream operation", err, iter.fileName, rsize)
+		return readErrorHandle("ReadStream operation", err, i.fileName, rsize)
 	}
 	return rsize, nil
 }

@@ -80,11 +80,11 @@ func releaseSeqReader(sr *seqReader) {
 var seqReaderPool sync.Pool
 
 type seqReaders struct {
+	tagFamilyMetadata map[string]*seqReader
+	tagFamilies       map[string]*seqReader
 	primary           seqReader
 	timestamps        seqReader
 	fieldValues       seqReader
-	tagFamilyMetadata map[string]*seqReader
-	tagFamilies       map[string]*seqReader
 }
 
 func (sr *seqReaders) reset() {

@@ -237,13 +237,13 @@ func (pi *partIter) findBlock() bool {
 }
 
 type partMergeIter struct {
-	err                  error
 	seqReaders           seqReaders
+	err                  error
 	primaryBlockMetadata []primaryBlockMetadata
-	partID               uint64
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
 	block                blockPointer
+	partID               uint64
 	primaryMetadataIdx   int
 }
 

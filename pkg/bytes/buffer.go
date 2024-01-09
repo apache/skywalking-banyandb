@@ -62,6 +62,7 @@ func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
 	return n, err
 }
 
+// StreamRead implements fs.Reader.
 func (b *Buffer) StreamRead() io.Reader {
 	return &reader{bb: b}
 }
