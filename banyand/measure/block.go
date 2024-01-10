@@ -134,7 +134,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, ww.timestampsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, &ww.timestampsWriter)
 
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
@@ -212,8 +212,11 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
-	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
 
+	if len(tagProjection) < 1 {
+		return
+	}
+	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
 	for j := range tagProjection {
 		for i := range cfm.columnMetadata {
 			if tagProjection[j] == cfm.columnMetadata[i].name {
@@ -221,6 +224,30 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 				break
 			}
 		}
+	}
+}
+
+func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
+	columnFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
+) {
+	if columnFamilyMetadataBlock.offset != metaReader.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
+	}
+	bb := bigValuePool.Generate()
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	metaReader.mustReadFull(bb.Buf)
+	cfm := generateColumnFamilyMetadata()
+	defer releaseColumnFamilyMetadata(cfm)
+	_, err := cfm.unmarshal(bb.Buf)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
+	}
+	bigValuePool.Release(bb)
+	b.tagFamilies[tfIndex].name = name
+
+	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
+	for i := range cfm.columnMetadata {
+		cc[i].mustSeqReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
 	}
 }
 
@@ -261,6 +288,11 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 
 	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
 
+	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
+	for i := range cc {
+		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
+	}
+
 	_ = b.resizeTagFamilies(len(bm.tagProjection))
 	for i := range bm.tagProjection {
 		name := bm.tagProjection[i].Family
@@ -268,11 +300,31 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		if !ok {
 			continue
 		}
-		b.unmarshalTagFamily(decoder, i, name, block, bm.tagProjection[i].Names, p.tagFamilyMetadata[name], p.tagFamilies[name])
+		b.unmarshalTagFamily(decoder, i, name, block,
+			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
+			p.tagFamilies[name])
 	}
+}
+
+func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
+	b.reset()
+
+	b.timestamps = mustSeqReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
+
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
-		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
+		cc[i].mustSeqReadValues(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count)
+	}
+	_ = b.resizeTagFamilies(len(bm.tagFamilies))
+	keys := make([]string, 0, len(bm.tagFamilies))
+	for k := range bm.tagFamilies {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for i, name := range keys {
+		block := bm.tagFamilies[name]
+		b.unmarshalTagFamilyFromSeqReaders(decoder, i, name, block,
+			seqReaders.tagFamilyMetadata[name], seqReaders.tagFamilies[name])
 	}
 }
 
@@ -283,7 +335,7 @@ func (b *block) sortTagFamilies() {
 	})
 }
 
-func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter writer) {
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter *writer) {
 	tm.reset()
 
 	bb := bigValuePool.Generate()
@@ -303,6 +355,22 @@ func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, read
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
+	var err error
+	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
+	}
+	return dst
+}
+
+func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader *seqReader) []int64 {
+	if tm.offset != reader.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, reader.bytesRead)
+	}
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	reader.mustReadFull(bb.Buf)
 	var err error
 	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
 	if err != nil {
@@ -369,9 +437,20 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
+func (bc *blockCursor) copyAllTo(r *pbv1.Result, desc bool) {
+	var idx, offset int
+	if desc {
+		idx = 0
+		offset = bc.idx + 1
+	} else {
+		idx = bc.idx
+		offset = len(bc.timestamps)
+	}
+	if offset <= idx {
+		return
+	}
 	r.SID = bc.bm.seriesID
-	r.Timestamps = append(r.Timestamps, bc.timestamps...)
+	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	for _, cf := range bc.tagFamilies {
 		tf := pbv1.TagFamily{
 			Name: cf.name,
@@ -380,7 +459,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 			t := pbv1.Tag{
 				Name: c.name,
 			}
-			for _, v := range c.values {
+			for _, v := range c.values[idx:offset] {
 				t.Values = append(t.Values, mustDecodeTagValue(c.valueType, v))
 			}
 			tf.Tags = append(tf.Tags, t)
@@ -391,7 +470,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 		f := pbv1.Field{
 			Name: c.name,
 		}
-		for _, v := range c.values {
+		for _, v := range c.values[idx:offset] {
 			f.Values = append(f.Values, mustDecodeFieldValue(c.valueType, v))
 		}
 		r.Fields = append(r.Fields, f)
@@ -502,6 +581,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			name:      tmpBlock.field.columns[i].name,
 			valueType: tmpBlock.field.columns[i].valueType,
 		}
+
 		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end]...)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
@@ -527,10 +607,21 @@ func findRange(timestamps []int64, min int64, max int64) (int, int, bool) {
 		}
 	}
 
-	if start == -1 || end == -1 || start >= end {
+	if start == -1 && end == -1 {
 		return 0, 0, false
 	}
 
+	if start == -1 {
+		start = 0
+	}
+
+	if end == -1 {
+		end = l
+	}
+
+	if start >= end {
+		return 0, 0, false
+	}
 	return start, end, true
 }
 
@@ -547,4 +638,113 @@ func generateBlockCursor() *blockCursor {
 func releaseBlockCursor(bc *blockCursor) {
 	bc.reset()
 	blockCursorPool.Put(bc)
+}
+
+type blockPointer struct {
+	block
+	bm         blockMetadata
+	idx        int
+	lastPartID uint64
+}
+
+func (bi *blockPointer) updateMetadata() {
+	if len(bi.block.timestamps) == 0 {
+		return
+	}
+	// only update timestamps since they are used for merging
+	// blockWriter will recompute all fields
+	bi.bm.timestamps.min = bi.block.timestamps[0]
+	bi.bm.timestamps.max = bi.block.timestamps[len(bi.timestamps)-1]
+}
+
+func (bi *blockPointer) copyFrom(src *blockPointer) {
+	bi.idx = 0
+	bi.bm.copyFrom(&src.bm)
+	bi.appendAll(src)
+}
+
+func (bi *blockPointer) appendAll(b *blockPointer) {
+	if len(b.timestamps) == 0 {
+		return
+	}
+	bi.append(b, len(b.timestamps))
+}
+
+func (bi *blockPointer) append(b *blockPointer, offset int) {
+	if offset <= b.idx {
+		return
+	}
+	if len(bi.tagFamilies) == 0 && len(b.tagFamilies) > 0 {
+		for _, tf := range b.tagFamilies {
+			tagFamily := columnFamily{name: tf.name}
+			for _, c := range tf.columns {
+				col := column{name: c.name, valueType: c.valueType}
+				assertIdxAndOffset(col.name, len(c.values), b.idx, offset)
+				col.values = append(col.values, c.values[b.idx:offset]...)
+				tagFamily.columns = append(tagFamily.columns, col)
+			}
+			bi.tagFamilies = append(bi.tagFamilies, tagFamily)
+		}
+	} else {
+		if len(bi.tagFamilies) != len(b.tagFamilies) {
+			logger.Panicf("unexpected number of tag families: got %d; want %d", len(bi.tagFamilies), len(b.tagFamilies))
+		}
+		for i := range bi.tagFamilies {
+			if bi.tagFamilies[i].name != b.tagFamilies[i].name {
+				logger.Panicf("unexpected tag family name: got %q; want %q", bi.tagFamilies[i].name, b.tagFamilies[i].name)
+			}
+			if len(bi.tagFamilies[i].columns) != len(b.tagFamilies[i].columns) {
+				logger.Panicf("unexpected number of tags for tag family %q: got %d; want %d", bi.tagFamilies[i].name, len(bi.tagFamilies[i].columns), len(b.tagFamilies[i].columns))
+			}
+			for j := range bi.tagFamilies[i].columns {
+				if bi.tagFamilies[i].columns[j].name != b.tagFamilies[i].columns[j].name {
+					logger.Panicf("unexpected tag name for tag family %q: got %q; want %q", bi.tagFamilies[i].name, bi.tagFamilies[i].columns[j].name, b.tagFamilies[i].columns[j].name)
+				}
+				assertIdxAndOffset(b.tagFamilies[i].columns[j].name, len(b.tagFamilies[i].columns[j].values), b.idx, offset)
+				bi.tagFamilies[i].columns[j].values = append(bi.tagFamilies[i].columns[j].values, b.tagFamilies[i].columns[j].values[b.idx:offset]...)
+			}
+		}
+	}
+
+	if len(bi.field.columns) == 0 && len(b.field.columns) > 0 {
+		for _, c := range b.field.columns {
+			col := column{name: c.name, valueType: c.valueType}
+			assertIdxAndOffset(col.name, len(c.values), b.idx, offset)
+			col.values = append(col.values, c.values[b.idx:offset]...)
+			bi.field.columns = append(bi.field.columns, col)
+		}
+	} else {
+		if len(bi.field.columns) != len(b.field.columns) {
+			logger.Panicf("unexpected number of fields: got %d; want %d", len(bi.field.columns), len(b.field.columns))
+		}
+		for i := range bi.field.columns {
+			assertIdxAndOffset(b.field.columns[i].name, len(b.field.columns[i].values), b.idx, offset)
+			bi.field.columns[i].values = append(bi.field.columns[i].values, b.field.columns[i].values[b.idx:offset]...)
+		}
+	}
+
+	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
+	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
+
+	bi.lastPartID = b.lastPartID
+}
+
+func assertIdxAndOffset(name string, length int, idx int, offset int) {
+	if idx >= offset {
+		logger.Panicf("%q idx %d must be less than offset %d", name, idx, offset)
+	}
+	if offset > length {
+		logger.Panicf("%q offset %d must be less than or equal to length %d", name, offset, length)
+	}
+}
+
+func (bi *blockPointer) isFull() bool {
+	return bi.bm.count >= maxBlockLength || bi.bm.uncompressedSizeBytes >= maxUncompressedBlockSize
+}
+
+func (bi *blockPointer) reset() {
+	bi.idx = 0
+	bi.lastPartID = 0
+	bi.block.reset()
+	bi.bm = blockMetadata{}
 }

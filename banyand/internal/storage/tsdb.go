@@ -43,8 +43,9 @@ const (
 )
 
 // TSDBOpts wraps options to create a tsdb.
-type TSDBOpts[T TSTable] struct {
-	TSTableCreator  TSTableCreator[T]
+type TSDBOpts[T TSTable, O any] struct {
+	Option          O
+	TSTableCreator  TSTableCreator[T, O]
 	Location        string
 	SegmentInterval IntervalRule
 	TTL             IntervalRule
@@ -59,17 +60,18 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 	return segmentID(unit)<<31 | ((segmentID(suffix) << 1) >> 1)
 }
 
-type database[T TSTable] struct {
+type database[T TSTable, O any] struct {
 	logger   *logger.Logger
 	index    *seriesIndex
+	p        common.Position
 	location string
-	sLst     []*shard[T]
-	opts     TSDBOpts[T]
+	sLst     []*shard[T, O]
+	opts     TSDBOpts[T, O]
 	sync.RWMutex
 	sLen uint32
 }
 
-func (d *database[T]) Close() error {
+func (d *database[T, O]) Close() error {
 	d.Lock()
 	defer d.Unlock()
 	for _, s := range d.sLst {
@@ -80,7 +82,7 @@ func (d *database[T]) Close() error {
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenTSDB[T TSTable](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error) {
+func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[T, O], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -94,11 +96,12 @@ func OpenTSDB[T TSTable](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index failed").Error())
 	}
-	db := &database[T]{
+	db := &database[T, O]{
 		location: location,
 		logger:   logger.Fetch(ctx, p.Database),
 		index:    si,
 		opts:     opts,
+		p:        p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	if err = db.loadDatabase(); err != nil {
@@ -107,7 +110,7 @@ func OpenTSDB[T TSTable](ctx context.Context, opts TSDBOpts[T]) (TSDB[T], error)
 	return db, nil
 }
 
-func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
+func (d *database[T, O]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
 	id := uint32(shardID)
 	if id >= atomic.LoadUint32(&d.sLen) {
 		return func() (TSTableWrapper[T], error) {
@@ -129,7 +132,7 @@ func (d *database[T]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Ti
 	return d.createTSTTable(shardID, ts)
 }
 
-func (d *database[T]) createTSTTable(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
+func (d *database[T, O]) createTSTTable(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
 	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
 	ss := d.sLst[shardID].segmentController.selectTSTables(timeRange)
 	if len(ss) > 0 {
@@ -138,7 +141,7 @@ func (d *database[T]) createTSTTable(shardID common.ShardID, ts time.Time) (TSTa
 	return d.sLst[shardID].segmentController.createTSTable(ts)
 }
 
-func (d *database[T]) SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T] {
+func (d *database[T, O]) SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T] {
 	var result []TSTableWrapper[T]
 	d.RLock()
 	for i := range d.sLst {
@@ -148,8 +151,11 @@ func (d *database[T]) SelectTSTables(timeRange timestamp.TimeRange) []TSTableWra
 	return result
 }
 
-func (d *database[T]) registerShard(id int) error {
+func (d *database[T, O]) registerShard(id int) error {
 	ctx := context.WithValue(context.Background(), logger.ContextKey, d.logger)
+	ctx = common.SetPosition(ctx, func(p common.Position) common.Position {
+		return d.p
+	})
 	so, err := d.openShard(ctx, common.ShardID(id))
 	if err != nil {
 		return err
@@ -159,7 +165,7 @@ func (d *database[T]) registerShard(id int) error {
 	return nil
 }
 
-func (d *database[T]) loadDatabase() error {
+func (d *database[T, O]) loadDatabase() error {
 	d.Lock()
 	defer d.Unlock()
 	return walkDir(d.location, shardPathPrefix, func(suffix string) error {

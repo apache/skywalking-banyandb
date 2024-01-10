@@ -35,18 +35,28 @@ func (tst *tsTable) currentSnapshot() *snapshot {
 	return s
 }
 
+type snapshotCreator rune
+
+const (
+	snapshotCreatorMemPart = iota
+	snapshotCreatorFlusher
+	snapshotCreatorMerger
+	snapshotCreatorMergedFlusher
+)
+
 type snapshot struct {
-	parts []*partWrapper
-	epoch uint64
+	parts   []*partWrapper
+	epoch   uint64
+	creator snapshotCreator
 
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, opts queryOptions) ([]*part, int) {
+func (s *snapshot) getParts(dst []*part, minTimestamp, maxTimestamp int64) ([]*part, int) {
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
-		if opts.maxTimestamp < pm.MinTimestamp || opts.minTimestamp > pm.MaxTimestamp {
+		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
 		dst = append(dst, p.p)
@@ -92,6 +102,19 @@ func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) sn
 		}
 		s.parts[i].incRef()
 		result.parts = append(result.parts, s.parts[i])
+	}
+	return result
+}
+
+func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot {
+	var result snapshot
+	result.epoch = nextEpoch
+	result.ref = 1
+	for i := 0; i < len(s.parts); i++ {
+		if _, ok := merged[s.parts[i].ID()]; !ok {
+			s.parts[i].incRef()
+			result.parts = append(result.parts, s.parts[i])
+		}
 	}
 	return result
 }

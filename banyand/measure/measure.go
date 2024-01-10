@@ -41,7 +41,13 @@ const (
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
 	maxBlockLength = 8 * 1024
+
+	defaultFlushTimeout = 5 * time.Second
 )
+
+type option struct {
+	flushTimeout time.Duration
+}
 
 type measure struct {
 	databaseSupplier  schema.Supplier

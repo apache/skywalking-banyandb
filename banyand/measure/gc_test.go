@@ -18,88 +18,54 @@
 package measure
 
 import (
-	"path/filepath"
-	"sort"
+	"fmt"
+	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-func TestGarbageCleanerCleanSnapshot(t *testing.T) {
+func TestDeletableEpochs(t *testing.T) {
 	tests := []struct {
 		name            string
-		snapshotsOnDisk []uint64
-		snapshotsInGC   []uint64
-		wantOnDisk      []uint64
-		wantInGC        []uint64
+		knownEpochs     []uint64
+		deletableEpochs []uint64
+		n               int
 	}{
 		{
-			name: "Test with no snapshots on disk and no snapshots in GC",
+			name:            "empty",
+			n:               1,
+			knownEpochs:     nil,
+			deletableEpochs: nil,
 		},
 		{
-			name:            "Test with some snapshots on disk and no snapshots in GC",
-			snapshotsInGC:   nil,
-			snapshotsOnDisk: []uint64{1, 2, 3},
-			wantInGC:        nil,
-			wantOnDisk:      []uint64{1, 2, 3},
+			name:            "one",
+			n:               1,
+			knownEpochs:     []uint64{1},
+			deletableEpochs: nil,
 		},
 		{
-			name:            "Test with no snapshots on disk and some snapshots in GC",
-			snapshotsOnDisk: nil,
-			snapshotsInGC:   []uint64{1, 2, 3},
-			wantOnDisk:      nil,
-			// gc won't fix the miss match between inmemory and disk
-			wantInGC: []uint64{3},
-		},
-		{
-			name:            "Test with some snapshots on disk and some snapshots in GC",
-			snapshotsOnDisk: []uint64{1, 2, 3, 4, 5},
-			snapshotsInGC:   []uint64{1, 3, 5},
-			wantOnDisk:      []uint64{2, 4, 5},
-			wantInGC:        []uint64{5},
-		},
-		{
-			name:            "Test with unsorted",
-			snapshotsOnDisk: []uint64{1, 3, 2, 5, 4},
-			snapshotsInGC:   []uint64{5, 1, 3},
-			wantOnDisk:      []uint64{2, 4, 5},
-			wantInGC:        []uint64{5},
+			name:            "many",
+			n:               1,
+			knownEpochs:     []uint64{1, 2, 3, 4},
+			deletableEpochs: []uint64{1, 2, 3},
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root, defFn := test.Space(require.New(t))
-			defer defFn()
-			parent := &tsTable{
-				root:       root,
-				l:          logger.GetLogger("test"),
+
+	for _, test := range tests {
+		test := test
+		t.Run(fmt.Sprintf("%s-%d", test.name, test.n), func(t *testing.T) {
+			var gc garbageCleaner
+			gc.init(&tsTable{
 				fileSystem: fs.NewLocalFileSystem(),
+			})
+
+			for _, epoch := range test.knownEpochs {
+				gc.registerSnapshot(&snapshot{epoch: epoch})
 			}
-			for i := range tt.snapshotsOnDisk {
-				filePath := filepath.Join(parent.root, snapshotName(tt.snapshotsOnDisk[i]))
-				file, err := parent.fileSystem.CreateFile(filePath, filePermission)
-				require.NoError(t, err)
-				require.NoError(t, file.Close())
+			if !reflect.DeepEqual(gc.deletableEpochs, test.deletableEpochs) {
+				t.Errorf("expected deletable: %#v, got %#v", test.deletableEpochs, gc.deletableEpochs)
 			}
-			g := &garbageCleaner{
-				parent:    parent,
-				snapshots: tt.snapshotsInGC,
-			}
-			g.cleanSnapshots()
-			var got []uint64
-			for _, de := range parent.fileSystem.ReadDir(parent.root) {
-				s, err := parseSnapshot(de.Name())
-				require.NoError(t, err, "failed to parse snapshot name:%s", de.Name())
-				got = append(got, s)
-			}
-			sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
-			assert.Equal(t, tt.wantOnDisk, got)
-			assert.Equal(t, tt.wantInGC, g.snapshots)
 		})
 	}
 }

@@ -74,7 +74,7 @@ func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
 
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(&mp.meta))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
 	// Open data files
 	p.meta = &mp.meta
@@ -228,8 +228,8 @@ type partWrapper struct {
 	mustBeDeleted uint32
 }
 
-func newPartWrapper(mp *memPart, p *part, fileSystem fs.FileSystem) *partWrapper {
-	return &partWrapper{mp: mp, p: p, fileSystem: fileSystem, ref: 1}
+func newPartWrapper(mp *memPart, p *part) *partWrapper {
+	return &partWrapper{mp: mp, p: p, ref: 1}
 }
 
 func (pw *partWrapper) incRef() {
@@ -248,24 +248,22 @@ func (pw *partWrapper) decRef() {
 		return
 	}
 	pw.p.close()
-	if atomic.LoadUint32(&pw.mustBeDeleted) == 0 {
-		return
-	}
-	pw.fileSystem.MustRMAll(pw.p.path)
 }
 
 func (pw *partWrapper) ID() uint64 {
 	return pw.p.partMetadata.ID
 }
 
-func mustOpenFilePart(partPath string, fileSystem fs.FileSystem) *part {
+func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	var p part
+	partPath := partPath(root, id)
 	p.path = partPath
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
+	p.partMetadata.ID = id
 
 	metaPath := path.Join(partPath, metaFilename)
 	pr := mustOpenReader(metaPath, fileSystem)
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(pr))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
 	fs.MustClose(pr)
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
