@@ -245,6 +245,43 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 	}
 }
 
+func Test_mustWriteAndReadElementIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantPanic bool
+		wantTM    elementIDsMetadata
+	}{
+		{
+			name:      "Test mustWriteAndReadElementIDs",
+			args:      []string{"0", "1", "2", "3", "4"},
+			wantPanic: false,
+		},
+		// {
+		// 	name:      "Test mustWriteAndReadTimestamps with panic",
+		// 	args:      getBitInt64Arr(),
+		// 	wantPanic: true,
+		// },
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if (r != nil) != tt.wantPanic {
+					t.Errorf("mustWriteElementIDs() recover = %v, wantPanic = %v", r, tt.wantPanic)
+				}
+			}()
+			em := &elementIDsMetadata{}
+			b := &bytes.Buffer{}
+			mustWriteElementIDsTo(em, tt.args, writer{w: b})
+			elementIDs := mustReadElementIDsFrom(nil, em, len(tt.args), b)
+			if !reflect.DeepEqual(elementIDs, tt.args) {
+				t.Errorf("mustReadElementIDsFrom() = %v, want %v", elementIDs, tt.args)
+			}
+		})
+	}
+}
+
 func getBitInt64Arr() []int64 {
 	size := maxTimestampsBlockSize + 1
 	randSlice := make([]int64, size)

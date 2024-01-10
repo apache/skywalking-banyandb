@@ -90,29 +90,29 @@ type elementRef struct {
 	timestamp uint64
 }
 
-type Item struct {
+type indexedElementRef struct {
 	elementRef
 	elemIdx int
 }
 
-type PriorityQueue []*Item
+type priorityQueue []*indexedElementRef
 
-func (pq PriorityQueue) Len() int { return len(pq) }
+func (pq priorityQueue) Len() int { return len(pq) }
 
-func (pq PriorityQueue) Less(i, j int) bool {
+func (pq priorityQueue) Less(i, j int) bool {
 	return pq[i].timestamp < pq[j].timestamp
 }
 
-func (pq PriorityQueue) Swap(i, j int) {
+func (pq priorityQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 }
 
-func (pq *PriorityQueue) Push(x interface{}) {
-	item := x.(*Item)
+func (pq *priorityQueue) Push(x interface{}) {
+	item := x.(*indexedElementRef)
 	*pq = append(*pq, item)
 }
 
-func (pq *PriorityQueue) Pop() interface{} {
+func (pq *priorityQueue) Pop() interface{} {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
@@ -122,24 +122,24 @@ func (pq *PriorityQueue) Pop() interface{} {
 
 func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
 	var result []elementRef
-	pq := make(PriorityQueue, 0)
+	pq := make(priorityQueue, 0)
 	heap.Init(&pq)
 
 	for seriesID, timestamps := range postingMap {
 		if len(timestamps) > 0 {
 			er := elementRef{seriesID: seriesID, timestamp: timestamps[0]}
-			item := &Item{elementRef: er, elemIdx: 0}
+			item := &indexedElementRef{elementRef: er, elemIdx: 0}
 			heap.Push(&pq, item)
 		}
 	}
 	for pq.Len() > 0 {
-		item := heap.Pop(&pq).(*Item)
+		item := heap.Pop(&pq).(*indexedElementRef)
 		result = append(result, item.elementRef)
 
 		if item.elemIdx+1 < len(postingMap[item.seriesID]) {
-			nextTs := postingMap[item.seriesID][item.elemIdx+1]
-			nextEr := elementRef{seriesID: item.seriesID, timestamp: nextTs}
-			nextItem := &Item{elementRef: nextEr, elemIdx: item.elemIdx + 1}
+			nextTS := postingMap[item.seriesID][item.elemIdx+1]
+			nextEr := elementRef{seriesID: item.seriesID, timestamp: nextTS}
+			nextItem := &indexedElementRef{elementRef: nextEr, elemIdx: item.elemIdx + 1}
 			heap.Push(&pq, nextItem)
 		}
 	}

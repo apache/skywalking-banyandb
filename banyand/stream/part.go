@@ -47,6 +47,34 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
+type columnElements struct {
+	elementID   []string
+	tagFamilies [][]pbv1.TagFamily
+	timestamp   []int64
+}
+
+func newColumnElements() *columnElements {
+	ces := &columnElements{}
+	ces.elementID = make([]string, 0)
+	ces.tagFamilies = make([][]pbv1.TagFamily, 0)
+	ces.timestamp = make([]int64, 0)
+	return ces
+}
+
+func (ces *columnElements) Pull() *pbv1.StreamColumnResult {
+	r := &pbv1.StreamColumnResult{}
+	r.Timestamps = make([]int64, 0)
+	r.ElementIDs = make([]string, 0)
+	r.TagFamilies = make([][]pbv1.TagFamily, len(ces.tagFamilies))
+	r.Timestamps = append(r.Timestamps, ces.timestamp...)
+	r.ElementIDs = append(r.ElementIDs, ces.elementID...)
+	for i, tfs := range ces.tagFamilies {
+		r.TagFamilies[i] = make([]pbv1.TagFamily, 0)
+		r.TagFamilies[i] = append(r.TagFamilies[i], tfs...)
+	}
+	return r
+}
+
 type element struct {
 	elementID   string
 	tagFamilies []*tagFamily
@@ -226,6 +254,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
+	mp.elementIDs.Reset()
 	if mp.tagFamilies != nil {
 		for _, tf := range mp.tagFamilies {
 			tf.Reset()

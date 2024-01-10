@@ -72,7 +72,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
 	if i.order != nil && i.order.Index != nil {
-		es, err := ec.Sort(ctx, pbv1.StreamSortOptions{
+		ssr, err := ec.Sort(ctx, pbv1.StreamSortOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -84,12 +84,32 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		if err != nil {
 			return nil, err
 		}
-		elements = append(elements, es...)
+		r := ssr.Pull()
+		for i := range r.Timestamps {
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
+			}
+
+			for _, tf := range r.TagFamilies[i] {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
+				}
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[0],
+					})
+				}
+			}
+			elements = append(elements, e)
+		}
 		return elements, nil
 	}
 
 	if i.filter != nil && i.filter != logical.Enode {
-		es, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+		sfr, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -101,7 +121,27 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		if err != nil {
 			return nil, err
 		}
-		elements = append(elements, es...)
+		r := sfr.Pull()
+		for i := range r.Timestamps {
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
+			}
+
+			for _, tf := range r.TagFamilies[i] {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
+				}
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[0],
+					})
+				}
+			}
+			elements = append(elements, e)
+		}
 		return elements, nil
 	}
 

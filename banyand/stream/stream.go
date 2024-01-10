@@ -25,16 +25,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"time"
 
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -67,8 +64,8 @@ type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
-	Sort(ctx context.Context, opts pbv1.StreamSortOptions) ([]*streamv1.Element, error)
-	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) ([]*streamv1.Element, error)
+	Sort(ctx context.Context, opts pbv1.StreamSortOptions) (pbv1.StreamSortResult, error)
+	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) (pbv1.StreamFilterResult, error)
 }
 
 var _ Stream = (*stream)(nil)
@@ -121,7 +118,7 @@ func NewItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 	return itersort.NewItemIter[item](ii, false)
 }
 
-func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (elems []*streamv1.Element, err error) {
+func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (sfr pbv1.StreamFilterResult, err error) {
 	if sqo.TimeRange == nil || sqo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -148,47 +145,47 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (elem
 		seriesList = seriesList.Merge(sl)
 	}
 
+	ces := newColumnElements()
 	for _, tw := range tabWrappers {
-		if len(elems) >= sqo.MaxElementSize {
+		if len(ces.timestamp) >= sqo.MaxElementSize {
 			break
 		}
 		index := tw.Table().Index()
-		erl, err := index.Search(context.TODO(), seriesList, sqo.Filter)
+		erl, err := index.Search(ctx, seriesList, sqo.Filter)
 		if err != nil {
 			return nil, err
 		}
-		if len(elems)+len(erl) > sqo.MaxElementSize {
-			erl = erl[:sqo.MaxElementSize-len(elems)]
+		if len(ces.timestamp)+len(erl) > sqo.MaxElementSize {
+			erl = erl[:sqo.MaxElementSize-len(ces.timestamp)]
 		}
 		for _, er := range erl {
 			e, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sqo.TagProjection)
 			if err != nil {
 				return nil, err
 			}
-			elem := &streamv1.Element{
-				Timestamp: timestamppb.New(time.Unix(0, e.timestamp)),
-				ElementId: e.elementID,
-			}
+			tagFamilies := make([]pbv1.TagFamily, 0)
 			for _, tf := range e.tagFamilies {
-				tagFamily := &modelv1.TagFamily{
+				tagFamily := pbv1.TagFamily{
 					Name: tf.name,
 				}
-				elem.TagFamilies = append(elem.TagFamilies, tagFamily)
 				for _, t := range tf.tags {
-					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-						Key:   t.name,
-						Value: mustDecodeTagValue(t.valueType, t.values[e.index]),
-					})
+					tag := pbv1.Tag{
+						Name: t.name,
+					}
+					tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+					tagFamily.Tags = append(tagFamily.Tags, tag)
 				}
+				tagFamilies = append(tagFamilies, tagFamily)
 			}
-			elems = append(elems, elem)
+			ces.tagFamilies = append(ces.tagFamilies, tagFamilies)
+			ces.elementID = append(ces.elementID, e.elementID)
+			ces.timestamp = append(ces.timestamp, e.timestamp)
 		}
 	}
-	return
+	return ces, nil
 }
 
-// TODO: refactor to column-based query.
-func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []*streamv1.Element, err error) {
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (ssr pbv1.StreamSortResult, err error) {
 	if sqo.TimeRange == nil || sqo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -227,41 +224,43 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (elems []
 	}
 
 	if len(iters) == 0 {
-		return elems, nil
+		return ssr, nil
 	}
 
 	it := NewItemIter(iters, sqo.Order.Sort)
 	defer func() {
 		err = multierr.Append(err, it.Close())
 	}()
+
+	ces := newColumnElements()
 	for it.Next() {
 		nextItem := it.Val()
 		e, err := nextItem.Element()
 		if err != nil {
 			return nil, err
 		}
-		elem := &streamv1.Element{
-			Timestamp: timestamppb.New(time.Unix(0, e.timestamp)),
-			ElementId: e.elementID,
-		}
+		tagFamilies := make([]pbv1.TagFamily, 0)
 		for _, tf := range e.tagFamilies {
-			tagFamily := &modelv1.TagFamily{
+			tagFamily := pbv1.TagFamily{
 				Name: tf.name,
 			}
-			elem.TagFamilies = append(elem.TagFamilies, tagFamily)
 			for _, t := range tf.tags {
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   t.name,
-					Value: mustDecodeTagValue(t.valueType, t.values[e.index]),
-				})
+				tag := pbv1.Tag{
+					Name: t.name,
+				}
+				tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+				tagFamily.Tags = append(tagFamily.Tags, tag)
 			}
+			tagFamilies = append(tagFamilies, tagFamily)
 		}
-		elems = append(elems, elem)
-		if len(elems) >= sqo.MaxElementSize {
+		ces.tagFamilies = append(ces.tagFamilies, tagFamilies)
+		ces.elementID = append(ces.elementID, e.elementID)
+		ces.timestamp = append(ces.timestamp, e.timestamp)
+		if len(ces.timestamp) >= sqo.MaxElementSize {
 			break
 		}
 	}
-	return elems, nil
+	return ces, nil
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {

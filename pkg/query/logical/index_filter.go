@@ -893,6 +893,7 @@ func jsonToString(marshaler json.Marshaler) string {
 }
 
 var (
+	// Enode is an empty node.
 	Enode = new(emptyNode)
 	bList = new(bypassList)
 )
