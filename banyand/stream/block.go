@@ -121,8 +121,8 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, ww.timestampsWriter)
-	mustWriteElementIDsTo(&bm.elementIDs, b.elementIDs, ww.elementIDsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, &ww.timestampsWriter)
+	mustWriteElementIDsTo(&bm.elementIDs, b.elementIDs, &ww.elementIDsWriter)
 
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
@@ -174,9 +174,9 @@ func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader,
+	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, readTagByProjection bool,
 ) {
-	if len(tagProjection) < 1 {
+	if readTagByProjection && len(tagProjection) < 1 {
 		return
 	}
 	bb := bigValuePool.Generate()
@@ -190,15 +190,24 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
-	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
-
-	for j := range tagProjection {
-		for i := range cfm.tagMetadata {
-			if tagProjection[j] == cfm.tagMetadata[i].name {
-				cc[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
-				break
+	if readTagByProjection {
+		if len(tagProjection) < 1 {
+			return
+		}
+		cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
+		for j := range tagProjection {
+			for i := range cfm.tagMetadata {
+				if tagProjection[j] == cfm.tagMetadata[i].name {
+					cc[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
+					break
+				}
 			}
 		}
+		return
+	}
+	cc := b.tagFamilies[tfIndex].resizeTags(len(cfm.tagMetadata))
+	for i := range cfm.tagMetadata {
+		cc[i].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
 	}
 }
 
@@ -223,20 +232,37 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata, readTagByProjection bool) {
 	b.reset()
 
 	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
 	b.elementIDs = mustReadElementIDsFrom(b.elementIDs, &bm.elementIDs, int(bm.count), p.elementIDs)
 
-	_ = b.resizeTagFamilies(len(bm.tagProjection))
-	for i := range bm.tagProjection {
-		name := bm.tagProjection[i].Family
-		block, ok := bm.tagFamilies[name]
-		if !ok {
-			continue
+	if readTagByProjection {
+		_ = b.resizeTagFamilies(len(bm.tagProjection))
+		for i := range bm.tagProjection {
+			name := bm.tagProjection[i].Family
+			block, ok := bm.tagFamilies[name]
+			if !ok {
+				continue
+			}
+			b.unmarshalTagFamily(decoder, i, name, block,
+				bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
+				p.tagFamilies[name], readTagByProjection)
 		}
-		b.unmarshalTagFamily(decoder, i, name, block, bm.tagProjection[i].Names, p.tagFamilyMetadata[name], p.tagFamilies[name])
+		return
+	}
+
+	_ = b.resizeTagFamilies(len(bm.tagFamilies))
+	keys := make([]string, 0, len(bm.tagFamilies))
+	for k := range bm.tagFamilies {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for i, name := range keys {
+		block := bm.tagFamilies[name]
+		b.unmarshalTagFamily(decoder, i, name, block,
+			nil, p.tagFamilyMetadata[name], p.tagFamilies[name], readTagByProjection)
 	}
 }
 
@@ -247,7 +273,7 @@ func (b *block) sortTagFamilies() {
 	})
 }
 
-func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter writer) {
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter *writer) {
 	tm.reset()
 
 	bb := bigValuePool.Generate()
@@ -275,7 +301,7 @@ func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, read
 	return dst
 }
 
-func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementIDsWriter writer) {
+func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementIDsWriter *writer) {
 	em.reset()
 
 	bb := bigValuePool.Generate()
@@ -366,10 +392,21 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.tagProjection = queryOpts.TagProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
+func (bc *blockCursor) copyAllTo(r *pbv1.Result, desc bool) {
+	var idx, offset int
+	if desc {
+		idx = 0
+		offset = bc.idx + 1
+	} else {
+		idx = bc.idx
+		offset = len(bc.timestamps)
+	}
+	if offset <= idx {
+		return
+	}
 	r.SID = bc.bm.seriesID
-	r.Timestamps = append(r.Timestamps, bc.timestamps...)
-	r.ElementIDs = append(r.ElementIDs, bc.elementIDs...)
+	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
+	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
 	for _, cf := range bc.tagFamilies {
 		tf := pbv1.TagFamily{
 			Name: cf.name,
@@ -378,7 +415,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result) {
 			t := pbv1.Tag{
 				Name: c.name,
 			}
-			for _, v := range c.values {
+			for _, v := range c.values[idx:offset] {
 				t.Values = append(t.Values, mustDecodeTagValue(c.valueType, v))
 			}
 			tf.Tags = append(tf.Tags, t)
@@ -430,7 +467,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		}
 	}
 	bc.bm.tagFamilies = tf
-	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
+	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm, true)
 
 	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
@@ -481,10 +518,21 @@ func findRange(timestamps []int64, min int64, max int64) (int, int, bool) {
 		}
 	}
 
-	if start == -1 || end == -1 || start >= end {
+	if start == -1 && end == -1 {
 		return 0, 0, false
 	}
 
+	if start == -1 {
+		start = 0
+	}
+
+	if end == -1 {
+		end = l
+	}
+
+	if start >= end {
+		return 0, 0, false
+	}
 	return start, end, true
 }
 
@@ -501,4 +549,97 @@ func generateBlockCursor() *blockCursor {
 func releaseBlockCursor(bc *blockCursor) {
 	bc.reset()
 	blockCursorPool.Put(bc)
+}
+
+type blockPointer struct {
+	block
+	bm         blockMetadata
+	idx        int
+	lastPartID uint64
+}
+
+func (bi *blockPointer) updateMetadata() {
+	if len(bi.block.timestamps) == 0 {
+		return
+	}
+	// only update timestamps since they are used for merging
+	// blockWriter will recompute all fields
+	bi.bm.timestamps.min = bi.block.timestamps[0]
+	bi.bm.timestamps.max = bi.block.timestamps[len(bi.timestamps)-1]
+}
+
+func (bi *blockPointer) copyFrom(src *blockPointer) {
+	bi.idx = 0
+	bi.bm.copyFrom(&src.bm)
+	bi.appendAll(src)
+}
+
+func (bi *blockPointer) appendAll(b *blockPointer) {
+	if len(b.timestamps) == 0 {
+		return
+	}
+	bi.append(b, len(b.timestamps))
+}
+
+func (bi *blockPointer) append(b *blockPointer, offset int) {
+	if offset <= b.idx {
+		return
+	}
+	if len(bi.tagFamilies) == 0 && len(b.tagFamilies) > 0 {
+		for _, tf := range b.tagFamilies {
+			tagFamily := tagFamily{name: tf.name}
+			for _, c := range tf.tags {
+				col := tag{name: c.name, valueType: c.valueType}
+				assertIdxAndOffset(col.name, len(c.values), b.idx, offset)
+				col.values = append(col.values, c.values[b.idx:offset]...)
+				tagFamily.tags = append(tagFamily.tags, col)
+			}
+			bi.tagFamilies = append(bi.tagFamilies, tagFamily)
+		}
+	} else {
+		if len(bi.tagFamilies) != len(b.tagFamilies) {
+			logger.Panicf("unexpected number of tag families: got %d; want %d", len(bi.tagFamilies), len(b.tagFamilies))
+		}
+		for i := range bi.tagFamilies {
+			if bi.tagFamilies[i].name != b.tagFamilies[i].name {
+				logger.Panicf("unexpected tag family name: got %q; want %q", bi.tagFamilies[i].name, b.tagFamilies[i].name)
+			}
+			if len(bi.tagFamilies[i].tags) != len(b.tagFamilies[i].tags) {
+				logger.Panicf("unexpected number of tags for tag family %q: got %d; want %d", bi.tagFamilies[i].name, len(bi.tagFamilies[i].tags), len(b.tagFamilies[i].tags))
+			}
+			for j := range bi.tagFamilies[i].tags {
+				if bi.tagFamilies[i].tags[j].name != b.tagFamilies[i].tags[j].name {
+					logger.Panicf("unexpected tag name for tag family %q: got %q; want %q", bi.tagFamilies[i].name, bi.tagFamilies[i].tags[j].name, b.tagFamilies[i].tags[j].name)
+				}
+				assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
+				bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
+			}
+		}
+	}
+
+	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
+	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
+	bi.elementIDs = append(bi.elementIDs, b.elementIDs[b.idx:offset]...)
+
+	bi.lastPartID = b.lastPartID
+}
+
+func assertIdxAndOffset(name string, length int, idx int, offset int) {
+	if idx >= offset {
+		logger.Panicf("%q idx %d must be less than offset %d", name, idx, offset)
+	}
+	if offset > length {
+		logger.Panicf("%q offset %d must be less than or equal to length %d", name, offset, length)
+	}
+}
+
+func (bi *blockPointer) isFull() bool {
+	return bi.bm.count >= maxBlockLength || bi.bm.uncompressedSizeBytes >= maxUncompressedBlockSize
+}
+
+func (bi *blockPointer) reset() {
+	bi.idx = 0
+	bi.lastPartID = 0
+	bi.block.reset()
+	bi.bm = blockMetadata{}
 }

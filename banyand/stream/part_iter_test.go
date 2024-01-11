@@ -150,7 +150,68 @@ func Test_partIter_nextBlock(t *testing.T) {
 			partPath := partPath(tmpDir, epoch)
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
-			p = mustOpenFilePart(partPath, fileSystem)
+			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
+			verifyPart(p)
+		})
+	}
+}
+
+func Test_partMergeIter_nextBlock(t *testing.T) {
+	tests := []struct {
+		wantErr error
+		name    string
+		dps     *elements
+		want    []blockMetadata
+	}{
+		{
+			name: "Test with all data",
+			dps:  es,
+			want: []blockMetadata{
+				{seriesID: 1, count: 2}, {seriesID: 2, count: 2}, {seriesID: 3, count: 2},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifyPart := func(p *part) {
+				defer p.close()
+				pi := partMergeIter{}
+				pi.mustInitFromPart(p)
+				var got []blockMetadata
+				for pi.nextBlock() {
+					got = append(got, pi.block.bm)
+					require.Nil(t, pi.block.bm.tagProjection)
+					require.Equal(t, len(pi.block.bm.tagFamilies), len(pi.block.tagFamilies))
+				}
+
+				if !errors.Is(pi.error(), tt.wantErr) {
+					t.Errorf("Unexpected error: got %v, want %v", pi.err, tt.wantErr)
+				}
+
+				if diff := cmp.Diff(got, tt.want,
+					cmpopts.IgnoreFields(blockMetadata{}, "uncompressedSizeBytes"),
+					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmp.AllowUnexported(blockMetadata{}),
+				); diff != "" {
+					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+			}
+			mp := generateMemPart()
+			releaseMemPart(mp)
+			mp.mustInitFromElements(tt.dps)
+
+			p := openMemPart(mp)
+			verifyPart(p)
+			tmpDir, defFn := test.Space(require.New(t))
+			defer defFn()
+			epoch := uint64(1)
+			partPath := partPath(tmpDir, epoch)
+			fileSystem := fs.NewLocalFileSystem()
+			mp.mustFlush(fileSystem, partPath)
+			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
 			verifyPart(p)
 		})
 	}

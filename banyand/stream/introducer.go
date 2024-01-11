@@ -77,7 +77,36 @@ func releaseFlusherIntroduction(i *flusherIntroduction) {
 	flusherIntroductionPool.Put(i)
 }
 
-func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, watcherCh watcher.Channel, epoch uint64) {
+type mergerIntroduction struct {
+	merged  map[uint64]struct{}
+	newPart *partWrapper
+	applied chan struct{}
+}
+
+func (i *mergerIntroduction) reset() {
+	for k := range i.merged {
+		delete(i.merged, k)
+	}
+	i.newPart = nil
+	i.applied = nil
+}
+
+var mergerIntroductionPool = sync.Pool{}
+
+func generateMergerIntroduction() *mergerIntroduction {
+	v := mergerIntroductionPool.Get()
+	if v == nil {
+		return &mergerIntroduction{}
+	}
+	return v.(*mergerIntroduction)
+}
+
+func releaseMergerIntroduction(i *mergerIntroduction) {
+	i.reset()
+	mergerIntroductionPool.Put(i)
+}
+
+func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction, watcherCh watcher.Channel, epoch uint64) {
 	var introducerWatchers watcher.Epochs
 	defer tst.loopCloser.Done()
 	for {
@@ -89,6 +118,9 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, watcherCh 
 			epoch++
 		case next := <-flushCh:
 			tst.introduceFlushed(next, epoch)
+			epoch++
+		case next := <-mergeCh:
+			tst.introduceMerged(next, epoch)
 			epoch++
 		case epochWatcher := <-watcherCh:
 			introducerWatchers.Add(epochWatcher)
@@ -108,8 +140,8 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 
 	next := nextIntroduction.memPart
 	nextSnp := cur.copyAllTo(epoch)
-	next.p.partMetadata.ID = epoch
 	nextSnp.parts = append(nextSnp.parts, next)
+	nextSnp.creator = snapshotCreatorMemPart
 	tst.replaceSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
@@ -123,6 +155,22 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	}
 	defer cur.decRef()
 	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
+	nextSnp.creator = snapshotCreatorFlusher
+	tst.replaceSnapshot(&nextSnp)
+	if nextIntroduction.applied != nil {
+		close(nextIntroduction.applied)
+	}
+}
+
+func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint64) {
+	cur := tst.currentSnapshot()
+	if cur == nil {
+		tst.l.Panic().Msg("current snapshot is nil")
+	}
+	defer cur.decRef()
+	nextSnp := cur.remove(epoch, nextIntroduction.merged)
+	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
+	nextSnp.creator = snapshotCreatorMerger
 	tst.replaceSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)

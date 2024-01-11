@@ -36,6 +36,7 @@ import (
 func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
+		elementIDs  []string
 		tagFamilies []tagFamily
 	}
 	tests := []struct {
@@ -47,10 +48,12 @@ func Test_block_reset(t *testing.T) {
 			name: "Test reset",
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
+				elementIDs:  []string{"0", "1", "2"},
 				tagFamilies: []tagFamily{{}, {}, {}},
 			},
 			want: block{
 				timestamps:  []int64{},
+				elementIDs:  []string{},
 				tagFamilies: []tagFamily{},
 			},
 		},
@@ -59,6 +62,7 @@ func Test_block_reset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{
 				timestamps:  tt.fields.timestamps,
+				elementIDs:  tt.fields.elementIDs,
 				tagFamilies: tt.fields.tagFamilies,
 			}
 			b.reset()
@@ -236,7 +240,7 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			}()
 			tm := &timestampsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteTimestampsTo(tm, tt.args, writer{w: b})
+			mustWriteTimestampsTo(tm, tt.args, &writer{w: b})
 			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
 			if !reflect.DeepEqual(timestamps, tt.args) {
 				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
@@ -273,7 +277,7 @@ func Test_mustWriteAndReadElementIDs(t *testing.T) {
 			}()
 			em := &elementIDsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteElementIDsTo(em, tt.args, writer{w: b})
+			mustWriteElementIDsTo(em, tt.args, &writer{w: b})
 			elementIDs := mustReadElementIDsFrom(nil, em, len(tt.args), b)
 			if !reflect.DeepEqual(elementIDs, tt.args) {
 				t.Errorf("mustReadElementIDsFrom() = %v, want %v", elementIDs, tt.args)
@@ -327,7 +331,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, true)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(tagFamily{}, tag{}),
@@ -380,7 +384,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		})
 	}
 	bm.tagProjection = tp
-	unmarshaled.mustReadFrom(decoder, p, bm)
+	unmarshaled.mustReadFrom(decoder, p, bm, true)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
 
@@ -469,6 +473,322 @@ func Test_findRange(t *testing.T) {
 			}
 			if gotExist != tt.wantExist {
 				t.Errorf("findRange() gotExist = %v, want %v", gotExist, tt.wantExist)
+			}
+		})
+	}
+}
+
+func Test_blockPointer_append(t *testing.T) {
+	type fields struct {
+		timestamps  []int64
+		elementIDs  []string
+		tagFamilies []tagFamily
+		partID      uint64
+	}
+	type args struct {
+		b      *blockPointer
+		offset int
+	}
+	tests := []struct {
+		want      *blockPointer
+		name      string
+		args      args
+		fields    fields
+		wantPanic bool
+	}{
+		{
+			name: "Test append with empty block",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []string{"0", "1"},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{},
+						elementIDs:  []string{},
+						tagFamilies: []tagFamily{},
+					},
+					idx: 0,
+				},
+				offset: 0,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					elementIDs: []string{"0", "1"},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append to a empty block",
+			fields: fields{
+				timestamps:  nil,
+				elementIDs:  nil,
+				tagFamilies: nil,
+				partID:      0,
+			},
+			args: args{
+				b: &blockPointer{
+					lastPartID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []string{"3", "4"},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				lastPartID: 2,
+				block: block{
+					timestamps: []int64{4, 5},
+					elementIDs: []string{"3", "4"},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with offset equals to the data size. All data",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []string{"0", "1"},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					lastPartID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []string{"3", "4"},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				lastPartID: 2,
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					elementIDs: []string{"0", "1", "3", "4"},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}),
+										marshalStrArr([][]byte{[]byte("value11"), []byte("value12")}),
+									},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with non-empty block and offset less than timestamps",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []string{"0", "1"},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					lastPartID: 2,
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []string{"3", "4"},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value9"), []byte("value10")}), marshalStrArr([][]byte{[]byte("value11"), []byte("value12")})},
+									},
+								},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 1,
+			},
+			want: &blockPointer{
+				lastPartID: 2,
+				block: block{
+					timestamps: []int64{1, 2, 4},
+					elementIDs: []string{"0", "1", "3"},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{
+										[]byte("value7"),
+										[]byte("value8"),
+									}), marshalStrArr([][]byte{[]byte("value9"), []byte("value10")})},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if (r != nil) != tt.wantPanic {
+					t.Errorf("blockPointer.append() recover = %v, wantPanic = %v", r, tt.wantPanic)
+				}
+			}()
+			bi := &blockPointer{
+				block: block{
+					timestamps:  tt.fields.timestamps,
+					tagFamilies: tt.fields.tagFamilies,
+					elementIDs:  tt.fields.elementIDs,
+				},
+				lastPartID: tt.fields.partID,
+			}
+			bi.append(tt.args.b, tt.args.offset)
+			if !reflect.DeepEqual(bi, tt.want) {
+				t.Errorf("blockPointer.append() = %+v, want %+v", bi, tt.want)
+			}
+		})
+	}
+}
+
+func Test_blockPointer_copyFrom(t *testing.T) {
+	type fields struct {
+		bm  blockMetadata
+		idx int
+	}
+	type args struct {
+		src *blockPointer
+	}
+	tests := []struct {
+		args   args
+		want   *blockPointer
+		name   string
+		fields fields
+	}{
+		{
+			name: "Test copyFrom",
+			fields: fields{
+				bm:  blockMetadata{},
+				idx: 0,
+			},
+			args: args{
+				src: &blockPointer{
+					bm:         blockMetadata{count: 1},
+					idx:        0,
+					block:      conventionalBlock,
+					lastPartID: 2,
+				},
+			},
+			want: &blockPointer{
+				bm:         blockMetadata{count: 1},
+				idx:        0,
+				block:      conventionalBlock,
+				lastPartID: 2,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bi := &blockPointer{
+				bm:  tt.fields.bm,
+				idx: tt.fields.idx,
+			}
+			bi.copyFrom(tt.args.src)
+			if !reflect.DeepEqual(bi, tt.want) {
+				t.Errorf("blockPointer.copyFrom() = %+v, want %+v", bi, tt.want)
 			}
 		})
 	}

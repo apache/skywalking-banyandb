@@ -59,6 +59,7 @@ type service struct {
 	localPipeline queue.Queue
 	l             *logger.Logger
 	root          string
+	option        option
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -76,6 +77,7 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
+	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	return flagS
 }
 

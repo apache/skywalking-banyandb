@@ -166,7 +166,7 @@ func (qr *queryResult) Pull() *pbv1.Result {
 	if len(qr.data) == 1 {
 		r := &pbv1.Result{}
 		bc := qr.data[0]
-		bc.copyAllTo(r)
+		bc.copyAllTo(r, qr.orderByTimestampDesc())
 		qr.data = qr.data[:0]
 		return r
 	}

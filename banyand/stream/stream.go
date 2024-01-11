@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -49,8 +50,13 @@ const (
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
-	maxBlockLength = 8 * 1024
+	maxBlockLength      = 8 * 1024
+	defaultFlushTimeout = 5 * time.Second
 )
+
+type option struct {
+	flushTimeout time.Duration
+}
 
 // Query allow to retrieve elements in a series of streams.
 type Query interface {
@@ -125,7 +131,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (sfr 
 	if len(sqo.TagProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
-	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
 	sort.Slice(tabWrappers, func(i, j int) bool {
 		return tabWrappers[i].GetTimeRange().Start.Before(tabWrappers[j].GetTimeRange().Start)
@@ -192,7 +198,7 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (ssr pbv1
 	if len(sqo.TagProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
-	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
 	defer func() {
 		for i := range tabWrappers {
@@ -270,7 +276,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	if len(sqo.TagProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
-	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable])
+	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
 	defer func() {
 		for i := range tabWrappers {
@@ -302,7 +308,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, qo)
+		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue

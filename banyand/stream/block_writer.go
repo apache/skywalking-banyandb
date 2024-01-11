@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"path/filepath"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -170,6 +171,19 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.elementIDsWriter.init(&mp.elementIDs)
 }
 
+func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
+	bw.reset()
+	fileSystem.MkdirPanicIfExist(path, dirPermission)
+	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
+		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), filePermission),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilenameExt), filePermission)
+	}
+	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), filePermission))
+	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), filePermission))
+	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), filePermission))
+	bw.writers.elementIDsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, elementIDsFilename), filePermission))
+}
+
 func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
 	if len(timestamps) == 0 {
 		return
@@ -178,6 +192,10 @@ func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64
 	b := generateBlock()
 	defer releaseBlock(b)
 	b.mustInitFromElements(timestamps, elementIDs, tagFamilies)
+	bw.mustWriteBlock(sid, b)
+}
+
+func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	if b.Len() == 0 {
 		return
 	}
@@ -192,9 +210,9 @@ func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64
 	isSeenSid := sid == bw.sidLast
 	bw.sidLast = sid
 
-	bh := generateBlockMetadata()
-	b.mustWriteTo(sid, bh, &bw.writers)
-	th := &bh.timestamps
+	bm := generateBlockMetadata()
+	b.mustWriteTo(sid, bm, &bw.writers)
+	th := &bm.timestamps
 	if bw.totalCount == 0 || th.min < bw.totalMinTimestamp {
 		bw.totalMinTimestamp = th.min
 	}
@@ -212,12 +230,12 @@ func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64
 	}
 	bw.minTimestampLast = th.min
 
-	bw.totalUncompressedSizeBytes += bh.uncompressedSizeBytes
-	bw.totalCount += bh.count
+	bw.totalUncompressedSizeBytes += bm.uncompressedSizeBytes
+	bw.totalCount += bm.count
 	bw.totalBlocksCount++
 
-	bw.primaryBlockData = bh.marshal(bw.primaryBlockData)
-	releaseBlockMetadata(bh)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
+	releaseBlockMetadata(bm)
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
 		bw.primaryBlockData = bw.primaryBlockData[:0]
@@ -235,12 +253,12 @@ func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	bw.sidFirst = 0
 }
 
-func (bw *blockWriter) Flush(ph *partMetadata) {
-	ph.UncompressedSizeBytes = bw.totalUncompressedSizeBytes
-	ph.TotalCount = bw.totalCount
-	ph.BlocksCount = bw.totalBlocksCount
-	ph.MinTimestamp = bw.totalMinTimestamp
-	ph.MaxTimestamp = bw.totalMaxTimestamp
+func (bw *blockWriter) Flush(pm *partMetadata) {
+	pm.UncompressedSizeBytes = bw.totalUncompressedSizeBytes
+	pm.TotalCount = bw.totalCount
+	pm.BlocksCount = bw.totalBlocksCount
+	pm.MinTimestamp = bw.totalMinTimestamp
+	pm.MaxTimestamp = bw.totalMaxTimestamp
 
 	bw.mustFlushPrimaryBlock(bw.primaryBlockData)
 
@@ -249,7 +267,7 @@ func (bw *blockWriter) Flush(ph *partMetadata) {
 	bw.writers.metaWriter.MustWrite(bb.Buf)
 	bigValuePool.Release(bb)
 
-	ph.CompressedSizeBytes = bw.writers.totalBytesWritten()
+	pm.CompressedSizeBytes = bw.writers.totalBytesWritten()
 
 	bw.writers.MustClose()
 	bw.reset()
