@@ -14,49 +14,27 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-/tmp
+istio_mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
+istio_mk_dir   := $(dir $(istio_mk_path))
 
-# Test binary, build with `go test -c`
-*.test
-*.log
+root_dir := $(istio_mk_dir)../../../..
 
-# Ginkgo test report
-*.report
+include $(root_dir)/scripts/build/version.mk
+include $(root_dir)/scripts/build/base.mk
+include $(root_dir)/scripts/build/ginkgo.mk
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+.PHONY: profile
+profile: $(GINKGO)
+	$(GINKGO) -v --tags="prometheus" \
+	  --blockprofile prof/block.prof \
+	  --cpuprofile prof/cpu.prof \
+	  --memprofile prof/mem.prof \
+	  --mutexprofile prof/mutex.prof \
+	  ./... 2 > $(root_dir)/test.log
 
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
-
-.DS_Store
-.env
-.run
-
-# mock files
-*mock.go
-*mock_test.go
-
-# snky cache
-.dccache
-
-# okteto
-.stignore
-
-# profile result
-*.prof
+.PHONY: test
+test: $(GINKGO)
+	$(GINKGO) -v --tags="prometheus" \
+	  ./... 2 > $(root_dir)/test.log

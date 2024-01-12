@@ -7,11 +7,18 @@
 Service: 256
 Instances: 2048, 8 per service
 
-
 ### Demo cluster
 
 Traffic RPS: 4352
 VUS: 8192
+
+### Machine Info
+
+Machine and OS information:
+
+- CPU: CPU: AMD EPYC 7B12, VendorID: AuthenticAMD, Family: 23, Model: 49, Cores: 8
+- Memory: Total: 47176 MB
+- OS: OS: linux, Platform: ubuntu, Platform Family: debian, Platform Version: 21.04
 
 ## Result
 
@@ -20,94 +27,85 @@ throughput: 6967.051077 items/s
 throughput(kb/s) 1782.985321
 latency: 2ns
 
-## CPU Profile
+### Problem
 
-CPU Usage: 324%
+Memory: blockPointer.append used 22.55% of total memory, that is significantly larger than expected.
+
+Disk IO: weighted_io(ms) is 504.606667, which is larger than 100ms. This means a lot of IO operations are blocked.
+
+## CPU
+
+CPU 95th-percentile: 2.74 cores (8 cores in total)
 
 ```bash
-Showing top 10 nodes out of 300
+Showing top 10 nodes out of 291
       flat  flat%   sum%        cum   cum%
-   348.58s  4.62%  4.62%    383.07s  5.08%  runtime.findObject
-   272.92s  3.62%  8.24%    272.92s  3.62%  runtime.memmove
-   240.53s  3.19% 11.43%    240.53s  3.19%  runtime/internal/syscall.Syscall6
-   239.05s  3.17% 14.60%    239.05s  3.17%  runtime.memclrNoHeapPointers
-   210.82s  2.80% 17.40%    340.64s  4.52%  github.com/klauspost/compress/zstd.(*doubleFastEncoder).Encode
-   189.80s  2.52% 19.92%   1111.75s 14.74%  runtime.mallocgc
-   182.17s  2.42% 22.33%    687.47s  9.12%  runtime.scanobject
-   134.93s  1.79% 24.12%    202.49s  2.69%  github.com/dgraph-io/badger/v3/table.(*MergeIterator).Value
-   116.62s  1.55% 25.67%    116.62s  1.55%  runtime.nextFreeFast (inline)
-   110.73s  1.47% 27.14%    110.73s  1.47%  github.com/klauspost/compress/zstd.sequenceDecs_decodeSync_bmi2
+   657.01s 10.54% 10.54%    657.01s 10.54%  runtime/internal/syscall.Syscall6
+   242.03s  3.88% 14.43%    457.06s  7.33%  github.com/blevesearch/vellum.registryCache.entry
+   211.69s  3.40% 17.82%    218.18s  3.50%  github.com/klauspost/compress/zstd.(*fseEncoder).buildCTable
+   173.92s  2.79% 20.61%    697.34s 11.19%  runtime.mallocgc
+   172.26s  2.76% 23.38%    172.75s  2.77%  github.com/blevesearch/vellum.(*builderNode).equiv (inline)
+   164.02s  2.63% 26.01%    188.35s  3.02%  runtime.findObject
+   131.81s  2.12% 28.13%    169.79s  2.72%  github.com/klauspost/compress/zstd.(*fastEncoder).EncodeNoHist
+   127.66s  2.05% 30.17%    127.66s  2.05%  runtime.memmove
+   123.01s  1.97% 32.15%    141.11s  2.26%  github.com/klauspost/compress/huff0.(*Scratch).huffSort
+    99.42s  1.60% 33.74%    134.90s  2.16%  github.com/blevesearch/vellum.(*builderNodeUnfinished).lastCompiled
 ```
 
-From the top 10 list, we can see that the CPU is mainly used by `compaction`.
+From the top 10 list, we can see that the CPU is mainly used by `Syscall6`.
 
 ## Heap Profile
 
-Heap Size: 1.2GB
+`alloc_bytes` 95th-percentile: 968.94 MB.
+`heap_inuse_bytes` 95th-percentile: 1054.00 MB.
+`sys_bytes` 95th-percentile: 1445.43 MB.
+`stack_inuse_bytes` 95th-percentile: 18.03 MB.
 
 ```bash
-Showing top 10 nodes out of 104
+Showing top 10 nodes out of 212
       flat  flat%   sum%        cum   cum%
-  690.27MB 53.22% 53.22%   690.27MB 53.22%  github.com/dgraph-io/ristretto/z.Calloc (inline)
-  172.07MB 13.27% 66.48%   172.07MB 13.27%  runtime.malg
-     128MB  9.87% 76.35%      128MB  9.87%  github.com/klauspost/compress/zstd.(*fastBase).ensureHist (inline)
-   78.98MB  6.09% 82.44%    78.98MB  6.09%  github.com/dgraph-io/badger/v3/skl.newArena
-   57.51MB  4.43% 86.87%   141.71MB 10.92%  github.com/dgraph-io/badger/v3/table.(*Builder).addHelper.func1
-   36.02MB  2.78% 89.65%   177.73MB 13.70%  github.com/dgraph-io/badger/v3/table.(*Builder).addHelper
-   28.97MB  2.23% 91.88%    28.97MB  2.23%  runtime/pprof.(*profMap).lookup
-   26.50MB  2.04% 93.93%   757.59MB 58.41%  github.com/dgraph-io/badger/v3/table.(*Builder).addInternal
-    8.21MB  0.63% 94.56%     8.21MB  0.63%  github.com/klauspost/compress/zstd.encoderOptions.encoder
-       4MB  0.31% 94.87%    48.50MB  3.74%  github.com/dgraph-io/badger/v3/table.(*Table).block
+  132.68GB 22.55% 22.55%   132.68GB 22.55%  github.com/apache/skywalking-banyandb/banyand/measure.(*blockPointer).append
+   46.53GB  7.91% 30.47%    46.53GB  7.91%  github.com/blevesearch/vellum.(*unfinishedNodes).get
+   25.95GB  4.41% 34.88%    25.95GB  4.41%  reflect.New
+   25.34GB  4.31% 39.19%    25.34GB  4.31%  github.com/blevesearch/vellum.(*builderNodePool).Get
+   19.88GB  3.38% 42.57%    29.48GB  5.01%  github.com/apache/skywalking-banyandb/banyand/measure.(*blockMetadata).unmarshal
+   18.69GB  3.18% 45.74%    18.69GB  3.18%  github.com/RoaringBitmap/roaring.(*Bitmap).Iterator
+   16.04GB  2.73% 48.47%    22.22GB  3.78%  github.com/apache/skywalking-banyandb/banyand/measure.(*blockMetadata).copyFrom
+   15.90GB  2.70% 51.17%    15.90GB  2.70%  github.com/blevesearch/vellum.(*builderNodeUnfinished).lastCompiled
+   13.91GB  2.36% 53.54%    13.91GB  2.36%  github.com/blugelabs/bluge/analysis.TokenFrequency
+   13.91GB  2.36% 55.90%    13.91GB  2.36%  github.com/apache/skywalking-banyandb/banyand/measure.(*columnFamilyMetadata).resizeColumnMetadata (inline)
 ```
 
-From the top 10 list, we can see that the memory is mainly used by write `buffer(skl)` and `compaction(table)`.
-Especially, the compaction includes several table related operations, such as `table.(*Builder).addHelper`,
-consumes most of the memory.
-
+`blockPointer.append` is the most memory consuming function.
 
 ## Disk Usage
 
 ```bash
-measure: 446 MB
-measure/measure-default: 272 MB
-measure/measure-default/shard-0: 272 MB
-measure/measure-default/shard-0/buffer-0: 1.4 MB
-measure/measure-default/shard-0/buffer-1: 2.8 MB
-measure/measure-default/shard-0/seg-20231015: 247 MB
-measure/measure-default/shard-0/seg-20231015/block-2023101516: 247 MB
-measure/measure-default/shard-0/seg-20231015/block-2023101516/encoded: 74 MB
-measure/measure-default/shard-0/seg-20231015/block-2023101516/lsm: 83 MB
-measure/measure-default/shard-0/seg-20231015/block-2023101516/tst: 90 MB
-measure/measure-default/shard-0/seg-20231015/index: 0 B
-measure/measure-default/shard-0/series: 21 MB
-measure/measure-default/shard-0/series/inverted: 2.9 MB
-measure/measure-default/shard-0/series/lsm: 1.0 MB
-measure/measure-default/shard-0/series/md: 17 MB
-measure/measure-minute: 173 MB
-measure/measure-minute/shard-0: 89 MB
-measure/measure-minute/shard-0/buffer-0: 2.0 MB
-measure/measure-minute/shard-0/buffer-1: 1.6 MB
-measure/measure-minute/shard-0/seg-20231015: 76 MB
-measure/measure-minute/shard-0/seg-20231015/block-2023101516: 76 MB
-measure/measure-minute/shard-0/seg-20231015/block-2023101516/encoded: 23 MB
-measure/measure-minute/shard-0/seg-20231015/block-2023101516/lsm: 26 MB
-measure/measure-minute/shard-0/seg-20231015/block-2023101516/tst: 28 MB
-measure/measure-minute/shard-0/seg-20231015/index: 0 B
-measure/measure-minute/shard-0/series: 8.7 MB
-measure/measure-minute/shard-0/series/inverted: 2.1 MB
-measure/measure-minute/shard-0/series/lsm: 1.0 MB
-measure/measure-minute/shard-0/series/md: 5.6 MB
-measure/measure-minute/shard-1: 84 MB
-measure/measure-minute/shard-1/buffer-0: 1.5 MB
-measure/measure-minute/shard-1/buffer-1: 698 kB
-measure/measure-minute/shard-1/seg-20231015: 73 MB
-measure/measure-minute/shard-1/seg-20231015/block-2023101516: 73 MB
-measure/measure-minute/shard-1/seg-20231015/block-2023101516/encoded: 19 MB
-measure/measure-minute/shard-1/seg-20231015/block-2023101516/lsm: 26 MB
-measure/measure-minute/shard-1/seg-20231015/block-2023101516/tst: 28 MB
-measure/measure-minute/shard-1/seg-20231015/index: 0 B
-measure/measure-minute/shard-1/series: 9.3 MB
-measure/measure-minute/shard-1/series/inverted: 2.7 MB
-measure/measure-minute/shard-1/series/lsm: 1.0 MB
-measure/measure-minute/shard-1/series/md: 5.6 MB
+measure: 300 MB
+measure/measure-default: 137 MB
+measure/measure-default/idx: 53 MB
+measure/measure-default/shard-0: 84 MB
+measure/measure-default/shard-0/seg-20240111: 84 MB
+measure/measure-default/shard-0/seg-20240111/000000000000208b: 84 MB
+measure/measure-minute: 162 MB
+measure/measure-minute/idx: 32 MB
+measure/measure-minute/shard-0: 65 MB
+measure/measure-minute/shard-0/seg-20240111: 65 MB
+measure/measure-minute/shard-0/seg-20240111/00000000000010f4: 65 MB
+measure/measure-minute/shard-1: 65 MB
+measure/measure-minute/shard-1/seg-20240111: 65 MB
+measure/measure-minute/shard-1/seg-20240111/000000000000109a: 65 MB
 ```
+
+## Disk IO
+
+| Metric              | 95th-percentile per second  |
+|---------------------|-----------------------------|
+| read_count          | 0.856667                    |
+| merged_read_count   | 0.603333                    |
+| write_count         | 136.976667                  |
+| merged_write_count  | 269.993333                  |
+| read_bytes          | 13817.173333                |
+| write_bytes         | 17439505.066667             |
+| io_time(ms)         | 125.560000                  |
+| weighted_io(ms)     | 504.606667                  |
