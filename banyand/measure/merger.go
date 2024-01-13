@@ -30,6 +30,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+var (
+	mergerPolicy = &noopMergePolicy{}
+)
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -71,7 +75,7 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 }
 
 func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction) error {
-	maxFanOut := tst.freeDiskSpace(tst.root) / 2
+	maxFanOut := tst.freeDiskSpace(tst.root)
 	partsToMerge, toBeMerged := tst.getPartsToMerge(curSnapshot, maxFanOut)
 	if len(partsToMerge) < 2 {
 		return nil
@@ -179,15 +183,21 @@ var reservedDiskSpace uint64
 
 func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
-	toBeMerged := make(map[uint64]struct{})
+
+	maxBytesPerPart := maxFanOut / 2
 	for _, pw := range snapshot.parts {
-		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 || pw.p.partMetadata.CompressedSizeBytes > maxFanOut {
+		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 || pw.p.partMetadata.CompressedSizeBytes > maxBytesPerPart {
 			continue
 		}
 		parts = append(parts, pw)
+	}
+
+	parts = mergerPolicy.GetPartsToMerge(parts, maxFanOut)
+
+	toBeMerged := make(map[uint64]struct{})
+	for _, pw := range parts {
 		toBeMerged[pw.ID()] = struct{}{}
 	}
-	// TODO: select proper parts to generate the lowest write amplification
 	return parts, toBeMerged
 }
 
