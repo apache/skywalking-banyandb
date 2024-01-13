@@ -555,7 +555,8 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			if tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
 				t.valueType = tmpBlock.tagFamilies[i].tags[blockIndex].valueType
 				if len(tmpBlock.tagFamilies[i].tags[blockIndex].values) != len(tmpBlock.timestamps) {
-					logger.Panicf("unexpected number of values for tags %q: got %d; want %d", tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
+					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
+						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
 				t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[start:end+1]...)
 				blockIndex++
