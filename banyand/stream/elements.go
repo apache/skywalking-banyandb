@@ -135,6 +135,7 @@ func (e *elements) Less(i, j int) bool {
 func (e *elements) Swap(i, j int) {
 	e.seriesIDs[i], e.seriesIDs[j] = e.seriesIDs[j], e.seriesIDs[i]
 	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
+	e.elementIDs[i], e.elementIDs[j] = e.elementIDs[j], e.elementIDs[i]
 	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
 }
 

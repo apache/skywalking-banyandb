@@ -280,7 +280,6 @@ func (th *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
 	}
-	// src = src[8:]
 	th.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }

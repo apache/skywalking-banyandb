@@ -16,6 +16,10 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
+- Stream column-based storage:
+  - Data ingestion and retrieval.
+  - Flush memory data to disk.
+  - Merge memory data and disk data.
 
 ### Bugs
 

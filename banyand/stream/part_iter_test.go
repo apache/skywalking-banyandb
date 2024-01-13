@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -174,14 +175,16 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verifyPart := func(p *part) {
+			verifyPart := func(p *part, decoder *encoding.BytesBlockDecoder) {
 				defer p.close()
-				pi := partMergeIter{}
+				pi := generatePartMergeIter()
+				defer releasePartMergeIter(pi)
 				pi.mustInitFromPart(p)
 				var got []blockMetadata
-				for pi.nextBlock() {
+				for pi.nextBlockMetadata() {
 					got = append(got, pi.block.bm)
 					require.Nil(t, pi.block.bm.tagProjection)
+					pi.mustLoadBlockData(decoder, &pi.block)
 					require.Equal(t, len(pi.block.bm.tagFamilies), len(pi.block.tagFamilies))
 				}
 
@@ -203,8 +206,10 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 			releaseMemPart(mp)
 			mp.mustInitFromElements(tt.dps)
 
+			decoder := generateColumnValuesDecoder()
+			defer releaseColumnValuesDecoder(decoder)
 			p := openMemPart(mp)
-			verifyPart(p)
+			verifyPart(p, decoder)
 			tmpDir, defFn := test.Space(require.New(t))
 			defer defFn()
 			epoch := uint64(1)
@@ -212,7 +217,7 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
 			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
-			verifyPart(p)
+			verifyPart(p, decoder)
 		})
 	}
 }

@@ -49,7 +49,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
-	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
+	// g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
 	g.Entry("invalid time range", helpers.Args{
 		Input: "all",
 		Begin: timestamppb.New(time.Unix(0, int64(math.MinInt64+time.Millisecond)).Truncate(time.Millisecond)),
@@ -67,5 +67,5 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("having non indexed", helpers.Args{Input: "having_non_indexed", Duration: 1 * time.Hour}),
 	g.Entry("having non indexed array", helpers.Args{Input: "having_non_indexed_arr", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
-	// g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
+	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 )

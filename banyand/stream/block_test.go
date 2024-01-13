@@ -331,12 +331,32 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, true)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(tagFamily{}, tag{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
+	}
+
+	unmarshaled2 := generateBlock()
+	defer releaseBlock(unmarshaled2)
+	unmarshaled2.timestamps = make([]int64, len(b.timestamps))
+	unmarshaled2.resizeTagFamilies(1)
+
+	metaReader := generateSeqReader()
+	defer releaseSeqReader(metaReader)
+	metaReader.init(metaBuffer)
+	valueReader := generateSeqReader()
+	defer releaseSeqReader(valueReader)
+	valueReader.init(dataBuffer)
+
+	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
+
+	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
+		cmp.AllowUnexported(tagFamily{}, tag{}),
+	); diff != "" {
+		t.Errorf("block.unmarshalTagFamilyFromSeqReaders() (-got +want):\n%s", diff)
 	}
 }
 
@@ -352,6 +372,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		elementIDsWriter:         writer{w: elementIDsBuffer},
 	}
 	p := &part{
+		primary:    &bytes.Buffer{},
 		timestamps: timestampBuffer,
 		elementIDs: elementIDsBuffer,
 	}
@@ -384,12 +405,23 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		})
 	}
 	bm.tagProjection = tp
-	unmarshaled.mustReadFrom(decoder, p, bm, true)
+	unmarshaled.mustReadFrom(decoder, p, bm)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
 
 	if !reflect.DeepEqual(b, unmarshaled) {
 		t.Errorf("block.mustReadFrom() = %+v, want %+v", unmarshaled, b)
+	}
+
+	unmarshaled2 := generateBlock()
+	defer releaseBlock(unmarshaled2)
+	var sr seqReaders
+	sr.init(p)
+	defer sr.reset()
+
+	unmarshaled2.mustSeqReadFrom(decoder, &sr, bm)
+	if !reflect.DeepEqual(b, unmarshaled2) {
+		t.Errorf("block.mustSeqReadFrom() = %+v, want %+v", unmarshaled, b)
 	}
 }
 
@@ -398,6 +430,8 @@ func Test_findRange(t *testing.T) {
 		timestamps []int64
 		min        int64
 		max        int64
+		includeMin bool
+		includeMax bool
 	}
 	tests := []struct {
 		name      string
@@ -413,8 +447,8 @@ func Test_findRange(t *testing.T) {
 				min:        1,
 				max:        10,
 			},
-			wantStart: 0,
-			wantEnd:   0,
+			wantStart: -1,
+			wantEnd:   -1,
 			wantExist: false,
 		},
 		{
@@ -423,9 +457,11 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1},
 				min:        1,
 				max:        1,
+				includeMin: true,
+				includeMax: true,
 			},
 			wantStart: 0,
-			wantEnd:   1,
+			wantEnd:   0,
 			wantExist: true,
 		},
 		{
@@ -435,8 +471,8 @@ func Test_findRange(t *testing.T) {
 				min:        6,
 				max:        10,
 			},
-			wantStart: 0,
-			wantEnd:   0,
+			wantStart: -1,
+			wantEnd:   -1,
 			wantExist: false,
 		},
 		{
@@ -445,9 +481,11 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1, 2, 3, 4, 5},
 				min:        2,
 				max:        4,
+				includeMin: true,
+				includeMax: true,
 			},
 			wantStart: 1,
-			wantEnd:   4,
+			wantEnd:   3,
 			wantExist: true,
 		},
 		{
@@ -456,15 +494,17 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1, 2, 3, 4, 5},
 				min:        1,
 				max:        5,
+				includeMin: true,
+				includeMax: true,
 			},
 			wantStart: 0,
-			wantEnd:   5,
+			wantEnd:   4,
 			wantExist: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotStart, gotEnd, gotExist := findRange(tt.args.timestamps, tt.args.min, tt.args.max)
+			gotStart, gotEnd, gotExist := findRange(tt.args.timestamps, tt.args.min, tt.args.max, tt.args.includeMin, tt.args.includeMax)
 			if gotStart != tt.wantStart {
 				t.Errorf("findRange() gotStart = %v, want %v", gotStart, tt.wantStart)
 			}

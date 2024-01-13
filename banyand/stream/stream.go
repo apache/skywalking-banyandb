@@ -170,15 +170,20 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamFilterOptions) (sfr 
 				return nil, err
 			}
 			tagFamilies := make([]pbv1.TagFamily, 0)
-			for _, tf := range e.tagFamilies {
+			for i, tf := range e.tagFamilies {
 				tagFamily := pbv1.TagFamily{
 					Name: tf.name,
 				}
-				for _, t := range tf.tags {
+				for j, t := range tf.tags {
 					tag := pbv1.Tag{
 						Name: t.name,
 					}
-					tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+					if tag.Name == "" {
+						tag.Name = sqo.TagProjection[i].Names[j]
+						tag.Values = append(tag.Values, pbv1.NullTagValue)
+					} else {
+						tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+					}
 					tagFamily.Tags = append(tagFamily.Tags, tag)
 				}
 				tagFamilies = append(tagFamilies, tagFamily)
@@ -246,15 +251,20 @@ func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamSortOptions) (ssr pbv1
 			return nil, err
 		}
 		tagFamilies := make([]pbv1.TagFamily, 0)
-		for _, tf := range e.tagFamilies {
+		for i, tf := range e.tagFamilies {
 			tagFamily := pbv1.TagFamily{
 				Name: tf.name,
 			}
-			for _, t := range tf.tags {
+			for j, t := range tf.tags {
 				tag := pbv1.Tag{
 					Name: t.name,
 				}
-				tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+				if tag.Name == "" {
+					tag.Name = sqo.TagProjection[i].Names[j]
+					tag.Values = append(tag.Values, pbv1.NullTagValue)
+				} else {
+					tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+				}
 				tagFamily.Tags = append(tagFamily.Tags, tag)
 			}
 			tagFamilies = append(tagFamilies, tagFamily)
@@ -301,6 +311,8 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
+		includeMin:         sqo.TimeRange.IncludeStart,
+		includeMax:         sqo.TimeRange.IncludeEnd,
 	}
 	var n int
 	for i := range tabWrappers {

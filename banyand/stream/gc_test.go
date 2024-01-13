@@ -69,4 +69,3 @@ func TestDeletableEpochs(t *testing.T) {
 		})
 	}
 }
-

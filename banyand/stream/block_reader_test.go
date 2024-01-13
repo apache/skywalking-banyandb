@@ -84,10 +84,11 @@ func Test_blockReader_nextBlock(t *testing.T) {
 					pmi.mustInitFromPart(p)
 					pii = append(pii, pmi)
 				}
-				reader := &blockReader{}
+				reader := generateBlockReader()
+				defer releaseBlockReader(reader)
 				reader.init(pii)
 				var got []blockMetadata
-				for reader.nextBlock() {
+				for reader.nextBlockMetadata() {
 					if reader.block.bm.seriesID == 0 {
 						t.Errorf("Expected curBlock to be initialized, but it was nil")
 					}

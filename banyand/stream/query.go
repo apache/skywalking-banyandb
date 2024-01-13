@@ -31,6 +31,8 @@ type queryOptions struct {
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
+	includeMin   bool
+	includeMax   bool
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -229,14 +231,9 @@ func (qr *queryResult) merge() *pbv1.Result {
 		step = -1
 	}
 	result := &pbv1.Result{}
-	var lastSid common.SeriesID
 
 	for qr.Len() > 0 {
 		topBC := qr.data[0]
-		if lastSid != 0 && topBC.bm.seriesID != lastSid {
-			return result
-		}
-		lastSid = topBC.bm.seriesID
 
 		topBC.copyTo(result)
 		topBC.idx += step

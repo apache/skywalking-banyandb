@@ -21,7 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
+	"github.com/dustin/go-humanize"
+
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -72,23 +76,62 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 	if len(partsToMerge) < 2 {
 		return nil
 	}
-	if _, err := tst.mergePartsThenSendIntroduction(partsToMerge, toBeMerged, merges, tst.loopCloser.CloseNotify()); err != nil {
+	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, partsToMerge,
+		toBeMerged, merges, tst.loopCloser.CloseNotify()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (tst *tsTable) mergePartsThenSendIntroduction(parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
+func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
 	closeCh <-chan struct{},
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
+	start := time.Now()
 	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
 	if err != nil {
 		return nil, err
 	}
+	elapsed := time.Since(start)
+	if elapsed > 30*time.Second {
+		var totalCount uint64
+		for _, pw := range parts {
+			totalCount += pw.p.partMetadata.TotalCount
+		}
+		tst.l.Warn().
+			Uint64("beforeTotalCount", totalCount).
+			Uint64("afterTotalCount", newPart.p.partMetadata.TotalCount).
+			Int("beforePartCount", len(parts)).
+			Dur("elapsed", elapsed).
+			Msg("background merger takes too long")
+	} else if snapshotCreatorMerger == creator && tst.l.Info().Enabled() && len(parts) > 2 {
+		var minSize, maxSize, totalSize, totalCount uint64
+		for _, pw := range parts {
+			totalCount += pw.p.partMetadata.TotalCount
+			totalSize += pw.p.partMetadata.CompressedSizeBytes
+			if minSize == 0 || minSize > pw.p.partMetadata.CompressedSizeBytes {
+				minSize = pw.p.partMetadata.CompressedSizeBytes
+			}
+			if maxSize < pw.p.partMetadata.CompressedSizeBytes {
+				maxSize = pw.p.partMetadata.CompressedSizeBytes
+			}
+		}
+		if totalSize > 10<<20 && minSize*uint64(len(parts)) < maxSize {
+			// it's a unbalanced merge. but it's ok when the size is small.
+			tst.l.Info().
+				Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
+				Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
+				Int("beforePartCount", len(parts)).
+				Str("minSize", humanize.IBytes(minSize)).
+				Str("maxSize", humanize.IBytes(maxSize)).
+				Dur("elapsedMS", elapsed).
+				Msg("background merger merges unbalanced parts")
+		}
+	}
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
+	mi.creator = creator
 	mi.newPart = newPart
 	mi.merged = merged
 	mi.applied = make(chan struct{})
@@ -172,13 +215,14 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		pmi.mustInitFromPart(parts[i].p)
 		pii = append(pii, pmi)
 	}
-	br := new(blockReader)
+	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath)
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)
+	releaseBlockReader(br)
 	for i := range pii {
 		releasePartMergeIter(pii[i])
 	}
@@ -197,7 +241,20 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	pendingBlockIsEmpty := true
 	pendingBlock := &blockPointer{}
 	var tmpBlock, tmpBlock2 *blockPointer
-	for br.nextBlock() {
+	var decoder *encoding.BytesBlockDecoder
+	getDecoder := func() *encoding.BytesBlockDecoder {
+		if decoder == nil {
+			decoder = generateColumnValuesDecoder()
+		}
+		return decoder
+	}
+	releaseDecoder := func() {
+		if decoder != nil {
+			releaseColumnValuesDecoder(decoder)
+			decoder = nil
+		}
+	}
+	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
 			return nil, errClosed
@@ -206,6 +263,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		b := br.block
 
 		if pendingBlockIsEmpty {
+			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -214,7 +272,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
 			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max <= b.bm.timestamps.min) {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+			releaseDecoder()
 			pendingBlock.reset()
+			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
 			continue
 		}
@@ -224,6 +284,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
+		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if len(tmpBlock.timestamps) <= maxBlockLength && tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.timestamps) == 0 {
@@ -235,6 +296,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 
 		if len(tmpBlock.timestamps) <= maxBlockLength {
 			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+			releaseDecoder()
 			continue
 		}
 		tmpBlock.idx = maxBlockLength
@@ -247,6 +309,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock2.reset()
 		tmpBlock2.append(tmpBlock, l)
 		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		releaseDecoder()
 	}
 	if err := br.error(); err != nil {
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)
@@ -254,6 +317,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	if !pendingBlockIsEmpty {
 		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 	}
+	releaseDecoder()
 	var result partMetadata
 	bw.Flush(&result)
 	return &result, nil

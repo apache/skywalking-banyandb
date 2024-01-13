@@ -117,9 +117,14 @@ func (p *part) String() string {
 func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
-	for _, primaryMeta := range p.primaryBlockMetadata {
-		if !primaryMeta.mightContainElement(seriesID, timestamp) {
+	for i, primaryMeta := range p.primaryBlockMetadata {
+		if i != len(p.primaryBlockMetadata)-1 && seriesID >= p.primaryBlockMetadata[i+1].seriesID {
 			continue
+		}
+		if seriesID < p.primaryBlockMetadata[i].seriesID ||
+			timestamp < common.ItemID(p.primaryBlockMetadata[i].minTimestamp) ||
+			timestamp > common.ItemID(p.primaryBlockMetadata[i].maxTimestamp) {
+			break
 		}
 
 		compressedPrimaryBuf := make([]byte, primaryMeta.size)
@@ -135,17 +140,24 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 		if err != nil {
 			return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 		}
+		var targetBlockMetadata blockMetadata
+		for _, blockMetadata := range bm {
+			if blockMetadata.seriesID == seriesID {
+				targetBlockMetadata = blockMetadata
+				break
+			}
+		}
 
 		timestamps := make([]int64, 0)
-		timestamps = mustReadTimestampsFrom(timestamps, &bm[0].timestamps, int(bm[0].count), p.timestamps)
+		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)
 		for i, ts := range timestamps {
 			if timestamp == common.ItemID(ts) {
 				elementIDs := make([]string, 0)
-				elementIDs = mustReadElementIDsFrom(elementIDs, &bm[0].elementIDs, int(bm[0].count), p.elementIDs)
+				elementIDs = mustReadElementIDsFrom(elementIDs, &targetBlockMetadata.elementIDs, int(targetBlockMetadata.count), p.elementIDs)
 				tfs := make([]*tagFamily, 0)
 				for j := range tagProjection {
 					name := tagProjection[j].Family
-					block, ok := bm[0].tagFamilies[name]
+					block, ok := targetBlockMetadata.tagFamilies[name]
 					if !ok {
 						continue
 					}
@@ -204,7 +216,7 @@ func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
 
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(&mp.meta))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
 	// Open data files
 	p.meta = &mp.meta
@@ -387,7 +399,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	metaPath := path.Join(partPath, metaFilename)
 	pr := mustOpenReader(metaPath, fileSystem)
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(pr))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
 	fs.MustClose(pr)
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
