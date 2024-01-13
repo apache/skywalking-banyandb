@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -30,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -84,6 +86,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		r := ssr.Pull()
 		for i := range r.Timestamps {
 			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 				ElementId: r.ElementIDs[i],
 			}
 
@@ -120,6 +123,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		r := sfr.Pull()
 		for i := range r.Timestamps {
 			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 				ElementId: r.ElementIDs[i],
 			}
 
@@ -164,6 +168,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		}
 		for i := range r.Timestamps {
 			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 				ElementId: r.ElementIDs[i],
 			}
 
