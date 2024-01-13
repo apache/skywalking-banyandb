@@ -117,6 +117,8 @@ type tsTable struct {
 	gc            garbageCleaner
 	curPartID     uint64
 	option        option
+	// memory buffer for merge
+	pwsChunk []*partWrapper
 	sync.RWMutex
 }
 

@@ -21,33 +21,43 @@ import (
 	"sort"
 )
 
-var (
-	_ MergePolicy = (*noopMergePolicy)(nil)
-	_ MergePolicy = (*lowestWriteAmplificationMergePolicy)(nil)
-)
-
-// MergePolicy is to select parts to be merged.
-type MergePolicy interface {
-	GetPartsToMerge(src []*partWrapper, maxFanOut uint64) []*partWrapper
-}
-
-// noopMergePolicy aims to merge all parts.
-type noopMergePolicy struct{}
-
-func (s *noopMergePolicy) GetPartsToMerge(src []*partWrapper, _ uint64) []*partWrapper {
-	return src
-}
-
-// lowestWriteAmplificationMergePolicy aims to choose an optimal combination
+// MergePolicy aims to choose an optimal combination
 // that has the lowest write amplification.
 // This policy can be referred to https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v0.4.2-victorialogs/lib/logstorage/datadb.go
 // But parameters can be varied.
-type lowestWriteAmplificationMergePolicy struct {
+type MergePolicy struct {
 	maxParts           int
 	minMergeMultiplier float64
 }
 
-func (l *lowestWriteAmplificationMergePolicy) GetPartsToMerge(src []*partWrapper, maxFanOut uint64) (dst []*partWrapper) {
+func NewDefaultMergePolicy() *MergePolicy {
+	return NewMergePolicy(15, 1.7)
+}
+
+func NewMergePolicy(maxParts int, minMergeMul float64) *MergePolicy {
+	return &MergePolicy{
+		maxParts:           maxParts,
+		minMergeMultiplier: minMergeMul,
+	}
+}
+
+func (l *MergePolicy) GetPartsToMerge(dst, src []*partWrapper, maxFanOut uint64) []*partWrapper {
+	if len(src) < 2 {
+		return dst
+	}
+
+	// Filter out too big parts.
+	// This should reduce N for O(N^2) algorithm below.
+	maxInPartBytes := uint64(float64(maxFanOut) / l.minMergeMultiplier)
+	tmp := make([]*partWrapper, 0, len(src))
+	for _, pw := range src {
+		if pw.p.partMetadata.CompressedSizeBytes > maxInPartBytes {
+			continue
+		}
+		tmp = append(tmp, pw)
+	}
+	src = tmp
+
 	sortPartsForOptimalMerge(src)
 
 	maxSrcParts := l.maxParts

@@ -31,7 +31,8 @@ import (
 )
 
 var (
-	mergerPolicy = &noopMergePolicy{}
+	// mergePolicy is a global policy for all merge works.
+	mergerPolicy = NewDefaultMergePolicy()
 )
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
@@ -184,18 +185,20 @@ var reservedDiskSpace uint64
 func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
-	maxBytesPerPart := maxFanOut / 2
 	for _, pw := range snapshot.parts {
-		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 || pw.p.partMetadata.CompressedSizeBytes > maxBytesPerPart {
+		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
 		}
 		parts = append(parts, pw)
 	}
 
-	parts = mergerPolicy.GetPartsToMerge(parts, maxFanOut)
+	tst.pwsChunk = mergerPolicy.GetPartsToMerge(tst.pwsChunk[:0], parts, maxFanOut)
+	if len(tst.pwsChunk) == 0 {
+		tst.pwsChunk = append(tst.pwsChunk[:0], parts...)
+	}
 
 	toBeMerged := make(map[uint64]struct{})
-	for _, pw := range parts {
+	for _, pw := range tst.pwsChunk {
 		toBeMerged[pw.ID()] = struct{}{}
 	}
 	return parts, toBeMerged
