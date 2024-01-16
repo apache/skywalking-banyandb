@@ -190,7 +190,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*pa
 		parts = append(parts, pw)
 	}
 
-	tst.pwsChunk = mergerPolicy.GetPartsToMerge(tst.pwsChunk[:0], parts, maxFanOut)
+	tst.pwsChunk = mergerPolicy.getPartsToMerge(tst.pwsChunk[:0], parts, maxFanOut)
 	if len(tst.pwsChunk) == 0 {
 		tst.pwsChunk = append(tst.pwsChunk[:0], parts...)
 	}

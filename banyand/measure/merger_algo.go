@@ -30,10 +30,12 @@ type MergePolicy struct {
 	minMergeMultiplier float64
 }
 
+// NewDefaultMergePolicy create a MergePolicy with default parameters.
 func NewDefaultMergePolicy() *MergePolicy {
 	return NewMergePolicy(15, 1.7)
 }
 
+// NewMergePolicy creates a MergePolicy with given parameters.
 func NewMergePolicy(maxParts int, minMergeMul float64) *MergePolicy {
 	return &MergePolicy{
 		maxParts:           maxParts,
@@ -41,7 +43,7 @@ func NewMergePolicy(maxParts int, minMergeMul float64) *MergePolicy {
 	}
 }
 
-func (l *MergePolicy) GetPartsToMerge(dst, src []*partWrapper, maxFanOut uint64) []*partWrapper {
+func (l *MergePolicy) getPartsToMerge(dst, src []*partWrapper, maxFanOut uint64) []*partWrapper {
 	if len(src) < 2 {
 		return dst
 	}
