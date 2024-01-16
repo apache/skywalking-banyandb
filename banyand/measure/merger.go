@@ -30,10 +30,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-var (
-	// mergePolicy is a global policy for all merge works.
-	mergerPolicy = NewDefaultMergePolicy()
-)
+// mergePolicy is a global policy for all merge works.
+var mergerPolicy = NewDefaultMergePolicy()
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
