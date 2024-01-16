@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"math"
 	"sort"
 )
 
@@ -28,18 +29,20 @@ import (
 type MergePolicy struct {
 	maxParts           int
 	minMergeMultiplier float64
+	maxFanOutSize      uint64
 }
 
 // NewDefaultMergePolicy create a MergePolicy with default parameters.
 func NewDefaultMergePolicy() *MergePolicy {
-	return NewMergePolicy(15, 1.7)
+	return NewMergePolicy(15, 1.7, math.MaxUint64)
 }
 
 // NewMergePolicy creates a MergePolicy with given parameters.
-func NewMergePolicy(maxParts int, minMergeMul float64) *MergePolicy {
+func NewMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *MergePolicy {
 	return &MergePolicy{
 		maxParts:           maxParts,
 		minMergeMultiplier: minMergeMul,
+		maxFanOutSize:      maxFanOutSize,
 	}
 }
 
@@ -50,7 +53,7 @@ func (l *MergePolicy) getPartsToMerge(dst, src []*partWrapper, maxFanOut uint64)
 
 	// Filter out too big parts.
 	// This should reduce N for O(N^2) algorithm below.
-	maxInPartBytes := uint64(float64(maxFanOut) / l.minMergeMultiplier)
+	maxInPartBytes := min(l.maxFanOutSize, uint64(float64(maxFanOut)/l.minMergeMultiplier))
 	tmp := make([]*partWrapper, 0, len(src))
 	for _, pw := range src {
 		if pw.p.partMetadata.CompressedSizeBytes > maxInPartBytes {

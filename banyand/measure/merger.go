@@ -33,6 +33,20 @@ import (
 // mergePolicy is a global policy for all merge works.
 var mergerPolicy = NewDefaultMergePolicy()
 
+func withMaxFanOut(maxFanOutSize uint64) func(policy *MergePolicy) {
+	return func(policy *MergePolicy) {
+		policy.maxFanOutSize = maxFanOutSize
+	}
+}
+
+func customizeMergePolicy(customizers ...func(policy *MergePolicy)) {
+	p := NewDefaultMergePolicy()
+	for _, customizer := range customizers {
+		customizer(p)
+	}
+	mergerPolicy = p
+}
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 

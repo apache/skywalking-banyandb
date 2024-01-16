@@ -46,7 +46,8 @@ const (
 )
 
 type option struct {
-	flushTimeout time.Duration
+	flushTimeout  time.Duration
+	maxFanOutSize uint64
 }
 
 type measure struct {

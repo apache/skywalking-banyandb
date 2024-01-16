@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"math"
 	"path"
 
 	"github.com/pkg/errors"
@@ -78,6 +79,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	flagS.Uint64Var(&s.option.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
 	return flagS
 }
 
@@ -98,6 +100,8 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	// set merge policy
+	customizeMergePolicy(withMaxFanOut(s.option.maxFanOutSize))
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
