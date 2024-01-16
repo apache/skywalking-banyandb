@@ -114,11 +114,11 @@ type tsTable struct {
 	loopCloser    *run.Closer
 	p             common.Position
 	root          string
-	gc            garbageCleaner
-	curPartID     uint64
-	option        option
-	// memory buffer for merge
-	pwsChunk []*partWrapper
+	// pwsChunk is the memory buffer for parts to be merged
+	pwsChunk  []*partWrapper
+	gc        garbageCleaner
+	curPartID uint64
+	option    option
 	sync.RWMutex
 }
 
