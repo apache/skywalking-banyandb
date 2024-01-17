@@ -29,37 +29,37 @@ latency: 2ns
 
 ### Problem
 
-Memory: blockPointer.append used 22.55% of total memory, that is significantly larger than expected.
+Memory: blockPointer.append used 22.55% of total memory. That's due to the fact that parts without the time overlap are merged. The unnecessary unpacking block operations take up a lot of memory.
 
-Disk IO: weighted_io(ms) is 504.606667, which is larger than 100ms. This means a lot of IO operations are blocked.
+CPU: As memory's part, the unnecessary unpacking block operations take up a lot of CPU.
 
 ## CPU
 
-CPU 95th-percentile: 2.74 cores (8 cores in total)
+CPU 95th-percentile: 2.91 cores (8 cores in total)
 
 ```bash
-Showing top 10 nodes out of 291
+Showing top 10 nodes out of 327
       flat  flat%   sum%        cum   cum%
-   657.01s 10.54% 10.54%    657.01s 10.54%  runtime/internal/syscall.Syscall6
-   242.03s  3.88% 14.43%    457.06s  7.33%  github.com/blevesearch/vellum.registryCache.entry
-   211.69s  3.40% 17.82%    218.18s  3.50%  github.com/klauspost/compress/zstd.(*fseEncoder).buildCTable
-   173.92s  2.79% 20.61%    697.34s 11.19%  runtime.mallocgc
-   172.26s  2.76% 23.38%    172.75s  2.77%  github.com/blevesearch/vellum.(*builderNode).equiv (inline)
-   164.02s  2.63% 26.01%    188.35s  3.02%  runtime.findObject
-   131.81s  2.12% 28.13%    169.79s  2.72%  github.com/klauspost/compress/zstd.(*fastEncoder).EncodeNoHist
-   127.66s  2.05% 30.17%    127.66s  2.05%  runtime.memmove
-   123.01s  1.97% 32.15%    141.11s  2.26%  github.com/klauspost/compress/huff0.(*Scratch).huffSort
-    99.42s  1.60% 33.74%    134.90s  2.16%  github.com/blevesearch/vellum.(*builderNodeUnfinished).lastCompiled
+   216.45s  4.14%  4.14%    226.17s  4.32%  github.com/klauspost/compress/zstd.(*fseEncoder).buildCTable
+   171.32s  3.27%  7.41%    171.32s  3.27%  runtime/internal/syscall.Syscall6
+   155.50s  2.97% 10.38%    606.59s 11.59%  runtime.mallocgc
+   135.71s  2.59% 12.98%    169.48s  3.24%  github.com/klauspost/compress/zstd.(*fastEncoder).EncodeNoHist
+   134.63s  2.57% 15.55%    248.72s  4.75%  github.com/blevesearch/vellum.registryCache.entry
+   133.90s  2.56% 18.11%    133.90s  2.56%  runtime.memmove
+   130.33s  2.49% 20.60%    149.37s  2.85%  github.com/klauspost/compress/huff0.(*Scratch).huffSort
+   118.60s  2.27% 22.87%    136.91s  2.62%  runtime.findObject
+    90.35s  1.73% 24.59%     92.01s  1.76%  github.com/blevesearch/vellum.(*builderNode).equiv (inline)
+    83.19s  1.59% 26.18%     83.19s  1.59%  runtime.nextFreeFast (inline)
 ```
 
-From the top 10 list, we can see that the CPU is mainly used by `Syscall6`.
+From the top 10 list, we can see that the CPU is mainly used by `zstd.Encoder`.
 
 ## Heap Profile
 
-`alloc_bytes` 95th-percentile: 968.94 MB.
-`heap_inuse_bytes` 95th-percentile: 1054.00 MB.
-`sys_bytes` 95th-percentile: 1445.43 MB.
-`stack_inuse_bytes` 95th-percentile: 18.03 MB.
+`alloc_bytes` 95th-percentile: 1.33 GB.
+`heap_inuse_bytes` 95th-percentile: 1.46 GB.
+`sys_bytes` 95th-percentile: 1.95 GB.
+`stack_inuse_bytes` 95th-percentile: 17.89 MB.
 
 ```bash
 Showing top 10 nodes out of 212
@@ -81,31 +81,31 @@ Showing top 10 nodes out of 212
 ## Disk Usage
 
 ```bash
-measure: 300 MB
-measure/measure-default: 137 MB
-measure/measure-default/idx: 53 MB
+measure: 281 MB
+measure/measure-default: 122 MB
+measure/measure-default/idx: 38 MB
 measure/measure-default/shard-0: 84 MB
-measure/measure-default/shard-0/seg-20240111: 84 MB
-measure/measure-default/shard-0/seg-20240111/000000000000208b: 84 MB
-measure/measure-minute: 162 MB
-measure/measure-minute/idx: 32 MB
+measure/measure-default/shard-0/seg-20240117: 84 MB
+measure/measure-default/shard-0/seg-20240117/0000000000002157: 84 MB
+measure/measure-minute: 159 MB
+measure/measure-minute/idx: 29 MB
 measure/measure-minute/shard-0: 65 MB
-measure/measure-minute/shard-0/seg-20240111: 65 MB
-measure/measure-minute/shard-0/seg-20240111/00000000000010f4: 65 MB
+measure/measure-minute/shard-0/seg-20240117: 65 MB
+measure/measure-minute/shard-0/seg-20240117/0000000000001240: 65 MB
 measure/measure-minute/shard-1: 65 MB
-measure/measure-minute/shard-1/seg-20240111: 65 MB
-measure/measure-minute/shard-1/seg-20240111/000000000000109a: 65 MB
+measure/measure-minute/shard-1/seg-20240117: 65 MB
+measure/measure-minute/shard-1/seg-20240117/00000000000011ce: 65 MB
 ```
 
 ## Disk IO
 
 | Metric              | 95th-percentile per second  |
 |---------------------|-----------------------------|
-| read_count          | 0.856667                    |
-| merged_read_count   | 0.603333                    |
-| write_count         | 136.976667                  |
-| merged_write_count  | 269.993333                  |
-| read_bytes          | 13817.173333                |
-| write_bytes         | 17439505.066667             |
-| io_time(ms)         | 125.560000                  |
-| weighted_io(ms)     | 504.606667                  |
+| read_count          | 0.003333                    |
+| merged_read_count   | 0                           |
+| write_count         | 114.936667                  |
+| merged_write_count  | 70.315                      |
+| read_bytes          | 13.653333                   |
+| write_bytes         | 22672254.29                 |
+| io_time(ms)         | 57.906667                   |
+| weighted_io(ms)     | 922.218333                  |

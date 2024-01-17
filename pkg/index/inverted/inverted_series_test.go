@@ -207,6 +207,10 @@ func setupData(tester *assert.Assertions, s index.SeriesStore) {
 		DocID:        3,
 		EntityValues: []byte("test3"),
 	}
-	tester.NoError(s.Batch([]index.Document{series1, series2, series3, series3}))
-	s.(*store).flush()
+	applied := make(chan struct{})
+	tester.NoError(s.Batch(index.Batch{
+		Applied:   applied,
+		Documents: []index.Document{series1, series2, series3, series3},
+	}))
+	<-applied
 }

@@ -44,12 +44,13 @@ const (
 
 // TSDBOpts wraps options to create a tsdb.
 type TSDBOpts[T TSTable, O any] struct {
-	Option          O
-	TSTableCreator  TSTableCreator[T, O]
-	Location        string
-	SegmentInterval IntervalRule
-	TTL             IntervalRule
-	ShardNum        uint32
+	Option                         O
+	TSTableCreator                 TSTableCreator[T, O]
+	Location                       string
+	SegmentInterval                IntervalRule
+	TTL                            IntervalRule
+	ShardNum                       uint32
+	SeriesIndexFlushTimeoutSeconds int64
 }
 
 type (
@@ -92,7 +93,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	p := common.GetPosition(ctx)
 	location := filepath.Clean(opts.Location)
 	lfs.MkdirIfNotExist(location, dirPerm)
-	si, err := newSeriesIndex(ctx, location)
+	si, err := newSeriesIndex(ctx, location, opts.SeriesIndexFlushTimeoutSeconds)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index failed").Error())
 	}

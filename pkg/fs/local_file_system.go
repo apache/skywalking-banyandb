@@ -25,12 +25,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+const defaultIOSize = 256 * 1024
 
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
@@ -347,6 +350,12 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	return size, nil
 }
 
+// SequentialWrite supports appending consecutive buffers to the end of the file.
+func (file *LocalFile) SequentialWrite() SeqWriter {
+	writer := generateWriter(file.file)
+	return &seqWriter{writer: writer, fileName: file.file.Name()}
+}
+
 // Read is used to read a specified location of file.
 func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 	rsize, err := file.file.ReadAt(buffer, offset)
@@ -373,9 +382,9 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	return size, nil
 }
 
-// StreamRead is used to read the entire file using streaming read.
-func (file *LocalFile) StreamRead() io.Reader {
-	reader := bufio.NewReader(file.file)
+// SequentialRead is used to read the entire file using streaming read.
+func (file *LocalFile) SequentialRead() SeqReader {
+	reader := generateReader(file.file)
 	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
@@ -437,3 +446,70 @@ func (i *seqReader) Read(p []byte) (int, error) {
 	}
 	return rsize, nil
 }
+
+func (i *seqReader) Path() string {
+	return i.fileName
+}
+
+func (i *seqReader) Close() error {
+	releaseReader(i.reader)
+	return nil
+}
+
+type seqWriter struct {
+	writer   *bufio.Writer
+	fileName string
+}
+
+func (w *seqWriter) Write(p []byte) (n int, err error) {
+	return w.writer.Write(p)
+}
+
+func (w *seqWriter) Path() string {
+	return w.fileName
+}
+
+func (w *seqWriter) Close() error {
+	if err := w.writer.Flush(); err != nil {
+		return &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
+		}
+	}
+	releaseWriter(w.writer)
+	return nil
+}
+
+func generateReader(f *os.File) *bufio.Reader {
+	v := bufReaderPool.Get()
+	if v == nil {
+		return bufio.NewReaderSize(f, defaultIOSize)
+	}
+	br := v.(*bufio.Reader)
+	br.Reset(f)
+	return br
+}
+
+func releaseReader(br *bufio.Reader) {
+	br.Reset(nil)
+	bufReaderPool.Put(br)
+}
+
+var bufReaderPool sync.Pool
+
+func generateWriter(f *os.File) *bufio.Writer {
+	v := bufWriterPool.Get()
+	if v == nil {
+		return bufio.NewWriterSize(f, defaultIOSize)
+	}
+	bw := v.(*bufio.Writer)
+	bw.Reset(f)
+	return bw
+}
+
+func releaseWriter(bw *bufio.Writer) {
+	bw.Reset(nil)
+	bufWriterPool.Put(bw)
+}
+
+var bufWriterPool sync.Pool
