@@ -264,7 +264,8 @@ var errClosed = fmt.Errorf("the merger is closed")
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
-	pendingBlock := &blockPointer{}
+	pendingBlock := generateBlockPointer()
+	defer releaseBlockPointer(pendingBlock)
 	var tmpBlock, tmpBlock2 *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
@@ -305,7 +306,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 
 		if tmpBlock == nil {
-			tmpBlock = &blockPointer{}
+			tmpBlock = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock)
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
@@ -329,7 +331,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		l := tmpBlock.idx
 		tmpBlock.idx = 0
 		if tmpBlock2 == nil {
-			tmpBlock2 = &blockPointer{}
+			tmpBlock2 = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock2)
 		}
 		tmpBlock2.reset()
 		tmpBlock2.append(tmpBlock, l)

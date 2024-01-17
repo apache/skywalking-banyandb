@@ -28,12 +28,14 @@ import (
 )
 
 type writer struct {
+	sw           fs.SeqWriter
 	w            fs.Writer
 	bytesWritten uint64
 }
 
 func (w *writer) reset() {
 	w.w = nil
+	w.sw = nil
 	w.bytesWritten = 0
 }
 
@@ -41,14 +43,16 @@ func (w *writer) init(wc fs.Writer) {
 	w.reset()
 
 	w.w = wc
+	w.sw = wc.SequentialWrite()
 }
 
 func (w *writer) MustWrite(data []byte) {
-	fs.MustWriteData(w.w, data)
+	fs.MustWriteData(w.sw, data)
 	w.bytesWritten += uint64(len(data))
 }
 
 func (w *writer) MustClose() {
+	fs.MustClose(w.sw)
 	fs.MustClose(w.w)
 	w.reset()
 }
@@ -115,12 +119,10 @@ func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*w
 		return chw, cw
 	}
 	hw, w := sw.mustCreateTagFamilyWriters(columnName)
-	chw = &writer{
-		w: hw,
-	}
-	cw = &writer{
-		w: w,
-	}
+	chw = new(writer)
+	chw.init(hw)
+	cw = new(writer)
+	cw.init(w)
 	sw.tagFamilyMetadataWriters[columnName] = chw
 	sw.tagFamilyWriters[columnName] = cw
 	return chw, cw
