@@ -748,3 +748,18 @@ func (bi *blockPointer) reset() {
 	bi.block.reset()
 	bi.bm = blockMetadata{}
 }
+
+func generateBlockPointer() *blockPointer {
+	v := blockPointerPool.Get()
+	if v == nil {
+		return &blockPointer{}
+	}
+	return v.(*blockPointer)
+}
+
+func releaseBlockPointer(bi *blockPointer) {
+	bi.reset()
+	blockPointerPool.Put(bi)
+}
+
+var blockPointerPool sync.Pool

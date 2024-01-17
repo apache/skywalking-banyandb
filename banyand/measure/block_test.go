@@ -264,7 +264,9 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			}()
 			tm := &timestampsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteTimestampsTo(tm, tt.args, &writer{w: b})
+			w := new(writer)
+			w.init(b)
+			mustWriteTimestampsTo(tm, tt.args, w)
 			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
 			if !reflect.DeepEqual(timestamps, tt.args) {
 				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
@@ -349,14 +351,17 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 
 func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampBuffer, fieldBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	timestampWriter, fieldWriter := &writer{}, &writer{}
+	timestampWriter.init(timestampBuffer)
+	fieldWriter.init(fieldBuffer)
 	ww := &writers{
 		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
-		timestampsWriter:         writer{w: timestampBuffer},
-		fieldValuesWriter:        writer{w: fieldBuffer},
+		timestampsWriter:         *timestampWriter,
+		fieldValuesWriter:        *fieldWriter,
 	}
 	p := &part{
 		primary:     &bytes.Buffer{},

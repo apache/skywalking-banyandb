@@ -91,14 +91,14 @@ type store struct {
 	batchInterval time.Duration
 }
 
-func (s *store) Batch(docs index.Documents) error {
+func (s *store) Batch(batch index.Batch) error {
 	if !s.closer.AddRunning() {
 		return nil
 	}
 	defer s.closer.Done()
 	select {
 	case <-s.closer.CloseNotify():
-	case s.ch <- docs:
+	case s.ch <- batch:
 	}
 	return nil
 }
@@ -106,9 +106,10 @@ func (s *store) Batch(docs index.Documents) error {
 // NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
-	// TODO:// parameterize the following options
-	// WithUnsafeBatches().
-	// WithPersisterNapTimeMSec(60 * 1000)
+	if opts.BatchWaitSec > 0 {
+		indexConfig = indexConfig.WithUnsafeBatches().
+			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
+	}
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
 	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
@@ -312,17 +313,20 @@ func (s *store) run() {
 		}()
 		size := 0
 		batch := bluge.NewBatch()
-		flush := func() {
+		flush := func(applied chan struct{}) {
 			if size < 1 {
 				return
 			}
 			if err := s.writer.Batch(batch); err != nil {
 				s.l.Error().Err(err).Msg("write to the inverted index")
 			}
+			if applied != nil {
+				close(applied)
+			}
 			batch.Reset()
 			size = 0
 		}
-		defer flush()
+		defer flush(nil)
 		var docIDBuffer bytes.Buffer
 		for {
 			timer := time.NewTimer(s.batchInterval)
@@ -337,16 +341,18 @@ func (s *store) run() {
 				}
 				switch d := event.(type) {
 				case flushEvent:
-					flush()
+					flush(nil)
 					close(d.onComplete)
-				case index.Document, index.Documents:
+				case index.Document, index.Batch:
 					var docs []index.Document
 					var isBatch bool
+					var applied chan struct{}
 					switch v := d.(type) {
 					case index.Document:
 						docs = []index.Document{v}
-					case index.Documents:
-						docs = v
+					case index.Batch:
+						docs = v.Documents
+						applied = v.Applied
 						isBatch = true
 					}
 
@@ -384,11 +390,11 @@ func (s *store) run() {
 						batch.Update(doc.ID(), doc)
 					}
 					if isBatch || size >= batchSize {
-						flush()
+						flush(applied)
 					}
 				}
 			case <-timer.C:
-				flush()
+				flush(nil)
 			}
 			timer.Stop()
 		}
