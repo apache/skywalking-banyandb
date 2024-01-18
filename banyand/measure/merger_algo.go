@@ -24,9 +24,7 @@ import (
 
 // MergePolicy aims to choose an optimal combination
 // that has the lowest write amplification.
-// This policy can be referred to https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v0.4.2-victorialogs/lib/logstorage/datadb.go
-// But parameters can be varied.
-type MergePolicy struct {
+type mergePolicy struct {
 	maxParts           int
 	minMergeMultiplier float64
 	maxFanOutSize      uint64
