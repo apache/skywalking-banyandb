@@ -83,6 +83,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		if err != nil {
 			return nil, err
 		}
+		if ssr == nil {
+			return elements, nil
+		}
 		r := ssr.Pull()
 		for i := range r.Timestamps {
 			e := &streamv1.Element{
@@ -119,6 +122,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		})
 		if err != nil {
 			return nil, err
+		}
+		if sfr == nil {
+			return elements, nil
 		}
 		r := sfr.Pull()
 		for i := range r.Timestamps {

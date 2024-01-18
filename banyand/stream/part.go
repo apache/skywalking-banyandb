@@ -49,6 +49,7 @@ const (
 
 type columnElements struct {
 	elementID   []string
+	// TODO: change it to 1d array after refactoring low-level query
 	tagFamilies [][]pbv1.TagFamily
 	timestamp   []int64
 }

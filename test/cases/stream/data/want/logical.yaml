@@ -30,7 +30,8 @@ elements:
             value: "30"
       - key: service_id
         value:
-          "null": null
+          str:
+            value: webapp_id
       - key: status_code
         value:
           int:
@@ -54,7 +55,8 @@ elements:
             value: "60"
       - key: service_id
         value:
-          "null": null
+          str:
+            value: webapp_id
       - key: status_code
         value:
           int:

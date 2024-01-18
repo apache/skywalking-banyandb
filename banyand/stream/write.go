@@ -113,7 +113,6 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 
 	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
 	tagFamiliesForIndexWrite := make([]tagValues, len(stm.schema.TagFamilies))
-	entityTagNames := stm.GetSchema().GetEntity().TagNames
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -135,14 +134,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				tagFamilySpec.Tags[j].Type,
 				tagValue,
 			))
-			isEntityTag := false
-			for _, tagName := range entityTagNames {
-				if tagFamilySpec.Tags[j].Name == tagName {
-					isEntityTag = true
-					break
-				}
-			}
-			if isEntityTag {
+			if tagFamilySpec.Tags[j].IndexedOnly {
 				continue
 			}
 			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
