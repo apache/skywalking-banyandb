@@ -190,7 +190,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64) ([]
 	maxFanOutSize := min(freeDiskSize, uint64(tst.option.maxFanOutSize))
 	tst.pwsChunk = tst.merger.getPartsToMerge(tst.pwsChunk[:0], parts, maxFanOutSize)
 	if len(tst.pwsChunk) == 0 {
-		tst.pwsChunk = append(tst.pwsChunk[:0], parts...)
+		return nil, nil
 	}
 
 	toBeMerged := make(map[uint64]struct{})
