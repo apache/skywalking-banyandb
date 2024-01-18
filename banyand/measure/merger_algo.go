@@ -33,7 +33,7 @@ type MergePolicy struct {
 }
 
 // NewDefaultMergePolicy create a MergePolicy with default parameters.
-func NewDefaultMergePolicy() *MergePolicy {
+func newDefaultMergePolicy() *MergePolicy {
 	return NewMergePolicy(15, 1.7, math.MaxUint64)
 }
 
