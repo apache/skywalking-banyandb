@@ -30,23 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-// mergePolicy is a global policy for all merge works.
-var mergerPolicy = NewDefaultMergePolicy()
-
-func withMaxFanOut(maxFanOutSize uint64) func(policy *MergePolicy) {
-	return func(policy *MergePolicy) {
-		policy.maxFanOutSize = maxFanOutSize
-	}
-}
-
-func customizeMergePolicy(customizers ...func(policy *MergePolicy)) {
-	p := NewDefaultMergePolicy()
-	for _, customizer := range customizers {
-		customizer(p)
-	}
-	mergerPolicy = p
-}
-
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -88,8 +71,8 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 }
 
 func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction) error {
-	maxFanOut := tst.freeDiskSpace(tst.root)
-	partsToMerge, toBeMerged := tst.getPartsToMerge(curSnapshot, maxFanOut)
+	freeDiskSize := tst.freeDiskSpace(tst.root)
+	partsToMerge, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize)
 	if len(partsToMerge) < 2 {
 		return nil
 	}
@@ -194,7 +177,7 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*partWrapper, map[uint64]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
 	for _, pw := range snapshot.parts {
@@ -204,7 +187,8 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*pa
 		parts = append(parts, pw)
 	}
 
-	tst.pwsChunk = mergerPolicy.getPartsToMerge(tst.pwsChunk[:0], parts, maxFanOut)
+	maxFanOutSize := min(freeDiskSize, uint64(tst.option.maxFanOutSize))
+	tst.pwsChunk = tst.merger.getPartsToMerge(tst.pwsChunk[:0], parts, maxFanOutSize)
 	if len(tst.pwsChunk) == 0 {
 		tst.pwsChunk = append(tst.pwsChunk[:0], parts...)
 	}

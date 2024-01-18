@@ -53,6 +53,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+		merger:     newDefaultMergePolicy(),
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -116,6 +117,7 @@ type tsTable struct {
 	root          string
 	// pwsChunk is the memory buffer for parts to be merged
 	pwsChunk  []*partWrapper
+	merger    *mergePolicy
 	gc        garbageCleaner
 	curPartID uint64
 	option    option

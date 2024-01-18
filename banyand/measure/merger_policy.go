@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"math"
 	"sort"
 )
 
@@ -27,31 +26,29 @@ import (
 type mergePolicy struct {
 	maxParts           int
 	minMergeMultiplier float64
-	maxFanOutSize      uint64
 }
 
 // NewDefaultMergePolicy create a MergePolicy with default parameters.
-func newDefaultMergePolicy() *MergePolicy {
-	return NewMergePolicy(15, 1.7, math.MaxUint64)
+func newDefaultMergePolicy() *mergePolicy {
+	return newMergePolicy(15, 1.7)
 }
 
 // NewMergePolicy creates a MergePolicy with given parameters.
-func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *MergePolicy {
-	return &MergePolicy{
+func newMergePolicy(maxParts int, minMergeMul float64) *mergePolicy {
+	return &mergePolicy{
 		maxParts:           maxParts,
 		minMergeMultiplier: minMergeMul,
-		maxFanOutSize:      maxFanOutSize,
 	}
 }
 
-func (l *MergePolicy) getPartsToMerge(dst, src []*partWrapper, maxFanOut uint64) []*partWrapper {
+func (l *mergePolicy) getPartsToMerge(dst, src []*partWrapper, maxFanOut uint64) []*partWrapper {
 	if len(src) < 2 {
 		return dst
 	}
 
 	// Filter out too big parts.
 	// This should reduce N for O(N^2) algorithm below.
-	maxInPartBytes := min(l.maxFanOutSize, uint64(float64(maxFanOut)/l.minMergeMultiplier))
+	maxInPartBytes := uint64(float64(maxFanOut) / l.minMergeMultiplier)
 	tmp := make([]*partWrapper, 0, len(src))
 	for _, pw := range src {
 		if pw.p.partMetadata.CompressedSizeBytes > maxInPartBytes {
