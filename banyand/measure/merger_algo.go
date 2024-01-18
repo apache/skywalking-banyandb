@@ -38,7 +38,7 @@ func NewDefaultMergePolicy() *MergePolicy {
 }
 
 // NewMergePolicy creates a MergePolicy with given parameters.
-func NewMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *MergePolicy {
+func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *MergePolicy {
 	return &MergePolicy{
 		maxParts:           maxParts,
 		minMergeMultiplier: minMergeMul,
